@@ -272,14 +272,25 @@ def _without_trt(providers: Iterable):
     return kept or ["CPUExecutionProvider"]
 
 
+_DIGESTS: dict = {}
+
+
 def _model_digest(model_path: str | None) -> str:
     if not model_path or not os.path.isfile(model_path):
         return "missing"
+    # Memoised on (path, size, mtime): every providers_for() call for a model path re-read the whole file, and a
+    # per-model precision lookup now makes that call once per buffalo file per pooled analyser (1k3d68 is 137 MB).
+    st = os.stat(model_path)
+    stamp = (os.path.abspath(model_path), st.st_size, st.st_mtime_ns)
+    hit = _DIGESTS.get(stamp)
+    if hit is not None:
+        return hit
     digest = hashlib.sha256()
     with open(model_path, "rb") as handle:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
-    return digest.hexdigest()[:16]
+    _DIGESTS[stamp] = digest.hexdigest()[:16]
+    return _DIGESTS[stamp]
 
 
 def decision_cache_key(model_key: str, model_path: str | None, requested: str,
@@ -378,17 +389,136 @@ def resolve(model_key: str, requested: str = "mixed", providers=None,
                              effective, backend, trt, fallback, key, policy)
 
 
+def _global_precision() -> str:
+    try:
+        import roop.globals
+        return getattr(getattr(roop.globals, "CFG", None), "trt_precision", "mixed")
+    except Exception as _degrade_error:
+        _swallowed("roop/precision_policy.py:382", _degrade_error, "fallback continued")
+        return "mixed"
+
+
+# ── per-model precision ────────────────────────────────────────────────────────────────────────────
+#
+# `trt_precision` is ONE user-facing setting, but the small models do not share a numerical profile. Measured 2026-10-10
+# on 500 real faces from d4/d1/d6/Love/s7 (docs/perf/trt_precision_fidelity.md), shipped TensorRT 'mixed' against a CUDA
+# FP32 reference with TF32 off, and against the same engine built with fp16 off:
+#
+#   model      mixed vs FP32                                                    TRT FP32 vs FP32     FP32 costs
+#   xseg       IoU mean 0.9936 / min 0.81, 162 of 500 faces < 0.995, 6 < 0.95    IoU >= 0.9997       +0.6 ms  (2.23 -> 2.82)
+#   2d106det   mean 0.12 px / max 1.25 px (frame)                                0.03 px (= floor)    +0.02 ms (0.50 -> 0.52)
+#   1k3d68     mean 1.19 px, p95 4.5, max 8.8; refined kps mean 0.94 px, p95    0.37 px (= floor)    +1.05 ms (0.72 -> 1.77)
+#              3.6 px = 10.5% of the inter-ocular distance at p95
+#   w600k_r50  embedding cosine min 0.999916 (gate 0.999: PASS)                  1.000000             +1.08 ms (0.95 -> 2.04)
+#
+# Those fail the gates the earlier briefs set (xseg IoU >= 0.995 on >= 99% of faces and none < 0.95; landmark p95 <= 0.3 px)
+# by 2-12x, while the FP32 engine sits at the engine-to-engine floor. w600k_r50 passes, so it keeps 'mixed'. An entry maps a
+# model FILE STEM (lower-case) to a precision from PRECISIONS; with no entry the model follows `trt_precision`.
+#
+#   ROOP_TRT_MODEL_PRECISION="xseg:mixed;1k3d68:global"      env wins over the table; 'global' drops the table entry
+#
+# Swappers are refused (they have their own canary and ROOP_SWAP_FP32). Take an entry out of the table to hand a model back
+# to the global setting; nothing else changes - the engine caches are per precision, so both engines stay on disk.
+PRECISION_OVERRIDES: dict = {"xseg": "fp32", "2d106det": "fp32", "1k3d68": "fp32"}
+PRECISION_OVERRIDE_ENV = "ROOP_TRT_MODEL_PRECISION"
+precision_log: list = []        # every per-model precision applied or refused in this process, for harnesses and tests
+_precision_announced: set = set()
+
+
+def parse_precision_overrides(text: str) -> dict:
+    """'xseg:fp32;1k3d68:global' -> {stem: precision | 'global'}. Raises ValueError."""
+    out = {}
+    for part in [p.strip() for p in str(text or "").split(";") if p.strip()]:
+        stem, sep, value = part.partition(":")
+        stem, value = stem.strip().lower(), value.strip().lower()
+        if not stem or not sep:
+            raise ValueError("expected 'stem:precision', got %r" % part)
+        if value != "global" and value not in PRECISIONS:
+            raise ValueError("precision must be one of %s or 'global', got %r" % (", ".join(PRECISIONS), value))
+        out[stem] = value
+    return out
+
+
+def precision_override_for(model_key, model_path):
+    """The per-model precision for this file, or None to follow the global setting. Swappers are always None."""
+    stem = _stem(model_path)
+    if not stem:
+        return None
+    table = dict(PRECISION_OVERRIDES)
+    raw = os.environ.get(PRECISION_OVERRIDE_ENV, "").strip()
+    if raw:
+        try:
+            table.update(parse_precision_overrides(raw))
+        except ValueError as exc:
+            if ("bad", raw) not in _precision_announced:       # loud, once: a typo must not look like "no override"
+                _precision_announced.add(("bad", raw))
+                print("[TRT] %s IGNORED (%s): %r" % (PRECISION_OVERRIDE_ENV, exc, raw), flush=True)
+                precision_log.append({"stem": stem, "refused": "malformed: %s" % exc})
+            return None
+    value = table.get(stem)
+    if value is None or value == "global":
+        return None
+    if canonical_model_key(model_key, model_path) in _PROTECTED_KEYS:
+        if ("protected", stem) not in _precision_announced:
+            _precision_announced.add(("protected", stem))
+            print("[TRT] precision override for %s refused: swappers use ROOP_SWAP_FP32 and the swap canary" % stem,
+                  flush=True)
+            precision_log.append({"stem": stem, "refused": "swapper"})
+        return None
+    return value
+
+
+def _announce_precision(stem, requested, glob):
+    if requested != glob and ("applied", stem, requested, glob) not in _precision_announced:
+        _precision_announced.add(("applied", stem, requested, glob))
+        print("[TRT] precision for %s: %s (per-model; global %s)" % (stem, requested, glob), flush=True)
+        precision_log.append({"stem": stem, "precision": requested, "global": glob})
+
+
+def bundle_member_providers(model_key, providers, model_path):
+    """Providers for ONE file of a multi-model bundle (buffalo_l), with ONLY its precision override applied.
+
+    insightface builds every file of a bundle from one provider chain, so this is the seam that lets w600k_r50 stay mixed
+    while 1k3d68 builds FP32. Deliberately not providers_for(): that would also attach a dynamic-batch shape profile to
+    2d106det / 1k3d68 (their batch axis is 'None') and move their engines to a new cache namespace, which is a different
+    change from the one being made. Returns None when no override applies (the caller keeps its chain untouched).
+
+    An override can tighten ('fp32') or equal the global setting. Loosening a model under a global 'fp32' would need the
+    pre-global chain, which a bundle caller no longer has; that case is refused loudly rather than guessed.
+    """
+    requested = precision_override_for(model_key, model_path)
+    if requested is None:
+        return None
+    glob = _global_precision()
+    if requested == glob:
+        return None
+    decision = resolve(model_key, requested, providers, model_path)
+    if glob == "fp32" or not decision.trt_enabled or decision.policy.trt_supported == "no":
+        if decision.trt_enabled:
+            print("[TRT] precision for %s: %s ignored inside a bundle while the global setting is fp32" % (
+                _stem(model_path), requested), flush=True)
+        return None
+    _announce_precision(_stem(model_path), decision.effective, glob)
+    if decision.effective == "fp32":
+        return _force_fp32(providers, decision.model)
+    if decision.effective == "bf16":
+        return _enable_bf16(providers, decision.model)
+    return None
+
+
 def providers_for(model_key: str, providers, model_path: str | None = None,
                   requested: str | None = None, device_id: int = 0,
                   hardware=None):
-    """Return provider options for one model under the active precision policy."""
+    """Return provider options for one model under the active precision policy.
+
+    `requested` defaults to this model's per-model precision (PRECISION_OVERRIDES / ROOP_TRT_MODEL_PRECISION), then to the
+    global `trt_precision`. An explicit `requested` is authoritative: harnesses that name a precision get exactly it.
+    """
     if requested is None:
-        try:
-            import roop.globals
-            requested = getattr(getattr(roop.globals, "CFG", None), "trt_precision", "mixed")
-        except Exception as _degrade_error:
-            _swallowed("roop/precision_policy.py:382", _degrade_error, "fallback continued")
-            requested = "mixed"
+        glob = _global_precision()
+        requested = precision_override_for(model_key, model_path) or glob
+        if model_path:
+            _announce_precision(_stem(model_path), requested, glob)
     decision = resolve(model_key, requested, providers, model_path, device_id,
                        hardware=hardware)
     if model_path:

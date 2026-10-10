@@ -1,0 +1,4198 @@
+{
+ "trt_precision": "mixed",
+ "date": "2026-10-10 19:25",
+ "models": {
+  "xseg": {
+   "model_file": "G:\\pinokio\\api\\roop-ultimate\\app\\models\\xseg.onnx",
+   "live": {
+    "providers": [
+     "TensorrtExecutionProvider",
+     "CUDAExecutionProvider",
+     "CPUExecutionProvider"
+    ],
+    "inputs": [
+     [
+      "xseg_input:0",
+      [
+       "unk__1491",
+       256,
+       256,
+       3
+      ],
+      "tensor(float)"
+     ]
+    ],
+    "outputs": [
+     [
+      "xseg_output:0",
+      [
+       "unk__1492",
+       256,
+       256,
+       1
+      ],
+      "tensor(float)"
+     ]
+    ],
+    "options": {
+     "trt_fp16_enable": "1",
+     "trt_layer_norm_fp32_fallback": "1",
+     "trt_build_heuristics_enable": "1",
+     "trt_builder_optimization_level": "3",
+     "trt_engine_cache_path": "G:\\pinokio\\api\\roop-ultimate\\app\\models\\trt_cache\\mixed_NVIDIA_GeForce_RTX_4070_sm0809_cuda12.8_drv616.56_trt10.9.0.34_ort1.23.2_lnfp32_seq_heur_b3_a-1_g0_c40b4a7d8494df527",
+     "trt_force_sequential_engine_build": "1",
+     "trt_max_workspace_size": "2147483648",
+     "trt_profile_min_shapes": "",
+     "trt_profile_opt_shapes": "",
+     "trt_profile_max_shapes": ""
+    }
+   },
+   "fp16": true,
+   "level": 3,
+   "cached_engines": [
+    "TensorrtExecutionProvider_TRTKernel_graph_tf2onnx_15145087408845782589_0_0_fp16_sm89.engine",
+    "TensorrtExecutionProvider_TRTKernel_graph_tf2onnx_11837966833193373116_0_0_fp16_sm89.engine"
+   ],
+   "cached_engine": {
+    "file": "TensorrtExecutionProvider_TRTKernel_graph_tf2onnx_15145087408845782589_0_0_fp16_sm89.engine",
+    "bytes": 39501252,
+    "n_layers": 411,
+    "layer_types": {},
+    "profiling_verbosity": "ProfilingVerbosity.LAYER_NAMES_ONLY",
+    "transpose_like": [
+     "Reformatting CopyNode for Input Tensor 0 to Conv2D_18__6",
+     "Reformatting CopyNode for Input Tensor 0 to {ForeignNode[Square_1...Maximum]}",
+     "Reformatting CopyNode for Input Tensor 0 to Conv__300",
+     "Reformatting CopyNode for Input Tensor 0 to {ForeignNode[Square_2...Maximum_1]}",
+     "Reformatting CopyNode for Input Tensor 0 to depthwise",
+     "Reformatting CopyNode for Input Tensor 0 to {ForeignNode[Square_3...Maximum_2]}",
+     "Reformatting CopyNode for Input Tensor 0 to Conv__312",
+     "Reformatting CopyNode for Input Tensor 0 to {ForeignNode[Square_4...Maximum_3]}",
+     "Reformatting CopyNode for Input Tensor 0 to Conv__318",
+     "Reformatting CopyNode for Input Tensor 0 to {ForeignNode[Square_5...Maximum_4]}",
+     "Reformatting CopyNode for Input Tensor 0 to Conv__324",
+     "Reformatting CopyNode for Input Tensor 0 to {ForeignNode[Square_6...Maximum_5]}",
+     "Reformatting CopyNode for Input Tensor 0 to Conv__330 + PWN(Square_7)",
+     "Reformatting CopyNode for Input Tensor 0 to Mean_7",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PWN(const_fold_opt__1442 + add_46, PWN(Sqrt_6)), PWN(truediv_20))",
+     "Reformatting CopyNode for Input Tensor 0 to Reshape_55:0 + mul_17",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(mul_18)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(mul_18)",
+     "Reformatting CopyNode for Input Tensor 0 to const_fold_opt__1395 + add_47",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(Maximum_6)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(Maximum_6)",
+     "Reformatting CopyNode for Input Tensor 0 to Conv__336 + PWN(Square_8)",
+     "Reformatting CopyNode for Input Tensor 0 to Mean_8",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(mul_20)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(mul_20)",
+     "Reformatting CopyNode for Input Tensor 0 to const_fold_opt__1406 + add_50",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(Maximum_7)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(Maximum_7)",
+     "Reformatting CopyNode for Input Tensor 0 to Conv__342 + PWN(Square_9)",
+     "Reformatting CopyNode for Input Tensor 0 to Mean_9",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(mul_22)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(mul_22)",
+     "Reformatting CopyNode for Input Tensor 0 to const_fold_opt__1362 + add_53",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(Maximum_8)",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(Square_10)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(Square_10)",
+     "Reformatting CopyNode for Input Tensor 0 to Mean_10",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PWN(const_fold_opt__1468 + add_55, PWN(Sqrt_9)), PWN(truediv_29))",
+     "Reformatting CopyNode for Input Tensor 0 to Reshape_67:0 + mul_23",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(mul_24)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(Maximum_9)",
+     "Reformatting CopyNode for Output Tensor 0 to Conv__354",
+     "Reformatting CopyNode for Input Tensor 0 to Mean_11",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(mul_26)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(mul_26)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(Maximum_10)",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(Square_12)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(Square_12)",
+     "Reformatting CopyNode for Input Tensor 0 to Mean_12",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PWN(const_fold_opt__1419 + add_61, PWN(Sqrt_11)), PWN(truediv_35))",
+     "Reformatting CopyNode for Input Tensor 0 to Reshape_75:0 + mul_27",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(mul_28)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(Maximum_11)",
+     "Reformatting CopyNode for Output Tensor 0 to PWN(Maximum_11)",
+     "Reformatting CopyNode for Output Tensor 0 to Conv__366",
+     "Reformatting CopyNode for Input Tensor 0 to Mean_13",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PWN(const_fold_opt__1470 + add_64, PWN(Sqrt_12)), PWN(truediv_38))",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(mul_30)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(mul_30)",
+     "Reformatting CopyNode for Input Tensor 0 to const_fold_opt__1339 + add_65",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(Maximum_12)",
+     "Reformatting CopyNode for Output Tensor 0 to Conv__372",
+     "Reformatting CopyNode for Input Tensor 0 to Mean_14",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PWN(const_fold_opt__1490 + add_67, PWN(Sqrt_13)), PWN(truediv_41))",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(mul_32)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(mul_32)",
+     "Reformatting CopyNode for Input Tensor 0 to const_fold_opt__1460 + add_68",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(Maximum_13)",
+     "Reformatting CopyNode for Output Tensor 0 to Conv__378",
+     "Reformatting CopyNode for Input Tensor 0 to Mean_15",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PWN(const_fold_opt__1462 + add_70, PWN(Sqrt_14)), PWN(truediv_44))",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(mul_34)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(mul_34)",
+     "Reformatting CopyNode for Input Tensor 0 to const_fold_opt__1335 + add_71",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(Maximum_14)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(Maximum_14)",
+     "Reformatting CopyNode for Input Tensor 0 to depthwise_5",
+     "Reformatting CopyNode for Input Tensor 0 to conv2d_transpose + const_fold_opt__1456 + Add_74 + ConstantFolding/truediv_96_recip:0 + ONNXTRT_Broadcast + truediv_45",
+     "conv2d_transpose + const_fold_opt__1456 + Add_74 + ConstantFolding/truediv_96_recip:0 + ONNXTRT_Broadcast + truediv_45",
+     "Reformatting CopyNode for Output Tensor 0 to conv2d_transpose + const_fold_opt__1456 + Add_74 + ConstantFolding/truediv_96_recip:0 + ONNXTRT_Broadcast + truediv_45",
+     "Reformatting CopyNode for Input Tensor 0 to Mean_16",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PWN(const_fold_opt__1392 + add_75, PWN(Sqrt_15)), PWN(truediv_47))",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(mul_36)",
+     "Reformatting CopyNode for Input Tensor 0 to const_fold_opt__1397 + add_76",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(Maximum_15)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(Maximum_15)",
+     "Reformatting CopyNode for Input Tensor 0 to Conv__394",
+     "Reformatting CopyNode for Output Tensor 0 to Conv__394",
+     "Reformatting CopyNode for Input Tensor 0 to Mean_17",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PWN(const_fold_opt__1380 + add_78, PWN(Sqrt_16)), PWN(truediv_50))",
+     "Reformatting CopyNode for Input Tensor 0 to Reshape_99:0 + mul_37",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(mul_38)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(mul_38)",
+     "Reformatting CopyNode for Input Tensor 0 to const_fold_opt__1365 + add_79",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(Maximum_16)",
+     "Reformatting CopyNode for Output Tensor 0 to Conv__400",
+     "Reformatting CopyNode for Input Tensor 0 to Mean_18",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PWN(const_fold_opt__1386 + add_81, PWN(Sqrt_17)), PWN(truediv_53))",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(mul_40)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(mul_40)",
+     "Reformatting CopyNode for Input Tensor 0 to const_fold_opt__1379 + add_82",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(Maximum_17)",
+     "Reformatting CopyNode for Output Tensor 0 to Conv__406",
+     "Reformatting CopyNode for Input Tensor 0 to Mean_19",
+     "Reformatting CopyNode for Input Tensor 0 to Reshape_107:0 + mul_41",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(mul_42)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(mul_42)",
+     "Reformatting CopyNode for Input Tensor 0 to const_fold_opt__1413 + add_85",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(Maximum_18)",
+     "conv2d_transpose_1 + const_fold_opt__1447 + Add_86 + ConstantFolding/truediv_96_recip:0_clone_1 + ONNXTRT_Broadcast_3 + truediv_57",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PWN(const_fold_opt__1474 + add_87, PWN(Sqrt_19)), PWN(truediv_59))",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(mul_44)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(Maximum_19)",
+     "Reformatting CopyNode for Output Tensor 0 to Conv__418",
+     "Reformatting CopyNode for Input Tensor 0 to Mean_21",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(mul_46)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(mul_46)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(Maximum_20)",
+     "Reformatting CopyNode for Output Tensor 0 to Conv__424",
+     "Reformatting CopyNode for Input Tensor 0 to Mean_22",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PWN(const_fold_opt__1391 + add_93, PWN(Sqrt_21)), PWN(truediv_65))",
+     "Reformatting CopyNode for Input Tensor 0 to Reshape_119:0 + mul_47",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(mul_48)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(mul_48)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(Maximum_21)",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(Square_23)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(Square_23)",
+     "Reformatting CopyNode for Input Tensor 0 to Mean_23",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PWN(const_fold_opt__1483 + add_96, PWN(Sqrt_22)), PWN(truediv_68))",
+     "Reformatting CopyNode for Input Tensor 0 to Reshape_123:0 + mul_49",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(mul_50)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(Maximum_22)",
+     "conv2d_transpose_2 + const_fold_opt__1353 + Add_98 + ConstantFolding/truediv_96_recip:0_clone_2 + ONNXTRT_Broadcast_5 + truediv_69",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(Square_24)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(Square_24)",
+     "Reformatting CopyNode for Input Tensor 0 to Mean_24",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PWN(const_fold_opt__1480 + add_99, PWN(Sqrt_23)), PWN(truediv_71))",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(mul_52)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(Maximum_23)",
+     "Reformatting CopyNode for Input Tensor 0 to Mean_25",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(mul_54)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(mul_54)",
+     "Reformatting CopyNode for Input Tensor 0 to const_fold_opt__1465 + add_103",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(Maximum_24)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(Maximum_24)",
+     "Reformatting CopyNode for Input Tensor 0 to Conv__448 + PWN(Square_26)",
+     "Reformatting CopyNode for Input Tensor 0 to Mean_26",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PWN(const_fold_opt__1401 + add_105, PWN(Sqrt_25)), PWN(truediv_77))",
+     "Reformatting CopyNode for Input Tensor 0 to Reshape_135:0 + mul_55",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(mul_56)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(mul_56)",
+     "Reformatting CopyNode for Input Tensor 0 to const_fold_opt__1428 + add_106",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(Maximum_25)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(Maximum_25)",
+     "Reformatting CopyNode for Input Tensor 0 to Conv__454 + PWN(Square_27)",
+     "Reformatting CopyNode for Input Tensor 0 to Mean_27",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PWN(const_fold_opt__1403 + add_108, PWN(Sqrt_26)), PWN(truediv_80))",
+     "Reformatting CopyNode for Input Tensor 0 to Reshape_139:0 + mul_57",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(mul_58)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(mul_58)",
+     "Reformatting CopyNode for Input Tensor 0 to const_fold_opt__1449 + add_109",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(Maximum_26)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(Maximum_26)",
+     "Reformatting CopyNode for Input Tensor 0 to conv2d_transpose_3",
+     "conv2d_transpose_3",
+     "Reformatting CopyNode for Input Tensor 0 to {ForeignNode[const_fold_opt__1452...concat_16]}",
+     "Reformatting CopyNode for Input Tensor 0 to Conv__466",
+     "Reformatting CopyNode for Input Tensor 0 to {ForeignNode[Square_29...Maximum_28]}",
+     "Reformatting CopyNode for Input Tensor 0 to Conv__472",
+     "Reformatting CopyNode for Input Tensor 0 to {ForeignNode[Square_30...Maximum_29]}",
+     "Reformatting CopyNode for Input Tensor 0 to conv2d_transpose_4",
+     "conv2d_transpose_4",
+     "Reformatting CopyNode for Input Tensor 0 to {ForeignNode[const_fold_opt__1384...concat_17]}",
+     "Reformatting CopyNode for Input Tensor 0 to Conv__484",
+     "Reformatting CopyNode for Input Tensor 0 to {ForeignNode[Square_32...Maximum_31]}",
+     "Reformatting CopyNode for Input Tensor 0 to Conv__490",
+     "Reformatting CopyNode for Input Tensor 0 to {ForeignNode[Square_33...Maximum_32]}",
+     "Reformatting CopyNode for Input Tensor 0 to conv2d_transpose_5",
+     "conv2d_transpose_5",
+     "Reformatting CopyNode for Input Tensor 0 to {ForeignNode[const_fold_opt__1388...concat_18]}",
+     "Reformatting CopyNode for Input Tensor 0 to Conv__502",
+     "Reformatting CopyNode for Input Tensor 0 to {ForeignNode[Square_35...Maximum_34]}",
+     "Reformatting CopyNode for Input Tensor 0 to Conv__508",
+     "Reformatting CopyNode for Input Tensor 0 to {ForeignNode[Square_36...Maximum_35]}",
+     "Reformatting CopyNode for Input Tensor 0 to Conv__514 + PWN(Sigmoid_4)"
+    ],
+    "first": [
+     "Reformatting CopyNode for Input Tensor 0 to Conv2D_18__6",
+     "Conv2D_18__6",
+     "Conv__294",
+     "Reformatting CopyNode for Input Tensor 0 to {ForeignNode[Square_1...Maximum]}",
+     "__myl_Move_myl4_0",
+     "__myl_MoveMulAddSqrtDivMulMulAddMaxMean_myl4_1"
+    ],
+    "last": [
+     "__myl_MoveMulAddSqrtDivMulMulAddMaxMean_myl398_1",
+     "Reformatting CopyNode for Input Tensor 0 to Conv__514 + PWN(Sigmoid_4)",
+     "Conv__514 + PWN(Sigmoid_4)",
+     "Conv2D_48__128"
+    ],
+    "io": [
+     [
+      "xseg_input:0",
+      "TensorIOMode.INPUT",
+      [
+       1,
+       256,
+       256,
+       3
+      ],
+      "DataType.FLOAT",
+      "TensorFormat.LINEAR"
+     ],
+     [
+      "xseg_output:0",
+      "TensorIOMode.OUTPUT",
+      [
+       1,
+       256,
+       256,
+       1
+      ],
+      "DataType.FLOAT",
+      "TensorFormat.LINEAR"
+     ]
+    ],
+    "layers_json_head": [
+     "Reformatting CopyNode for Input Tensor 0 to Conv2D_18__6",
+     "Conv2D_18__6",
+     "Conv__294"
+    ]
+   },
+   "ort_profile_nodes_per_provider": {
+    "TensorrtExecutionProvider": 1
+   },
+   "detailed_engine": {
+    "n_layers": 387,
+    "layer_types": {
+     "Shuffle": 1,
+     "Reformat": 55,
+     "CaskConvolution": 33,
+     "kgen": 29,
+     "CaskPooling": 21,
+     "PointWiseV2": 78,
+     "Scale": 42,
+     "NoOp": 95,
+     "Constant": 21,
+     "CaskJitConv": 4,
+     "gemm": 2,
+     "CaskDeconvolutionV2": 6
+    },
+    "transpose_like": [
+     "Reformatting CopyNode for Input Tensor 0 to Conv__294",
+     "Reformatting CopyNode for Input Tensor 0 to {ForeignNode[ONNXTRT_Broadcast...Maximum]}",
+     "Reformatting CopyNode for Input Tensor 0 to Conv__300",
+     "Reformatting CopyNode for Input Tensor 0 to {ForeignNode[ONNXTRT_Broadcast_1...Pad_19]}",
+     "Reformatting CopyNode for Input Tensor 0 to depthwise",
+     "Reformatting CopyNode for Input Tensor 0 to {ForeignNode[ONNXTRT_Broadcast_5...Maximum_2]}",
+     "Reformatting CopyNode for Input Tensor 0 to Conv__312",
+     "Reformatting CopyNode for Input Tensor 0 to {ForeignNode[ONNXTRT_Broadcast_7...Pad_22]}",
+     "Reformatting CopyNode for Input Tensor 0 to depthwise_1",
+     "Reformatting CopyNode for Input Tensor 0 to {ForeignNode[ONNXTRT_Broadcast_18...Maximum_4]}",
+     "Reformatting CopyNode for Input Tensor 0 to Conv__324",
+     "Reformatting CopyNode for Input Tensor 0 to {ForeignNode[ONNXTRT_Broadcast_20...Pad_25]}",
+     "Reformatting CopyNode for Input Tensor 0 to Conv__330 + ConstantFolding/truediv_96_recip:0 + ONNXTRT_Broadcast_31 + truediv_18 + PWN(Square_7)",
+     "Reformatting CopyNode for Input Tensor 0 to Mean_7",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(mul_18)",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(Maximum_6)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(Maximum_6)",
+     "Reformatting CopyNode for Input Tensor 0 to Conv__336 + ConstantFolding/truediv_96_recip:0_clone_1 + ONNXTRT_Broadcast_33 + truediv_21 + PWN(Square_8)",
+     "Reformatting CopyNode for Input Tensor 0 to Mean_8",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PWN(const_fold_opt__1396 + add_49, PWN(Sqrt_7)), PWN(truediv_23))",
+     "Reformatting CopyNode for Input Tensor 0 to Reshape_59:0 + mul_19",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(mul_20)",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(Maximum_7)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(Maximum_7)",
+     "Reformatting CopyNode for Input Tensor 0 to Conv__342 + ConstantFolding/truediv_96_recip:0_clone_2 + ONNXTRT_Broadcast_35 + truediv_24 + PWN(Square_9)",
+     "Reformatting CopyNode for Input Tensor 0 to Mean_9",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PWN(const_fold_opt__1479 + add_52, PWN(Sqrt_8)), PWN(truediv_26))",
+     "Reformatting CopyNode for Input Tensor 0 to Reshape_63:0 + mul_21",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(mul_22)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(Maximum_8)",
+     "Reformatting CopyNode for Output Tensor 0 to Conv__348 + ConstantFolding/truediv_96_recip:0_clone_3 + ONNXTRT_Broadcast_46 + truediv_27",
+     "Reformatting CopyNode for Input Tensor 0 to Mean_10",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PWN(const_fold_opt__1468 + add_55, PWN(Sqrt_9)), PWN(truediv_29))",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(mul_24)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(mul_24)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(Maximum_9)",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(Square_11)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(Square_11)",
+     "Reformatting CopyNode for Input Tensor 0 to Mean_11",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PWN(const_fold_opt__1464 + add_58, PWN(Sqrt_10)), PWN(truediv_32))",
+     "Reformatting CopyNode for Input Tensor 0 to Reshape_71:0 + mul_25",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(mul_26)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(Maximum_10)",
+     "Reformatting CopyNode for Output Tensor 0 to Conv__360 + ConstantFolding/truediv_96_recip:0_clone_5 + ONNXTRT_Broadcast_50 + truediv_33",
+     "Reformatting CopyNode for Input Tensor 0 to Mean_12",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PWN(const_fold_opt__1419 + add_61, PWN(Sqrt_11)), PWN(truediv_35))",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(mul_28)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(mul_28)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(Maximum_11)",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PWN(const_fold_opt__1470 + add_64, PWN(Sqrt_12)), PWN(truediv_38))",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(mul_30)",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(Maximum_12)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(Maximum_12)",
+     "Reformatting CopyNode for Input Tensor 0 to Conv__372 + ConstantFolding/truediv_96_recip:0_clone_7 + ONNXTRT_Broadcast_63 + truediv_39",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PWN(const_fold_opt__1490 + add_67, PWN(Sqrt_13)), PWN(truediv_41))",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(mul_32)",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(Maximum_13)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(Maximum_13)",
+     "Reformatting CopyNode for Input Tensor 0 to Conv__378 + ConstantFolding/truediv_96_recip:0_clone_8 + ONNXTRT_Broadcast_65 + truediv_42",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PWN(const_fold_opt__1462 + add_70, PWN(Sqrt_14)), PWN(truediv_44))",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(mul_34)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(Maximum_14)",
+     "conv2d_transpose + const_fold_opt__1456 + Add_74 + ConstantFolding/truediv_96_recip:0_clone_9 + ONNXTRT_Broadcast_78 + truediv_45",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PWN(const_fold_opt__1392 + add_75, PWN(Sqrt_15)), PWN(truediv_47))",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(mul_36)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(mul_36)",
+     "Reformatting CopyNode for Input Tensor 0 to const_fold_opt__1397 + add_76",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(Maximum_15)",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PWN(const_fold_opt__1380 + add_78, PWN(Sqrt_16)), PWN(truediv_50))",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(mul_38)",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(Maximum_16)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(Maximum_16)",
+     "Reformatting CopyNode for Input Tensor 0 to Conv__400 + ConstantFolding/truediv_96_recip:0_clone_11 + ONNXTRT_Broadcast_82 + truediv_51",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PWN(const_fold_opt__1386 + add_81, PWN(Sqrt_17)), PWN(truediv_53))",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(mul_40)",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(Maximum_17)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(Maximum_17)",
+     "Reformatting CopyNode for Input Tensor 0 to Conv__406 + ConstantFolding/truediv_96_recip:0_clone_12 + ONNXTRT_Broadcast_84 + truediv_54",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PWN(const_fold_opt__1374 + add_84, PWN(Sqrt_18)), PWN(truediv_56))",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(mul_42)",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(Maximum_18)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(Maximum_18)",
+     "Reformatting CopyNode for Input Tensor 0 to conv2d_transpose_1 + const_fold_opt__1447 + Add_86 + ConstantFolding/truediv_96_recip:0_clone_13 + ONNXTRT_Broadcast_86 + truediv_57",
+     "conv2d_transpose_1 + const_fold_opt__1447 + Add_86 + ConstantFolding/truediv_96_recip:0_clone_13 + ONNXTRT_Broadcast_86 + truediv_57",
+     "Reformatting CopyNode for Output Tensor 0 to conv2d_transpose_1 + const_fold_opt__1447 + Add_86 + ConstantFolding/truediv_96_recip:0_clone_13 + ONNXTRT_Broadcast_86 + truediv_57",
+     "Reformatting CopyNode for Input Tensor 0 to Mean_20",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PWN(const_fold_opt__1474 + add_87, PWN(Sqrt_19)), PWN(truediv_59))",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(mul_44)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(mul_44)",
+     "Reformatting CopyNode for Input Tensor 0 to const_fold_opt__1400 + add_88",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(Maximum_19)",
+     "Reformatting CopyNode for Output Tensor 0 to Conv__418 + ConstantFolding/truediv_96_recip:0_clone_14 + ONNXTRT_Broadcast_88 + truediv_60",
+     "Reformatting CopyNode for Input Tensor 0 to Mean_21",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PWN(const_fold_opt__1372 + add_90, PWN(Sqrt_20)), PWN(truediv_62))",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(mul_46)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(mul_46)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(Maximum_20)",
+     "Reformatting CopyNode for Output Tensor 0 to Conv__424 + ConstantFolding/truediv_96_recip:0_clone_15 + ONNXTRT_Broadcast_90 + truediv_63",
+     "Reformatting CopyNode for Input Tensor 0 to Mean_22",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PWN(const_fold_opt__1391 + add_93, PWN(Sqrt_21)), PWN(truediv_65))",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(mul_48)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(mul_48)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(Maximum_21)",
+     "Reformatting CopyNode for Output Tensor 0 to Conv__430 + ConstantFolding/truediv_96_recip:0_clone_16 + ONNXTRT_Broadcast_92 + truediv_66",
+     "Reformatting CopyNode for Input Tensor 0 to Mean_23",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PWN(const_fold_opt__1483 + add_96, PWN(Sqrt_22)), PWN(truediv_68))",
+     "Reformatting CopyNode for Input Tensor 0 to Reshape_123:0 + mul_49",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(mul_50)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(mul_50)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(Maximum_22)",
+     "conv2d_transpose_2 + const_fold_opt__1353 + Add_98 + ConstantFolding/truediv_96_recip:0_clone_17 + ONNXTRT_Broadcast_94 + truediv_69",
+     "Reformatting CopyNode for Output Tensor 0 to conv2d_transpose_2 + const_fold_opt__1353 + Add_98 + ConstantFolding/truediv_96_recip:0_clone_17 + ONNXTRT_Broadcast_94 + truediv_69",
+     "Reformatting CopyNode for Input Tensor 0 to Mean_24",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PWN(const_fold_opt__1480 + add_99, PWN(Sqrt_23)), PWN(truediv_71))",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(mul_52)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(mul_52)",
+     "Reformatting CopyNode for Input Tensor 0 to const_fold_opt__1340 + add_100",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(Maximum_23)",
+     "Reformatting CopyNode for Input Tensor 0 to Mean_25",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(mul_54)",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(Maximum_24)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(Maximum_24)",
+     "Reformatting CopyNode for Input Tensor 0 to Conv__448 + ConstantFolding/truediv_96_recip:0_clone_19 + ONNXTRT_Broadcast_98 + truediv_75 + PWN(Square_26)",
+     "Reformatting CopyNode for Input Tensor 0 to Mean_26",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PWN(const_fold_opt__1401 + add_105, PWN(Sqrt_25)), PWN(truediv_77))",
+     "Reformatting CopyNode for Input Tensor 0 to Reshape_135:0 + mul_55",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(mul_56)",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(Maximum_25)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(Maximum_25)",
+     "Reformatting CopyNode for Input Tensor 0 to Conv__454 + ConstantFolding/truediv_96_recip:0_clone_20 + ONNXTRT_Broadcast_100 + truediv_78 + PWN(Square_27)",
+     "Reformatting CopyNode for Input Tensor 0 to Mean_27",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PWN(const_fold_opt__1403 + add_108, PWN(Sqrt_26)), PWN(truediv_80))",
+     "Reformatting CopyNode for Input Tensor 0 to Reshape_139:0 + mul_57",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(mul_58)",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(Maximum_26)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(Maximum_26)",
+     "Reformatting CopyNode for Input Tensor 0 to conv2d_transpose_3",
+     "conv2d_transpose_3",
+     "Reformatting CopyNode for Input Tensor 0 to {ForeignNode[ONNXTRT_Broadcast_102...concat_16]}",
+     "Reformatting CopyNode for Input Tensor 0 to Conv__466",
+     "Reformatting CopyNode for Input Tensor 0 to {ForeignNode[ONNXTRT_Broadcast_106...Maximum_29]}",
+     "Reformatting CopyNode for Input Tensor 0 to conv2d_transpose_4",
+     "conv2d_transpose_4",
+     "Reformatting CopyNode for Input Tensor 0 to {ForeignNode[ONNXTRT_Broadcast_108...concat_17]}",
+     "Reformatting CopyNode for Input Tensor 0 to Conv__484",
+     "Reformatting CopyNode for Input Tensor 0 to {ForeignNode[ONNXTRT_Broadcast_110...Maximum_31]}",
+     "Reformatting CopyNode for Input Tensor 0 to Conv__490",
+     "Reformatting CopyNode for Input Tensor 0 to {ForeignNode[ONNXTRT_Broadcast_112...Maximum_32]}",
+     "Reformatting CopyNode for Input Tensor 0 to conv2d_transpose_5",
+     "conv2d_transpose_5",
+     "Reformatting CopyNode for Input Tensor 0 to {ForeignNode[ONNXTRT_Broadcast_114...concat_18]}",
+     "Reformatting CopyNode for Input Tensor 0 to Conv__502",
+     "Reformatting CopyNode for Input Tensor 0 to {ForeignNode[ONNXTRT_Broadcast_116...Maximum_34]}",
+     "Reformatting CopyNode for Input Tensor 0 to Conv__508",
+     "Reformatting CopyNode for Input Tensor 0 to {ForeignNode[ONNXTRT_Broadcast_118...Maximum_35]}"
+    ],
+    "io": [
+     [
+      "xseg_input:0",
+      "TensorIOMode.INPUT",
+      [
+       1,
+       256,
+       256,
+       3
+      ],
+      "DataType.FLOAT",
+      "TensorFormat.LINEAR"
+     ],
+     [
+      "xseg_output:0",
+      "TensorIOMode.OUTPUT",
+      [
+       1,
+       256,
+       256,
+       1
+      ],
+      "DataType.FLOAT",
+      "TensorFormat.LINEAR"
+     ]
+    ],
+    "first": [
+     "Conv2D_18__6",
+     "Reformatting CopyNode for Input Tensor 0 to Conv__294",
+     "Conv__294",
+     "Reformatting CopyNode for Input Tensor 0 to {ForeignNode[ONNXTRT_Broadcast...Maximum]}",
+     "__myl_Move_myl4_0",
+     "__myl_MulMulAddSqrtDivMulMulAddMaxMean_myl4_1"
+    ],
+    "last": [
+     "__myl_Move_myl369_0",
+     "__myl_MulMulAddSqrtDivMulMulAddMaxMean_myl369_1",
+     "Conv__514 + PWN(Sigmoid_4)",
+     "Conv2D_48__128"
+    ],
+    "profiling_verbosity": "ProfilingVerbosity.DETAILED",
+    "output_format_dtype_hist": {
+     "Float": 10,
+     "Half": 393,
+     "Int32": 5
+    },
+    "data_movers": [
+     {
+      "name": "Conv2D_18__6",
+      "type": "Shuffle",
+      "in": [
+       "Float"
+      ],
+      "out": [
+       "Float"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to Conv__294",
+      "type": "Reformat",
+      "in": [
+       "Float"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to {ForeignNode[ONNXTRT_Broadcast...Maximum]}",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to Conv__300",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to {ForeignNode[ONNXTRT_Broadcast_1...Pad_19]}",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to depthwise",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to {ForeignNode[ONNXTRT_Broadcast_5...Maximum_2]}",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to Conv__312",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to {ForeignNode[ONNXTRT_Broadcast_7...Pad_22]}",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to depthwise_1",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to {ForeignNode[ONNXTRT_Broadcast_18...Maximum_4]}",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to Conv__324",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to {ForeignNode[ONNXTRT_Broadcast_20...Pad_25]}",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to Conv__330 + ConstantFolding/truediv_96_recip:0 + ONNXTRT_Broadcast_31 + truediv_18 + PWN(Square_7)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to Mean_7",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(mul_18)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to PWN(Maximum_6)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(Maximum_6)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to Conv__336 + ConstantFolding/truediv_96_recip:0_clone_1 + ONNXTRT_Broadcast_33 + truediv_21 + PWN(Square_8)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to Mean_8",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to PWN(PWN(const_fold_opt__1396 + add_49, PWN(Sqrt_7)), PWN(truediv_23))",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to Reshape_59:0 + mul_19",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(mul_20)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to PWN(Maximum_7)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(Maximum_7)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to Conv__342 + ConstantFolding/truediv_96_recip:0_clone_2 + ONNXTRT_Broadcast_35 + truediv_24 + PWN(Square_9)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to Mean_9",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to PWN(PWN(const_fold_opt__1479 + add_52, PWN(Sqrt_8)), PWN(truediv_26))",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to Reshape_63:0 + mul_21",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(mul_22)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(Maximum_8)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Output Tensor 0 to Conv__348 + ConstantFolding/truediv_96_recip:0_clone_3 + ONNXTRT_Broadcast_46 + truediv_27",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to Mean_10",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to PWN(PWN(const_fold_opt__1468 + add_55, PWN(Sqrt_9)), PWN(truediv_29))",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to PWN(mul_24)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(mul_24)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(Maximum_9)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to PWN(Square_11)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(Square_11)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to Mean_11",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to PWN(PWN(const_fold_opt__1464 + add_58, PWN(Sqrt_10)), PWN(truediv_32))",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to Reshape_71:0 + mul_25",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(mul_26)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(Maximum_10)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Output Tensor 0 to Conv__360 + ConstantFolding/truediv_96_recip:0_clone_5 + ONNXTRT_Broadcast_50 + truediv_33",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to Mean_12",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to PWN(PWN(const_fold_opt__1419 + add_61, PWN(Sqrt_11)), PWN(truediv_35))",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to PWN(mul_28)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(mul_28)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(Maximum_11)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to PWN(PWN(const_fold_opt__1470 + add_64, PWN(Sqrt_12)), PWN(truediv_38))",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(mul_30)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to PWN(Maximum_12)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(Maximum_12)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to Conv__372 + ConstantFolding/truediv_96_recip:0_clone_7 + ONNXTRT_Broadcast_63 + truediv_39",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to PWN(PWN(const_fold_opt__1490 + add_67, PWN(Sqrt_13)), PWN(truediv_41))",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(mul_32)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to PWN(Maximum_13)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(Maximum_13)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to Conv__378 + ConstantFolding/truediv_96_recip:0_clone_8 + ONNXTRT_Broadcast_65 + truediv_42",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to PWN(PWN(const_fold_opt__1462 + add_70, PWN(Sqrt_14)), PWN(truediv_44))",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(mul_34)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(Maximum_14)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "conv2d_transpose + const_fold_opt__1456 + Add_74 + ConstantFolding/truediv_96_recip:0_clone_9 + ONNXTRT_Broadcast_78 + truediv_45",
+      "type": "CaskDeconvolutionV2",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to PWN(PWN(const_fold_opt__1392 + add_75, PWN(Sqrt_15)), PWN(truediv_47))",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to PWN(mul_36)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(mul_36)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to const_fold_opt__1397 + add_76",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(Maximum_15)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to PWN(PWN(const_fold_opt__1380 + add_78, PWN(Sqrt_16)), PWN(truediv_50))",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(mul_38)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to PWN(Maximum_16)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(Maximum_16)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to Conv__400 + ConstantFolding/truediv_96_recip:0_clone_11 + ONNXTRT_Broadcast_82 + truediv_51",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to PWN(PWN(const_fold_opt__1386 + add_81, PWN(Sqrt_17)), PWN(truediv_53))",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(mul_40)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to PWN(Maximum_17)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(Maximum_17)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to Conv__406 + ConstantFolding/truediv_96_recip:0_clone_12 + ONNXTRT_Broadcast_84 + truediv_54",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to PWN(PWN(const_fold_opt__1374 + add_84, PWN(Sqrt_18)), PWN(truediv_56))",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(mul_42)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to PWN(Maximum_18)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(Maximum_18)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to conv2d_transpose_1 + const_fold_opt__1447 + Add_86 + ConstantFolding/truediv_96_recip:0_clone_13 + ONNXTRT_Broadcast_86 + truediv_57",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "conv2d_transpose_1 + const_fold_opt__1447 + Add_86 + ConstantFolding/truediv_96_recip:0_clone_13 + ONNXTRT_Broadcast_86 + truediv_57",
+      "type": "CaskDeconvolutionV2",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Output Tensor 0 to conv2d_transpose_1 + const_fold_opt__1447 + Add_86 + ConstantFolding/truediv_96_recip:0_clone_13 + ONNXTRT_Broadcast_86 + truediv_57",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to Mean_20",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to PWN(PWN(const_fold_opt__1474 + add_87, PWN(Sqrt_19)), PWN(truediv_59))",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to PWN(mul_44)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(mul_44)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to const_fold_opt__1400 + add_88",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(Maximum_19)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Output Tensor 0 to Conv__418 + ConstantFolding/truediv_96_recip:0_clone_14 + ONNXTRT_Broadcast_88 + truediv_60",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to Mean_21",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to PWN(PWN(const_fold_opt__1372 + add_90, PWN(Sqrt_20)), PWN(truediv_62))",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to PWN(mul_46)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(mul_46)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(Maximum_20)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Output Tensor 0 to Conv__424 + ConstantFolding/truediv_96_recip:0_clone_15 + ONNXTRT_Broadcast_90 + truediv_63",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to Mean_22",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to PWN(PWN(const_fold_opt__1391 + add_93, PWN(Sqrt_21)), PWN(truediv_65))",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to PWN(mul_48)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(mul_48)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(Maximum_21)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Output Tensor 0 to Conv__430 + ConstantFolding/truediv_96_recip:0_clone_16 + ONNXTRT_Broadcast_92 + truediv_66",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to Mean_23",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to PWN(PWN(const_fold_opt__1483 + add_96, PWN(Sqrt_22)), PWN(truediv_68))",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to Reshape_123:0 + mul_49",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to PWN(mul_50)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(mul_50)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(Maximum_22)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "conv2d_transpose_2 + const_fold_opt__1353 + Add_98 + ConstantFolding/truediv_96_recip:0_clone_17 + ONNXTRT_Broadcast_94 + truediv_69",
+      "type": "CaskDeconvolutionV2",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Output Tensor 0 to conv2d_transpose_2 + const_fold_opt__1353 + Add_98 + ConstantFolding/truediv_96_recip:0_clone_17 + ONNXTRT_Broadcast_94 + truediv_69",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to Mean_24",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to PWN(PWN(const_fold_opt__1480 + add_99, PWN(Sqrt_23)), PWN(truediv_71))",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to PWN(mul_52)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(mul_52)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to const_fold_opt__1340 + add_100",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(Maximum_23)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to Mean_25",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(mul_54)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to PWN(Maximum_24)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(Maximum_24)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to Conv__448 + ConstantFolding/truediv_96_recip:0_clone_19 + ONNXTRT_Broadcast_98 + truediv_75 + PWN(Square_26)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to Mean_26",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to PWN(PWN(const_fold_opt__1401 + add_105, PWN(Sqrt_25)), PWN(truediv_77))",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to Reshape_135:0 + mul_55",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(mul_56)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to PWN(Maximum_25)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(Maximum_25)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to Conv__454 + ConstantFolding/truediv_96_recip:0_clone_20 + ONNXTRT_Broadcast_100 + truediv_78 + PWN(Square_27)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to Mean_27",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to PWN(PWN(const_fold_opt__1403 + add_108, PWN(Sqrt_26)), PWN(truediv_80))",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to Reshape_139:0 + mul_57",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(mul_58)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to PWN(Maximum_26)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(Maximum_26)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to conv2d_transpose_3",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "conv2d_transpose_3",
+      "type": "CaskDeconvolutionV2",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to {ForeignNode[ONNXTRT_Broadcast_102...concat_16]}",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to Conv__466",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to {ForeignNode[ONNXTRT_Broadcast_106...Maximum_29]}",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to conv2d_transpose_4",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "conv2d_transpose_4",
+      "type": "CaskDeconvolutionV2",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to {ForeignNode[ONNXTRT_Broadcast_108...concat_17]}",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to Conv__484",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to {ForeignNode[ONNXTRT_Broadcast_110...Maximum_31]}",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to Conv__490",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to {ForeignNode[ONNXTRT_Broadcast_112...Maximum_32]}",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to conv2d_transpose_5",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "conv2d_transpose_5",
+      "type": "CaskDeconvolutionV2",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to {ForeignNode[ONNXTRT_Broadcast_114...concat_18]}",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to Conv__502",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to {ForeignNode[ONNXTRT_Broadcast_116...Maximum_34]}",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to Conv__508",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to {ForeignNode[ONNXTRT_Broadcast_118...Maximum_35]}",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Float"
+      ]
+     }
+    ],
+    "float_output_layers": [
+     "Conv2D_18__6",
+     "__myl_MulMulAddSqrtDivMulMulAddMaxMean_myl4_1",
+     "__myl_MulMulMean_myl8_1",
+     "__myl_AddMulMulMean_myl361_1",
+     "__myl_MulMulAddSqrtDivMulMulAddMaxMean_myl365_1",
+     "Reformatting CopyNode for Input Tensor 0 to {ForeignNode[ONNXTRT_Broadcast_118...Maximum_35]}",
+     "__myl_MulMulAddSqrtDivMulMulAddMaxMean_myl369_1",
+     "Conv__514 + PWN(Sigmoid_4)",
+     "Conv2D_48__128"
+    ],
+    "layer_times": {
+     "wall_ms_per_run": 2.5256,
+     "sum_layer_ms": 3.3567,
+     "ms_by_kind": {
+      "Shuffle": 0.0126,
+      "Reformat": 0.6077,
+      "compute": 2.6181,
+      "NoOp": 0.0,
+      "CaskDeconvolutionV2": 0.1182
+     },
+     "top5_layers_ms": [
+      [
+       0.0522,
+       "Reformatting CopyNode for Input Tensor 0 to Conv__508"
+      ],
+      [
+       0.0463,
+       "Conv__502"
+      ],
+      [
+       0.0438,
+       "Conv__514 + PWN(Sigmoid_4)"
+      ],
+      [
+       0.0367,
+       "Conv__484"
+      ],
+      [
+       0.0366,
+       "Conv__466"
+      ]
+     ],
+     "input_shuffle_ms": {
+      "Conv2D_18__6": 0.01264
+     }
+    }
+   }
+  },
+  "w600k_r50": {
+   "model_file": "G:\\pinokio\\api\\roop-ultimate\\app\\models\\buffalo_l\\w600k_r50.onnx",
+   "live": {
+    "providers": [
+     "TensorrtExecutionProvider",
+     "CUDAExecutionProvider",
+     "CPUExecutionProvider"
+    ],
+    "inputs": [
+     [
+      "input.1",
+      [
+       "None",
+       3,
+       112,
+       112
+      ],
+      "tensor(float)"
+     ]
+    ],
+    "outputs": [
+     [
+      "683",
+      [
+       1,
+       512
+      ],
+      "tensor(float)"
+     ]
+    ],
+    "options": {
+     "trt_fp16_enable": "1",
+     "trt_layer_norm_fp32_fallback": "1",
+     "trt_build_heuristics_enable": "1",
+     "trt_builder_optimization_level": "3",
+     "trt_engine_cache_path": "G:\\pinokio\\api\\roop-ultimate\\app\\models\\trt_cache\\mixed_NVIDIA_GeForce_RTX_4070_sm0809_cuda12.8_drv616.56_trt10.9.0.34_ort1.23.2_lnfp32_seq_heur_b3_a-1_g0_c40b4a7d8494df527",
+     "trt_force_sequential_engine_build": "1",
+     "trt_max_workspace_size": "2147483648",
+     "trt_profile_min_shapes": "",
+     "trt_profile_opt_shapes": "",
+     "trt_profile_max_shapes": ""
+    }
+   },
+   "fp16": true,
+   "level": 3,
+   "cached_engines": [
+    "TensorrtExecutionProvider_TRTKernel_graph_torch-jit-export_14103515968279783020_0_0_fp16_sm89.engine",
+    "TensorrtExecutionProvider_TRTKernel_graph_torch-jit-export_11324358616759938670_0_0_fp16_sm89.engine"
+   ],
+   "cached_engine": {
+    "file": "TensorrtExecutionProvider_TRTKernel_graph_torch-jit-export_14103515968279783020_0_0_fp16_sm89.engine",
+    "bytes": 89825092,
+    "n_layers": 204,
+    "layer_types": {},
+    "profiling_verbosity": "ProfilingVerbosity.LAYER_NAMES_ONLY",
+    "transpose_like": [
+     "Reformatting CopyNode for Input Tensor 0 to Conv_0",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PRelu_1)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_1)",
+     "Reformatting CopyNode for Output Tensor 0 to PWN(PRelu_1)",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PRelu_4)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_4)",
+     "Reformatting CopyNode for Input Tensor 0 to Conv_5",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PRelu_10)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_10)",
+     "Reformatting CopyNode for Input Tensor 0 to Conv_11 + Add_12",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PRelu_15)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_15)",
+     "Reformatting CopyNode for Input Tensor 0 to Conv_16 + Add_17",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_20)",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PRelu_26)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_26)",
+     "Reformatting CopyNode for Input Tensor 0 to Conv_27 + Add_28",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PRelu_31)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_31)",
+     "Reformatting CopyNode for Input Tensor 0 to Conv_32 + Add_33",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PRelu_36)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_36)",
+     "Reformatting CopyNode for Input Tensor 0 to Conv_37 + Add_38",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PRelu_41)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_41)",
+     "Reformatting CopyNode for Input Tensor 0 to Conv_42",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PRelu_47)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_47)",
+     "Reformatting CopyNode for Input Tensor 0 to Conv_48 + Add_49",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PRelu_52)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_52)",
+     "Reformatting CopyNode for Input Tensor 0 to Conv_53 + Add_54",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PRelu_57)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_57)",
+     "Reformatting CopyNode for Input Tensor 0 to Conv_58 + Add_59",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PRelu_62)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_62)",
+     "Reformatting CopyNode for Input Tensor 0 to Conv_63 + Add_64",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PRelu_67)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_67)",
+     "Reformatting CopyNode for Input Tensor 0 to Conv_68 + Add_69",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PRelu_72)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_72)",
+     "Reformatting CopyNode for Input Tensor 0 to Conv_73 + Add_74",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PRelu_77)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_77)",
+     "Reformatting CopyNode for Input Tensor 0 to Conv_78 + Add_79",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PRelu_82)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_82)",
+     "Reformatting CopyNode for Input Tensor 0 to Conv_83 + Add_84",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PRelu_87)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_87)",
+     "Reformatting CopyNode for Input Tensor 0 to Conv_88 + Add_89",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PRelu_92)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_92)",
+     "Reformatting CopyNode for Input Tensor 0 to Conv_93 + Add_94",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PRelu_97)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_97)",
+     "Reformatting CopyNode for Input Tensor 0 to Conv_98 + Add_99",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PRelu_102)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_102)",
+     "Reformatting CopyNode for Input Tensor 0 to Conv_103 + Add_104",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PRelu_107)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_107)",
+     "Reformatting CopyNode for Input Tensor 0 to Conv_108 + Add_109",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PRelu_112)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_112)",
+     "Reformatting CopyNode for Input Tensor 0 to Conv_113",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PRelu_118)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_118)",
+     "Reformatting CopyNode for Input Tensor 0 to Conv_119 + Add_120",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PRelu_123)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_123)",
+     "Reformatting CopyNode for Input Tensor 0 to Conv_124"
+    ],
+    "first": [
+     "Reformatting CopyNode for Input Tensor 0 to Conv_0",
+     "Conv_0",
+     "843 + ONNXTRT_Broadcast",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PRelu_1)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_1)",
+     "PWN(PRelu_1)"
+    ],
+    "last": [
+     "Conv_124",
+     "__myl_AddMulAdd_myl201_0",
+     "Gemm_128_myl201_1",
+     "__myl_MulAddReshCast_myl201_2"
+    ],
+    "io": [
+     [
+      "input.1",
+      "TensorIOMode.INPUT",
+      [
+       1,
+       3,
+       112,
+       112
+      ],
+      "DataType.FLOAT",
+      "TensorFormat.LINEAR"
+     ],
+     [
+      "683",
+      "TensorIOMode.OUTPUT",
+      [
+       1,
+       512
+      ],
+      "DataType.FLOAT",
+      "TensorFormat.LINEAR"
+     ]
+    ],
+    "layers_json_head": [
+     "Reformatting CopyNode for Input Tensor 0 to Conv_0",
+     "Conv_0",
+     "843 + ONNXTRT_Broadcast"
+    ]
+   },
+   "ort_profile_nodes_per_provider": {
+    "TensorrtExecutionProvider": 1
+   },
+   "detailed_engine": {
+    "n_layers": 174,
+    "layer_types": {
+     "Reformat": 32,
+     "CaskConvolution": 53,
+     "Constant": 25,
+     "PointWiseV2": 25,
+     "Scale": 24,
+     "NoOp": 12,
+     "kgen": 2,
+     "gemm": 1
+    },
+    "transpose_like": [
+     "Reformatting CopyNode for Input Tensor 0 to Conv_0",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PRelu_1)",
+     "Reformatting CopyNode for Input Tensor 0 to Conv_3",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PRelu_4)",
+     "Reformatting CopyNode for Input Tensor 0 to Conv_5",
+     "Reformatting CopyNode for Input Tensor 0 to Conv_6 + Add_7",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PRelu_10)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_10)",
+     "Reformatting CopyNode for Input Tensor 0 to Conv_11 + Add_12",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PRelu_15)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_15)",
+     "Reformatting CopyNode for Input Tensor 0 to Conv_16 + Add_17",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_20)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_26)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_31)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_36)",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PRelu_41)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_41)",
+     "Reformatting CopyNode for Input Tensor 0 to Conv_42",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_47)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_52)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_57)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_62)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_67)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_72)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_77)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_82)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_87)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_92)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_97)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_102)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_107)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_112)",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PRelu_118)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_118)",
+     "Reformatting CopyNode for Input Tensor 0 to Conv_119 + Add_120",
+     "Reformatting CopyNode for Output Tensor 0 to Conv_119 + Add_120",
+     "Reformatting CopyNode for Input Tensor 0 to BatchNormalization_121",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PRelu_123)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_123)",
+     "Reformatting CopyNode for Input Tensor 0 to Conv_124",
+     "Reformatting CopyNode for Input Tensor 0 to {ForeignNode[fc.weight...ONNXTRT_ShapeShuffle_56]}",
+     "Reformatting CopyNode for Input Tensor 1 to {ForeignNode[fc.weight...ONNXTRT_ShapeShuffle_56]}",
+     "Reformatting CopyNode for Output Tensor 0 to {ForeignNode[fc.weight...ONNXTRT_ShapeShuffle_56]}"
+    ],
+    "io": [
+     [
+      "input.1",
+      "TensorIOMode.INPUT",
+      [
+       1,
+       3,
+       112,
+       112
+      ],
+      "DataType.FLOAT",
+      "TensorFormat.LINEAR"
+     ],
+     [
+      "683",
+      "TensorIOMode.OUTPUT",
+      [
+       1,
+       512
+      ],
+      "DataType.FLOAT",
+      "TensorFormat.LINEAR"
+     ]
+    ],
+    "first": [
+     "Reformatting CopyNode for Input Tensor 0 to Conv_0",
+     "Conv_0",
+     "843 + ONNXTRT_Broadcast",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PRelu_1)",
+     "PWN(PRelu_1)",
+     "BatchNormalization_2"
+    ],
+    "last": [
+     "__myl_AddMulAdd_myl170_0",
+     "Gemm_128_myl170_1",
+     "__myl_MulAdd_myl170_2",
+     "Reformatting CopyNode for Output Tensor 0 to {ForeignNode[fc.weight...ONNXTRT_ShapeShuffle_56]}"
+    ],
+    "profiling_verbosity": "ProfilingVerbosity.DETAILED",
+    "output_format_dtype_hist": {
+     "Half": 166,
+     "Float": 8
+    },
+    "data_movers": [
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to Conv_0",
+      "type": "Reformat",
+      "in": [
+       "Float"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to PWN(PRelu_1)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Float"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to Conv_3",
+      "type": "Reformat",
+      "in": [
+       "Float"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to PWN(PRelu_4)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Float"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to Conv_5",
+      "type": "Reformat",
+      "in": [
+       "Float"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to Conv_6 + Add_7",
+      "type": "Reformat",
+      "in": [
+       "Float"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to PWN(PRelu_10)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_10)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to Conv_11 + Add_12",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to PWN(PRelu_15)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_15)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to Conv_16 + Add_17",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_20)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_26)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_31)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_36)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to PWN(PRelu_41)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_41)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to Conv_42",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_47)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_52)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_57)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_62)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_67)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_72)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_77)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_82)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_87)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_92)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_97)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_102)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_107)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_112)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to PWN(PRelu_118)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_118)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to Conv_119 + Add_120",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Output Tensor 0 to Conv_119 + Add_120",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to BatchNormalization_121",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to PWN(PRelu_123)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(PRelu_123)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to Conv_124",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to {ForeignNode[fc.weight...ONNXTRT_ShapeShuffle_56]}",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to {ForeignNode[fc.weight...ONNXTRT_ShapeShuffle_56]}",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Output Tensor 0 to {ForeignNode[fc.weight...ONNXTRT_ShapeShuffle_56]}",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Float"
+      ]
+     }
+    ],
+    "float_output_layers": [
+     "843 + ONNXTRT_Broadcast",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PRelu_1)",
+     "PWN(PRelu_1)",
+     "BatchNormalization_2",
+     "844 + ONNXTRT_Broadcast_1",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PRelu_4)",
+     "PWN(PRelu_4)",
+     "Reformatting CopyNode for Output Tensor 0 to {ForeignNode[fc.weight...ONNXTRT_ShapeShuffle_56]}"
+    ],
+    "layer_times": {
+     "wall_ms_per_run": 1.3102,
+     "sum_layer_ms": 1.6385,
+     "ms_by_kind": {
+      "Reformat": 0.2586,
+      "compute": 1.38,
+      "NoOp": 0.0
+     },
+     "top5_layers_ms": [
+      [
+       0.0628,
+       "Gemm_128_myl170_1"
+      ],
+      [
+       0.0263,
+       "Conv_3"
+      ],
+      [
+       0.0244,
+       "Conv_56"
+      ],
+      [
+       0.0235,
+       "Conv_101"
+      ],
+      [
+       0.0234,
+       "Conv_81"
+      ]
+     ],
+     "input_shuffle_ms": {}
+    }
+   }
+  },
+  "2d106det": {
+   "model_file": "G:\\pinokio\\api\\roop-ultimate\\app\\models\\buffalo_l\\2d106det.onnx",
+   "live": {
+    "providers": [
+     "TensorrtExecutionProvider",
+     "CUDAExecutionProvider",
+     "CPUExecutionProvider"
+    ],
+    "inputs": [
+     [
+      "data",
+      [
+       "None",
+       3,
+       192,
+       192
+      ],
+      "tensor(float)"
+     ]
+    ],
+    "outputs": [
+     [
+      "fc1",
+      [
+       1,
+       212
+      ],
+      "tensor(float)"
+     ]
+    ],
+    "options": {
+     "trt_fp16_enable": "1",
+     "trt_layer_norm_fp32_fallback": "1",
+     "trt_build_heuristics_enable": "1",
+     "trt_builder_optimization_level": "3",
+     "trt_engine_cache_path": "G:\\pinokio\\api\\roop-ultimate\\app\\models\\trt_cache\\mixed_NVIDIA_GeForce_RTX_4070_sm0809_cuda12.8_drv616.56_trt10.9.0.34_ort1.23.2_lnfp32_seq_heur_b3_a-1_g0_c40b4a7d8494df527",
+     "trt_force_sequential_engine_build": "1",
+     "trt_max_workspace_size": "2147483648",
+     "trt_profile_min_shapes": "",
+     "trt_profile_opt_shapes": "",
+     "trt_profile_max_shapes": ""
+    }
+   },
+   "fp16": true,
+   "level": 3,
+   "cached_engines": [
+    "TensorrtExecutionProvider_TRTKernel_graph_mxnet_converted_model_18033423568874193273_0_0_fp16_sm89.engine",
+    "TensorrtExecutionProvider_TRTKernel_graph_mxnet_converted_model_4489768024963422862_0_0_fp16_sm89.engine"
+   ],
+   "cached_engine": {
+    "file": "TensorrtExecutionProvider_TRTKernel_graph_mxnet_converted_model_18033423568874193273_0_0_fp16_sm89.engine",
+    "bytes": 4109724,
+    "n_layers": 138,
+    "layer_types": {},
+    "profiling_verbosity": "ProfilingVerbosity.LAYER_NAMES_ONLY",
+    "transpose_like": [
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PWN(scalar_op1 + ONNXTRT_Broadcast, PWN(_minusscalar0)), scalar_op2 + ONNXTRT_Broadcast_1 + _mulscalar0)",
+     "Reformatting CopyNode for Input Tensor 0 to conv_1_conv2d",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(conv_1_relu)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(conv_2_dw_relu)",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(conv_2_relu)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(conv_2_relu)",
+     "Reformatting CopyNode for Input Tensor 0 to conv_3_dw_conv2d",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(conv_3_dw_relu)",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(conv_3_relu)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(conv_3_relu)",
+     "Reformatting CopyNode for Input Tensor 0 to conv_4_dw_conv2d",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(conv_4_dw_relu)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(conv_4_dw_relu)",
+     "Reformatting CopyNode for Input Tensor 0 to conv_4_conv2d",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(conv_4_relu)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(conv_4_relu)",
+     "Reformatting CopyNode for Input Tensor 0 to conv_5_dw_conv2d",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(conv_5_dw_relu)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(conv_5_dw_relu)",
+     "Reformatting CopyNode for Input Tensor 0 to conv_5_conv2d",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(conv_5_relu)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(conv_6_dw_relu)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(conv_6_relu)",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(conv_7_dw_relu)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(conv_7_dw_relu)",
+     "Reformatting CopyNode for Input Tensor 0 to conv_7_conv2d",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(conv_7_relu)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(conv_8_dw_relu)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(conv_8_relu)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(conv_9_dw_relu)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(conv_9_relu)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(conv_10_dw_relu)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(conv_10_relu)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(conv_11_dw_relu)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(conv_11_relu)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(conv_12_dw_relu)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(conv_12_relu)",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(conv_13_dw_relu)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(conv_13_dw_relu)",
+     "Reformatting CopyNode for Input Tensor 0 to conv_13_conv2d",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(conv_13_relu)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(conv_13_relu)",
+     "Reformatting CopyNode for Input Tensor 0 to conv_14_dw_conv2d",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(conv_14_dw_relu)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(conv_14_dw_relu)",
+     "Reformatting CopyNode for Input Tensor 0 to conv_14_conv2d",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(conv_14_relu)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(conv_14_relu)",
+     "Reformatting CopyNode for Input Tensor 0 to conv_15_conv2d",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(conv_15_relu)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(conv_15_relu)",
+     "Reformatting CopyNode for Input Tensor 0 to {ForeignNode[fc1_weight...(Unnamed Layer* 130) [ElementWise]]}"
+    ],
+    "first": [
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PWN(scalar_op1 + ONNXTRT_Broadcast, PWN(_minusscalar0)), scalar_op2 + ONNXTRT_Broadcast_1 + _mulscalar0)",
+     "PWN(PWN(scalar_op1 + ONNXTRT_Broadcast, PWN(_minusscalar0)), scalar_op2 + ONNXTRT_Broadcast_1 + _mulscalar0)",
+     "Reformatting CopyNode for Input Tensor 0 to conv_1_conv2d",
+     "conv_1_conv2d",
+     "conv_1_relu_gamma + ONNXTRT_Broadcast_3",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(conv_1_relu)"
+    ],
+    "last": [
+     "Reformatting CopyNode for Input Tensor 1 to PWN(conv_15_relu)",
+     "PWN(conv_15_relu)",
+     "Reformatting CopyNode for Input Tensor 0 to {ForeignNode[fc1_weight...(Unnamed Layer* 130) [ElementWise]]}",
+     "__myl_MulSumAdd_myl137_0"
+    ],
+    "io": [
+     [
+      "data",
+      "TensorIOMode.INPUT",
+      [
+       1,
+       3,
+       192,
+       192
+      ],
+      "DataType.FLOAT",
+      "TensorFormat.LINEAR"
+     ],
+     [
+      "fc1",
+      "TensorIOMode.OUTPUT",
+      [
+       1,
+       212
+      ],
+      "DataType.FLOAT",
+      "TensorFormat.LINEAR"
+     ]
+    ],
+    "layers_json_head": [
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PWN(scalar_op1 + ONNXTRT_Broadcast, PWN(_minusscalar0)), scalar_op2 + ONNXTRT_Broadcast_1 + _mulscalar0)",
+     "PWN(PWN(scalar_op1 + ONNXTRT_Broadcast, PWN(_minusscalar0)), scalar_op2 + ONNXTRT_Broadcast_1 + _mulscalar0)",
+     "Reformatting CopyNode for Input Tensor 0 to conv_1_conv2d"
+    ]
+   },
+   "ort_profile_nodes_per_provider": {
+    "TensorrtExecutionProvider": 1
+   },
+   "detailed_engine": {
+    "n_layers": 162,
+    "layer_types": {
+     "NoOp": 47,
+     "PointWiseV2": 29,
+     "Reformat": 29,
+     "CaskConvolution": 20,
+     "Constant": 28,
+     "CaskGemmConvolution": 8,
+     "kgen": 1
+    },
+    "transpose_like": [
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PWN(scalar_op1 + ONNXTRT_Broadcast, PWN(_minusscalar0)), scalar_op2 + ONNXTRT_Broadcast_1 + _mulscalar0)",
+     "Reformatting CopyNode for Input Tensor 0 to conv_1_conv2d + conv_1_batchnorm",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(conv_1_relu)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(conv_1_relu)",
+     "Reformatting CopyNode for Input Tensor 0 to conv_2_dw_conv2d + conv_2_dw_batchnorm",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(conv_2_dw_relu)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(conv_2_dw_relu)",
+     "Reformatting CopyNode for Input Tensor 0 to conv_2_conv2d + conv_2_batchnorm",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(conv_2_relu)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(conv_2_relu)",
+     "Reformatting CopyNode for Input Tensor 0 to conv_3_dw_conv2d + conv_3_dw_batchnorm",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(conv_3_dw_relu)",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(conv_3_relu)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(conv_3_relu)",
+     "Reformatting CopyNode for Input Tensor 0 to conv_4_dw_conv2d + conv_4_dw_batchnorm",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(conv_4_dw_relu)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(conv_4_dw_relu)",
+     "Reformatting CopyNode for Input Tensor 0 to conv_4_conv2d + conv_4_batchnorm",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(conv_4_relu)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(conv_4_relu)",
+     "Reformatting CopyNode for Input Tensor 0 to conv_5_dw_conv2d + conv_5_dw_batchnorm",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(conv_5_dw_relu)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(conv_5_dw_relu)",
+     "Reformatting CopyNode for Input Tensor 0 to conv_5_conv2d + conv_5_batchnorm",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(conv_5_relu)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(conv_6_dw_relu)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(conv_6_relu)",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(conv_7_dw_relu)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(conv_7_dw_relu)",
+     "Reformatting CopyNode for Input Tensor 0 to conv_7_conv2d + conv_7_batchnorm",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(conv_7_relu)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(conv_7_relu)",
+     "Reformatting CopyNode for Input Tensor 0 to conv_8_dw_conv2d + conv_8_dw_batchnorm",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(conv_8_dw_relu)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(conv_8_dw_relu)",
+     "Reformatting CopyNode for Input Tensor 0 to conv_8_conv2d + conv_8_batchnorm",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(conv_8_relu)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(conv_8_relu)",
+     "Reformatting CopyNode for Input Tensor 0 to conv_9_dw_conv2d + conv_9_dw_batchnorm",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(conv_9_dw_relu)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(conv_9_dw_relu)",
+     "Reformatting CopyNode for Input Tensor 0 to conv_9_conv2d + conv_9_batchnorm",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(conv_9_relu)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(conv_9_relu)",
+     "Reformatting CopyNode for Input Tensor 0 to conv_10_dw_conv2d + conv_10_dw_batchnorm",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(conv_10_dw_relu)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(conv_10_dw_relu)",
+     "Reformatting CopyNode for Input Tensor 0 to conv_10_conv2d + conv_10_batchnorm",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(conv_10_relu)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(conv_10_relu)",
+     "Reformatting CopyNode for Input Tensor 0 to conv_11_dw_conv2d + conv_11_dw_batchnorm",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(conv_11_dw_relu)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(conv_11_dw_relu)",
+     "Reformatting CopyNode for Input Tensor 0 to conv_11_conv2d + conv_11_batchnorm",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(conv_11_relu)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(conv_11_relu)",
+     "Reformatting CopyNode for Input Tensor 0 to conv_12_dw_conv2d + conv_12_dw_batchnorm",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(conv_12_dw_relu)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(conv_12_dw_relu)",
+     "Reformatting CopyNode for Input Tensor 0 to conv_12_conv2d + conv_12_batchnorm",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(conv_12_relu)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(conv_12_relu)",
+     "Reformatting CopyNode for Input Tensor 0 to conv_13_dw_conv2d + conv_13_dw_batchnorm",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(conv_13_dw_relu)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(conv_13_dw_relu)",
+     "Reformatting CopyNode for Input Tensor 0 to conv_13_conv2d + conv_13_batchnorm",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(conv_13_relu)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(conv_13_relu)",
+     "Reformatting CopyNode for Input Tensor 0 to conv_14_dw_conv2d + conv_14_dw_batchnorm",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(conv_14_dw_relu)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(conv_14_dw_relu)",
+     "Reformatting CopyNode for Input Tensor 0 to conv_14_conv2d + conv_14_batchnorm",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(conv_14_relu)",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(conv_14_relu)",
+     "Reformatting CopyNode for Input Tensor 0 to conv_15_conv2d + conv_15_batchnorm",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(conv_15_relu)"
+    ],
+    "io": [
+     [
+      "data",
+      "TensorIOMode.INPUT",
+      [
+       1,
+       3,
+       192,
+       192
+      ],
+      "DataType.FLOAT",
+      "TensorFormat.LINEAR"
+     ],
+     [
+      "fc1",
+      "TensorIOMode.OUTPUT",
+      [
+       1,
+       212
+      ],
+      "DataType.FLOAT",
+      "TensorFormat.LINEAR"
+     ]
+    ],
+    "first": [
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PWN(scalar_op1 + ONNXTRT_Broadcast, PWN(_minusscalar0)), scalar_op2 + ONNXTRT_Broadcast_1 + _mulscalar0)",
+     "PWN(PWN(scalar_op1 + ONNXTRT_Broadcast, PWN(_minusscalar0)), scalar_op2 + ONNXTRT_Broadcast_1 + _mulscalar0)",
+     "Reformatting CopyNode for Input Tensor 0 to conv_1_conv2d + conv_1_batchnorm",
+     "conv_1_conv2d + conv_1_batchnorm",
+     "conv_1_relu_gamma + ONNXTRT_Broadcast_3",
+     "Reformatting CopyNode for Input Tensor 0 to PWN(conv_1_relu)"
+    ],
+    "last": [
+     "conv_15_relu_gamma + ONNXTRT_Broadcast_57",
+     "Reformatting CopyNode for Input Tensor 1 to PWN(conv_15_relu)",
+     "PWN(conv_15_relu)",
+     "__myl_ReshMulSumAddCast_myl161_0"
+    ],
+    "profiling_verbosity": "ProfilingVerbosity.DETAILED",
+    "output_format_dtype_hist": {
+     "Float": 3,
+     "Half": 159
+    },
+    "data_movers": [
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to PWN(PWN(scalar_op1 + ONNXTRT_Broadcast, PWN(_minusscalar0)), scalar_op2 + ONNXTRT_Broadcast_1 + _mulscalar0)",
+      "type": "NoOp",
+      "in": [
+       "Float"
+      ],
+      "out": [
+       "Float"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to conv_1_conv2d + conv_1_batchnorm",
+      "type": "Reformat",
+      "in": [
+       "Float"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to PWN(conv_1_relu)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(conv_1_relu)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to conv_2_dw_conv2d + conv_2_dw_batchnorm",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to PWN(conv_2_dw_relu)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(conv_2_dw_relu)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to conv_2_conv2d + conv_2_batchnorm",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to PWN(conv_2_relu)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(conv_2_relu)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to conv_3_dw_conv2d + conv_3_dw_batchnorm",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(conv_3_dw_relu)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to PWN(conv_3_relu)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(conv_3_relu)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to conv_4_dw_conv2d + conv_4_dw_batchnorm",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to PWN(conv_4_dw_relu)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(conv_4_dw_relu)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to conv_4_conv2d + conv_4_batchnorm",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to PWN(conv_4_relu)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(conv_4_relu)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to conv_5_dw_conv2d + conv_5_dw_batchnorm",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to PWN(conv_5_dw_relu)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(conv_5_dw_relu)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to conv_5_conv2d + conv_5_batchnorm",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(conv_5_relu)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(conv_6_dw_relu)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(conv_6_relu)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to PWN(conv_7_dw_relu)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(conv_7_dw_relu)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to conv_7_conv2d + conv_7_batchnorm",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to PWN(conv_7_relu)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(conv_7_relu)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to conv_8_dw_conv2d + conv_8_dw_batchnorm",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to PWN(conv_8_dw_relu)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(conv_8_dw_relu)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to conv_8_conv2d + conv_8_batchnorm",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to PWN(conv_8_relu)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(conv_8_relu)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to conv_9_dw_conv2d + conv_9_dw_batchnorm",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to PWN(conv_9_dw_relu)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(conv_9_dw_relu)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to conv_9_conv2d + conv_9_batchnorm",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to PWN(conv_9_relu)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(conv_9_relu)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to conv_10_dw_conv2d + conv_10_dw_batchnorm",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to PWN(conv_10_dw_relu)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(conv_10_dw_relu)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to conv_10_conv2d + conv_10_batchnorm",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to PWN(conv_10_relu)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(conv_10_relu)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to conv_11_dw_conv2d + conv_11_dw_batchnorm",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to PWN(conv_11_dw_relu)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(conv_11_dw_relu)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to conv_11_conv2d + conv_11_batchnorm",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to PWN(conv_11_relu)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(conv_11_relu)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to conv_12_dw_conv2d + conv_12_dw_batchnorm",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to PWN(conv_12_dw_relu)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(conv_12_dw_relu)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to conv_12_conv2d + conv_12_batchnorm",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to PWN(conv_12_relu)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(conv_12_relu)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to conv_13_dw_conv2d + conv_13_dw_batchnorm",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to PWN(conv_13_dw_relu)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(conv_13_dw_relu)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to conv_13_conv2d + conv_13_batchnorm",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to PWN(conv_13_relu)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(conv_13_relu)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to conv_14_dw_conv2d + conv_14_dw_batchnorm",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to PWN(conv_14_dw_relu)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(conv_14_dw_relu)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to conv_14_conv2d + conv_14_batchnorm",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to PWN(conv_14_relu)",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(conv_14_relu)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to conv_15_conv2d + conv_15_batchnorm",
+      "type": "NoOp",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     },
+     {
+      "name": "Reformatting CopyNode for Input Tensor 1 to PWN(conv_15_relu)",
+      "type": "Reformat",
+      "in": [
+       "Half"
+      ],
+      "out": [
+       "Half"
+      ]
+     }
+    ],
+    "float_output_layers": [
+     "Reformatting CopyNode for Input Tensor 0 to PWN(PWN(scalar_op1 + ONNXTRT_Broadcast, PWN(_minusscalar0)), scalar_op2 + ONNXTRT_Broadcast_1 + _mulscalar0)",
+     "PWN(PWN(scalar_op1 + ONNXTRT_Broadcast, PWN(_minusscalar0)), scalar_op2 + ONNXTRT_Broadcast_1 + _mulscalar0)",
+     "__myl_ReshMulSumAddCast_myl161_0"
+    ],
+    "layer_times": {
+     "wall_ms_per_run": 0.5576,
+     "sum_layer_ms": 0.913,
+     "ms_by_kind": {
+      "NoOp": 0.0,
+      "compute": 0.6434,
+      "Reformat": 0.2696
+     },
+     "top5_layers_ms": [
+      [
+       0.0281,
+       "conv_2_conv2d + conv_2_batchnorm"
+      ],
+      [
+       0.0246,
+       "PWN(conv_1_relu)"
+      ],
+      [
+       0.0241,
+       "conv_15_conv2d + conv_15_batchnorm"
+      ],
+      [
+       0.0204,
+       "Reformatting CopyNode for Input Tensor 1 to PWN(conv_3_dw_relu)"
+      ],
+      [
+       0.0172,
+       "conv_6_dw_conv2d + conv_6_dw_batchnorm"
+      ]
+     ],
+     "input_shuffle_ms": {}
+    }
+   }
+  },
+  "1k3d68": {
+   "model_file": "G:\\pinokio\\api\\roop-ultimate\\app\\models\\buffalo_l\\1k3d68.onnx",
+   "live": {
+    "providers": [
+     "TensorrtExecutionProvider",
+     "CUDAExecutionProvider",
+     "CPUExecutionProvider"
+    ],
+    "inputs": [
+     [
+      "data",
+      [
+       "None",
+       3,
+       192,
+       192
+      ],
+      "tensor(float)"
+     ]
+    ],
+    "outputs": [
+     [
+      "fc1",
+      [
+       1,
+       3309
+      ],
+      "tensor(float)"
+     ]
+    ],
+    "options": {
+     "trt_fp16_enable": "1",
+     "trt_layer_norm_fp32_fallback": "1",
+     "trt_build_heuristics_enable": "1",
+     "trt_builder_optimization_level": "3",
+     "trt_engine_cache_path": "G:\\pinokio\\api\\roop-ultimate\\app\\models\\trt_cache\\mixed_NVIDIA_GeForce_RTX_4070_sm0809_cuda12.8_drv616.56_trt10.9.0.34_ort1.23.2_lnfp32_seq_heur_b3_a-1_g0_c40b4a7d8494df527",
+     "trt_force_sequential_engine_build": "1",
+     "trt_max_workspace_size": "2147483648",
+     "trt_profile_min_shapes": "",
+     "trt_profile_opt_shapes": "",
+     "trt_profile_max_shapes": ""
+    }
+   },
+   "fp16": true,
+   "level": 3,
+   "cached_engines": [
+    "TensorrtExecutionProvider_TRTKernel_graph_mxnet_converted_model_8064458990853286646_0_0_fp16_sm89.engine",
+    "TensorrtExecutionProvider_TRTKernel_graph_mxnet_converted_model_10886072259931503380_0_0_fp16_sm89.engine"
+   ],
+   "cached_engine": {
+    "file": "TensorrtExecutionProvider_TRTKernel_graph_mxnet_converted_model_8064458990853286646_0_0_fp16_sm89.engine",
+    "bytes": 73979156,
+    "n_layers": 78,
+    "layer_types": {},
+    "profiling_verbosity": "ProfilingVerbosity.LAYER_NAMES_ONLY",
+    "transpose_like": [
+     "Reformatting CopyNode for Input Tensor 0 to bn_data",
+     "Reformatting CopyNode for Input Tensor 0 to {ForeignNode[fc1_weight...(Unnamed Layer* 152) [ElementWise]]}",
+     "Reformatting CopyNode for Output Tensor 0 to {ForeignNode[fc1_weight...(Unnamed Layer* 152) [ElementWise]]}"
+    ],
+    "first": [
+     "Reformatting CopyNode for Input Tensor 0 to bn_data",
+     "bn_data",
+     "conv0 + relu0",
+     "pooling0",
+     "stage1_unit1_bn1 + stage1_unit1_relu1",
+     "stage1_unit1_conv1 + stage1_unit1_relu2"
+    ],
+    "last": [
+     "Reformatting CopyNode for Input Tensor 0 to {ForeignNode[fc1_weight...(Unnamed Layer* 152) [ElementWise]]}",
+     "__myl_Relu_myl75_0",
+     "fc1_myl75_1",
+     "Reformatting CopyNode for Output Tensor 0 to {ForeignNode[fc1_weight...(Unnamed Layer* 152) [ElementWise]]}"
+    ],
+    "io": [
+     [
+      "data",
+      "TensorIOMode.INPUT",
+      [
+       1,
+       3,
+       192,
+       192
+      ],
+      "DataType.FLOAT",
+      "TensorFormat.LINEAR"
+     ],
+     [
+      "fc1",
+      "TensorIOMode.OUTPUT",
+      [
+       1,
+       3309
+      ],
+      "DataType.FLOAT",
+      "TensorFormat.LINEAR"
+     ]
+    ],
+    "layers_json_head": [
+     "Reformatting CopyNode for Input Tensor 0 to bn_data",
+     "bn_data",
+     "conv0 + relu0"
+    ]
+   },
+   "ort_profile_nodes_per_provider": {
+    "TensorrtExecutionProvider": 1
+   },
+   "detailed_engine": {
+    "n_layers": 78,
+    "layer_types": {
+     "NoOp": 1,
+     "Scale": 18,
+     "Reformat": 1,
+     "CaskConvolution": 27,
+     "CaskPooling": 1,
+     "CaskGemmConvolution": 27,
+     "kgen": 2,
+     "gemm": 1
+    },
+    "transpose_like": [
+     "Reformatting CopyNode for Input Tensor 0 to conv0 + bn0 + relu0"
+    ],
+    "io": [
+     [
+      "data",
+      "TensorIOMode.INPUT",
+      [
+       1,
+       3,
+       192,
+       192
+      ],
+      "DataType.FLOAT",
+      "TensorFormat.LINEAR"
+     ],
+     [
+      "fc1",
+      "TensorIOMode.OUTPUT",
+      [
+       1,
+       3309
+      ],
+      "DataType.FLOAT",
+      "TensorFormat.LINEAR"
+     ]
+    ],
+    "first": [
+     "id",
+     "bn_data",
+     "Reformatting CopyNode for Input Tensor 0 to conv0 + bn0 + relu0",
+     "conv0 + bn0 + relu0",
+     "pooling0",
+     "stage1_unit1_bn1 + stage1_unit1_relu1"
+    ],
+    "last": [
+     "conv2 + bn2",
+     "__myl_Relu_myl75_0",
+     "fc1_myl75_1",
+     "__myl_Cast_myl75_2"
+    ],
+    "profiling_verbosity": "ProfilingVerbosity.DETAILED",
+    "output_format_dtype_hist": {
+     "Float": 3,
+     "Half": 75
+    },
+    "data_movers": [
+     {
+      "name": "Reformatting CopyNode for Input Tensor 0 to conv0 + bn0 + relu0",
+      "type": "Reformat",
+      "in": [
+       "Float"
+      ],
+      "out": [
+       "Half"
+      ]
+     }
+    ],
+    "float_output_layers": [
+     "id",
+     "bn_data",
+     "__myl_Cast_myl75_2"
+    ],
+    "layer_times": {
+     "wall_ms_per_run": 0.8058,
+     "sum_layer_ms": 1.0269,
+     "ms_by_kind": {
+      "compute": 1.0186,
+      "Reformat": 0.0083
+     },
+     "top5_layers_ms": [
+      [
+       0.0473,
+       "conv2 + bn2"
+      ],
+      [
+       0.0398,
+       "fc1_myl75_1"
+      ],
+      [
+       0.0296,
+       "stage4_unit2_conv2 + stage4_unit2_bn3 + stage4_unit2_relu3"
+      ],
+      [
+       0.0253,
+       "stage1_unit2_conv2 + stage1_unit2_bn3 + stage1_unit2_relu3"
+      ],
+      [
+       0.022,
+       "stage1_unit1_conv1 + stage1_unit1_bn2 + stage1_unit1_relu2"
+      ]
+     ],
+     "input_shuffle_ms": {}
+    }
+   }
+  }
+ }
+}

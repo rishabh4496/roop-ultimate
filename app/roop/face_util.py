@@ -19,7 +19,7 @@ from roop.capturer import get_video_frame
 from roop.utilities import resolve_relative_path, conditional_download, get_onnx_session_options
 from roop.nms import bind_instance_nms
 from roop import face_contact
-from roop.precision_policy import providers_for
+from roop.precision_policy import providers_for, bundle_member_providers
 from roop.backend_manager import build_session_with_fallback
 from roop import baseline_probe as _bp
 from roop import face_detector as _fd
@@ -160,21 +160,84 @@ def _probe_analyser(fa, requested):
         _swallowed("roop/face_util.py:_probe_analyser", _degrade_error, "probe skipped")
 
 
+@contextlib.contextmanager
+def _per_model_precision(chains):
+    """While a FaceAnalysis is constructed, give each file of the bundle its own precision.
+
+    insightface builds every file of buffalo_l from ONE provider chain, so trt_precision could only ever be global. The
+    router resolves `model_zoo.get_model` at call time, so wrapping it here (and restoring it in `finally`) needs no change
+    to site-packages. A file with no per-model precision gets the chain it was handed, untouched. `chains` records the chain
+    each file was really built with, which the canary needs to rebuild a file on FP32 without guessing at options.
+    Callers hold THREAD_LOCK_ANALYSER, so the swap is never observed by a second builder.
+    """
+    from insightface.model_zoo import model_zoo as _mz
+    original = _mz.get_model
+
+    def get_model(name, **kwargs):
+        chain = kwargs.get('providers')
+        if chain:
+            member = bundle_member_providers('recognition:buffalo_l', chain, name)
+            if member is not None:
+                kwargs['providers'] = chain = member
+        chains[os.path.normcase(os.path.abspath(name))] = list(chain or [])
+        return original(name, **kwargs)
+
+    _mz.get_model = get_model
+    try:
+        yield
+    finally:
+        _mz.get_model = original
+
+
+def _guard_aux_models(fa, chains):
+    """Startup canary (roop/aux_canary.py) for the buffalo files it covers: w600k_r50, 2d106det, 1k3d68.
+
+    Each live TensorRT session is compared against a CUDA FP32 reference on two fixed inputs; the verdict is cached by engine
+    hash, so only the first start after an engine changes pays for a reference session. A failing file is rebuilt on a
+    TensorRT FP32 engine and then CUDA/CPU - the model's `session` is replaced in place, which is all insightface reads.
+    """
+    try:
+        from roop import aux_canary
+        if not aux_canary.enabled():
+            return
+        import onnxruntime
+        owned = dict(fa.models)
+        if getattr(fa, 'lm68_model', None) is not None:
+            owned['landmark_3d_68'] = fa.lm68_model
+        for _task, model in owned.items():
+            model_file = getattr(model, 'model_file', None)
+            stem = aux_canary.stem_of(model_file)
+            chain = chains.get(os.path.normcase(os.path.abspath(model_file))) if model_file else None
+            if stem not in aux_canary.SPECS or not chain or getattr(model, 'session', None) is None:
+                continue
+
+            def _build(c, _f=model_file):
+                return onnxruntime.InferenceSession(_f, get_onnx_session_options(), providers=c)
+            session, _used, _verdict = aux_canary.guard(stem, model.session, model_file, chain, _build)
+            if session is not model.session:
+                model.session = session
+    except Exception as _degrade_error:
+        _swallowed("roop/face_util.py:_guard_aux_models", _degrade_error, "canary skipped")
+
+
 def _build_face_analyser():
     model_path = resolve_relative_path('..')
     allowed_modules = roop.globals.g_desired_face_analysis
     providers = _face_analysis_providers()
     providers, _precision = providers_for('recognition:buffalo_l', providers)
     _requested_providers = list(providers)      # before any step-down (baseline_probe)
+    _bundle_chains = {}                         # file -> the chain it was built with (per-model precision, canary)
+
+    def _construct(chain):
+        with _per_model_precision(_bundle_chains):
+            return insightface.app.FaceAnalysis(
+                name="buffalo_l", root=model_path, providers=chain,
+                allowed_modules=allowed_modules,
+                sess_options=get_onnx_session_options())
     # buffalo_l builds several sessions at once, so a TensorRT engine failure
     # here used to take the whole application down at startup on a machine
     # where CUDA would have run every one of them. Step down instead, loudly.
-    fa, providers = build_session_with_fallback(
-        lambda chain: insightface.app.FaceAnalysis(
-            name="buffalo_l", root=model_path, providers=chain,
-            allowed_modules=allowed_modules,
-            sess_options=get_onnx_session_options()),
-        providers, tag='buffalo_l')
+    fa, providers = build_session_with_fallback(_construct, providers, tag='buffalo_l')
     fa.prepare(
         ctx_id=0,
         det_size=_desired_det_size(),
@@ -214,6 +277,7 @@ def _build_face_analyser():
         # otherwise the DEFAULT engine would be the only one still dropping
         # them. See roop/nms.py.
         bind_instance_nms(fa.det_model)
+    _guard_aux_models(fa, _bundle_chains)
     _probe_analyser(fa, _requested_providers)
     try:
         from roop.model_lifecycle import register_model_lifecycle, format_shape_from_session

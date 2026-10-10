@@ -5,6 +5,23 @@ full session record is [`SESSION_LOGS.md`](SESSION_LOGS.md); the running enginee
 state lives outside the repository (`RECODE_STATUS.md` in the operator's `roop-keep`
 folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22.
 
+## 2026-10-10
+
+- **Per-model TensorRT precision; XSeg, 2d106det and 1k3d68 now build FP32 (`docs/perf/trt_per_model_precision_2026-10-10.md`). Output changes: the mask and the landmark-refined kps move
+  toward the FP32 reference.** On 500 real faces (d4/d1/d6/Love/s7) the shipped `mixed` engines miss the gates earlier briefs set: XSeg IoU mean 0.9936, min 0.81, 6 faces < 0.95;
+  2d106det up to 1.2 px; 1k3d68 mean 1.2 px with the refined kps at 0.94 px mean, 3.6 px p95 (10.5% of the inter-ocular distance). The FP32 engines land at the engine-to-engine floor
+  for +0.6 / +0.02 / +1.05 ms per call; w600k_r50 passes (cosine min 0.999916) and stays mixed. `precision_policy.PRECISION_OVERRIDES` / `ROOP_TRT_MODEL_PRECISION` map a model FILE stem to
+  a precision; `providers_for` honours it (an explicit `requested=` still wins), and the buffalo_l bundle - which insightface builds from one provider chain - gets it through
+  `face_util._per_model_precision` (precision step only; no shape profile, so no engine moves namespace). Engines are per precision on disk, so reverting is one table line and loses nothing.
+  End-to-end fps was not A/B'd (expected ~1%, below what this rig resolves); the regression benchmark passes (300/300 swapped, face SSIM 0.985).
+- **Startup canary for XSeg / w600k_r50 / 2d106det / 1k3d68, cached by engine hash (`roop/aux_canary.py`, `ROOP_AUX_CANARY=0` disables).** The swap canary's idea for the models whose output is read as
+  ground truth: two fixed inputs through the live engine and a CUDA FP32 reference, metric by consumer, floors calibrated against 500 real faces and a wrong-face control
+  (`docs/perf/aux_canary_calibration.md`). The verdict is keyed on the blake2b of the cached engine files, the ONNX digest, the build options and the floors, so a rebuilt engine, a driver /
+  TensorRT / ORT upgrade or an edited floor is a miss and nothing is trusted across them; warm start 21 s vs 52 s cold, no reference session built. A failing engine is rebuilt on
+  TensorRT FP32, then CUDA/CPU. It catches the swap-canary failure class (wrong picture, collapse, non-finite), not FP16 drift - that stays the fidelity harness's job.
+- **XSeg's NHWC input costs one `Shuffle` layer: 0.0126 ms mixed / 0.0137 ms FP32 of a 2.5-3.2 ms call.** An NCHW variant was not built (ceiling 0.4-0.8% of one call). The live
+  provider / precision of all four models is recorded by `tests/trt_precision_probe.py`; `_model_digest` is now memoised (it re-read the whole ONNX on every `providers_for` call).
+
 ## 2026-10-09
 
 - **Opt-in static TensorRT profile for `retinaface_r50` (`docs/perf/r50_static_profile_2026-10-09.md`); defaults unchanged.** `ROOP_TRT_STATIC_PROFILE=1` pins the ORT

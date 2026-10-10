@@ -74,6 +74,14 @@ class Mask_XSeg():
                 return sess
 
             self.model_xseg = _build()
+            if not self._cpu_only and id(self.model_xseg) not in self._bound:
+                # Startup canary (roop/aux_canary.py): compare the live engine with a CUDA FP32 reference, cached by engine
+                # hash. On a failed verdict the session is rebuilt on TensorRT FP32, then CUDA/CPU; `providers` is rebound
+                # so the pool extras below are built on whatever the primary now runs on.
+                from roop import aux_canary
+                self.model_xseg, providers, _verdict = aux_canary.guard(
+                    'xseg', self.model_xseg, model_path, providers,
+                    lambda chain: onnxruntime.InferenceSession(model_path, _sess_opts, providers=chain))
             self.model_inputs = self.model_xseg.get_inputs()
             self.model_outputs = self.model_xseg.get_outputs()
 
