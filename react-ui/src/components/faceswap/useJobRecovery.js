@@ -51,7 +51,7 @@ export default function useJobRecovery({ onReattach } = {}) {
           // Only a genuinely-missing route falls back. A timeout or a network
           // error must NOT be read as "this backend is old", or one stalled
           // request would permanently downgrade the client.
-          if (!/404|not found/i.test(e?.message || '')) throw e;
+          if (e?.status !== 404) throw e;
           legacyRef.current = true;
         }
       }

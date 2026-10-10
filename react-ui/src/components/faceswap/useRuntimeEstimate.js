@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { postJSON } from '../../api';
+import { useApi } from '../../useApi';
 import { num } from './utils';
 
 // ── Pre-run estimate (idle only) ──────────────────────────────────────────
@@ -71,6 +71,7 @@ const heuristicMsPerFrame = (p, threads) => {
 export default function useRuntimeEstimate({
   settings: p, estFrames, faceCount, processing, hasTargets, threads,
 }) {
+  const { postJSON } = useApi();
   const [calibEst, setCalibEst] = useState(null);
 
   /* eslint-disable react-hooks/exhaustive-deps -- intentional: the settings
@@ -87,7 +88,7 @@ export default function useRuntimeEstimate({
           frames: estFrames,
           face_count: faceCount,
           ...sigPayload(p),
-        });
+        }, { abortOnUnmount: true });
         if (!cancelled) setCalibEst(res || null);
       } catch { if (!cancelled) setCalibEst(null); }
     }, 500);

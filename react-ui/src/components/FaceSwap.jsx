@@ -3,7 +3,8 @@ import { TargetAngleCaptureHUD } from './BiometricAngleHUD';
 import { applyTargetFacesPayload } from './faceswap/targetPayload';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { getJSON, postJSON, postFile, postFiles, API } from '../api';
+import { API, timeoutFor } from '../api';
+import { useApi } from '../useApi';
 import { Section, Select, Slider, Toggle, TextInput, Button, FaceGallery, Card } from './ui';
 import { confirmDialog } from './confirm';
 import { Icon } from '../icons';
@@ -73,6 +74,7 @@ import { LiveText } from './LiveTelemetry';
 import { selectProg, etaMsOf, useTelemetryStore } from '../store/telemetryStore';
 import { outputMediaUrl, outputSource } from './outputUrl';
 import { useFrameSocketHold } from '../transport/useFrameSocket';
+import { logFailure, reportFailure } from '../failureLog';
 
 // AI upscale models folded into the swap pass (mirrors the Extras post-processor
 // list). value = backend subtype, label = friendly name.
@@ -100,6 +102,7 @@ export default function FaceSwap({
   meta, settings, setSettings, notify, registerFileListener,
   progress, setProgress, startTime, setStartTime, onOpenProcessing, onStopRun
 }) {
+  const { postJSON, getJSON, postFiles, postFile } = useApi();
   const [sourceFaces, setSourceFaces] = useState([]);
   const [sourceFacesInfo, setSourceFacesInfo] = useState([]);
   // Identity Blender recipe. Rides inside every preview/swap payload, so the
@@ -433,7 +436,7 @@ export default function FaceSwap({
     // Keep the backend's target-scoped source selection in step with the
     // preview. This is also what makes a webview reload restore target 2's
     // faceset instead of falling back to the globally selected source.
-    postJSON('/api/source/select', { index: restoredSelSource }).catch(() => {});
+    postJSON('/api/source/select', { index: restoredSelSource }).catch(logFailure('Saving the source selection for this target', { toast: false }));
     targetContextsRef.current[mediaId] = {
       ...saved,
       targetFaces: faces,
@@ -960,7 +963,7 @@ export default function FaceSwap({
 
   const joinSegments = async () => {
     try {
-      const res = await postJSON('/api/queue/join', { ids: joinableJobs.map((j) => j.id) });
+      const res = await postJSON('/api/queue/join', { ids: joinableJobs.map((j) => j.id) }, { timeout: 0 });
       notify(`Joined ${res.segments} segments into ${res.name}`, 'success');
     } catch (e) { notify(e.message, 'error'); }
   };
@@ -1351,7 +1354,7 @@ export default function FaceSwap({
   // which remounts this component and wipes its React state. The backend keeps
   // running, so we restore both the faces/targets AND the live job state.
   useEffect(() => {
-    hydrateWorkspaceFromState({ restoreView: true }).catch(() => {});
+    hydrateWorkspaceFromState({ restoreView: true }).catch(logFailure('Restoring the workspace', { toast: false }));
 
     // Restore an in-flight swap so the run bar shows Pause/Resume/Stop and the
     // progress %/desc again instead of falling back to "Start Swapping".
@@ -1363,7 +1366,7 @@ export default function FaceSwap({
         // long render as a few seconds old and skew the ETA with it.
         if (!startTime) setStartTime(pr.started_at ? pr.started_at * 1000 : Date.now());
       }
-    }).catch(() => {});
+    }).catch(logFailure('Restoring the running job', { toast: false }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1429,7 +1432,12 @@ export default function FaceSwap({
     // TensorRT/CUDA engine (minutes). Abort after 15 min so a genuine hang can
     // never wedge the single-flight guard permanently.
     const ctrl = new AbortController();
-    const killer = setTimeout(() => ctrl.abort(), 15 * 60 * 1000);
+    // `killed` tells OUR deadline apart from any other abort. The request is also aborted
+    // when this panel unmounts (abortOnUnmount): that is the user leaving, not a model
+    // build that took too long, and must neither toast nor start the queued next preview.
+    let killed = false;
+    let abandoned = false;
+    const killer = setTimeout(() => { killed = true; ctrl.abort(); }, 15 * 60 * 1000);
     // Everything the response will be judged against is captured NOW, from
     // this render's values — never re-read after the await, when the UI may
     // be on another person, source, target or frame.
@@ -1452,7 +1460,7 @@ export default function FaceSwap({
       const res = await postJSON('/api/preview', buildPreviewPayload(p, {
         index: idx, frame: fr, fake, target_media_id: requestedMediaId,
         processing_selection: selection,
-      }), { signal: ctrl.signal });
+      }), { abortOnUnmount: true, timeout: 0, signal: ctrl.signal });
       if (res?.error) throw new Error(res.message || res.error || 'preview swap failed');
       const verdict = classifyPreviewResponse({
         request, response: res, wanted: wantedPreviewRef.current,
@@ -1509,13 +1517,14 @@ export default function FaceSwap({
         });
       }
     } catch (e) {
-      notify(e.name === 'AbortError' ? 'Preview timed out (model build took too long)' : e.message, 'error');
+      if (e.name === 'AbortError' && !killed) abandoned = true;           // the panel went away
+      else notify(e.name === 'AbortError' ? 'Preview timed out (model build took too long)' : e.message, 'error');
     }
     finally {
       clearTimeout(killer);
       previewBusyRef.current = false;
       setPreviewing(false);
-      if (previewPendingRef.current) {
+      if (previewPendingRef.current && !abandoned) {
         const next = previewPendingRef.current;
         previewPendingRef.current = null;
         (refreshPreviewRef.current || refreshPreview)(next);
@@ -1586,9 +1595,10 @@ export default function FaceSwap({
     // (falls back to the raw frame server-side when there are no source faces).
     let baseImage = '';
     try {
-      const baseRes = await postJSON('/api/preview', buildPreviewPayload(p, { index: selTarget, frame, fake: true }));
+      const baseRes = await postJSON('/api/preview', buildPreviewPayload(p, { index: selTarget, frame, fake: true }), { abortOnUnmount: true, timeout: 0 });
       baseImage = baseRes.image || '';
-    } catch {
+    } catch (err) {
+      reportFailure('Rendering the base frame for the upscale preview', err, { toast: false });
       // handled below (no base → nothing to upscale)
     }
     if (!activeCheck()) return;
@@ -1604,7 +1614,7 @@ export default function FaceSwap({
           setUpscaleRenderTimers(prev => ({ ...prev, [label]: ((Date.now() - start) / 1000).toFixed(1) + 's' }));
         }, 100);
 
-        const res = await postJSON('/api/preview_upscale', { image: baseImage, subtype });
+        const res = await postJSON('/api/preview_upscale', { image: baseImage, subtype }, { abortOnUnmount: true, timeout: 0 });
 
         const duration = ((Date.now() - start) / 1000).toFixed(2);
         if (upscaleIntervalsRef.current[label]) {
@@ -1703,7 +1713,7 @@ export default function FaceSwap({
     setUploadingSrc(true);
     setSrcProgress(null);
     try {
-      const res = checkDesync(await postFiles('/api/source/add', files, undefined, {
+      const res = checkDesync(await postFiles('/api/source/add', files, undefined, { timeout: 0,
         onProgress: setSrcProgress, signal: ctrl.signal,
       }));
       setSourceFaces(res.source_faces);
@@ -1734,7 +1744,7 @@ export default function FaceSwap({
     setUploadingSrc(true);
     setSrcProgress(null);
     try {
-      const res = checkDesync(await postFiles('/api/source/add-folder', files, undefined, {
+      const res = checkDesync(await postFiles('/api/source/add-folder', files, undefined, { timeout: 0,
         onProgress: setSrcProgress, signal: ctrl.signal,
       }));
       if (res.error) throw new Error(res.error);
@@ -1804,7 +1814,7 @@ export default function FaceSwap({
     setTgtProgress(null);
     try {
       const beforeCount = targets.length;
-      await applyTargetAdd(await postFiles('/api/target/add', files, undefined, {
+      await applyTargetAdd(await postFiles('/api/target/add', files, undefined, { timeout: 0,
         onProgress: setTgtProgress, signal: ctrl.signal,
       }), beforeCount);
     } catch (err) { reportUploadError(err); }
@@ -1815,7 +1825,7 @@ export default function FaceSwap({
     if (!files || !files.length) return;
     setUploadingLipsyncAudio(true);
     try {
-      const res = await postFile('/api/lipsync/audio/add', files[0]);
+      const res = await postFile('/api/lipsync/audio/add', files[0], undefined, { timeout: 0 });
       set('lipsync_audio_path', res.path);
     } catch (err) { notify(err.message, 'error'); }
     finally { setUploadingLipsyncAudio(false); }
@@ -1828,7 +1838,7 @@ export default function FaceSwap({
     setUploadingTgt(true);
     try {
       const beforeCount = targets.length;
-      const res = await postJSON('/api/target/add_path', { paths });
+      const res = await postJSON('/api/target/add_path', { paths }, { timeout: 0 });
       // Report rejects individually: with several paths pasted at once, a
       // silent drop looks like the app ignored the whole thing.
       (res.rejected || []).forEach((r) => notify(`Skipped ${r.path} — ${r.why}`, 'error'));
@@ -1885,7 +1895,7 @@ export default function FaceSwap({
 
   const sourceAction = async (path, body) => {
     try {
-      const res = checkDesync(await postJSON(path, body));
+      const res = checkDesync(await postJSON(path, body, { timeout: timeoutFor('POST', path) }));
       if (res.source_faces) setSourceFaces(res.source_faces);
       if (res.source_faces_info) setSourceFacesInfo(res.source_faces_info);
       return res;
@@ -1914,7 +1924,7 @@ export default function FaceSwap({
     const nextSel = selSource === i ? 0 : selSource > i ? selSource - 1 : selSource;
     if (nextSel !== selSource) {
       setSelSource(nextSel);
-      try { await postJSON('/api/source/select', { index: nextSel }); } catch { /* selection is best-effort */ }
+      try { await postJSON('/api/source/select', { index: nextSel }); } catch (err) { reportFailure('Saving the source selection', err); /* selection is best-effort */ }
     }
   };
 
@@ -1931,7 +1941,7 @@ export default function FaceSwap({
       remapSourceMappingAfterMove(getFaceMappingArray(), from, to),
     ));
     setSelSource(to);
-    try { await postJSON('/api/source/select', { index: to }); } catch { /* best effort */ }
+    try { await postJSON('/api/source/select', { index: to }); } catch (err) { reportFailure('Saving the source order', err); /* best effort */ }
   };
   const selectSource = async (i) => {
     setSelSource(i);
@@ -1948,7 +1958,7 @@ export default function FaceSwap({
         frame,
         target_media_id: activeTargetMediaId,
         ...(captureAll ? { capture_all: true } : { face_index: faceIndex }),
-      });
+      }, { timeout: 0 });
       setTargetFaces(res.target_faces);
       setTargetGroups(res.target_groups || []);
       setTargetNames(res.target_names || []);
@@ -2063,7 +2073,7 @@ export default function FaceSwap({
       const res = await postJSON('/api/preview_upscale', {
         image: imageBytes,
         subtype: p.upscale_model_after || 'esrganx2',
-      });
+      }, { abortOnUnmount: true, timeout: 0 });
       if (!res.image) throw new Error(res.message || 'upscale failed');
       setUpscaledSrc(res.image);
       setUpscaledDims(res.width && res.height ? { w: res.width, h: res.height } : null);
@@ -2089,7 +2099,7 @@ export default function FaceSwap({
   const start = async () => {
     try {
       await postJSON('/api/settings', p);            // persist CFG
-      await postJSON('/api/swap', buildSwapPayload());
+      await postJSON('/api/swap', buildSwapPayload(), { timeout: 0 });
       setStartTime(Date.now());
       // Ask for desktop-notification permission so we can ping on completion if
       // the tab is backgrounded (no-op if already decided).
@@ -2324,7 +2334,8 @@ export default function FaceSwap({
         // revoking a blob URL does not disturb an image that has already loaded
         // from it, and any that had not are being unmounted anyway.
         outgoing.forEach((u) => u && u.startsWith('blob:') && URL.revokeObjectURL(u));
-      } catch {
+      } catch (err) {
+        reportFailure('Loading the frame strip', err, { toast: false });
         // The strip is decoration; a failed fetch leaves the previous one up.
       }
     }, 220);
@@ -2546,7 +2557,7 @@ export default function FaceSwap({
         // Quick 5s preview clip: skip the heavy post-swap AI upscale so the
         // preview stays fast (the real render still upscales).
         upscale_after_swap: false,
-      });
+      }, { timeout: 0 });
 
       setStartTime(Date.now());
       notify('Generating 5-second preview clip...');

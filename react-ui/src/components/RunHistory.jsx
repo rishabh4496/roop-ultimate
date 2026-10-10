@@ -1,9 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { getJSON, postJSON, fileUrl } from '../api';
+import { fileUrl } from '../api';
+import { useApi } from '../useApi';
 import { Button, Card, MotionIcon } from './ui';
 import { confirmDialog } from './confirm';
 import { LABELS, CHIP_KEYS, fmtDur, fmtVal, primitives, diffSettings } from './settingsDiff';
 import { Icon } from '../icons';
+import { logFailure, reportFailure } from '../failureLog';
 
 /**
  * Run History — a browsable record of every completed swap.
@@ -30,6 +32,7 @@ const fmtRel = (t) => {
 };
 
 export default function RunHistory({ notify, setSettings, setTab }) {
+  const { getJSON, postJSON } = useApi();
   const [entries, setEntries] = useState([]);
   const [outputPath, setOutputPath] = useState('');
   const [existing, setExisting] = useState({}); // basename -> kind, for still-present outputs
@@ -56,13 +59,13 @@ export default function RunHistory({ notify, setSettings, setTab }) {
       const map = {};
       (o.files || []).forEach((f) => { map[f.name] = f.kind; });
       setExisting(map);
-    } catch { /* no outputs endpoint / folder */ }
+    } catch (err) { reportFailure('Listing the outputs folder', err, { toast: false }); /* no outputs endpoint / folder */ }
   };
 
   /* eslint-disable react-hooks/exhaustive-deps -- fetch once on mount */
   useEffect(() => { load(); }, []);
   useEffect(() => {
-    getJSON('/api/export/presets').then((r) => setPresets(r.presets || [])).catch(() => {});
+    getJSON('/api/export/presets').then((r) => setPresets(r.presets || [])).catch(logFailure('Loading the export presets'));
   }, []);
   /* eslint-enable react-hooks/exhaustive-deps */
 
@@ -91,7 +94,7 @@ export default function RunHistory({ notify, setSettings, setTab }) {
 
   const exportRun = async (name, presetKey) => {
     try {
-      const res = await postJSON('/api/export/apply', { source: name, preset: presetKey });
+      const res = await postJSON('/api/export/apply', { source: name, preset: presetKey }, { timeout: 0 });
       notify?.(`Exported ${res.name}`);
     } catch (e) {
       notify?.(e.message, 'error');

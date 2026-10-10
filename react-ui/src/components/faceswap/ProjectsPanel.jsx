@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { getJSON, postJSON } from '../../api';
+import { timeoutFor } from '../../api';
+import { useApi } from '../../useApi';
 import { Button, Section } from '../ui';
 import { confirmDialog } from '../confirm';
 
@@ -59,6 +60,7 @@ const fmtAgo = (t) => {
 const fmtN = (n) => (typeof n === 'number' ? n.toLocaleString() : null);
 
 export default function ProjectsPanel({ notify, onLoaded, processing = false }) {
+  const { getJSON, postJSON } = useApi();
   const [projects, setProjects] = useState(null);   // null = not fetched yet
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
@@ -73,7 +75,7 @@ export default function ProjectsPanel({ notify, onLoaded, processing = false }) 
       setError(e.message || 'could not read the project list');
       setProjects([]);
     }
-  }, []);
+  }, [getJSON]);
 
   useEffect(() => { refresh(); }, [refresh]);
 
@@ -98,7 +100,10 @@ export default function ProjectsPanel({ notify, onLoaded, processing = false }) 
     setBusy(`${kind}:${project.id}`);
     setError('');
     try {
-      const res = await postJSON(`/api/projects/${encodeURIComponent(project.id)}/${kind}`, {});
+      // `load` and `resume` reload media and (resume) restart a run; `validate` is quick.
+      // The registry decides which, by the verb.
+      const path = `/api/projects/${encodeURIComponent(project.id)}/${kind}`;
+      const res = await postJSON(path, {}, { timeout: timeoutFor('POST', path) });
       if (kind === 'validate') {
         notify?.(`“${project.name || project.id}” can be resumed safely`, 'success');
       } else if (kind === 'load') {

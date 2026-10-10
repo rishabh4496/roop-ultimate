@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { getJSON } from '../../api';
+import { useApi } from '../../useApi';
+import { reportFailure } from '../../failureLog';
 
 /**
  * Diagnostics shown inside the Preview box while a job runs.
@@ -123,6 +124,7 @@ const fmtDur = (ms) => {
 export default function DiagnosticsPanel({ desc = '', telemetry, processing, paused, config = [],
                                            elapsedMs = 0, etaMs = 0, prog = 0,
                                            framesDone = null, framesTotal = null, fps = null }) {
+  const { getJSON } = useApi();
   // ── Throughput history ────────────────────────────────────────────────────
   // Derived from the FRAME COUNT over wall time, NOT from the "(Z FPS)" in the
   // status line. That number is tqdm's smoothed rate, and tqdm measures the
@@ -236,12 +238,12 @@ export default function DiagnosticsPanel({ desc = '', telemetry, processing, pau
       try {
         const d = await getJSON('/api/system/profile');
         if (!stop) setProfile(d);
-      } catch { /* quiet — diagnostics must never break the run view */ }
+      } catch (err) { reportFailure('Loading the system profile', err, { toast: false }); /* quiet — diagnostics must never break the run view */ }
     };
     poll();
     const id = setInterval(poll, 4000);
     return () => { stop = true; clearInterval(id); };
-  }, [processing]);
+  }, [processing, getJSON]);
 
   const vramPct = telemetry?.vram_total ? (telemetry.vram_used / telemetry.vram_total) * 100 : 0;
   const hasGpuUtil = telemetry?.gpu_util !== undefined && telemetry?.gpu_util !== null;

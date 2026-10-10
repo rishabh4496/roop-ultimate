@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
-import { getJSON, postJSON } from '../../api';
+import { useApi } from '../../useApi';
+import { logFailure } from '../../failureLog';
 
 // Manages named setting presets ("profiles"). Persists to localStorage
 // (instant/offline) AND the backend (survives cache clears, shareable via
 // profiles.json on disk). Extracted verbatim from FaceSwap.jsx.
 export default function useProfiles({ settings, setSettings, notify }) {
+  const { postJSON, getJSON } = useApi();
   const [profiles, setProfiles] = useState(() => {
     try {
       return JSON.parse(localStorage.getItem('roop_profiles') || '[]');
@@ -22,7 +24,7 @@ export default function useProfiles({ settings, setSettings, notify }) {
     // documents, so tell our own as well or the palette would go stale until
     // the next reload.
     window.dispatchEvent(new CustomEvent('roop:presets-changed'));
-    postJSON('/api/profiles', { profiles: updated }).catch(() => { /* offline-tolerant */ });
+    postJSON('/api/profiles', { profiles: updated }).catch(logFailure('Saving the profile list'));  // offline-tolerant
   };
 
   // On mount, prefer server-side presets if any exist (merge, server wins).
@@ -37,8 +39,8 @@ export default function useProfiles({ settings, setSettings, notify }) {
         localStorage.setItem('roop_profiles', JSON.stringify(merged));
         return merged;
       });
-    }).catch(() => { /* backend not ready — localStorage still works */ });
-  }, []);
+    }).catch(logFailure('Loading saved profiles', { toast: false }));  // backend not ready — localStorage still works
+  }, [getJSON]);
 
   const saveProfile = () => {
     if (!newProfileName.trim()) {

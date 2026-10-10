@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Section, Slider, Toggle, Button } from '../ui';
-import { postJSON } from '../../api';
+import { useApi } from '../../useApi';
 import { EMPTY_BLEND } from './identityBlend';
+import { logFailure } from '../../failureLog';
 
 // Identity Blender: latent blend of up to four source identities on the ArcFace
 // hypersphere, plus attribute offsets along fitted directions. The maths and its
@@ -36,6 +37,7 @@ function scoreBadge(entry) {
 }
 
 export default function IdentityBlender({ sourceFaces = [], sourceFacesInfo = [], value, onChange, onUploadSource, notify }) {
+  const { postJSON } = useApi();
   const recipe = value || EMPTY_BLEND;
   const [diag, setDiag] = useState(null);
   const [busySlot, setBusySlot] = useState(-1);
@@ -57,7 +59,7 @@ export default function IdentityBlender({ sourceFaces = [], sourceFacesInfo = []
   const sig = JSON.stringify(recipe) + '|' + sourceFacesInfo.map((i) => i?.id).join(',');
   useEffect(() => {
     const t = setTimeout(() => {
-      postJSON('/api/identity/blend', recipe).then(setDiag).catch(() => {});
+      postJSON('/api/identity/blend', recipe, { abortOnUnmount: true }).then(setDiag).catch(logFailure('Updating the identity blend', { toast: false }));
     }, 250);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps

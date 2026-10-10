@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { postJSON } from '../api';
+import { useApi } from '../useApi';
 import { AnimatedNumber } from './ui';
 import { Icon } from '../icons';
 
@@ -24,6 +24,7 @@ function MetricBar({ label, score, detail }) {
 }
 
 export default function QualityReport({ outputPath, notify }) {
+  const { postJSON } = useApi();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState('');
@@ -34,7 +35,7 @@ export default function QualityReport({ outputPath, notify }) {
   const analyze = async () => {
     setLoading(true); setErr('');
     try {
-      const res = await postJSON('/api/quality/analyze', { path: outputPath });
+      const res = await postJSON('/api/quality/analyze', { path: outputPath }, { abortOnUnmount: true, timeout: 0 });
       if (res.ok) setData(res);
       else { setErr(res.message || 'No face detected in the output'); }
     } catch (e) {

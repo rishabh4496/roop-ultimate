@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { getJSON, postJSON } from '../api';
+import { useApi } from '../useApi';
 import { Section, Select, Slider, Toggle, TextInput } from './ui';
 import ThemeGallery from './ThemeGallery';
 import ThemeStudio from './ThemeStudio';
@@ -15,6 +15,7 @@ import TrtCachePanel from './TrtCachePanel';
 import AutoTunePanel from './AutoTunePanel';
 import RecognitionPanel from './RecognitionPanel';
 import { mergeSelection } from './recognitionSync';
+import { logFailure, reportFailure } from '../failureLog';
 
 // A Section that participates in the settings search and the "only changed"
 // filter. With either active it keeps just the controls that match (or the
@@ -62,6 +63,7 @@ function FilterSection({ title, icon, query, onlyModified, onResetKeys, children
 }
 
 export default function Settings({ meta, settings, setSettings, notify }) {
+  const { postJSON, getJSON } = useApi();
   const m = meta || {};
   const p = settings || {};
 
@@ -99,8 +101,8 @@ export default function Settings({ meta, settings, setSettings, notify }) {
   // verifies by reloading.
   const setMany = useCallback((patch) => {
     setSettings((s) => ({ ...s, ...patch }));
-    postJSON('/api/settings', patch).catch(() => {});
-  }, [setSettings]);
+    postJSON('/api/settings', patch).catch(logFailure('Saving settings'));
+  }, [setSettings, postJSON]);
   const [query, setQuery] = useState('');
 
   const showTrtSettings =
@@ -126,9 +128,9 @@ export default function Settings({ meta, settings, setSettings, notify }) {
     let live = true;
     getJSON('/api/settings/defaults')
       .then((d) => { if (live) setDefaults(d && typeof d === 'object' ? d : null); })
-      .catch(() => { /* pre-restart backend — markers stay off */ });
+      .catch(logFailure('Loading the setting defaults', { toast: false }));  // pre-restart backend — markers stay off
     return () => { live = false; };
-  }, []);
+  }, [getJSON]);
 
   // fmtVal normalises the comparison the same way the run-history diff does, so
   // 14 and "14" — which YAML and a number input disagree about — do not read as
@@ -747,7 +749,8 @@ export default function Settings({ meta, settings, setSettings, notify }) {
             try {
               const fresh = await getJSON('/api/settings');
               if (fresh && typeof fresh === 'object') setSettings((s) => ({ ...s, ...fresh }));
-            } catch {
+            } catch (err) {
+              reportFailure('Reloading settings', err);
               // ignore
             }
           }}
@@ -763,7 +766,8 @@ export default function Settings({ meta, settings, setSettings, notify }) {
             if (fresh && typeof fresh === 'object') {
               setSettings((s) => ({ ...s, ...fresh }));
             }
-          } catch {
+          } catch (err) {
+            reportFailure('Reloading settings', err);
             // ignore
           }
         }}

@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { postJSON } from '../../api';
+import { useApi } from '../../useApi';
 import { dataUrlToOwnedBlobUrl, revokeUrl } from './objectUrls';
 
 // ── One comparison grid's preview loader ──────────────────────────────────
@@ -41,6 +41,7 @@ export default function useGridPreviewLoader({
   reloadKey,          // previewKey — any preview-relevant setting change
   owner,              // object-URL owner token; shared with the main preview cache
 }) {
+  const { postJSON } = useApi();
   /* eslint-disable react-hooks/exhaustive-deps -- intentional: `load` is
      rebuilt every render and closes over current values on purpose; the effect
      is keyed on the things that should actually re-render the grid. Depending
@@ -92,7 +93,7 @@ export default function useGridPreviewLoader({
 
           const res = await postJSON('/api/preview', buildPreviewPayload(localParams, {
             index: selTarget, frame, fake: fakePreview,
-          }));
+          }), { abortOnUnmount: true, timeout: 0 });
           const duration = ((Date.now() - start) / 1000).toFixed(2);
           stopTimer();
           if (!activeCheck()) return;

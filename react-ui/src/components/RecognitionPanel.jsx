@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { getJSON, postJSON } from '../api';
+import { useApi } from '../useApi';
 import { Button, Select } from './ui';
 
 // Embedding backend for the identity API: which recogniser and which provider, what this machine
@@ -18,6 +18,7 @@ const specLine = (m) => [
 ].filter(Boolean).join(' · ');
 
 export default function RecognitionPanel({ notify, onApplied }) {
+  const { getJSON, postJSON } = useApi();
   const [data, setData] = useState(null);
   const [models, setModels] = useState([]);
   const [model, setModel] = useState('default');
@@ -38,7 +39,7 @@ export default function RecognitionPanel({ notify, onApplied }) {
     } catch (e) {
       notify?.(`Embedding backend: ${e.message || e}`, 'error');
     }
-  }, [notify]);
+  }, [notify, getJSON]);
 
   useEffect(() => { load(); }, [load]);
 

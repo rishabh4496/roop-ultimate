@@ -1,4 +1,5 @@
 import { getJSON } from '../../api';
+import { reportFailure } from '../../failureLog';
 
 // Identity Blender recipe shape (app/roop/identity_algebra.py BlendRecipe).
 export const EMPTY_BLEND = Object.freeze({
@@ -14,5 +15,5 @@ export async function fetchIdentityBlend() {
   try {
     const res = await getJSON('/api/identity/blend');
     return res?.recipe || null;
-  } catch { return null; }
+  } catch (err) { reportFailure('Loading the identity blend', err, { toast: false }); return null; }
 }

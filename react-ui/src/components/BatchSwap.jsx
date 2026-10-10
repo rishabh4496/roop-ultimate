@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { getJSON, postJSON, postFiles, API } from '../api';
+import { API } from '../api';
+import { useApi } from '../useApi';
 import { Card, Section, Button, InfoBadge, MotionIcon } from './ui';
 import { Icon } from '../icons';
 import useQueue from './faceswap/useQueue';
@@ -36,6 +37,7 @@ const ENHANCER_OPTIONS = [
 ];
 
 export default function BatchSwap({ settings = {}, notify }) {
+  const { getJSON, postFiles, postJSON } = useApi();
   // ── Server State ────────────────────────────────────────────────────────
   const [targets, setTargets] = useState([]);
   const [sourceFaces, setSourceFaces] = useState([]);
@@ -125,7 +127,7 @@ export default function BatchSwap({ settings = {}, notify }) {
     } finally {
       setLoadingState(false);
     }
-  }, [notify, settings]);
+  }, [notify, settings, getJSON]);
 
   useEffect(() => {
     refreshBackendState();
@@ -193,7 +195,7 @@ export default function BatchSwap({ settings = {}, notify }) {
     try {
       setUploading(true);
       notify?.(`Uploading ${files.length} target file(s)...`, 'info');
-      await postFiles('/api/target/add', files);
+      await postFiles('/api/target/add', files, undefined, { timeout: 0 });
       notify?.(`Successfully added ${files.length} target file(s)`);
       await refreshBackendState();
     } catch (err) {
@@ -210,7 +212,7 @@ export default function BatchSwap({ settings = {}, notify }) {
     try {
       setUploading(true);
       notify?.(`Uploading ${files.length} source faceset(s)...`, 'info');
-      await postFiles('/api/source/add', files);
+      await postFiles('/api/source/add', files, undefined, { timeout: 0 });
       notify?.(`Successfully added ${files.length} source face(s)`);
       await refreshBackendState();
     } catch (err) {

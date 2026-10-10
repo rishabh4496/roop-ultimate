@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { getJSON, postJSON } from '../../api';
+import { timeoutFor } from '../../api';
+import { useApi } from '../../useApi';
+import { reportFailure } from '../../failureLog';
 
 // The batch queue, as owned by the backend (see app/routes_queue.py).
 //
@@ -21,6 +23,7 @@ const IDLE = { jobs: [], running: false, paused: false, current: null };
 const POLL_MS = 2000;
 
 export default function useQueue({ notify } = {}) {
+  const { getJSON, postJSON } = useApi();
   const [state, setState] = useState(IDLE);
   const [busy, setBusy] = useState(false);
   // The poll must not clobber a newer snapshot returned by a mutation that
@@ -43,14 +46,14 @@ export default function useQueue({ notify } = {}) {
     try {
       const stamp = Date.now();
       commit(await getJSON('/api/queue'), stamp);
-    } catch { /* backend not up yet — the next poll or action will catch up */ }
-  }, [commit]);
+    } catch (err) { reportFailure('Polling the queue', err, { toast: false }); /* backend not up yet — the next poll or action will catch up */ }
+  }, [commit, getJSON]);
 
   // `act` is every mutation: one request, commit its snapshot, surface failures.
   const act = useCallback(async (path, body, { quiet = false } = {}) => {
     setBusy(true);
     try {
-      const snap = await postJSON(path, body || {});
+      const snap = await postJSON(path, body || {}, { timeout: timeoutFor('POST', path) });
       commit(snap, Date.now());
       return snap;
     } catch (e) {
@@ -62,7 +65,7 @@ export default function useQueue({ notify } = {}) {
     } finally {
       setBusy(false);
     }
-  }, [commit, notify, refresh]);
+  }, [commit, notify, refresh, postJSON]);
 
   useEffect(() => { refresh(); }, [refresh]);
 

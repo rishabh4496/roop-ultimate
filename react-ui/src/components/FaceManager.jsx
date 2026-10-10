@@ -56,7 +56,7 @@ export default function FaceManager({ notify, registerFileListener }) {
     return registerFileListener(async (files) => {
       try {
         const { detector: d, restore: r } = optsRef.current;
-        const res = await postFiles('/api/facemgr/add', files, { detector: d, restore: String(r) });
+        const res = await postFiles('/api/facemgr/add', files, { detector: d, restore: String(r) }, { timeout: 0 });
         applyPayload(res);
         if (res.video) { setVideo(res.video); setMaxFrames(res.frames || 1); setFrame(1); }
         notify('Loaded files into faceset');
@@ -70,7 +70,7 @@ export default function FaceManager({ notify, registerFileListener }) {
     if (!e.target.files.length) return;
     setBusy(true);
     try {
-      const res = await postFiles('/api/facemgr/add', e.target.files, { detector, restore: String(restore) });
+      const res = await postFiles('/api/facemgr/add', e.target.files, { detector, restore: String(restore) }, { timeout: 0 });
       applyPayload(res);
       if (res.video) { setVideo(res.video); setMaxFrames(res.frames || 1); setFrame(1); }
       notify(restore ? 'Loaded faces (restored)' : 'Loaded faces');
@@ -82,7 +82,7 @@ export default function FaceManager({ notify, registerFileListener }) {
   const onLoadFaceset = async (e) => {
     if (!e.target.files.length) return;
     setBusy(true);
-    try { const res = await postFile('/api/facemgr/faceset', e.target.files[0]); applyPayload(res); notify('Faceset loaded'); }
+    try { const res = await postFile('/api/facemgr/faceset', e.target.files[0], undefined, { timeout: 0 }); applyPayload(res); notify('Faceset loaded'); }
     catch (err) { notify(err.message, 'error'); }
     finally { setBusy(false); }
     e.target.value = '';
@@ -90,7 +90,7 @@ export default function FaceManager({ notify, registerFileListener }) {
 
   const cut = async () => {
     setBusy(true);
-    try { const res = await postJSON('/api/facemgr/cut', { frame, detector, restore }); applyPayload(res); notify('Faces cut from frame'); }
+    try { const res = await postJSON('/api/facemgr/cut', { frame, detector, restore }, { timeout: 0 }); applyPayload(res); notify('Faces cut from frame'); }
     catch (e) { notify(e.message, 'error'); }
     finally { setBusy(false); }
   };

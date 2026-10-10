@@ -1,11 +1,14 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { getJSON, postJSON, postFiles, fileUrl } from '../api';
+import { fileUrl } from '../api';
+import { useApi } from '../useApi';
 import { Button, Card } from './ui';
 import { confirmDialog } from './confirm';
 import { Icon } from '../icons';
 import OutputCompare from './OutputCompare';
+import { reportFailure } from '../failureLog';
 
 export default function Gallery({ notify, setSettings, setTab }) {
+  const { getJSON, postJSON, postFiles } = useApi();
   const [files, setFiles] = useState([]);
   const [outputPath, setOutputPath] = useState('');
   const [loading, setLoading] = useState(true);
@@ -41,7 +44,7 @@ export default function Gallery({ notify, setSettings, setTab }) {
         (entry.outputs || []).forEach((name) => { if (!map[name]) map[name] = entry; });
       });
       setHistoryByName(map);
-    } catch { /* no history yet */ }
+    } catch (err) { reportFailure('Loading the run history', err, { toast: false }); /* no history yet */ }
   };
 
   // Re-apply the exact settings a past run used, then jump to the Face Swap tab.
@@ -166,7 +169,7 @@ export default function Gallery({ notify, setSettings, setTab }) {
       const blob = await res.blob();
       const file = new File([blob], name, { type: blob.type });
       
-      await postFiles('/api/target/add', [file]);
+      await postFiles('/api/target/add', [file], undefined, { timeout: 0 });
       notify(`Loaded ${name} into face swap targets queue!`);
     } catch (e) {
       notify(`Failed to reuse as target: ${e.message}`, 'error');
@@ -185,7 +188,7 @@ export default function Gallery({ notify, setSettings, setTab }) {
       const blob = await res.blob();
       const file = new File([blob], name, { type: blob.type });
       
-      const result = await postFiles('/api/source/add', [file]);
+      const result = await postFiles('/api/source/add', [file], undefined, { timeout: 0 });
       if (result.source_faces && result.source_faces.length > 0) {
         notify(`Successfully extracted ${result.source_faces.length} faces!`);
       } else {

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { getJSON, postJSON } from '../../api';
+import { useApi } from '../../useApi';
+import { logFailure, reportFailure } from '../../failureLog';
 
 // ── Live camera (webcam → live swap → optional OBS virtual camera) ────────
 // Self-contained: the session lives entirely on the backend, so this owns only
@@ -18,6 +19,7 @@ const PREVIEW_INTERVAL_MS = 200;
 const OPEN_CONFIRM_MS = 1500;
 
 export default function useLiveCam({ notify }) {
+  const { getJSON, postJSON } = useApi();
   const [liveActive, setLiveActive] = useState(false);
   const [liveBusy, setLiveBusy] = useState(false);
   const [liveCamNum, setLiveCamNum] = useState(0);
@@ -36,23 +38,23 @@ export default function useLiveCam({ notify }) {
     if (!liveActive) return undefined;
     const id = setInterval(async () => {
       setLiveTick((t) => t + 1);
-      try { setLiveStatus(await getJSON('/api/livecam/status')); } catch { /* backend gone */ }
+      try { setLiveStatus(await getJSON('/api/livecam/status')); } catch (err) { reportFailure('Polling the live camera', err, { toast: false }); /* backend gone */ }
     }, PREVIEW_INTERVAL_MS);
     return () => clearInterval(id);
-  }, [liveActive]);
+  }, [liveActive, getJSON]);
 
   // SoundDevice is optional. Empty device lists keep webcam mode usable when
   // no virtual audio cable is installed.
   useEffect(() => {
     getJSON('/api/livecam/audio/devices')
       .then((data) => setLiveAudioDevices(data.devices || []))
-      .catch(() => {});
-  }, []);
+      .catch(logFailure('Listing audio devices', { toast: false }));
+  }, [getJSON]);
 
   // If the tab remounts while a cam session is running, pick its state back up.
   useEffect(() => {
-    getJSON('/api/livecam/status').then((st) => setLiveActive(!!st.active)).catch(() => {});
-  }, []);
+    getJSON('/api/livecam/status').then((st) => setLiveActive(!!st.active)).catch(logFailure('Reading the live camera status', { toast: false }));
+  }, [getJSON]);
 
   const startLiveCam = async () => {
     setLiveBusy(true);
@@ -65,14 +67,14 @@ export default function useLiveCam({ notify }) {
         stream_obs: liveObs,
         audio_input_device: liveAudio ? (liveAudioInput || null) : null,
         audio_output_device: liveAudio ? (liveAudioOutput || null) : null,
-      });
+      }, { timeout: 0 });
       setTimeout(async () => {
         try {
           const st = await getJSON('/api/livecam/status');
           setLiveActive(!!st.active);
           if (!st.active) notify(`Camera ${liveCamNum} could not be opened — check the index / close other apps using it`, 'error');
           else notify('Live camera running' + (liveObs ? ' → streaming to virtual camera' : ''));
-        } catch { /* backend gone */ }
+        } catch (err) { reportFailure('Starting the live camera', err); /* backend gone */ }
         setLiveBusy(false);
       }, OPEN_CONFIRM_MS);
     } catch (e) { notify(e.message, 'error'); setLiveBusy(false); }
@@ -80,7 +82,7 @@ export default function useLiveCam({ notify }) {
 
   const stopLiveCam = async () => {
     setLiveBusy(true);
-    try { await postJSON('/api/livecam/stop', {}); } catch { /* already down */ }
+    try { await postJSON('/api/livecam/stop', {}); } catch (err) { reportFailure('Stopping the live camera', err, { toast: false }); /* already down */ }
     setLiveActive(false);
     setLiveBusy(false);
     notify('Live camera stopped');

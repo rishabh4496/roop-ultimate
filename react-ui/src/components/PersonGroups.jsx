@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { postJSON } from '../api';
+import { postJSON, timeoutFor } from '../api';
 import { PERSON_COLORS } from './constants';
 import { confirmDialog } from './confirm';
 import { Icon } from '../icons';
@@ -120,7 +120,7 @@ export default function PersonGroups({
   const call = async (path, body, okMsg) => {
     setBusy(true);
     try {
-      const res = await postJSON(path, body);
+      const res = await postJSON(path, body, { timeout: timeoutFor('POST', path) });
       applyPayload(res);
       if (res && res.message && !res.count) {
         notify(res.message, 'warning');
@@ -158,7 +158,7 @@ export default function PersonGroups({
     try {
       const res = await postJSON('/api/target/auto_angles', {
         target_person_id: targetPersonId, index: selTarget, target_media_id: targetMediaId,
-      });
+      }, { timeout: 0 });
       applyPayload(res);
       const personIndices = (res.target_person_ids || []).reduce((acc, id, idx) => {
         if (id === targetPersonId) acc.push(idx);
@@ -211,7 +211,7 @@ export default function PersonGroups({
     try {
       const res = await postJSON('/api/target/face_bank', {
         index: selTarget, clustering_method: 'dbscan', target_media_id: targetMediaId, apply: true,
-      });
+      }, { timeout: 0 });
       applyPayload(res);
       if (!res.count) {
         notify(res.message || 'Face Bank found no faces in this clip', 'warning');
@@ -247,7 +247,7 @@ export default function PersonGroups({
     try {
       const res = await postJSON('/api/target/auto_capture', {
         index: selTarget, replace: true, target_media_id: targetMediaId,
-      });
+      }, { timeout: 0 });
       applyPayload(res);
       if (!res.count) {
         notify(res.message || 'Auto-capture found nobody in this clip', 'warning');

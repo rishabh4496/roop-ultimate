@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { getJSON } from '../../api';
 import { setSystemTelemetry, useTelemetryStore } from '../../store/telemetryStore';
+import { reportFailure } from '../../failureLog';
 
 // System telemetry (GPU/VRAM/CPU/RAM/threads) for the HUDs.
 //
@@ -22,7 +23,8 @@ let currentInterval = 3000;
 async function tick() {
   try {
     setSystemTelemetry(await getJSON('/api/system/telemetry', { timeout: 8000 }));
-  } catch {
+  } catch (err) {
+    reportFailure('Polling system telemetry', err, { toast: false });
     // quiet fail: the HUD keeps its last reading
   }
 }

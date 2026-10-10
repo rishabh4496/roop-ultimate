@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { getJSON, postJSON } from '../api';
+import { useApi } from '../useApi';
 import { confirmDialog } from './confirm';
 import { Icon } from '../icons';
 
@@ -33,6 +33,7 @@ function Classification({ value }) {
 }
 
 export default function StorageManager({ notify }) {
+  const { getJSON, postJSON } = useApi();
   const [review, setReview] = useState(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState('');
@@ -54,7 +55,7 @@ export default function StorageManager({ notify }) {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [getJSON]);
 
   useEffect(() => { refresh(); }, [refresh]);
 

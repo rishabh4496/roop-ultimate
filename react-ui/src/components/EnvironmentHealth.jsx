@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { getJSON } from '../api';
+import { useApi } from '../useApi';
 import { Section } from './ui';
 import { Icon } from '../icons';
 
@@ -62,6 +62,7 @@ const CLASS_TONE = {
 };
 
 export default function EnvironmentHealth({ notify, meta }) {
+  const { getJSON } = useApi();
   const [hw, setHw] = useState(null);
   const [runtime, setRuntime] = useState(null);
   const [tele, setTele] = useState(null);
@@ -88,7 +89,7 @@ export default function EnvironmentHealth({ notify, meta }) {
       ? (failed[0].reason?.message || 'the backend did not answer')
       : failed.length ? 'some diagnostics are unavailable' : '');
     setLoading(false);
-  }, []);
+  }, [getJSON]);
 
   useEffect(() => { refresh(); }, [refresh]);
 

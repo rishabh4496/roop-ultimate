@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { getJSON, postJSON, postFile, fileUrl } from '../../api';
+import { fileUrl } from '../../api';
+import { useApi } from '../../useApi';
 import { Button, FocusedInput } from '../ui';
 import { confirmDialog, promptDialog } from '../confirm';
 import { Icon } from '../../icons';
@@ -9,6 +10,7 @@ import { Icon } from '../../icons';
 // (Settings → "Faceset library folder") at OneDrive/Dropbox/Google Drive to sync
 // facesets across devices.
 export default function FacesetLibrary({ canSave, onLoaded, notify }) {
+  const { getJSON, postJSON, postFile } = useApi();
   const [open, setOpen] = useState(false);
   const [entries, setEntries] = useState([]);
   const [busy, setBusy] = useState(false);
@@ -28,7 +30,7 @@ export default function FacesetLibrary({ canSave, onLoaded, notify }) {
       const r = await getJSON('/api/faceset/library');
       setEntries(r.entries || []);
     } catch (e) { notify?.(e.message, 'error'); }
-  }, [notify]);
+  }, [notify, getJSON]);
 
   useEffect(() => { if (open) refresh(); }, [open, refresh]);
 
@@ -45,7 +47,7 @@ export default function FacesetLibrary({ canSave, onLoaded, notify }) {
     if (name == null) return;
     setBusy(true);
     try {
-      const r = await postJSON('/api/faceset/library/save', { name });
+      const r = await postJSON('/api/faceset/library/save', { name }, { timeout: 0 });
       setEntries(r.entries || []);
       notify?.(`Saved “${r.saved}” to library`);
     } catch (e) { notify?.(e.message, 'error'); } finally { setBusy(false); }
@@ -56,7 +58,7 @@ export default function FacesetLibrary({ canSave, onLoaded, notify }) {
     setBusy(true);
     setPickerOpen(false);
     try {
-      const r = await postJSON('/api/faceset/library/load', { filename: entry.filename });
+      const r = await postJSON('/api/faceset/library/load', { filename: entry.filename }, { timeout: 0 });
       setSelected(entry);
       onLoaded?.(r);
       notify?.(`Loaded “${entry.name}” into source faces`);
@@ -95,7 +97,7 @@ export default function FacesetLibrary({ canSave, onLoaded, notify }) {
     setBusy(true);
     try {
       let r;
-      for (const f of files) r = await postFile('/api/faceset/library/import', f);
+      for (const f of files) r = await postFile('/api/faceset/library/import', f, undefined, { timeout: 0 });
       if (r) setEntries(r.entries || []);
       if (files.length) notify?.(`Imported ${files.length} faceset(s)`);
     } catch (err) { notify?.(err.message, 'error'); } finally { setBusy(false); }
@@ -108,7 +110,7 @@ export default function FacesetLibrary({ canSave, onLoaded, notify }) {
   const rebuildThumbs = async () => {
     setBusy(true);
     try {
-      const r = await postJSON('/api/faceset/library/rebuild_thumbs', {});
+      const r = await postJSON('/api/faceset/library/rebuild_thumbs', {}, { timeout: 0 });
       setEntries(r.entries || []);
       notify?.(`Rebuilt ${r.rebuilt} thumbnail(s) — picked the most frontal face`);
     } catch (e) { notify?.(e.message, 'error'); } finally { setBusy(false); }

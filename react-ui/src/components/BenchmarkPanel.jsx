@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { getJSON, postJSON } from '../api';
+import { useApi } from '../useApi';
 import { AnimatedNumber, Button, Section } from './ui';
 import { Icon } from '../icons';
+import { reportFailure } from '../failureLog';
 
 const WORKLOAD_OPTIONS = [
   { value: '1', mode: 'solo', label: '1 Face (Solo)', desc: 'Single face swap pipeline throughput' },
@@ -32,6 +33,7 @@ function formatTimestamp(isoStr) {
 }
 
 export default function BenchmarkPanel({ notify, onSettingsApplied }) {
+  const { getJSON, postJSON } = useApi();
   const [activeTab, setActiveTab] = useState('runner'); // 'runner' | 'history'
   const [prompt, setPrompt] = useState(null);
   const [_loadingPrompt, setLoadingPrompt] = useState(true);
@@ -67,7 +69,7 @@ export default function BenchmarkPanel({ notify, onSettingsApplied }) {
     } finally {
       setLoadingPrompt(false);
     }
-  }, []);
+  }, [getJSON]);
 
   // Fetch existing or completed result
   const fetchResult = useCallback(async () => {
@@ -76,10 +78,11 @@ export default function BenchmarkPanel({ notify, onSettingsApplied }) {
       if (res && res.ready) {
         setResult(res);
       }
-    } catch {
+    } catch (err) {
+      reportFailure('Loading the benchmark result', err, { toast: false });
       // not ready or idle
     }
-  }, []);
+  }, [getJSON]);
 
   // Fetch saved history profiles
   const fetchProfiles = useCallback(async () => {
@@ -92,7 +95,7 @@ export default function BenchmarkPanel({ notify, onSettingsApplied }) {
     } finally {
       setLoadingProfiles(false);
     }
-  }, []);
+  }, [getJSON]);
 
   useEffect(() => {
     fetchPrompt();
@@ -131,11 +134,12 @@ export default function BenchmarkPanel({ notify, onSettingsApplied }) {
             fetchProfiles();
           }
         }
-      } catch {
+      } catch (err) {
+        reportFailure('Polling the benchmark', err, { toast: false });
         // Polling blip
       }
     }, 750);
-  }, [fetchResult, fetchProfiles, notify]);
+  }, [fetchResult, fetchProfiles, notify, getJSON]);
 
   // Start benchmark handler
   const handleStart = async () => {

@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { getJSON, fileUrl } from '../api';
+import { fileUrl } from '../api';
+import { useApi } from '../useApi';
 import { Card, Section, Skeleton, AnimatedNumber, MotionIcon } from './ui';
 import { Stagger, Reveal, motion, spring } from '../motion';
 import { CHIP_KEYS, LABELS, fmtVal, fmtDur } from './settingsDiff';
@@ -66,6 +67,7 @@ const Stat = ({ icon: Ico, label, value, sub, tone, onClick, title }) => {
 };
 
 export default function Home({ progress, setTab, setSettings, notify }) {
+  const { getJSON } = useApi();
   const [history, setHistory] = useState(null);   // null = still loading
   const [outputs, setOutputs] = useState(null);
   const [queue, setQueue] = useState(null);
@@ -87,7 +89,7 @@ export default function Home({ progress, setTab, setSettings, notify }) {
     pull('/api/system/telemetry', setTelemetry, (r) => (r.gpu ? r : null));
 
     return () => { live = false; };
-  }, []);
+  }, [getJSON]);
 
   const stats = useMemo(() => {
     const runs = history || [];

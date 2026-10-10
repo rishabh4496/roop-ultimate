@@ -18,11 +18,12 @@
 // debounced and sequenced, so a slower older response never overwrites a newer
 // one.
 import { useCallback, useEffect, useReducer, useRef } from 'react';
-import { getJSON, postJSON } from '../../api.js';
+import { useApi } from '../../useApi.js';
 import {
   hudReducer, initialHudState, parseServerEvent, sessionMatches, toFrameIdx,
   type AngleBinName, type AngleSession, type BinEntry, type HudState,
 } from './angleHudModel';
+import { logFailure } from '../../failureLog.js';
 
 const AUTO_SETTLE_MS = 600;
 const THRESHOLD_DEBOUNCE_MS = 250;
@@ -64,6 +65,7 @@ const socketUrl = (): string => {
 const errorOf = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
 export default function useAutoAngleCapture(opts: AutoAngleCaptureOptions): AutoAngleCapture {
+  const { getJSON, postJSON } = useApi();
   const { targetPersonId, targetMediaId, targetIndex, isVideo, autoScan } = opts;
   const [state, dispatch] = useReducer(hudReducer, initialHudState);
 
@@ -145,10 +147,10 @@ export default function useAutoAngleCapture(opts: AutoAngleCaptureOptions): Auto
       .then((res: { session?: AngleSession | null }) => {
         if (live && res?.session) dispatch({ type: 'session/set', session: res.session });
       })
-      .catch(() => { /* backend without the route, or down: nothing to restore */ })
+      .catch(logFailure('Restoring the angle-scan session', { toast: false }))  // backend without the route, or down: nothing to restore
       .finally(() => { if (live) hydratedRef.current = true; });
     return () => { live = false; };
-  }, []);
+  }, [getJSON]);
 
   // Auto-trigger on a person / media change.
   useEffect(() => {
@@ -190,7 +192,7 @@ export default function useAutoAngleCapture(opts: AutoAngleCaptureOptions): Auto
         if (seq === thresholdSeq.current) dispatch({ type: 'error', error: { code: 'thresholds', message: errorOf(err) } });
       })
       .finally(() => { if (seq === thresholdSeq.current) dispatch({ type: 'request/pending', pending: false }); });
-  }, []);
+  }, [postJSON]);
 
   const queueThreshold = useCallback((patch: { min_iod?: number; blur_frac?: number }): void => {
     pendingThresholds.current = { ...pendingThresholds.current, ...patch };
@@ -224,7 +226,7 @@ export default function useAutoAngleCapture(opts: AutoAngleCaptureOptions): Auto
   const assignOverride = useCallback(async (bin: AngleBinName, timelineFrame: number): Promise<OverrideResult | null> => {
     dispatch({ type: 'request/pending', pending: true });
     try {
-      const res = await postJSON('/api/angle-scan/override', { bin, frame_idx: toFrameIdx(timelineFrame) });
+      const res = await postJSON('/api/angle-scan/override', { bin, frame_idx: toFrameIdx(timelineFrame) }, { timeout: 0 });
       dispatch({ type: 'session/set', session: res.session });
       dispatch({ type: 'override/end' });
       dispatch({ type: 'reference/select', bin });
@@ -236,7 +238,7 @@ export default function useAutoAngleCapture(opts: AutoAngleCaptureOptions): Auto
     } finally {
       dispatch({ type: 'request/pending', pending: false });
     }
-  }, []);
+  }, [postJSON]);
 
   const clearOverride = useCallback(async (bin: AngleBinName): Promise<void> => {
     dispatch({ type: 'request/pending', pending: true });
@@ -248,19 +250,19 @@ export default function useAutoAngleCapture(opts: AutoAngleCaptureOptions): Auto
     } finally {
       dispatch({ type: 'request/pending', pending: false });
     }
-  }, []);
+  }, [postJSON]);
 
   const applyToPerson = useCallback(async (bins?: AngleBinName[]): Promise<Record<string, unknown> | null> => {
     dispatch({ type: 'request/pending', pending: true });
     try {
-      return await postJSON('/api/angle-scan/apply', bins ? { bins } : {});
+      return await postJSON('/api/angle-scan/apply', bins ? { bins } : {}, { timeout: 0 });
     } catch (err) {
       dispatch({ type: 'error', error: { code: 'apply', message: errorOf(err) } });
       return null;
     } finally {
       dispatch({ type: 'request/pending', pending: false });
     }
-  }, []);
+  }, [postJSON]);
 
   const dismissMessage = useCallback((): void => {
     dispatch({ type: 'error', error: null });

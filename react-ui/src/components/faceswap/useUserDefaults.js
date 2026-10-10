@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { postJSON } from '../../api';
 import { FACESWAP_DEFAULTS } from './defaults';
+import { logFailure } from '../../failureLog';
 
 // ── The user's own "default" for the Face Swap tab ────────────────────────
 // A snapshot of the tab's settings taken when "Save as default" is clicked,
@@ -38,7 +39,7 @@ export default function useUserDefaults({ settings: p, setSettings, notify }) {
   const resetToDefaults = () => {
     const target = userDefaults || FACESWAP_DEFAULTS;
     setSettings((s) => ({ ...s, ...target }));
-    postJSON('/api/settings', target).catch(() => { /* backend offline — will persist on next run */ });
+    postJSON('/api/settings', target).catch(logFailure('Saving the restored defaults'));  // backend offline — will persist on next run
     notify(userDefaults ? 'Restored your saved default' : 'Face Swap settings reset to factory defaults', 'info');
   };
 

@@ -74,6 +74,29 @@ CSS or theme is what broke. Tab panels are `lazyPanel(...)`, not bare `React.laz
 failed chunk load forever, which made "Retry" a no-op; `lazyPanel` lets the boundary reset it on Retry and when
 you leave the failed tab.
 
+**Requests.** Everything goes through `src/api.js` (`getJSON`, `postJSON`, `postFile(s)`), and each call has a
+deadline: **15 s unless it passes `timeout: 0`**. Fetch has no timeout of its own, so without one a backend
+that accepts the socket and stalls leaves the UI waiting in silence.
+* **Long-running endpoints opt out explicitly.** Anything whose duration scales with its input or can trigger a
+  cold start (a swap start, a preview, a clip scan, an upload, an ffmpeg join) is listed, with the reason, in
+  `src/longRunning.js`, and every call to it says `timeout: 0`. A computed path (`act(path)`) says
+  `timeout: timeoutFor('POST', path)` and lets the registry decide. `npm run lint:api-timeouts` enumerates every
+  call site and fails on a listed endpoint without its opt-out, an opt-out for an unlisted one, a computed path
+  that says nothing, and a stale entry; `app/tests/test_ui_api_timeouts.py` runs it from the Python suite too.
+  **Adding an endpoint that can run long means adding a line to `longRunning.js`.**
+* **Errors say which request.** Failures are `ApiError`s with `status`, `method`, `path` and `kind`
+  (`http` / `network` / `timeout` / `parse`), and the message ends `(HTTP 409 POST /api/swap)`. Branch on
+  `err.status`, never on message text. A caller's own abort stays an `AbortError`: it is not a failure.
+* **Failures are not swallowed.** A `.catch(() => {})` around a backend call becomes
+  `.catch(logFailure('Saving settings'))` (`src/failureLog.js`): each distinct failure is reported once to the
+  console and, unless `{ toast: false }` (a background poll the app already shows another way), as a toast,
+  at most two per 30 s. Aborts are never reported. Empty catches around *browser* APIs (`localStorage`,
+  `video.play()`, `ws.close()`, pointer capture) stay silent on purpose; the browser refusing is their expected path.
+* **Requests end with the component that made them.** `const { getJSON, postJSON } = useApi()` binds the calls to
+  the component's lifetime: its GETs, and any POST that only computes something (`abortOnUnmount: true`: a preview,
+  an estimate), are aborted on unmount. Mutations and uploads are not: aborting a POST does not undo it, it only
+  hides whether it happened. Dependency arrays that use these functions list them; the object is stable.
+
 ## Develop
 
 ```bash
@@ -88,6 +111,7 @@ npm run lint       # oxlint: react hooks, exhaustive-deps and jsx-a11y are error
 ```bash
 npm run check      # lint + lint:unreachable + build + e2e + every .render-check script
 npm run lint:unreachable
+npm run lint:api-timeouts    # every API call states its deadline (see "Requests")
 npm run test:e2e   # Playwright + axe only (needs a fresh `npm run build`)
 npm run test:render-checks   # node-only checks of real components and pure modules
 npm run test:e2e:baseline    # re-record e2e/allowlist.json
@@ -109,6 +133,7 @@ real backend. The suite refuses to run if `dist/` is missing or older than `src/
 | `nav-visibility.spec.js` | at 1024 / 1280 / 1440 / 1920: no tab clipped, header on one row, icon-only below 1280, every tab visible or one click under More, keyboard use of More, hash + Back, zoom, tooltips, axe with More open, and a run in flight |
 | `faceswap-layout.spec.js` | Face Swap at 1440: no truncated slider label, no body text under 12px, range inputs >= 24px, one Start control (with the reason it is disabled), the dock covers nothing |
 | `error-boundary.spec.js` | a lazy tab chunk that fails to download is contained to its panel; Retry, and coming back to the tab, recover it |
+| `api-client.spec.js` | a failed settings save is reported once with its status and path; a request is cancelled (`ERR_ABORTED`) when its tab unmounts; a hung GET is cut off at the 15 s default (fake clock) |
 | `idle-requests.spec.js` | idle Face Swap with a failing preview: <= 6 stage-frame requests in 30 s; valid preview: 0 |
 | `frame-unavailable.spec.js` | after the retries are spent the stage says "Frame unavailable - Retry", stops asking, and Retry recovers |
 | `idle-cpu.spec.js` | idle CPU with a failing preview is within 2x of the valid-frame case |
@@ -117,7 +142,8 @@ real backend. The suite refuses to run if `dist/` is missing or older than `src/
 
 `.render-check/*.mjs` (run by `test:render-checks`, plain Node, Vite's SSR pipeline) execute real components and
 pure modules: the Processing tab against payloads recorded from a real render, face mapping, Batch Matrix
-strategies, the player, recognition sync, frame-request retry policy and the error boundary. `scripts/` holds
+strategies, the player, recognition sync, frame-request retry policy, the error boundary and the API client
+(deadlines, `ApiError`, the failure log, unmount aborts). `scripts/` holds
 one-off verifiers (layout leak audit, backend-served-UI and telemetry end-to-end against a *live* backend);
 they are not part of `check`.
 

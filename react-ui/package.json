@@ -11,6 +11,7 @@
     "build": "vite build",
     "lint": "oxlint",
     "lint:unreachable": "node scripts/unreachable-modules.mjs",
+    "lint:api-timeouts": "node scripts/api-callsites.mjs",
     "test:render": "node .render-check/run.mjs",
     "test:mapping": "node .render-check/face-mapping-check.mjs",
     "test:stage14": "node .render-check/stage14-async-check.mjs",
@@ -19,14 +20,15 @@
     "preview": "vite preview",
     "test:player": "node .render-check/player-check.mjs",
     "test:error-boundary": "node .render-check/error-boundary-check.mjs",
+    "test:api-client": "node .render-check/run-module.mjs render-api-client.mjs",
     "test:recognition": "node .render-check/recognition-sync-check.mjs",
     "test:retry-policy": "node .render-check/retry-policy-check.mjs",
-    "test:render-checks": "npm run test:render && npm run test:mapping && npm run test:stage14 && npm run test:batch && npm run test:render:mutations && npm run test:player && npm run test:error-boundary && npm run test:recognition && npm run test:retry-policy",
+    "test:render-checks": "npm run test:render && npm run test:mapping && npm run test:stage14 && npm run test:batch && npm run test:render:mutations && npm run test:player && npm run test:error-boundary && npm run test:api-client && npm run test:recognition && npm run test:retry-policy",
     "test:e2e": "playwright test -c e2e/playwright.config.js",
     "test:e2e:baseline": "node e2e/baseline.js",
     "test:e2e:themes": "node e2e/run-themes.js",
     "test:e2e:themes:baseline": "node e2e/run-themes.js --update",
-    "check": "npm run lint && npm run lint:unreachable && npm run build && npm run test:e2e && npm run test:render-checks"
+    "check": "npm run lint && npm run lint:unreachable && npm run lint:api-timeouts && npm run build && npm run test:e2e && npm run test:render-checks"
   },
   "dependencies": {
     "framer-motion": "^12.42.2",

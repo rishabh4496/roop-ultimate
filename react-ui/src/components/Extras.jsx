@@ -1,8 +1,10 @@
 import OutputVideoPlayer from './OutputVideoPlayer';
 import React, { useState, useEffect } from 'react';
-import { postFile, fileUrl, getJSON } from '../api';
+import { fileUrl } from '../api';
+import { useApi } from '../useApi';
 import { Section, Select, Slider, Button } from './ui';
 import { Icon } from '../icons';
+import { logFailure } from '../failureLog';
 
 const RESOLUTIONS = ['Original', '3840x', '2560x', '1920x', '1280x', '1024x', '640x'];
 const ROTATIONS = ['None', '90° Clockwise', '90° Counter-Clockwise', '180°'];
@@ -16,6 +18,7 @@ const OP_LABELS = {
 const OP_TITLES = { upscale: 'AI Upscale', colorize: 'Colorize (B&W → color)', filter: 'Stylize Filter' };
 
 export default function Extras({ notify, registerFileListener }) {
+  const { getJSON, postFile } = useApi();
   const [file, setFile] = useState(null);
   const [fileName, setFileName] = useState('');
   const [fileUrlSrc, setFileUrlSrc] = useState('');
@@ -32,8 +35,8 @@ export default function Extras({ notify, registerFileListener }) {
   const [enhResult, setEnhResult] = useState(null);
 
   useEffect(() => {
-    getJSON('/api/extras/frame_ops').then(setFrameOps).catch(() => {});
-  }, []);
+    getJSON('/api/extras/frame_ops').then(setFrameOps).catch(logFailure('Loading the frame post-processors'));
+  }, [getJSON]);
 
   // Keep subtype valid whenever the operation changes.
   /* eslint-disable react-hooks/exhaustive-deps -- intentional: resync only when operation/frameOps change, not on every subtype edit */
@@ -49,7 +52,7 @@ export default function Extras({ notify, registerFileListener }) {
     setEnhBusy(true);
     setEnhResult(null);
     try {
-      const res = await postFile('/api/extras/enhance', file, { operation, subtype });
+      const res = await postFile('/api/extras/enhance', file, { operation, subtype }, { timeout: 0 });
       setEnhResult(res);
       notify('Done');
     } catch (e) { notify(e.message, 'error'); } finally { setEnhBusy(false); }
@@ -94,7 +97,7 @@ export default function Extras({ notify, registerFileListener }) {
     if (!file) { notify('Pick a file first', 'error'); return; }
     setBusy(true);
     try {
-      const res = await postFile('/api/extras/apply', file, opts);
+      const res = await postFile('/api/extras/apply', file, opts, { timeout: 0 });
       setResult(res); notify('Done');
     } catch (e) { notify(e.message, 'error'); } finally { setBusy(false); }
   };

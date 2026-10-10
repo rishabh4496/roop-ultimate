@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { postJSON } from '../../api';
+import { useApi } from '../../useApi';
 
 // ── Clip advisor ──────────────────────────────────────────────────────────
 // Samples the selected target (face sizes, count, detection coverage, motion,
@@ -31,6 +31,7 @@ export const fmtAdviceVal = (v) => (v === true ? 'On' : v === false ? 'Off' : St
  * @param set         (key, value) writer used when applying a recommendation
  */
 export default function useClipAdvisor({ targets, selTarget, settings, set, notify }) {
+  const { postJSON } = useApi();
   const [advice, setAdvice] = useState(null);
   const [advisorBusy, setAdvisorBusy] = useState(false);
 
@@ -39,7 +40,7 @@ export default function useClipAdvisor({ targets, selTarget, settings, set, noti
     setAdvisorBusy(true);
     setAdvice(null);
     try {
-      const res = await postJSON('/api/advisor', { index: selTarget, settings });
+      const res = await postJSON('/api/advisor', { index: selTarget, settings }, { abortOnUnmount: true, timeout: 0 });
       setAdvice(res);
       if (res.recommendations?.length === 0 && !res.message) notify('Settings already fit this clip ✓');
     } catch (e) { notify(e.message, 'error'); } finally { setAdvisorBusy(false); }

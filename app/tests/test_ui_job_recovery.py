@@ -109,7 +109,9 @@ class RecoveryPollsOnMountAndSurvivesAnOldBackend(unittest.TestCase):
         block = src[src.index('legacyRef.current = true'):]
         self.assertIn("getJSON('/api/progress'", src)
         guard = src[src.index('} catch (e) {'):src.index('legacyRef.current = true')]
-        self.assertIn('404|not found', guard)
+        # The status itself (ApiError.status), not a regex over the message: the message now
+        # ends with "(HTTP <status> <METHOD> <path>)", and text matching was always fragile.
+        self.assertIn('e?.status !== 404', guard)
         self.assertIn('throw e', guard)
         self.assertTrue(block)
 

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { getJSON } from '../api';
+import { useApi } from '../useApi';
 
 // Startup model check (app/roop/model_integrity.py via GET /api/models/integrity).
 //
@@ -19,6 +19,7 @@ const STATUS_LABEL = {
 const mb = (bytes) => `${((bytes || 0) / 1048576).toFixed(1)} MB`;
 
 export default function ModelSplash() {
+  const { getJSON } = useApi();
   const [state, setState] = useState(null);
   const [dismissed, setDismissed] = useState(false);
 
@@ -42,7 +43,7 @@ export default function ModelSplash() {
     };
     poll();
     return () => { alive = false; clearTimeout(timer); };
-  }, []);
+  }, [getJSON]);
 
   if (!state) return null;
 

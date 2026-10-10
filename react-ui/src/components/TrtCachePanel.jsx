@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { getJSON, postJSON } from '../api';
+import { useApi } from '../useApi';
 import { Button } from './ui';
 import { confirmDialog } from './confirm';
 
@@ -21,6 +21,7 @@ const KIND = {
 };
 
 export default function TrtCachePanel({ notify }) {
+  const { getJSON, postJSON } = useApi();
   const [data, setData] = useState(null);
   const [busy, setBusy] = useState('');
 
@@ -30,7 +31,7 @@ export default function TrtCachePanel({ notify }) {
     } catch (e) {
       notify?.(`TensorRT cache: ${e.message || e}`, 'error');
     }
-  }, [notify]);
+  }, [notify, getJSON]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -46,7 +47,7 @@ export default function TrtCachePanel({ notify }) {
     if (!ok) return;
     setBusy(scope);
     try {
-      const res = await postJSON('/api/trt_cache/clear', { scope });
+      const res = await postJSON('/api/trt_cache/clear', { scope }, { timeout: 0 });
       notify?.(`Freed ${res.freed_mb} MB${res.failed?.length ? `, ${res.failed.length} in use (retry after a restart)` : ''}`, 'success');
       setData(res.after);
     } catch (e) {

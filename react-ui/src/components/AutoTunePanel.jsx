@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { getJSON, postJSON } from '../api';
+import { timeoutFor } from '../api';
+import { useApi } from '../useApi';
 import { Button } from './ui';
+import { reportFailure } from '../failureLog';
 
 // Auto-tune: replays the LAST render on a short stretch of its own target and
 // measures provider x cross-frame swap batch, then NVENC presets. Screening
@@ -12,6 +14,7 @@ import { Button } from './ui';
 const pct = (v) => (v == null ? '–' : `${v > 0 ? '+' : ''}${v}%`);
 
 export default function AutoTunePanel({ notify, onSettingsApplied }) {
+  const { getJSON, postJSON } = useApi();
   const [status, setStatus] = useState(null);
   const [busy, setBusy] = useState('');
   const poll = useRef(null);
@@ -24,10 +27,11 @@ export default function AutoTunePanel({ notify, onSettingsApplied }) {
       const running = !!s?.progress?.running;
       if (wasRunning.current && !running) onSettingsApplied?.();
       wasRunning.current = running;
-    } catch {
+    } catch (err) {
+      reportFailure('Polling auto-tune status', err, { toast: false });
       // backend restarting; the next poll retries
     }
-  }, [onSettingsApplied]);
+  }, [onSettingsApplied, getJSON]);
 
   useEffect(() => {
     load();
@@ -38,7 +42,7 @@ export default function AutoTunePanel({ notify, onSettingsApplied }) {
   const act = async (what, path) => {
     setBusy(what);
     try {
-      const res = await postJSON(path, {});
+      const res = await postJSON(path, {}, { timeout: timeoutFor('POST', path) });
       if (what === 'revert') notify?.('Restored the settings auto-tune replaced', 'success');
       if (what === 'start') notify?.(`Auto-tune started: baseline ${res.baseline}, ${res.threads} workers`, 'info');
       load();

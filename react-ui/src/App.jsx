@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback, useRef, useMemo, Suspense } from 'react';
-import { getJSON, postJSON } from './api';
+import { getJSON, postJSON, timeoutFor } from './api';
+import { logFailure, reportFailure, setFailureToast } from './failureLog';
 import { Toasts, Confetti, MotionIcon } from './components/ui';
 import QualityProfilesModal, { BUILTIN_PROFILES } from './components/QualityProfilesModal';
 import CommandPalette from './components/CommandPalette';
@@ -159,6 +160,9 @@ export default function App() {
     setLiveMsg(`${type}: ${message}`);
     setTimeout(() => setToasts((ts) => ts.filter((t) => t.id !== id)), 4000);
   }, []);
+  // Failures that used to be swallowed (`.catch(() => {})`) report through failureLog;
+  // this is where its rate-limited toasts land.
+  useEffect(() => setFailureToast(notify), [notify]);
 
   // Every existing setTab call site goes through here, so navigation and the
   // URL cannot drift apart. `replace` is for the automatic switch into
@@ -248,7 +252,7 @@ export default function App() {
     }[action];
     if (optimistic) setProgress((pr) => ({ ...pr, ...optimistic }));
     try {
-      const result = await postJSON(`/api/${action}`, {});
+      const result = await postJSON(`/api/${action}`, {}, { timeout: timeoutFor('POST', `/api/${action}`) });
       const pauseState = result?.pause || {};
       if (action === 'pause') {
         setProgress((pr) => ({
@@ -375,7 +379,10 @@ export default function App() {
         const pr = await getJSON('/api/progress', { timeout: 5000 });
         mergeProgress(pr);
         reportNet(true);
-      } catch { /* still down */ }
+      } catch (e) {
+        // Still down. The offline banner already says so; keep a trace without a toast.
+        reportFailure('Checking the engine connection', e, { toast: false });
+      }
     }, 3000);
     return () => { if (beatRef.current) { clearInterval(beatRef.current); beatRef.current = null; } };
   }, [offline, reportNet, mergeProgress]);
@@ -647,7 +654,7 @@ export default function App() {
         ...(prev || {}),
         ...patch,
       }));
-      postJSON('/api/settings', patch).catch(() => {});
+      postJSON('/api/settings', patch).catch(logFailure('Saving the loaded profile'));
       notify(`Loaded Profile: ${label || profileId}`, 'success');
     }
   }, [notify]);
@@ -727,7 +734,7 @@ export default function App() {
     // like it did nothing.
     const patch = { selected_theme: name, theme_follow_system: false };
     setSettings((s) => ({ ...(s || {}), ...patch }));
-    postJSON('/api/settings', patch).catch(() => {});
+    postJSON('/api/settings', patch).catch(logFailure('Saving the theme'));
   }, []);
 
   // Faceswap-tab actions are decoupled via a window event bus so the palette
@@ -961,7 +968,10 @@ export default function App() {
         const pr = await getJSON('/api/progress', { timeout: 8000 });
         mergeProgress(pr);
         if (pr.processing) startPolling();
-      } catch { /* progress is non-critical for boot */ }
+      } catch (e) {
+        // Progress is non-critical for boot, so no toast; but do not lose the reason.
+        reportFailure('Loading run progress', e, { toast: false });
+      }
     } catch (e) {
       // Say what actually failed. This used to read "Cannot reach backend on
       // 127.0.0.1:8001" unconditionally, and both halves of that were wrong:
@@ -1032,7 +1042,9 @@ export default function App() {
     if (!body) return;
     settingsDirtyRef.current = null;
     if (settingsSaveRef.current) { clearTimeout(settingsSaveRef.current); settingsSaveRef.current = null; }
-    postJSON('/api/settings', body, { keepalive }).catch(() => { /* offline — persists on next edit/run */ });
+    // Offline, this fails and the change is re-sent with the next edit or run; the failure
+    // is reported once (not per keystroke) so the user knows their edit is not saved yet.
+    postJSON('/api/settings', body, { keepalive }).catch(logFailure('Saving settings'));
   }, []);
   useEffect(() => {
     if (!settings) return;
@@ -1139,7 +1151,7 @@ export default function App() {
                     type="button"
                     onClick={(e) => {
                       e.stopPropagation();
-                      runControl('resume').catch(() => {});
+                      runControl('resume').catch(logFailure('Resuming the job', { toast: false }));
                     }}
                     disabled={stopping || controlBusy === 'resume'}
                     className="grid place-items-center hover:text-white text-white/60 transition-colors cursor-pointer"
@@ -1153,7 +1165,7 @@ export default function App() {
                     disabled={progress.pause_requested || stopping || controlBusy === 'pause' || controlBusy === 'resume'}
                     onClick={(e) => {
                       e.stopPropagation();
-                      runControl('pause').catch(() => {});
+                      runControl('pause').catch(logFailure('Pausing the job', { toast: false }));
                     }}
                     className="grid place-items-center hover:text-white text-white/60 transition-colors cursor-pointer"
                     title={progress.pause_requested ? 'Pause requested' : 'Pause Job'} aria-label={progress.pause_requested ? 'Pause requested' : 'Pause job'}
@@ -1166,7 +1178,7 @@ export default function App() {
                   onClick={async (e) => {
                     e.stopPropagation();
                     if (await confirmDialog({ title: 'Stop job?', message: 'Stop the active job? The partial output so far is finalized and kept.', confirmLabel: 'Stop', danger: true })) {
-                      runControl('stop').catch(() => {});
+                      runControl('stop').catch(logFailure('Stopping the job', { toast: false }));
                     }
                   }}
                   disabled={stopping}

@@ -9,7 +9,8 @@
 // table); frames it did not sample fall back to the nearest scanned frame, then
 // to the face's own keypoints.
 import React, { useCallback, useEffect, useState } from 'react';
-import { getJSON, postJSON } from '../../api.js';
+import { timeoutFor } from '../../api.js';
+import { useApi } from '../../useApi.js';
 
 interface PortfolioSummary {
   bins: Record<string, { face_index: number; yaw: number; pitch_up: number; score: number }>;
@@ -44,6 +45,7 @@ export interface SourceRoutingPanelProps {
 }
 
 export default function SourceRoutingPanel({ sourceIndex, sourceLabel, refreshKey }: SourceRoutingPanelProps) {
+  const { getJSON, postJSON } = useApi();
   const [status, setStatus] = useState<StatusResponse | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -57,7 +59,7 @@ export default function SourceRoutingPanel({ sourceIndex, sourceLabel, refreshKe
       setStatus(null);
       setError(errorOf(err));
     }
-  }, [sourceIndex]);
+  }, [sourceIndex, getJSON]);
 
   useEffect(() => { void refresh(); }, [refresh, refreshKey]);
 
@@ -65,7 +67,7 @@ export default function SourceRoutingPanel({ sourceIndex, sourceLabel, refreshKe
     if (sourceIndex == null) return;
     setBusy(true);
     try {
-      setStatus(await postJSON(path, { source_index: sourceIndex }));
+      setStatus(await postJSON(path, { source_index: sourceIndex }, { timeout: timeoutFor('POST', path) }));
       setError(null);
     } catch (err) {
       setError(errorOf(err));
