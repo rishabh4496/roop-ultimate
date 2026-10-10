@@ -47,7 +47,7 @@ def _stats(v):
     v = np.asarray([x for x in v if np.isfinite(x)], np.float64)
     if not len(v):
         return {}
-    return {"n": int(len(v)), "min": float(v.min()), "p5": float(np.percentile(v, 5)), "median": float(np.median(v)),
+    return {"n": int(len(v)), "min": float(v.min()), "mean": float(v.mean()), "p5": float(np.percentile(v, 5)), "median": float(np.median(v)),
             "p95": float(np.percentile(v, 95)), "max": float(v.max())}
 
 
@@ -80,10 +80,10 @@ def main():
         crop = ac._shape_hw(mixed[stem])[0]
         for arm, sess in (("mixed", mixed[stem]), ("trt32", t32)):
             cases = {}
-            for (kind, seed), feed in zip(ac._CASES, feeds):
+            for (kind, seed), feed in zip(ac._cases(stem), feeds):
                 got = sess.run(None, feed)[0]
                 want = ref.run(None, feed)[0]
-                cases["%s%d" % (kind, seed)] = ac.compare(stem, got, want, crop)
+                cases["%s#%d" % (kind, seed)] = ac.compare(stem, got, want, crop)
             rec["canary_synth"][arm] = cases
         out["models"][stem] = rec
         print("[calib] %-10s done" % stem, flush=True)
@@ -200,5 +200,61 @@ def shipped():
     return 0
 
 
+def enhancers():
+    """Calibrate the face-restorer canary (kind "image"): shipped mixed engine vs the FP32 reference, on real FFHQ crops and on the
+    canary's own synthetic inputs, beside wrong-picture controls (another face's output, a grey output, a smeared output)."""
+    fid._init_pipeline()
+    import cv2
+    import onnxruntime
+    import roop.globals as g
+    from roop import aux_canary as ac, precision_policy as pp
+    from roop.utilities import get_onnx_session_options
+    sys.path.insert(0, os.path.join(REPO, "tools"))
+    import bench_restorer_batch as brb
+    crops = brb.collect_crops(32, cache=os.path.join(APP, "output", "restorer_fp16", "crops.npz"))
+    out = {"date": time.strftime("%Y-%m-%d %H:%M"), "models": {}}
+    for stem, key, size in (("restoreformer_plus_plus", "restoreformer_pp", 512),):
+        path = os.path.join(APP, "models", {"restoreformer_plus_plus": "restoreformer_plus_plus.onnx",
+                                            "gpen-bfr-512": "GPEN-BFR-512.onnx", "gpen_bfr_256": "gpen_bfr_256.onnx"}[stem])
+        spec = ac.SPECS[stem]
+        prov = pp.providers_for(key, g.execution_providers, path)[0]
+        live = onnxruntime.InferenceSession(path, get_onnx_session_options(), providers=prov)
+        if live.get_providers()[0] != "TensorrtExecutionProvider":
+            raise SystemExit("%s is not on TensorRT (%s)" % (stem, live.get_providers()))
+        ref = ac._reference_session(path, spec.ref_cpu)
+        name = live.get_inputs()[0].name
+        first = lambda s_: [s_.get_outputs()[0].name]
+        xs = np.stack([((cv2.resize(c, (size, size), interpolation=cv2.INTER_AREA)[..., ::-1].astype(np.float32) / 127.5) - 1.0)
+                       .transpose(2, 0, 1) for c in crops]).astype(np.float32)
+        lo = [live.run(first(live), {name: xs[i:i + 1]})[0] for i in range(len(xs))]
+        ro = [ref.run(first(ref), {name: xs[i:i + 1]})[0] for i in range(len(xs))]
+        rec = {"size": size, "providers": live.get_providers()[0], "fp16": (live.get_provider_options().get("TensorrtExecutionProvider") or {}).get("trt_fp16_enable"),
+               "floor": dict(spec.floors)}
+        rec["good_real"] = _stats([ac.compare(stem, a, b)["ssim"] for a, b in zip(lo, ro)])
+        feeds = ac.build_feeds(stem, live)
+        rec["canary_synth"] = {"%s#%d" % k: ac.compare(stem, live.run(first(live), f)[0], ref.run(first(ref), f)[0])["ssim"]
+                               for k, f in zip(ac._cases(stem), feeds)}
+        n = len(ro)
+        rec["wrong_other_face"] = _stats([ac.compare(stem, ro[(i + 7) % n], ro[i])["ssim"] for i in range(n)])
+        rec["wrong_grey"] = _stats([ac.compare(stem, np.zeros_like(ro[i]), ro[i])["ssim"] for i in range(n)])
+        rec["wrong_smear"] = _stats([ac.compare(stem, cv2.GaussianBlur(ro[i][0].transpose(1, 2, 0), (0, 0), 5).transpose(2, 0, 1)[None], ro[i])["ssim"]
+                                     for i in range(n)])
+        # the synthetic inputs are what the canary really runs: the same wrong-picture controls on THEM
+        sy_ref = [ref.run(first(ref), f)[0] for f in feeds]
+        rec["wrong_on_synth"] = {
+            "grey": [ac.compare(stem, np.zeros_like(r), r)["ssim"] for r in sy_ref],
+            "smear": [ac.compare(stem, cv2.GaussianBlur(r[0].transpose(1, 2, 0), (0, 0), 5).transpose(2, 0, 1)[None], r)["ssim"] for r in sy_ref],
+            "other_case": [ac.compare(stem, sy_ref[1], sy_ref[0])["ssim"], ac.compare(stem, sy_ref[0], sy_ref[1])["ssim"]]}
+        out["models"][stem] = rec
+        print("[enh] %-24s good real min %.5f mean %.5f | synth %s | wrong: other-face p95 %.3f grey %.3f smear p95 %.3f" % (
+            stem, rec["good_real"]["min"], rec["good_real"]["mean"], {k: round(v, 5) for k, v in rec["canary_synth"].items()},
+            rec["wrong_other_face"]["p95"], rec["wrong_grey"]["max"], rec["wrong_smear"]["p95"]), flush=True)
+        del live, ref
+    path = os.path.join(REPO, "docs", "perf", "aux_canary_enhancer_calibration.json")
+    json.dump(out, open(path, "w"), indent=1)
+    print("wrote", path)
+    return 0
+
+
 if __name__ == "__main__":
-    sys.exit(shipped() if MODE == "shipped" else main())
+    sys.exit(shipped() if MODE == "shipped" else (enhancers() if MODE == "enhancers" else main()))

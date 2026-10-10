@@ -1,4 +1,5 @@
 from typing import Any, List, Callable
+import os
 import threading
 import cv2 
 import numpy as np
@@ -50,16 +51,42 @@ class Enhance_RestoreFormerPPlus():
             session_providers, _precision = providers_for(
                 'restoreformer_pp', roop.globals.execution_providers, model_path)
 
+            # Experimental, opt-in: run a natively built TensorRT engine (per-layer FP32 islands; see
+            # tools/restorer_native_engine.py and docs/perf/restorer_fp16_islands_2026-10-10.md). The ORT TensorRT
+            # provider cannot express a per-layer precision, so this is the only way an island reaches a render.
+            native_engine = os.environ.get('ROOP_RESTORER_NATIVE_ENGINE', '').strip()
+
+            def _bind(sess):
+                iob = sess.io_binding()
+                iob.bind_output(sess.get_outputs()[0].name, self.devicename)
+                return (sess, iob)
+
             def _build(_i=0):
                 sess = onnxruntime.InferenceSession(model_path, opts, providers=session_providers)
                 baseline_probe.log_session('enhancer:restoreformer++', sess,
                                            session_providers, model_file=model_path)
-                outs = sess.get_outputs()
-                iob = sess.io_binding()
-                iob.bind_output(outs[0].name, self.devicename)
-                return (sess, iob)
+                return _bind(sess)
+
+            if native_engine:
+                def _build(_i=0):       # noqa: F811 - the opt-in native engine replaces the ORT builder, pool extras included
+                    from roop.trt_native_runner import NativeSession
+                    sess = NativeSession(native_engine)
+                    print('[Session] enhancer:restoreformer++ file=%s provider=TensorrtNativeEngine trt_fp16=islands '
+                          'input=input:1x3x512x512' % os.path.basename(native_engine), flush=True)
+                    return (sess, sess.io_binding())
 
             self.model_restoreformerpplus, self.io_binding = _build()
+            if not native_engine:
+                # Startup canary (roop/aux_canary.py): two fixed inputs through the live engine and a one-off FP32 reference,
+                # SSIM floor 0.98, verdict cached by engine hash. A TensorRT engine that builds, runs at speed and smears the
+                # face passes every other check. On failure the restorer is rebuilt on TensorRT FP32, then CUDA/CPU;
+                # `session_providers` is rebound so the pool extras below are built on whatever the primary now runs on.
+                from roop import aux_canary
+                _guarded, session_providers, _verdict = aux_canary.guard(
+                    'restoreformer_plus_plus', self.model_restoreformerpplus, model_path, session_providers,
+                    lambda chain: onnxruntime.InferenceSession(model_path, opts, providers=chain))
+                if _guarded is not self.model_restoreformerpplus:
+                    self.model_restoreformerpplus, self.io_binding = _bind(_guarded)
             self.model_inputs = self.model_restoreformerpplus.get_inputs()
             self._lut = ((np.arange(256, dtype=np.float32) / 127.5) - 1.0)
 

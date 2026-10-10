@@ -1,0 +1,14 @@
+{
+ "name": "native_fp32",
+ "model": "G:\\pinokio\\api\\roop-ultimate\\app\\output\\restorer_fp16\\restoreformer_single_output.onnx",
+ "fp16": false,
+ "fp32_ops": [],
+ "fp32_modules": [],
+ "constrained_layers": 0,
+ "failed_layers": [],
+ "n_failed": 0,
+ "build_seconds": 26.6,
+ "engine_bytes": 497863716,
+ "tensorrt": "10.9.0.34",
+ "constrained_names_sample": []
+}

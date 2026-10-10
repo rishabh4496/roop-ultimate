@@ -1,0 +1,97 @@
+{
+  "gpu": "NVIDIA GeForce RTX 4070",
+  "crops": 32,
+  "reference": "ORT CPU FP32",
+  "arms": {
+    "ort:mixed": {
+      "ssim_mean": 0.9974730757120588,
+      "ssim_min": 0.9948329698988403,
+      "mae_levels": 0.3227841487656684,
+      "psnr_mean": 52.37473215169128,
+      "psnr_min": 41.6281497263897,
+      "identity_cos_mean": 0.9993177000433207,
+      "identity_cos_min": 0.9981160759925842,
+      "identity_delta_mean": 0.0006822999566793442,
+      "nonfinite_outputs": 0,
+      "ms_per_face": 21.61842000023171,
+      "ms_rounds": [
+        21.539,
+        21.665,
+        21.618
+      ],
+      "speed_vs_ort:mixed": 1.0
+    },
+    "ort:mixed@G:/pinokio/api/roop-ultimate/app/output/restorer_fp16/variants/v_orig_exact.onnx": {
+      "ssim_mean": 0.9966435363747946,
+      "ssim_min": 0.9925543898082893,
+      "mae_levels": 0.4291580943249611,
+      "psnr_mean": 50.66923295677932,
+      "psnr_min": 41.39628517079255,
+      "identity_cos_mean": 0.9990992527455091,
+      "identity_cos_min": 0.9977545142173767,
+      "identity_delta_mean": 0.0009007472544908524,
+      "nonfinite_outputs": 0,
+      "ms_per_face": 23.056820000056177,
+      "ms_rounds": [
+        22.898,
+        23.077,
+        23.057
+      ],
+      "speed_vs_ort:mixed": 0.9376149876773568
+    },
+    "ort:mixed@G:/pinokio/api/roop-ultimate/app/output/restorer_fp16/variants/v_quant_only.onnx": {
+      "ssim_mean": 0.9967779880549014,
+      "ssim_min": 0.9934166141812828,
+      "mae_levels": 0.4278181003607452,
+      "psnr_mean": 50.87877290510484,
+      "psnr_min": 38.586895712387395,
+      "identity_cos_mean": 0.999165553599596,
+      "identity_cos_min": 0.9976852536201477,
+      "identity_delta_mean": 0.0008344464004039764,
+      "nonfinite_outputs": 0,
+      "ms_per_face": 22.10879250014841,
+      "ms_rounds": [
+        21.993,
+        22.109,
+        22.131
+      ],
+      "speed_vs_ort:mixed": 0.9778200234176783
+    },
+    "ort:mixed@G:/pinokio/api/roop-ultimate/app/output/restorer_fp16/variants/v_enc_only.onnx": {
+      "ssim_mean": 0.9965744248597619,
+      "ssim_min": 0.9921084681477977,
+      "mae_levels": 0.48061497009303167,
+      "psnr_mean": 50.589456919008754,
+      "psnr_min": 37.31838197222163,
+      "identity_cos_mean": 0.9990916382521391,
+      "identity_cos_min": 0.9968035817146301,
+      "identity_delta_mean": 0.0009083617478609085,
+      "nonfinite_outputs": 0,
+      "ms_per_face": 23.21994249978161,
+      "ms_rounds": [
+        23.137,
+        23.275,
+        23.22
+      ],
+      "speed_vs_ort:mixed": 0.9310281453296034
+    },
+    "ort:mixed@G:/pinokio/api/roop-ultimate/app/output/restorer_fp16/variants/v_orig_plus_dec_adds.onnx": {
+      "ssim_mean": 0.9963655990103257,
+      "ssim_min": 0.9921638678107487,
+      "mae_levels": 0.4761469607658512,
+      "psnr_mean": 50.42418846662426,
+      "psnr_min": 38.481272278819134,
+      "identity_cos_mean": 0.9990438129752874,
+      "identity_cos_min": 0.9971047043800354,
+      "identity_delta_mean": 0.0009561870247125626,
+      "nonfinite_outputs": 0,
+      "ms_per_face": 28.65308250002272,
+      "ms_rounds": [
+        28.643,
+        28.71,
+        28.653
+      ],
+      "speed_vs_ort:mixed": 0.7544884568777047
+    }
+  }
+}

@@ -1,0 +1,30 @@
+{
+ "name": "isl_nonconv",
+ "model": "G:\\pinokio\\api\\roop-ultimate\\app\\output\\restorer_fp16\\restoreformer_single_output.onnx",
+ "fp16": true,
+ "fp32_ops": [],
+ "fp32_except_ops": [
+  "Conv"
+ ],
+ "fp32_modules": [],
+ "constrained_layers": 1356,
+ "failed_layers": [],
+ "n_failed": 0,
+ "build_seconds": 22.6,
+ "engine_bytes": 179435668,
+ "tensorrt": "10.9.0.34",
+ "constrained_names_sample": [
+  "/encoder/block.0/norm1/Reshape",
+  "ONNXTRT_unsqueezeTensor",
+  "ONNXTRT_unsqueezeTensor_1",
+  "/encoder/block.0/norm1/InstanceNormalization",
+  "/encoder/block.0/norm1/Reshape_1",
+  "/encoder/block.0/norm1/Unsqueeze",
+  "ONNXTRT_Broadcast",
+  "/encoder/block.0/norm1/Mul",
+  "/encoder/block.0/norm1/Unsqueeze_1",
+  "ONNXTRT_Broadcast_5",
+  "/encoder/block.0/norm1/Add",
+  "/encoder/block.0/Sigmoid"
+ ]
+}

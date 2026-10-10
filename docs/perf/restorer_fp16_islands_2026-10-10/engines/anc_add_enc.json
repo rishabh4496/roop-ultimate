@@ -1,0 +1,26 @@
+{
+ "name": "anc_add_enc",
+ "model": "G:\\pinokio\\api\\roop-ultimate\\app\\output\\restorer_fp16\\restoreformer_single_output.onnx",
+ "fp16": true,
+ "fp32_ops": [],
+ "fp32_except_ops": [],
+ "fp32_modules": [],
+ "primary_output": "2701",
+ "anchors": 49,
+ "anchors_missing": 0,
+ "anchor_sample": [
+  "/encoder/block.0/norm1/Add_output_0",
+  "/encoder/block.0/norm2/Add_output_0",
+  "/encoder/block.0/Add_output_0",
+  "/encoder/block.1/norm1/Add_output_0",
+  "/encoder/block.1/norm2/Add_output_0",
+  "onnx::Pad_508"
+ ],
+ "constrained_layers": 0,
+ "failed_layers": [],
+ "n_failed": 0,
+ "build_seconds": 12.4,
+ "engine_bytes": 159149700,
+ "tensorrt": "10.9.0.34",
+ "constrained_names_sample": []
+}

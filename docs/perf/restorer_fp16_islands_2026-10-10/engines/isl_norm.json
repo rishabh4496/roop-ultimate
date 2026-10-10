@@ -1,0 +1,29 @@
+{
+ "name": "isl_norm",
+ "model": "G:\\pinokio\\api\\roop-ultimate\\app\\output\\restorer_fp16\\restoreformer_single_output.onnx",
+ "fp16": true,
+ "fp32_ops": [
+  "InstanceNormalization"
+ ],
+ "fp32_modules": [],
+ "constrained_layers": 87,
+ "failed_layers": [],
+ "n_failed": 0,
+ "build_seconds": 44.2,
+ "engine_bytes": 161534380,
+ "tensorrt": "10.9.0.34",
+ "constrained_names_sample": [
+  "/encoder/block.0/norm1/InstanceNormalization",
+  "/encoder/block.0/norm2/InstanceNormalization",
+  "/encoder/block.1/norm1/InstanceNormalization",
+  "/encoder/block.1/norm2/InstanceNormalization",
+  "/encoder/block.0/norm1_1/InstanceNormalization",
+  "/encoder/block.0/norm2_1/InstanceNormalization",
+  "/encoder/block.1/norm1_1/InstanceNormalization",
+  "/encoder/block.1/norm2_1/InstanceNormalization",
+  "/encoder/block.0/norm1_2/InstanceNormalization",
+  "/encoder/block.0/norm2_2/InstanceNormalization",
+  "/encoder/block.1/norm1_2/InstanceNormalization",
+  "/encoder/block.1/norm2_2/InstanceNormalization"
+ ]
+}

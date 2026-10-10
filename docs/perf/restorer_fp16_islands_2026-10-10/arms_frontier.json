@@ -1,0 +1,241 @@
+{
+  "gpu": "NVIDIA GeForce RTX 4070",
+  "crops": 32,
+  "reference": "ORT CPU FP32",
+  "arms": {
+    "ort:mixed": {
+      "ssim_mean": 0.9974730757120588,
+      "ssim_min": 0.9948329698988403,
+      "mae_levels": 0.3227841487656684,
+      "psnr_mean": 52.37473215169128,
+      "psnr_min": 41.6281497263897,
+      "identity_cos_mean": 0.9993177000433207,
+      "identity_cos_min": 0.9981160759925842,
+      "identity_delta_mean": 0.0006822999566793442,
+      "nonfinite_outputs": 0,
+      "ms_per_face": 21.751079999739886,
+      "ms_rounds": [
+        21.705,
+        21.751,
+        21.794
+      ],
+      "speed_vs_ort:mixed": 1.0
+    },
+    "ort:fp32": {
+      "ssim_mean": 0.9996619766190724,
+      "ssim_min": 0.9983106485238484,
+      "mae_levels": 0.03725144324508892,
+      "psnr_mean": 64.39755068104085,
+      "psnr_min": 52.49296274143504,
+      "identity_cos_mean": 0.9999157097190619,
+      "identity_cos_min": 0.9997349381446838,
+      "identity_delta_mean": 8.42902809381485e-05,
+      "nonfinite_outputs": 0,
+      "ms_per_face": 41.82350749979378,
+      "ms_rounds": [
+        41.724,
+        41.824,
+        41.917
+      ],
+      "speed_vs_ort:mixed": 0.5200682893429524
+    },
+    "native:native_fp16": {
+      "ssim_mean": 0.9965763460259376,
+      "ssim_min": 0.9943212551574261,
+      "mae_levels": 0.4051910649698671,
+      "psnr_mean": 50.75467874841749,
+      "psnr_min": 40.993346516938296,
+      "identity_cos_mean": 0.9991777576506138,
+      "identity_cos_min": 0.9982099533081055,
+      "identity_delta_mean": 0.0008222423493862152,
+      "nonfinite_outputs": 0,
+      "ms_per_face": 20.770132500183536,
+      "ms_rounds": [
+        20.747,
+        20.798,
+        20.77
+      ],
+      "speed_vs_ort:mixed": 1.0472287550186636
+    },
+    "native:isl_norm_attn": {
+      "ssim_mean": 0.9968716065729573,
+      "ssim_min": 0.9944945361375138,
+      "mae_levels": 0.3461422338759236,
+      "psnr_mean": 51.32618243974649,
+      "psnr_min": 47.27820069893993,
+      "identity_cos_mean": 0.9992111753672361,
+      "identity_cos_min": 0.998164176940918,
+      "identity_delta_mean": 0.0007888246327638626,
+      "nonfinite_outputs": 0,
+      "ms_per_face": 23.681505000058678,
+      "ms_rounds": [
+        23.64,
+        23.699,
+        23.682
+      ],
+      "speed_vs_ort:mixed": 0.918483854792421
+    },
+    "native:isl_dec_hi": {
+      "ssim_mean": 0.9971431272256523,
+      "ssim_min": 0.9925958492502136,
+      "mae_levels": 0.34328447148684504,
+      "psnr_mean": 51.80949838733535,
+      "psnr_min": 43.800824851835955,
+      "identity_cos_mean": 0.9992856848984957,
+      "identity_cos_min": 0.9976197481155396,
+      "identity_delta_mean": 0.0007143151015043259,
+      "nonfinite_outputs": 0,
+      "ms_per_face": 32.07609250021051,
+      "ms_rounds": [
+        32.0,
+        32.166,
+        32.076
+      ],
+      "speed_vs_ort:mixed": 0.6781087814732153
+    },
+    "native:isl_q_enclow": {
+      "ssim_mean": 0.9978540482290708,
+      "ssim_min": 0.9954173047395349,
+      "mae_levels": 0.27199281507684203,
+      "psnr_mean": 53.23984786760997,
+      "psnr_min": 44.10777819794477,
+      "identity_cos_mean": 0.999509846791625,
+      "identity_cos_min": 0.9988704323768616,
+      "identity_delta_mean": 0.0004901532083749771,
+      "nonfinite_outputs": 0,
+      "ms_per_face": 27.25938000003225,
+      "ms_rounds": [
+        27.254,
+        27.417,
+        27.259
+      ],
+      "speed_vs_ort:mixed": 0.7979301069838768
+    },
+    "native:isl_q_enchigh": {
+      "ssim_mean": 0.9978532399207227,
+      "ssim_min": 0.9960472270363252,
+      "mae_levels": 0.25464514831323104,
+      "psnr_mean": 53.25714327657738,
+      "psnr_min": 47.767799943559844,
+      "identity_cos_mean": 0.9994922634214163,
+      "identity_cos_min": 0.9988893270492554,
+      "identity_delta_mean": 0.0005077365785837173,
+      "nonfinite_outputs": 0,
+      "ms_per_face": 26.785722500062548,
+      "ms_rounds": [
+        26.786,
+        26.938,
+        26.784
+      ],
+      "speed_vs_ort:mixed": 0.8120400709627711
+    },
+    "native:isl_enc": {
+      "ssim_mean": 0.9972736932646642,
+      "ssim_min": 0.9950724081199508,
+      "mae_levels": 0.3053903836086753,
+      "psnr_mean": 52.12598804183355,
+      "psnr_min": 48.35956721530969,
+      "identity_cos_mean": 0.9993727970868349,
+      "identity_cos_min": 0.9984378218650818,
+      "identity_delta_mean": 0.0006272029131650925,
+      "nonfinite_outputs": 0,
+      "ms_per_face": 33.627427499959595,
+      "ms_rounds": [
+        33.549,
+        33.76,
+        33.627
+      ],
+      "speed_vs_ort:mixed": 0.6468255711729962
+    },
+    "native:isl_enc_quant": {
+      "ssim_mean": 0.9981565508514332,
+      "ssim_min": 0.9962255867362352,
+      "mae_levels": 0.2091322655992793,
+      "psnr_mean": 54.53532000008012,
+      "psnr_min": 49.93023084284146,
+      "identity_cos_mean": 0.9995523653924465,
+      "identity_cos_min": 0.9988855123519897,
+      "identity_delta_mean": 0.00044763460755348206,
+      "nonfinite_outputs": 0,
+      "ms_per_face": 31.601812499866355,
+      "ms_rounds": [
+        31.691,
+        31.602,
+        31.562
+      ],
+      "speed_vs_ort:mixed": 0.6882858380300773
+    },
+    "native:isl_enc_quant_declo": {
+      "ssim_mean": 0.9982823119035145,
+      "ssim_min": 0.9963596754998442,
+      "mae_levels": 0.19410549642758054,
+      "psnr_mean": 54.95157798941319,
+      "psnr_min": 50.385550792247635,
+      "identity_cos_mean": 0.9996091797947884,
+      "identity_cos_min": 0.9990037679672241,
+      "identity_delta_mean": 0.0003908202052116394,
+      "nonfinite_outputs": 0,
+      "ms_per_face": 38.91172250005184,
+      "ms_rounds": [
+        38.912,
+        38.979,
+        38.878
+      ],
+      "speed_vs_ort:mixed": 0.5589852775011671
+    },
+    "native:isl_allconv": {
+      "ssim_mean": 0.9977610233466419,
+      "ssim_min": 0.9951092291261047,
+      "mae_levels": 0.27942815459455805,
+      "psnr_mean": 53.01024688538549,
+      "psnr_min": 43.81988585515977,
+      "identity_cos_mean": 0.9994774684309959,
+      "identity_cos_min": 0.9986437559127808,
+      "identity_delta_mean": 0.0005225315690040588,
+      "nonfinite_outputs": 0,
+      "ms_per_face": 49.1316525000002,
+      "ms_rounds": [
+        49.08,
+        49.132,
+        49.167
+      ],
+      "speed_vs_ort:mixed": 0.44271012459309805
+    },
+    "native:isl_nonconv": {
+      "ssim_mean": 0.9975636294228056,
+      "ssim_min": 0.9941928660090164,
+      "mae_levels": 0.28502097057325193,
+      "psnr_mean": 52.744607306619386,
+      "psnr_min": 47.83034531142132,
+      "identity_cos_mean": 0.9993825294077396,
+      "identity_cos_min": 0.9977758526802063,
+      "identity_delta_mean": 0.0006174705922603607,
+      "nonfinite_outputs": 0,
+      "ms_per_face": 30.333347499981755,
+      "ms_rounds": [
+        30.385,
+        30.333,
+        30.304
+      ],
+      "speed_vs_ort:mixed": 0.7170682365259214
+    },
+    "native:native_fp32": {
+      "ssim_mean": 0.9996487059593557,
+      "ssim_min": 0.9983283242337502,
+      "mae_levels": 0.03851816496130492,
+      "psnr_mean": 64.02009318684189,
+      "psnr_min": 52.43581839893055,
+      "identity_cos_mean": 0.9999155476689339,
+      "identity_cos_min": 0.9997298717498779,
+      "identity_delta_mean": 8.445233106613159e-05,
+      "nonfinite_outputs": 0,
+      "ms_per_face": 41.79547999992792,
+      "ms_rounds": [
+        41.782,
+        41.825,
+        41.795
+      ],
+      "speed_vs_ort:mixed": 0.52041704030621
+    }
+  }
+}

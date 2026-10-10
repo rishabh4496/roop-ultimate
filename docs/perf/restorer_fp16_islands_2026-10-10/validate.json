@@ -1,0 +1,50 @@
+{
+ "n_nodes": 2255,
+ "n_modules": 274,
+ "ops_in_modules": {
+  "Conv": 130,
+  "Sigmoid": 70,
+  "Reshape": 216,
+  "Mul": 170,
+  "InstanceNormalization": 87,
+  "Unsqueeze": 174,
+  "Add": 135,
+  "Concat": 5,
+  "Resize": 5,
+  "Pad": 5,
+  "Transpose": 43,
+  "MatMul": 22,
+  "Softmax": 10,
+  "Pow": 4,
+  "ReduceSum": 3,
+  "Sub": 4,
+  "ConstantOfShape": 1,
+  "Cast": 2,
+  "Expand": 1,
+  "ScatterElements": 1,
+  "ReduceMean": 3,
+  "Log": 1,
+  "Neg": 1,
+  "Exp": 1
+ },
+ "null_control": {
+  "ssim_mean": 1.0,
+  "ssim_min": 1.0,
+  "mae_levels": 0.0,
+  "psnr_mean": 99.0,
+  "psnr_min": 99.0
+ },
+ "all_fp16_sim": {
+  "ssim_mean": 0.9984601379149046,
+  "ssim_min": 0.9951296074644158,
+  "mae_levels": 0.17960738077751434,
+  "psnr_mean": 55.37751594144268,
+  "psnr_min": 48.362868991508385,
+  "seconds": 74.37890481948853
+ },
+ "real_trt_fp16_vs_trt_fp32_reference": {
+  "ssim_mean": "0.996-0.997",
+  "ssim_min": "0.995-0.9957",
+  "source": "bench_restorer_batch.py header, 2026-10-03, 8 crops"
+ }
+}

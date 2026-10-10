@@ -7,6 +7,12 @@ folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22
 
 ## 2026-10-10
 
+- **RestoreFormer++ FP16 vs FP32 islands (`docs/perf/restorer_fp16_islands_2026-10-10.md`): target not reachable; shipped path unchanged; restorer canary added.** On 32 real crops (ORT CPU FP32 reference) the
+  FP16 restorer loses 0.0033 SSIM, spread over the encoder and the VQ codebook lookup - not softmax or norms (FP32 on all of them: 0.99658 -> 0.99669). The only engine to clear 0.998 keeps the
+  encoder + quantiser in FP32 (0.99816) at 31.6 ms vs 21.8 ms (69% speed); on the final composited face it recovers 0.0013 of a 0.010 SSIM loss (46.1 -> 46.5 dB, identity delta <= 0.0005). The
+  shipped engine's 0.9975 is a lucky build: twelve fresh FP16 builds score 0.9964-0.9969. `Enhance_RestoreFormerPPlus` (and Restore Ultra) now run the aux canary against a CPU FP32 reference (SSIM floor 0.96, cached by
+  engine hash, FP32 fallback); GPEN is deliberately not covered (its shipped TRT mixed engines sit at SSIM 0.84 from FP32 by design). New opt-in `ROOP_RESTORER_NATIVE_ENGINE` runs a native island engine.
+
 - **Per-model TensorRT precision; XSeg, 2d106det and 1k3d68 now build FP32 (`docs/perf/trt_per_model_precision_2026-10-10.md`). Output changes: the mask and the landmark-refined kps move
   toward the FP32 reference.** On 500 real faces (d4/d1/d6/Love/s7) the shipped `mixed` engines miss the gates earlier briefs set: XSeg IoU mean 0.9936, min 0.81, 6 faces < 0.95;
   2d106det up to 1.2 px; 1k3d68 mean 1.2 px with the refined kps at 0.94 px mean, 3.6 px p95 (10.5% of the inter-ocular distance). The FP32 engines land at the engine-to-engine floor

@@ -1,0 +1,40 @@
+{
+ "name": "isl_norm_attn",
+ "model": "G:\\pinokio\\api\\roop-ultimate\\app\\output\\restorer_fp16\\restoreformer_single_output.onnx",
+ "fp16": true,
+ "fp32_ops": [
+  "InstanceNormalization"
+ ],
+ "fp32_modules": [
+  "G:/pinokio/bin/miniforge/Library/encoder/attn.0",
+  "/encoder/attn.1",
+  "/encoder/attn_1",
+  "/decoder/attn_1",
+  "/decoder/attn.0",
+  "/decoder/attn.1",
+  "/decoder/attn.2",
+  "/decoder/attn.0_1",
+  "/decoder/attn.1_1",
+  "/decoder/attn.2_1"
+ ],
+ "constrained_layers": 336,
+ "failed_layers": [],
+ "n_failed": 0,
+ "build_seconds": 20.2,
+ "engine_bytes": 180921196,
+ "tensorrt": "10.9.0.34",
+ "constrained_names_sample": [
+  "/encoder/block.0/norm1/InstanceNormalization",
+  "/encoder/block.0/norm2/InstanceNormalization",
+  "/encoder/block.1/norm1/InstanceNormalization",
+  "/encoder/block.1/norm2/InstanceNormalization",
+  "/encoder/block.0/norm1_1/InstanceNormalization",
+  "/encoder/block.0/norm2_1/InstanceNormalization",
+  "/encoder/block.1/norm1_1/InstanceNormalization",
+  "/encoder/block.1/norm2_1/InstanceNormalization",
+  "/encoder/block.0/norm1_2/InstanceNormalization",
+  "/encoder/block.0/norm2_2/InstanceNormalization",
+  "/encoder/block.1/norm1_2/InstanceNormalization",
+  "/encoder/block.1/norm2_2/InstanceNormalization"
+ ]
+}

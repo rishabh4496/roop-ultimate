@@ -1,0 +1,61 @@
+{
+  "gpu": "NVIDIA GeForce RTX 4070",
+  "crops": 32,
+  "reference": "ORT CPU FP32",
+  "arms": {
+    "ort:mixed": {
+      "ssim_mean": 0.9974730757120588,
+      "ssim_min": 0.9948329698988403,
+      "mae_levels": 0.3227841487656684,
+      "psnr_mean": 52.37473215169128,
+      "psnr_min": 41.6281497263897,
+      "identity_cos_mean": 0.9993177000433207,
+      "identity_cos_min": 0.9981160759925842,
+      "identity_delta_mean": 0.0006822999566793442,
+      "nonfinite_outputs": 0,
+      "ms_per_face": 22.64719500017236,
+      "ms_rounds": [
+        24.972,
+        22.647,
+        22.219
+      ],
+      "speed_vs_ort:mixed": 1.0
+    },
+    "ort:mixed@G:/pinokio/api/roop-ultimate/app/output/restorer_fp16/restoreformer_single_output.onnx": {
+      "ssim_mean": 0.9967162866773416,
+      "ssim_min": 0.9931608412968436,
+      "mae_levels": 0.3661446434439293,
+      "psnr_mean": 51.066292546592365,
+      "psnr_min": 46.73288584233287,
+      "identity_cos_mean": 0.9991925787180662,
+      "identity_cos_min": 0.9977281093597412,
+      "identity_delta_mean": 0.0008074212819337845,
+      "nonfinite_outputs": 0,
+      "ms_per_face": 23.878849999891827,
+      "ms_rounds": [
+        24.7,
+        23.879,
+        23.136
+      ],
+      "speed_vs_ort:mixed": 0.9484206735364121
+    },
+    "native:native_fp16": {
+      "ssim_mean": 0.9965763460259376,
+      "ssim_min": 0.9943212551574261,
+      "mae_levels": 0.4051910649698671,
+      "psnr_mean": 50.75467874841749,
+      "psnr_min": 40.993346516938296,
+      "identity_cos_mean": 0.9991777576506138,
+      "identity_cos_min": 0.9982099533081055,
+      "identity_delta_mean": 0.0008222423493862152,
+      "nonfinite_outputs": 0,
+      "ms_per_face": 21.059100000275066,
+      "ms_rounds": [
+        21.076,
+        21.059,
+        20.64
+      ],
+      "speed_vs_ort:mixed": 1.0754113423591962
+    }
+  }
+}

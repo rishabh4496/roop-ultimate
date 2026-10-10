@@ -38,13 +38,18 @@ class _ModelMeta:
 
 
 SHAPES = {'xseg': ('xseg_input:0', ['unk__1', 256, 256, 3]), 'w600k_r50': ('input.1', ['None', 3, 112, 112]),
-          '2d106det': ('data', ['None', 3, 192, 192]), '1k3d68': ('data', ['None', 3, 192, 192])}
+          '2d106det': ('data', ['None', 3, 192, 192]), '1k3d68': ('data', ['None', 3, 192, 192]),
+          'restoreformer_plus_plus': ('input', [1, 3, 512, 512]), 'gpen-bfr-512': ('input', [1, 3, 512, 512]),
+          'gpen_bfr_256': ('input', [1, 3, 256, 256])}
+RESTORERS = ('restoreformer_plus_plus', 'gpen-bfr-512', 'gpen_bfr_256')       # the last two exist only to prove they are NOT covered
 
 
 def _fn(stem):
     """A deterministic stand-in for the model: a smooth function of the input with the real output shape."""
     def run(x):
         v = np.asarray(x, np.float32)
+        if stem in RESTORERS:       # a smooth, structure-preserving "restorer": mild contrast + a blur-free tone curve
+            return np.tanh(1.2 * v) / np.tanh(1.2)
         if stem == 'xseg':
             return 1.0 / (1.0 + np.exp(-(v.mean(axis=3, keepdims=True) - 0.5) * 6.0))
         if stem == 'w600k_r50':
@@ -122,7 +127,7 @@ class Base(unittest.TestCase):
 class Metrics(unittest.TestCase):
     def test_identical_outputs_pass_every_model(self):
         for stem in ac.SPECS:
-            out = _fn(stem)(np.random.RandomState(0).rand(*([1, 256, 256, 3] if stem == 'xseg' else [1, 3, 112, 112])))
+            out = _fn(stem)(np.random.RandomState(0).rand(*([1, 256, 256, 3] if stem == 'xseg' else [1, 3, 112, 112])) * 2 - 1)
             self.assertTrue(ac.judge(stem, ac.compare(stem, out, out)), stem)
 
     def test_non_finite_candidate_fails_on_every_metric(self):
@@ -162,6 +167,102 @@ class Metrics(unittest.TestCase):
     def test_a_half_precision_sized_error_passes(self):
         ref = np.random.RandomState(2).rand(1, 256, 256, 1).astype(np.float32)
         self.assertTrue(ac.judge('xseg', ac.compare('xseg', ref + 2e-3, ref)))
+
+
+class RestorerCanary(Base):
+    """Kind "image": the swap canary's SSIM floor, for the face restorers."""
+
+    def test_feeds_are_in_the_restorers_range(self):
+        feeds = ac.build_feeds('restoreformer_plus_plus', FakeSession('restoreformer_plus_plus'))
+        x = feeds[0]['input']
+        self.assertEqual(x.shape, (1, 3, 512, 512))
+        self.assertLess(x.min(), -0.3)                      # really spans [-1, 1], not [0, 1]
+        self.assertLessEqual(x.max(), 1.0)
+        self.assertGreaterEqual(x.min(), -1.0)
+
+    def test_matching_restorer_passes_with_half_precision_noise(self):
+        noisy = FakeSession('restoreformer_plus_plus', fn=lambda x: _fn('restoreformer_plus_plus')(x) + 4e-4,
+                            cache_dir=self.cache)
+        self.assertTrue(self.check('restoreformer_plus_plus', noisy).passed)
+
+    def test_a_grey_or_smeared_output_fails(self):
+        grey = FakeSession('restoreformer_plus_plus', fn=lambda x: np.zeros_like(x), cache_dir=self.cache)
+        self.assertTrue(self.check('restoreformer_plus_plus', grey).failed)
+        import cv2
+        smear = FakeSession('restoreformer_plus_plus', cache_dir=self.cache,
+                            fn=lambda x: cv2.GaussianBlur(_fn('restoreformer_plus_plus')(x)[0].transpose(1, 2, 0), (0, 0), 6)
+                            .transpose(2, 0, 1)[None].astype(np.float32))
+        self.assertTrue(self.check('restoreformer_plus_plus', smear).failed)
+
+    def test_non_finite_restorer_output_fails(self):
+        bad = FakeSession('restoreformer_plus_plus', fn=lambda x: np.full_like(x, np.nan), cache_dir=self.cache)
+        self.assertTrue(self.check('restoreformer_plus_plus', bad).failed)
+
+    def test_rf_pp_uses_the_cpu_reference(self):
+        asked = []
+        with mock.patch.object(ac, '_reference_session', lambda f, cpu=False: asked.append(cpu) or FakeSession('restoreformer_plus_plus', cache_dir=self.cache)):
+            with redirect_stdout(StringIO()):
+                ac.check_session('restoreformer_plus_plus', FakeSession('restoreformer_plus_plus', cache_dir=self.cache), self.model)
+        self.assertEqual(asked, [True])
+
+    def test_gpen_is_deliberately_not_covered(self):
+        """GPEN's shipped TensorRT mixed engines sit at SSIM ~0.84 from FP32 by design (the 4070's tuned look): a floor would rebuild them."""
+        for stem in ('gpen-bfr-512', 'gpen_bfr_256'):
+            self.assertNotIn(stem, ac.SPECS)
+            res = self.check(stem, self.session(stem))
+            self.assertIsNone(res.passed)
+            self.assertEqual(self.refs_built, [])
+
+    def test_restorer_canary_uses_structured_inputs_not_the_flat_defaults(self):
+        cases = ac.SPECS['restoreformer_plus_plus'].cases
+        self.assertTrue(cases and all(k.startswith('skin+n') for k, _ in cases))
+        a = ac.build_feeds('restoreformer_plus_plus', FakeSession('restoreformer_plus_plus'))
+        self.assertEqual(len(a), 2)
+        self.assertFalse(np.array_equal(a[0]['input'], a[1]['input']))
+        # the noise really is in the image: its local variance is well above the plain skin image's
+        plain = ac._synth('skin', 1, 64, 64)
+        noisy = ac._synth('skin+n0.08', 1, 64, 64)
+        self.assertGreater(float(np.abs(np.diff(noisy, axis=2)).mean()), 3 * float(np.abs(np.diff(plain, axis=2)).mean()))
+
+    def test_the_cases_are_part_of_the_verdict_key(self):
+        sess = FakeSession('restoreformer_plus_plus', cache_dir=self.cache)
+        store = ac._load_store()
+        k1 = ac.verdict_key('restoreformer_plus_plus', sess, self.model, store)[0]
+        old = ac.SPECS['restoreformer_plus_plus']
+        try:
+            ac.SPECS['restoreformer_plus_plus'] = ac.Spec(old.kind, old.floors, in_lo=old.in_lo, in_hi=old.in_hi, ref_cpu=True,
+                                                          cases=(('skin+n0.08', 5),))
+            k2 = ac.verdict_key('restoreformer_plus_plus', sess, self.model, store)[0]
+        finally:
+            ac.SPECS['restoreformer_plus_plus'] = old
+        self.assertNotEqual(k1, k2)
+
+    def test_only_the_first_output_is_fetched(self):
+        seen = []
+
+        class Wide(FakeSession):
+            def get_outputs(self):
+                return [_Meta('2701', [1, 3, 512, 512]), _Meta('input.1', [1, 64, 512, 512])]
+
+            def run(self, names, feed):
+                seen.append(names)
+                return super().run(names, feed)
+        self.check('restoreformer_plus_plus', Wide('restoreformer_plus_plus', cache_dir=self.cache),
+                   ref=Wide('restoreformer_plus_plus', cache_dir=self.cache))
+        self.assertTrue(seen and all(n == ['2701'] for n in seen))
+
+    def test_a_failing_restorer_is_rebuilt_on_fp32(self):
+        bad = FakeSession('restoreformer_plus_plus', fn=lambda x: np.zeros_like(x), cache_dir=self.cache)
+        good = FakeSession('restoreformer_plus_plus', cache_dir=os.path.join(self._tmp.name, 'fp32'), fp16=False)
+        os.makedirs(good._cache)
+        open(os.path.join(good._cache, os.path.basename(self.engine)), 'wb').write(b'fp32')
+        chains = []
+        providers = [('TensorrtExecutionProvider', {'trt_fp16_enable': True, 'trt_engine_cache_path': self.cache}), 'CPUExecutionProvider']
+        with mock.patch.object(ac, '_reference_session', lambda f, cpu=False: FakeSession('restoreformer_plus_plus', cache_dir=self.cache)):
+            with redirect_stdout(StringIO()):
+                got, used, res = ac.guard('restoreformer_plus_plus', bad, self.model, providers, lambda c: chains.append(c) or good)
+        self.assertIs(got, good)
+        self.assertFalse(next(p[1] for p in chains[0] if isinstance(p, tuple))['trt_fp16_enable'])
 
 
 class Feeds(unittest.TestCase):
@@ -350,7 +451,7 @@ class Guard(Base):
     def test_good_engine_is_left_alone(self):
         s = self.session('xseg')
         built = []
-        with mock.patch.object(ac, '_reference_session', lambda f: FakeSession('xseg', cache_dir=self.cache)):
+        with mock.patch.object(ac, '_reference_session', lambda f, cpu=False: FakeSession('xseg', cache_dir=self.cache)):
             got, providers, res = self.run_guard(s, lambda chain: built.append(chain))
         self.assertIs(got, s)
         self.assertEqual(built, [])
@@ -367,7 +468,7 @@ class Guard(Base):
         def build(chain):
             chains.append(chain)
             return good
-        with mock.patch.object(ac, '_reference_session', lambda f: FakeSession('xseg', cache_dir=self.cache)):
+        with mock.patch.object(ac, '_reference_session', lambda f, cpu=False: FakeSession('xseg', cache_dir=self.cache)):
             got, providers, res = self.run_guard(bad, build)
         self.assertIs(got, good)
         self.assertEqual(len(chains), 1)
@@ -386,7 +487,7 @@ class Guard(Base):
         def build(chain):
             seen.append(chain)
             return also_bad if len(seen) == 1 else cuda
-        with mock.patch.object(ac, '_reference_session', lambda f: FakeSession('xseg', cache_dir=self.cache)):
+        with mock.patch.object(ac, '_reference_session', lambda f, cpu=False: FakeSession('xseg', cache_dir=self.cache)):
             got, providers, res = self.run_guard(bad, build)
         self.assertIs(got, cuda)
         self.assertEqual(len(seen), 2)
@@ -403,7 +504,7 @@ class Guard(Base):
         def build(chain):
             seen.append(chain)
             return cuda
-        with mock.patch.object(ac, '_reference_session', lambda f: FakeSession('xseg', cache_dir=self.cache)):
+        with mock.patch.object(ac, '_reference_session', lambda f, cpu=False: FakeSession('xseg', cache_dir=self.cache)):
             got, used, res = self.run_guard(bad, build, providers)
         self.assertIs(got, cuda)
         self.assertEqual(len(seen), 1)
@@ -411,7 +512,7 @@ class Guard(Base):
     def test_a_skipped_check_never_rebuilds(self):
         s = self.session('xseg')
         built = []
-        with mock.patch.object(ac, '_reference_session', lambda f: None):
+        with mock.patch.object(ac, '_reference_session', lambda f, cpu=False: None):
             got, providers, res = self.run_guard(s, lambda chain: built.append(chain))
         self.assertIs(got, s)
         self.assertEqual(built, [])

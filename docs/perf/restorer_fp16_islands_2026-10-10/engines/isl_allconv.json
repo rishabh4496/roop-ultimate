@@ -1,0 +1,30 @@
+{
+ "name": "isl_allconv",
+ "model": "G:\\pinokio\\api\\roop-ultimate\\app\\output\\restorer_fp16\\restoreformer_single_output.onnx",
+ "fp16": true,
+ "fp32_ops": [
+  "Conv"
+ ],
+ "fp32_except_ops": [],
+ "fp32_modules": [],
+ "constrained_layers": 130,
+ "failed_layers": [],
+ "n_failed": 0,
+ "build_seconds": 17.6,
+ "engine_bytes": 488428964,
+ "tensorrt": "10.9.0.34",
+ "constrained_names_sample": [
+  "/encoder/conv_in/Conv",
+  "/encoder/block.0/conv1/Conv",
+  "/encoder/block.0/conv2/Conv",
+  "/encoder/block.1/conv1/Conv",
+  "/encoder/block.1/conv2/Conv",
+  "/encoder/downsample/conv/Conv",
+  "/encoder/block.0/conv1_1/Conv",
+  "/encoder/block.0/conv2_1/Conv",
+  "/encoder/block.0/nin_shortcut/Conv",
+  "/encoder/block.1/conv1_1/Conv",
+  "/encoder/block.1/conv2_1/Conv",
+  "/encoder/downsample/conv_1/Conv"
+ ]
+}

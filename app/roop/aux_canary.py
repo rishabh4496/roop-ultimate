@@ -38,6 +38,10 @@ SCOPE: a session that is not on TensorRT is skipped (CUDA/CPU run the graph's ow
 TensorRT is not admitted. FP32 TensorRT engines ARE checked - the cache makes that free after the first start, and tactic
 selection can go wrong at any precision. ROOP_AUX_CANARY=0 disables it.
 
+ENHANCERS. The same machinery guards the face restorers (RestoreFormer++ under Restore Ultra, GPEN-512 / 256): kind "image", SSIM of
+the output against a one-off FP32 reference built on the CPU where the CUDA EP cannot run the graph, floor 0.98 as in
+swap_canary.py. A restorer whose engine builds, runs at full speed and emits a smeared or grey face passes every other check.
+
 ON FAILURE `guard` rebuilds the model on a TensorRT FP32 engine and re-checks that, then on CUDA/CPU.
 """
 
@@ -72,6 +76,10 @@ class Spec:
     floors: Tuple[Tuple[str, float], ...]       # (metric, bound); 'cosine' and 'iou' are lower bounds, the rest upper
     points: int = 0                 # landmarks: how many trailing points the decoder keeps
     dim: int = 0                    # landmarks: values per point in the raw output (2 or 3)
+    in_lo: float = 0.0              # image: the model's input range ...
+    in_hi: float = 1.0              # ... (restorers take [-1, 1])
+    ref_cpu: bool = False           # build the reference on the CPU EP: the CUDA EP cannot run this graph (RF++)
+    cases: Tuple[Tuple[str, int], ...] = ()     # canary inputs; () = the two defaults below
 
 
 #: Floors calibrated 2026-10-10 on 500 real faces plus a wrong-face control: docs/perf/aux_canary_calibration.md.
@@ -80,8 +88,20 @@ SPECS: Dict[str, Spec] = {
     "w600k_r50": Spec("embedding", (("cosine", 0.99),)),
     "2d106det": Spec("landmarks", (("mean_px", 1.5), ("max_px", 5.0)), points=106, dim=2),
     "1k3d68": Spec("landmarks", (("mean_px", 4.0), ("max_px", 12.0)), points=68, dim=3),
+    # A face restorer (single NCHW image in, image out, both in [-1, 1]): SSIM of the output against a one-off FP32 reference
+    # (swap_canary.py's metric; its swapper floor is 0.98 with good >= 0.9958 and corrupt <= 0.8653). Here the floor is 0.96:
+    # noisier inputs amplify FP16 noise (good engine 0.9863 at noise 0.15, 0.994 at 0.08), and the failures to catch sit far lower.
+    # The default canary images are NOT usable here: RestoreFormer++ answers them with a near-flat picture, so a grey output
+    # scores 0.97 and a smeared one 0.9998 against it. Skin plus gaussian noise gives an output with real structure: grey 0.004,
+    # smeared (sigma 5) 0.91, a good engine >= 0.994 (docs/perf/aux_canary_enhancer_calibration.md).
+    #
+    # DELIBERATELY NOT COVERED: GPEN-256 / GPEN-512. Their shipped TensorRT mixed engines sit at SSIM 0.84 / 0.85 mean (min 0.79 /
+    # 0.80) from FP32 on real faces while CPU, CUDA and TensorRT FP32 agree to 0.99998 - FP16 is the look the 4070 is tuned for
+    # (the 3060 runs them FP32 and is tuned separately), so a 0.98 floor would "fail" every good engine and rebuild it FP32.
+    "restoreformer_plus_plus": Spec("image", (("ssim", 0.96),), in_lo=-1.0, in_hi=1.0, ref_cpu=True,
+                                    cases=(("skin+n0.04", 1), ("skin+n0.08", 2))),
 }
-_LOWER_BOUNDS = frozenset(("cosine", "iou"))
+_LOWER_BOUNDS = frozenset(("cosine", "iou", "ssim"))
 
 
 def enabled() -> bool:
@@ -93,6 +113,19 @@ def stem_of(model_file: Optional[str]) -> str:
 
 
 # ── inputs and metrics ──────────────────────────────────────────────────────────────────────────────────────────────
+def _cases(stem: str) -> Tuple[Tuple[str, int], ...]:
+    return SPECS[stem].cases or _CASES
+
+
+def _synth(kind: str, seed: int, h: int, w: int) -> np.ndarray:
+    """A canary image: swap_canary's, or 'skin+nA' = the skin image with gaussian noise of amplitude A (CHW float32 in [0, 1])."""
+    if kind.startswith("skin+n"):
+        base = _image("skin", seed, h, w)
+        noise = np.random.RandomState(100 + seed).randn(*base.shape).astype(np.float32) * float(kind[len("skin+n"):])
+        return np.ascontiguousarray(np.clip(base + noise, 0.0, 1.0), dtype=np.float32)
+    return _image(kind, seed, h, w)
+
+
 def _shape_hw(session) -> Tuple[int, int]:
     shape = session.get_inputs()[0].shape
     dims = [d if isinstance(d, int) and d > 0 else None for d in shape]
@@ -109,10 +142,12 @@ def build_feeds(stem: str, session) -> Optional[List[Dict[str, np.ndarray]]]:
     name = session.get_inputs()[0].name
     h, w = _shape_hw(session)
     feeds = []
-    for kind, seed in _CASES:
-        chw = _image(kind, seed, h, w)                          # CHW float32 in [0, 1]
+    for kind, seed in _cases(stem):
+        chw = _synth(kind, seed, h, w)                          # CHW float32 in [0, 1]
         if spec.kind == "mask":                                 # Mask_XSeg.Run: NHWC, /255
             x = np.transpose(chw, (1, 2, 0))[None]
+        elif spec.kind == "image":                              # a restorer: NCHW in [in_lo, in_hi]
+            x = (chw * (spec.in_hi - spec.in_lo) + spec.in_lo)[None]
         elif spec.kind == "embedding":                          # ArcFaceONNX: (x - 127.5) / 127.5, NCHW
             x = ((chw * 255.0 - 127.5) / 127.5)[None]
         else:                                                   # Landmark: mean 0, std 1 on 0..255, NCHW
@@ -136,6 +171,9 @@ def compare(stem: str, candidate: np.ndarray, reference: np.ndarray, crop: int =
     bad = float("inf")
     if a.shape != b.shape or not np.isfinite(a).all():
         return {k: (-1.0 if k in _LOWER_BOUNDS else bad) for k, _ in spec.floors}
+    if spec.kind == "image":
+        from roop.swap_canary import _compare
+        return {"ssim": float(_compare(a.astype(np.float32), b.astype(np.float32)))}
     if spec.kind == "mask":
         ma, mb = a > 0.5, b > 0.5
         union = np.logical_or(ma, mb).sum()
@@ -243,7 +281,8 @@ def verdict_key(stem: str, session, model_file: str, store: dict) -> Optional[Tu
         return None
     from roop.precision_policy import _model_digest
     spec = SPECS[stem]          # the floors are part of the identity: edit one and every verdict made under the old one is a miss
-    identity = {"v": VERSION, "stem": stem, "spec": [spec.kind, [list(f) for f in spec.floors], spec.points, spec.dim],
+    identity = {"v": VERSION, "stem": stem, "spec": [spec.kind, [list(f) for f in spec.floors], spec.points, spec.dim,
+                                                       spec.in_lo, spec.in_hi, [list(c) for c in spec.cases]],
                 "model": _model_digest(model_file),
                 "engines": engines, "cache": os.path.basename(str(cache_dir)),
                 "options": {k: str(opts.get(k)) for k in _KEY_OPTIONS}}
@@ -252,9 +291,11 @@ def verdict_key(stem: str, session, model_file: str, store: dict) -> Optional[Tu
 
 
 # ── the check ───────────────────────────────────────────────────────────────────────────────────────────────────────
-def _reference_session(model_file: str):
+def _reference_session(model_file: str, cpu: bool = False):
     import onnxruntime
     from roop.utilities import get_onnx_session_options
+    if cpu:         # the CUDA EP cannot create this graph's session (it silently lands on the CPU anyway): go there directly
+        return onnxruntime.InferenceSession(model_file, get_onnx_session_options(), providers=["CPUExecutionProvider"])
     if "CUDAExecutionProvider" not in onnxruntime.get_available_providers():
         return None
     device = 0
@@ -266,6 +307,15 @@ def _reference_session(model_file: str):
     return onnxruntime.InferenceSession(
         model_file, get_onnx_session_options(),
         providers=[("CUDAExecutionProvider", {"use_tf32": "0", "device_id": str(device)}), "CPUExecutionProvider"])
+
+
+def _first_output(session):
+    """Only the model's real output: RestoreFormer++'s shipped graph has 14 leftover export outputs production never reads."""
+    try:
+        return [session.get_outputs()[0].name]
+    except Exception as exc:    # a session without a usable output list is fetched whole
+        _swallowed("roop/aux_canary.py:_first_output", exc, "fetching every output")
+        return None
 
 
 def on_tensorrt(session) -> bool:
@@ -299,7 +349,7 @@ def check_session(stem: str, session, model_file: str,
                 # canary feed to build it, then identify it - otherwise the first start would never be cached.
                 warm = build_feeds(stem, session)
                 if warm is not None:
-                    session.run(None, warm[0])
+                    session.run(_first_output(session), warm[0])
                     ident = verdict_key(stem, session, model_file, store)
             key = ident[0] if ident else None
             if key is not None:
@@ -316,16 +366,16 @@ def check_session(stem: str, session, model_file: str,
             if feeds is None:
                 return CanaryResult(tag, None, "inputs are not the single image this canary understands")
             crop = _shape_hw(session)[0]
-            ref = (reference_factory or (lambda: _reference_session(model_file)))()
+            ref = (reference_factory or (lambda: _reference_session(model_file, SPECS[stem].ref_cpu)))()
             if ref is None:
                 return CanaryResult(tag, None, "no CUDA reference available")
             try:
                 per_case: Dict[str, float] = {}
                 ok = True
                 worst: Dict[str, float] = {}
-                for (kind, seed), feed in zip(_CASES, feeds):
-                    got = session.run(None, feed)[0]
-                    want = ref.run(None, feed)[0]
+                for (kind, seed), feed in zip(_cases(stem), feeds):
+                    got = session.run(_first_output(session), feed)[0]
+                    want = ref.run(_first_output(ref), feed)[0]
                     m = compare(stem, got, want, crop)
                     ok = ok and judge(stem, m)
                     for metric, v in m.items():

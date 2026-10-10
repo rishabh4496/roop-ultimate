@@ -19,6 +19,10 @@ tool relaxes the batch axis with the swapper's own ``_relax_batch_dim`` and lets
 ``trt_shape_profile`` derive the TensorRT profile, i.e. everything a batched restorer
 would need, and still measures 0% per-face gain.
 
+Variant scoring (32 real crops, CPU-FP32 reference, interleaved timing; see ``arms_main``)::
+
+    app/env/Scripts/python.exe tools/bench_restorer_batch.py --arms ort:mixed,ort:fp32,native:NAME --out arms.json
+
 Usage (from the repo root, app stopped)::
 
     app\\env\\Scripts\\python.exe tools/bench_restorer_batch.py [--out result.json]
@@ -38,7 +42,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 APP = REPO / "app"
-for p in (str(APP), str(APP / "tests")):
+for p in (str(APP), str(APP / "tests"), str(REPO / "tools")):
     if p not in sys.path:
         sys.path.insert(0, p)
 
@@ -52,6 +56,213 @@ def media_dir() -> Path:
     return Path(env) if env else REPO.parents[1] / "roop-keep"
 
 
+CROP_CLIPS = ("single/s3.mp4", "double/d4.mp4", "double/d1.mp4", "double/d6.mp4", "Love.mp4", "single/s7.mp4")
+
+
+def collect_crops(n: int = 32, clips=CROP_CLIPS, cache: str = ""):
+    """``n`` real FFHQ-aligned 512 BGR crops, spread evenly over ``clips`` (largest face of evenly spaced frames).
+
+    Needs the app's init first (face detection). Cached as an npz when ``cache`` is given: the crops are the
+    experiment's fixed input, so every variant and every session sees the same faces.
+    """
+    import cv2
+    import numpy as np
+    from skimage.transform import SimilarityTransform
+    import fixtures
+    from roop.face_util import get_all_faces
+
+    if cache and os.path.isfile(cache):
+        data = np.load(cache)
+        if len(data["crops"]) >= n:
+            return [c for c in data["crops"][:n]]
+    template = np.array(FFHQ_512, np.float32)
+    per = -(-n // len(clips))
+    crops, labels = [], []
+    for rel in clips:
+        cap = cv2.VideoCapture(fixtures.clip(rel))
+        total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        got = 0
+        for frac in np.linspace(0.04, 0.96, per * 8):
+            if got >= per:
+                break
+            cap.set(cv2.CAP_PROP_POS_FRAMES, int(total * frac))
+            ok, frame = cap.read()
+            if not ok:
+                continue
+            faces = get_all_faces(frame)
+            if not faces:
+                continue
+            face = max(faces, key=lambda f: f.bbox[2] - f.bbox[0])
+            tf = SimilarityTransform()
+            tf.estimate(face.kps.astype(np.float32), template)
+            crops.append(cv2.warpAffine(frame, tf.params[:2], (512, 512), flags=cv2.INTER_CUBIC))
+            labels.append(rel)
+            got += 1
+        cap.release()
+    if len(crops) < n:
+        raise SystemExit(f"only {len(crops)} aligned faces found in {clips}")
+    crops, labels = crops[:n], labels[:n]
+    if cache:
+        os.makedirs(os.path.dirname(cache), exist_ok=True)
+        np.savez_compressed(cache, crops=np.stack(crops), labels=np.array(labels))
+    return crops
+
+
+ENGINE_DIR = APP / "output" / "restorer_fp16" / "engines"
+
+
+def arms_main(args) -> int:
+    """Score engine variants of the restorer on the same real crops against a CPU-FP32 reference, timed interleaved.
+
+    ``--arms`` is a comma list. Grammar: ``ort:mixed`` / ``ort:fp32`` (the app's provider policy), ``ortx:Op1+Op2``
+    (mixed, those op types excluded from TensorRT so they run FP32 on CUDA), ``native:NAME`` (an engine built by
+    tools/restorer_native_engine.py), each optionally ``@path/to/model.onnx``. Reference = ORT CPU FP32 (the CUDA EP
+    cannot run this graph), so no TensorRT build is the ruler. Metrics: SSIM / PSNR / mean abs error of the 8-bit
+    output, AdaFace cosine of the aligned output crop to the reference's, and ms per face (GPU-resident, 3 interleaved
+    rounds, median).
+    """
+    import angle_bench as ab
+    from settings import Settings
+    cfg = Settings(str(APP / "config.yaml"))
+    g = ab.init_pipeline(cfg.provider, cfg.swap_model, None, None, sync_config=True)
+
+    import json as _json
+    import numpy as np
+    import onnxruntime as ort
+    import torch
+    import restorer_fp16_ranking as rk
+    from roop.precision_policy import providers_for
+
+    rk.OUT.mkdir(parents=True, exist_ok=True)
+    crops = collect_crops(args.crops, cache=str(rk.OUT / "crops.npz"))
+    x = rk.prep(crops)
+    ref_path = rk.OUT / "reference.npy"
+    if ref_path.is_file() and len(np.load(ref_path)) >= len(x):
+        ref = np.load(ref_path)[:len(x)]
+    else:
+        single = str(rk.SINGLE_ONNX)
+        s = ort.InferenceSession(single, providers=["CPUExecutionProvider"])
+        ref = np.concatenate([s.run(None, {"input": x[k:k + 1]})[0] for k in range(len(x))])
+        np.save(ref_path, ref)
+    ref_u8 = [rk.post(r) for r in ref]
+
+    def split(spec):
+        head, _, path = spec.partition("@")
+        kind, _, arg = head.partition(":")
+        return kind, arg, path or args.model
+
+    class OrtArm:
+        def __init__(self, label, path, providers):
+            self.label = label
+            self.s = ort.InferenceSession(path, ort.SessionOptions(), providers=providers)
+            if "Tensorrt" not in self.s.get_providers()[0]:
+                raise SystemExit(f"{label}: not on TensorRT ({self.s.get_providers()[0]})")
+
+        def _bind(self, xt):
+            yt = torch.empty((1, 3, 512, 512), dtype=torch.float32, device="cuda")
+            io = self.s.io_binding()
+            io.bind_input(self.s.get_inputs()[0].name, "cuda", 0, np.float32, tuple(xt.shape), xt.data_ptr())
+            io.bind_output(self.s.get_outputs()[0].name, "cuda", 0, np.float32, tuple(yt.shape), yt.data_ptr())
+            return io, yt
+
+        def run(self, arr):
+            xt = torch.from_numpy(arr).cuda().contiguous()
+            io, yt = self._bind(xt)
+            self.s.run_with_iobinding(io)
+            torch.cuda.synchronize()
+            return yt.cpu().numpy()
+
+        def time_ms(self, arr, iters):
+            xt = torch.from_numpy(arr).cuda().contiguous()
+            io, yt = self._bind(xt)
+            for _ in range(3):
+                self.s.run_with_iobinding(io)
+            torch.cuda.synchronize()
+            t0 = time.perf_counter()
+            for _ in range(iters):
+                self.s.run_with_iobinding(io)
+            torch.cuda.synchronize()
+            return (time.perf_counter() - t0) / iters * 1e3
+
+    class NativeArm:
+        def __init__(self, label, name):
+            from roop.trt_native_runner import NativeEngine
+            self.label, self.e = label, NativeEngine(str(ENGINE_DIR / f"{name}.engine"))
+
+        def run(self, arr):
+            return self.e.run(arr)
+
+        def time_ms(self, arr, iters):
+            return self.e.time_ms(torch.from_numpy(arr).cuda().contiguous(), iters)
+
+    arms = []
+    for spec in [a for a in args.arms.split(",") if a]:
+        kind, arg, path = split(spec)
+        if kind == "ort":
+            prov = providers_for(args.model_key, g.execution_providers, path, requested=arg)[0]
+            arms.append(OrtArm(spec, path, prov))
+        elif kind == "ortx":
+            import hashlib
+            prov = providers_for(args.model_key, g.execution_providers, path, requested="mixed")[0]
+            ops = arg.replace("+", ",")
+            out = []
+            for p in prov:
+                if isinstance(p, tuple) and "tensorrt" in p[0].lower():
+                    o = dict(p[1])
+                    o["trt_op_types_to_exclude"] = ops
+                    cache = o.get("trt_engine_cache_path")
+                    if cache:   # a different partitioning is a different engine: never share a cache directory
+                        scoped = cache + "_excl_" + hashlib.sha256(ops.encode()).hexdigest()[:8]
+                        os.makedirs(scoped, exist_ok=True)
+                        o["trt_engine_cache_path"] = o["trt_timing_cache_path"] = scoped
+                    p = (p[0], o)
+                out.append(p)
+            arms.append(OrtArm(spec, path, out))
+        elif kind == "native":
+            arms.append(NativeArm(spec, arg))
+        else:
+            raise SystemExit(f"unknown arm {spec!r}")
+
+    from roop import recognizer_adaface as ada
+    from roop.face_util import align_crop
+    template = np.array(FFHQ_512, np.float32)
+
+    def emb(u8_rgb):
+        crop, _ = align_crop(np.ascontiguousarray(u8_rgb[..., ::-1]), template, 112, mode=ada.ALIGN_MODE)
+        return ada.embed_crop(crop)
+
+    ref_emb = [emb(u) for u in ref_u8]
+    result = {"gpu": torch.cuda.get_device_name(0), "crops": len(x), "reference": "ORT CPU FP32", "arms": {}}
+    outs = {}
+    for a in arms:
+        ys = [a.run(x[k:k + 1])[0] for k in range(len(x))]
+        outs[a.label] = ys
+        m = rk.metrics(ys, ref)
+        cos = [float(np.dot(emb(rk.post(y)), re) / (np.linalg.norm(emb(rk.post(y))) * np.linalg.norm(re))) for y, re in zip(ys, ref_emb)]
+        m["identity_cos_mean"], m["identity_cos_min"] = float(np.mean(cos)), float(np.min(cos))
+        m["identity_delta_mean"] = 1.0 - m["identity_cos_mean"]
+        m["nonfinite_outputs"] = int(sum(0 if np.isfinite(y).all() else 1 for y in ys))
+        result["arms"][a.label] = m
+        print(f"[arm] {a.label}: ssim {m['ssim_mean']:.5f}/{m['ssim_min']:.5f} psnr {m['psnr_mean']:.2f}/{m['psnr_min']:.2f} "
+              f"mae {m['mae_levels']:.3f} idcos {m['identity_cos_mean']:.6f}", flush=True)
+    rounds = {a.label: [] for a in arms}
+    for _ in range(3):
+        for a in arms:
+            rounds[a.label].append(a.time_ms(x[:1], args.iters))
+    for a in arms:
+        result["arms"][a.label]["ms_per_face"] = float(np.median(rounds[a.label]))
+        result["arms"][a.label]["ms_rounds"] = [round(v, 3) for v in rounds[a.label]]
+    base = result["arms"].get(args.speed_base)
+    if base:
+        for lab, m in result["arms"].items():
+            m["speed_vs_" + args.speed_base] = base["ms_per_face"] / m["ms_per_face"]
+    text = _json.dumps(result, indent=2)
+    print(text)
+    if args.out:
+        Path(args.out).write_text(text, encoding="utf-8")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--clip", default=str(media_dir() / "single" / "s3.mp4"))
@@ -59,7 +270,12 @@ def main() -> int:
     parser.add_argument("--model-key", default="restoreformer_pp")
     parser.add_argument("--iters", type=int, default=20)
     parser.add_argument("--out", default="")
+    parser.add_argument("--arms", default="", help="variant scoring mode, see arms_main (e.g. ort:mixed,ort:fp32,native:isl_a)")
+    parser.add_argument("--crops", type=int, default=32)
+    parser.add_argument("--speed-base", default="ort:mixed", help="arm that speed_vs_* is relative to")
     args = parser.parse_args()
+    if args.arms:
+        return arms_main(args)
 
     # the app's init FIRST: it puts the TensorRT DLLs on PATH; a bare process silently
     # falls back to CPU and reports a 4 ms model as 210 ms (AGENTS.md)

@@ -1,0 +1,3230 @@
+{
+ "/encoder/conv_in": {
+  "ssim_mean": 0.999719684419455,
+  "ssim_min": 0.9991191862167099,
+  "mae_levels": 0.032110210184798094,
+  "psnr_mean": 65.6089831557766,
+  "psnr_min": 57.535398148186815,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/encoder/block.0/norm1": {
+  "ssim_mean": 0.9998947637949009,
+  "ssim_min": 0.9992596669561087,
+  "mae_levels": 0.014305545908696038,
+  "psnr_mean": 73.9914281986342,
+  "psnr_min": 57.56763251502011,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/encoder/block.0": {
+  "ssim_mean": 0.9999574948465998,
+  "ssim_min": 0.9999251808805273,
+  "mae_levels": 0.0045865352641805135,
+  "psnr_mean": 71.66204431647452,
+  "psnr_min": 69.37521635589701,
+  "ops": {
+   "Sigmoid": 2,
+   "Mul": 2,
+   "Add": 1
+  }
+ },
+ "/encoder/block.0/conv1": {
+  "ssim_mean": 0.9998828216839428,
+  "ssim_min": 0.9991276941850205,
+  "mae_levels": 0.01203398536782696,
+  "psnr_mean": 76.15454439291469,
+  "psnr_min": 58.38935051566463,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/encoder/block.0/norm2": {
+  "ssim_mean": 0.9999763983709931,
+  "ssim_min": 0.9999649216952282,
+  "mae_levels": 0.0023709616512940235,
+  "psnr_mean": 74.45579900929457,
+  "psnr_min": 73.21351711200505,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/encoder/block.0/conv2": {
+  "ssim_mean": 0.9998784220626615,
+  "ssim_min": 0.9991310683887799,
+  "mae_levels": 0.012655495785974247,
+  "psnr_mean": 73.98048808731625,
+  "psnr_min": 58.384312907643235,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/encoder/block.1/norm1": {
+  "ssim_mean": 0.9999825344282824,
+  "ssim_min": 0.9999575715142396,
+  "mae_levels": 0.00176921519275397,
+  "psnr_mean": 76.50143198792412,
+  "psnr_min": 72.13197199992786,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/encoder/block.1": {
+  "ssim_mean": 0.9998697280143072,
+  "ssim_min": 0.999259983287701,
+  "mae_levels": 0.016888475719235574,
+  "psnr_mean": 69.96241699600704,
+  "psnr_min": 57.57651841323337,
+  "ops": {
+   "Sigmoid": 2,
+   "Mul": 2,
+   "Add": 1
+  }
+ },
+ "/encoder/block.1/conv1": {
+  "ssim_mean": 0.9999950718060269,
+  "ssim_min": 0.9999902499522847,
+  "mae_levels": 0.0005684686407453343,
+  "psnr_mean": 80.98700977026209,
+  "psnr_min": 78.26786566199634,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/encoder/block.1/norm2": {
+  "ssim_mean": 0.9998842101776348,
+  "ssim_min": 0.9991291474324311,
+  "mae_levels": 0.012052447715122372,
+  "psnr_mean": 75.77638244792041,
+  "psnr_min": 58.39316189115464,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/encoder/block.1/conv2": {
+  "ssim_mean": 0.9999926597362231,
+  "ssim_min": 0.999990097239977,
+  "mae_levels": 0.0007115731009244008,
+  "psnr_mean": 79.63415936328036,
+  "psnr_min": 78.62404425409429,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/encoder/downsample": {
+  "ssim_mean": 0.9998660945751472,
+  "ssim_min": 0.9991266260355645,
+  "mae_levels": 0.013943685342417966,
+  "psnr_mean": 71.49181458743583,
+  "psnr_min": 58.38097724496034,
+  "ops": {
+   "Pad": 1
+  }
+ },
+ "/encoder/downsample/conv": {
+  "ssim_mean": 0.999770414752998,
+  "ssim_min": 0.9991273365225299,
+  "mae_levels": 0.027220817420403054,
+  "psnr_mean": 68.6202346814873,
+  "psnr_min": 57.563075232058154,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/encoder/block.0/norm1_1": {
+  "ssim_mean": 0.9999895732831061,
+  "ssim_min": 0.9999842348830099,
+  "mae_levels": 0.0011259656491918735,
+  "psnr_mean": 77.67073845755479,
+  "psnr_min": 75.74883412335899,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/encoder/block.0_1": {
+  "ssim_mean": 0.9999520701163844,
+  "ssim_min": 0.9999415270252824,
+  "mae_levels": 0.005167280033102628,
+  "psnr_mean": 71.05224954290703,
+  "psnr_min": 70.62435857254475,
+  "ops": {
+   "Sigmoid": 2,
+   "Mul": 2,
+   "Add": 1
+  }
+ },
+ "/encoder/block.0/conv1_1": {
+  "ssim_mean": 0.9999024805539363,
+  "ssim_min": 0.9992580992248605,
+  "mae_levels": 0.013485413090256193,
+  "psnr_mean": 77.68687069814081,
+  "psnr_min": 57.5644322205856,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/encoder/block.0/norm2_1": {
+  "ssim_mean": 0.999983798990534,
+  "ssim_min": 0.9999730577843617,
+  "mae_levels": 0.0017211955361690068,
+  "psnr_mean": 75.86396288167883,
+  "psnr_min": 74.45105468951125,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/encoder/block.0/conv2_1": {
+  "ssim_mean": 0.9998994003781446,
+  "ssim_min": 0.9992609244747283,
+  "mae_levels": 0.013816678135121774,
+  "psnr_mean": 75.58496679335438,
+  "psnr_min": 57.57408876650597,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/encoder/block.0/nin_shortcut": {
+  "ssim_mean": 0.9999573518084679,
+  "ssim_min": 0.999947162835387,
+  "mae_levels": 0.004721975725044958,
+  "psnr_mean": 71.40316002176924,
+  "psnr_min": 70.8004615482521,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/encoder/block.1/norm1_1": {
+  "ssim_mean": 0.9998977435453,
+  "ssim_min": 0.9992595091723455,
+  "mae_levels": 0.01402657882767,
+  "psnr_mean": 74.92368219100646,
+  "psnr_min": 57.56976735555061,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/encoder/block.1_1": {
+  "ssim_mean": 0.9997245122972285,
+  "ssim_min": 0.9988698123948443,
+  "mae_levels": 0.03163535229611936,
+  "psnr_mean": 67.25402101139902,
+  "psnr_min": 57.350873054988256,
+  "ops": {
+   "Sigmoid": 2,
+   "Mul": 2,
+   "Add": 1
+  }
+ },
+ "/encoder/block.1/conv1_1": {
+  "ssim_mean": 0.9999017993240641,
+  "ssim_min": 0.9992594962231586,
+  "mae_levels": 0.013580151376824667,
+  "psnr_mean": 77.04189941928573,
+  "psnr_min": 57.57010708604862,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/encoder/block.1/norm2_1": {
+  "ssim_mean": 0.9998948111522507,
+  "ssim_min": 0.9992564301126196,
+  "mae_levels": 0.014326788012942737,
+  "psnr_mean": 74.17651364427012,
+  "psnr_min": 57.55271794285833,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/encoder/block.1/conv2_1": {
+  "ssim_mean": 0.9999915956437418,
+  "ssim_min": 0.9999893892574255,
+  "mae_levels": 0.000961095387617128,
+  "psnr_mean": 78.35944180091853,
+  "psnr_min": 77.86016079545975,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/encoder/downsample_1": {
+  "ssim_mean": 0.9999640691988361,
+  "ssim_min": 0.9999546372487182,
+  "mae_levels": 0.0038609512911574884,
+  "psnr_mean": 72.30763354479741,
+  "psnr_min": 71.57779785241058,
+  "ops": {
+   "Pad": 1
+  }
+ },
+ "/encoder/downsample/conv_1": {
+  "ssim_mean": 0.9999523647065252,
+  "ssim_min": 0.9999442772926166,
+  "mae_levels": 0.005144358052385778,
+  "psnr_mean": 71.0648996283428,
+  "psnr_min": 70.44758082930967,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/encoder/block.0/norm1_2": {
+  "ssim_mean": 0.9998962426473832,
+  "ssim_min": 0.9992575198478106,
+  "mae_levels": 0.01424808020456636,
+  "psnr_mean": 74.19960046216735,
+  "psnr_min": 57.559975135243356,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/encoder/block.0_2": {
+  "ssim_mean": 0.9999659687664583,
+  "ssim_min": 0.9999633117991972,
+  "mae_levels": 0.0038542595263718615,
+  "psnr_mean": 72.3321443880636,
+  "psnr_min": 71.44549076913036,
+  "ops": {
+   "Sigmoid": 2,
+   "Mul": 2,
+   "Add": 1
+  }
+ },
+ "/encoder/block.0/conv1_2": {
+  "ssim_mean": 0.9999012299979746,
+  "ssim_min": 0.9992575958034977,
+  "mae_levels": 0.013730619411460032,
+  "psnr_mean": 76.19148605517219,
+  "psnr_min": 57.56167022649872,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/encoder/block.0/norm2_2": {
+  "ssim_mean": 0.9998864387593327,
+  "ssim_min": 0.9992591475157796,
+  "mae_levels": 0.015029310967548115,
+  "psnr_mean": 72.3362689478761,
+  "psnr_min": 57.57282588718227,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/encoder/block.0/conv2_2": {
+  "ssim_mean": 0.9999919519688117,
+  "ssim_min": 0.9999893587025482,
+  "mae_levels": 0.0010186342966722606,
+  "psnr_mean": 78.09300548234316,
+  "psnr_min": 77.10482199115535,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/encoder/block.1/norm1_2": {
+  "ssim_mean": 0.9999865830714026,
+  "ssim_min": 0.9999832490804029,
+  "mae_levels": 0.0016099648097234187,
+  "psnr_mean": 76.09145123115893,
+  "psnr_min": 74.36203760163997,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/encoder/block.1_2": {
+  "ssim_mean": 0.9998785898266135,
+  "ssim_min": 0.9992616902760638,
+  "mae_levels": 0.01626245809167981,
+  "psnr_mean": 70.51678544268037,
+  "psnr_min": 57.58815093871323,
+  "ops": {
+   "Sigmoid": 2,
+   "Mul": 2,
+   "Add": 1
+  }
+ },
+ "/encoder/block.1/conv1_2": {
+  "ssim_mean": 0.9999000844560733,
+  "ssim_min": 0.9992589048130147,
+  "mae_levels": 0.013853995658983376,
+  "psnr_mean": 75.5032531656447,
+  "psnr_min": 57.56831166863742,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/encoder/block.1/norm2_2": {
+  "ssim_mean": 0.999891367830571,
+  "ssim_min": 0.9992572235801501,
+  "mae_levels": 0.014905055914981591,
+  "psnr_mean": 72.62722177531202,
+  "psnr_min": 57.56205776884152,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/encoder/block.1/conv2_2": {
+  "ssim_mean": 0.9999001524535465,
+  "ssim_min": 0.9992592078520656,
+  "mae_levels": 0.013882338589728538,
+  "psnr_mean": 75.46407812529473,
+  "psnr_min": 57.56991295108132,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/encoder/downsample_2": {
+  "ssim_mean": 0.9998882389604067,
+  "ssim_min": 0.9992597938907971,
+  "mae_levels": 0.015080525400243405,
+  "psnr_mean": 72.1788357723766,
+  "psnr_min": 57.57666423527046,
+  "ops": {
+   "Pad": 1
+  }
+ },
+ "/encoder/downsample/conv_2": {
+  "ssim_mean": 0.9998296929096905,
+  "ssim_min": 0.9988751000309276,
+  "mae_levels": 0.017766787173890686,
+  "psnr_mean": 70.24277717290339,
+  "psnr_min": 57.370900195636985,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/encoder/block.0/norm1_3": {
+  "ssim_mean": 0.9999803107365892,
+  "ssim_min": 0.9999581183443961,
+  "mae_levels": 0.0024218292186195534,
+  "psnr_mean": 74.52373720390943,
+  "psnr_min": 71.3136464562222,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/encoder/block.0_3": {
+  "ssim_mean": 0.9999707543954945,
+  "ssim_min": 0.9999658282843606,
+  "mae_levels": 0.003547213576957642,
+  "psnr_mean": 72.71653914322727,
+  "psnr_min": 71.42304045344164,
+  "ops": {
+   "Sigmoid": 2,
+   "Mul": 2,
+   "Add": 1
+  }
+ },
+ "/encoder/block.0/conv1_3": {
+  "ssim_mean": 0.999792173053385,
+  "ssim_min": 0.9991303254152768,
+  "mae_levels": 0.025032592301972856,
+  "psnr_mean": 72.67516582817947,
+  "psnr_min": 57.565983583981,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/encoder/block.0/norm2_3": {
+  "ssim_mean": 0.9998741713507387,
+  "ssim_min": 0.9991277201647446,
+  "mae_levels": 0.013473271753866034,
+  "psnr_mean": 72.31151413434752,
+  "psnr_min": 58.3772349902296,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/encoder/block.0/conv2_3": {
+  "ssim_mean": 0.9999901227055341,
+  "ssim_min": 0.9999878843575466,
+  "mae_levels": 0.0012855111034543176,
+  "psnr_mean": 77.08979929011845,
+  "psnr_min": 75.713874261685,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/encoder/block.0/nin_shortcut_1": {
+  "ssim_mean": 0.999972720961496,
+  "ssim_min": 0.9999688637110574,
+  "mae_levels": 0.0032411771674800693,
+  "psnr_mean": 73.09293389902385,
+  "psnr_min": 71.58757926379545,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/encoder/block.1/norm1_3": {
+  "ssim_mean": 0.9997860290661771,
+  "ssim_min": 0.9991277347358081,
+  "mae_levels": 0.025819662165313395,
+  "psnr_mean": 70.62284801366734,
+  "psnr_min": 57.56593509548565,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/encoder/block.1_3": {
+  "ssim_mean": 0.9997761129138844,
+  "ssim_min": 0.9991266859905872,
+  "mae_levels": 0.026845940441435623,
+  "psnr_mean": 68.96443349936146,
+  "psnr_min": 57.587225036392475,
+  "ops": {
+   "Sigmoid": 2,
+   "Mul": 2,
+   "Add": 1
+  }
+ },
+ "/encoder/block.1/conv1_3": {
+  "ssim_mean": 0.9998980344595207,
+  "ssim_min": 0.9992583030457936,
+  "mae_levels": 0.014160816569840917,
+  "psnr_mean": 74.51964333181157,
+  "psnr_min": 57.565256313388275,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/encoder/block.1/norm2_3": {
+  "ssim_mean": 0.9997815233798273,
+  "ssim_min": 0.9991268514127127,
+  "mae_levels": 0.026428318651136595,
+  "psnr_mean": 69.8660749050105,
+  "psnr_min": 57.515797863973255,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/encoder/block.1/conv2_3": {
+  "ssim_mean": 0.999898100633634,
+  "ssim_min": 0.9992577328273626,
+  "mae_levels": 0.014136552882773601,
+  "psnr_mean": 74.58607417648597,
+  "psnr_min": 57.56128271873513,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/encoder/downsample_3": {
+  "ssim_mean": 0.9999810549866244,
+  "ssim_min": 0.9999724944137558,
+  "mae_levels": 0.002246139318191065,
+  "psnr_mean": 74.71873199227805,
+  "psnr_min": 72.49952655828389,
+  "ops": {
+   "Pad": 1
+  }
+ },
+ "/encoder/downsample/conv_3": {
+  "ssim_mean": 0.9998667546310495,
+  "ssim_min": 0.9991286762300928,
+  "mae_levels": 0.014244970648125688,
+  "psnr_mean": 71.0026919692304,
+  "psnr_min": 58.38454708546643,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/encoder/block.0/norm1_4": {
+  "ssim_mean": 0.9998795236234297,
+  "ssim_min": 0.9991285427322032,
+  "mae_levels": 0.012716212875226174,
+  "psnr_mean": 73.75402243500704,
+  "psnr_min": 58.378871829905634,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/encoder/block.0_4": {
+  "ssim_mean": 0.9997780112773502,
+  "ssim_min": 0.9991302563675445,
+  "mae_levels": 0.026742981790616738,
+  "psnr_mean": 69.15187293322296,
+  "psnr_min": 57.55881316921943,
+  "ops": {
+   "Sigmoid": 2,
+   "Mul": 2,
+   "Add": 1
+  }
+ },
+ "/encoder/block.0/conv1_4": {
+  "ssim_mean": 0.999993108092958,
+  "ssim_min": 0.9999899565864964,
+  "mae_levels": 0.0008834259006146317,
+  "psnr_mean": 78.78535545906425,
+  "psnr_min": 76.70121375589532,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/encoder/block.0/norm2_4": {
+  "ssim_mean": 0.999981487698996,
+  "ssim_min": 0.9999549010449661,
+  "mae_levels": 0.0022194052665069908,
+  "psnr_mean": 75.02320549317322,
+  "psnr_min": 71.05705481288712,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/encoder/block.0/conv2_4": {
+  "ssim_mean": 0.9998841121161544,
+  "ssim_min": 0.9991296007509564,
+  "mae_levels": 0.012112464154889757,
+  "psnr_mean": 75.61187239363619,
+  "psnr_min": 58.38829564895667,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/encoder/block.1/norm1_4": {
+  "ssim_mean": 0.999881531854127,
+  "ssim_min": 0.9991283125313271,
+  "mae_levels": 0.0125560000301006,
+  "psnr_mean": 74.12773184245401,
+  "psnr_min": 58.384371450915246,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/encoder/block.1_4": {
+  "ssim_mean": 0.9997437616109119,
+  "ssim_min": 0.998867502803386,
+  "mae_levels": 0.02979847833306626,
+  "psnr_mean": 69.05220823971331,
+  "psnr_min": 57.34239055811183,
+  "ops": {
+   "Sigmoid": 2,
+   "Mul": 2,
+   "Add": 1
+  }
+ },
+ "/encoder/block.1/conv1_4": {
+  "ssim_mean": 0.9998852015484583,
+  "ssim_min": 0.9991293957096158,
+  "mae_levels": 0.012004697648810847,
+  "psnr_mean": 76.23416131826858,
+  "psnr_min": 58.386303821748335,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/encoder/block.1/norm2_4": {
+  "ssim_mean": 0.9998922499330498,
+  "ssim_min": 0.9992593355123186,
+  "mae_levels": 0.014796168911409002,
+  "psnr_mean": 72.80249344572857,
+  "psnr_min": 57.569427651626235,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/encoder/block.1/conv2_4": {
+  "ssim_mean": 0.999884406401061,
+  "ssim_min": 0.9991283194318764,
+  "mae_levels": 0.0120812674756271,
+  "psnr_mean": 75.76594647275525,
+  "psnr_min": 58.38361044992734,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/encoder/downsample_4": {
+  "ssim_mean": 0.9998990642286295,
+  "ssim_min": 0.9992549225711084,
+  "mae_levels": 0.013925486869364456,
+  "psnr_mean": 75.61928152549697,
+  "psnr_min": 57.55030157111679,
+  "ops": {
+   "Pad": 1
+  }
+ },
+ "/encoder/downsample/conv_4": {
+  "ssim_mean": 0.9998786761055902,
+  "ssim_min": 0.9991275876161458,
+  "mae_levels": 0.012699470793587908,
+  "psnr_mean": 73.82579382031359,
+  "psnr_min": 58.38665525429353,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/encoder/block.0/norm1_5": {
+  "ssim_mean": 0.9998998856944445,
+  "ssim_min": 0.9992616798596295,
+  "mae_levels": 0.013831579281828876,
+  "psnr_mean": 75.53961107426846,
+  "psnr_min": 57.581041174686554,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/encoder/block.0_5": {
+  "ssim_mean": 0.9997554252005011,
+  "ssim_min": 0.9988719198600031,
+  "mae_levels": 0.028492599789772255,
+  "psnr_mean": 70.94940357000971,
+  "psnr_min": 57.34999637751832,
+  "ops": {
+   "Sigmoid": 2,
+   "Mul": 2,
+   "Add": 1
+  }
+ },
+ "/encoder/block.0/conv1_5": {
+  "ssim_mean": 0.9997960046301005,
+  "ssim_min": 0.9991293426398236,
+  "mae_levels": 0.024493086826667954,
+  "psnr_mean": 75.93490340016794,
+  "psnr_min": 57.57214602731566,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/encoder/block.0/norm2_5": {
+  "ssim_mean": 0.9999915730428379,
+  "ssim_min": 0.9999813589217746,
+  "mae_levels": 0.0009623381763607108,
+  "psnr_mean": 78.68539498834893,
+  "psnr_min": 74.65455391455788,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/encoder/block.0/conv2_5": {
+  "ssim_mean": 0.9999906936636804,
+  "ssim_min": 0.9999872387080381,
+  "mae_levels": 0.001085191204194813,
+  "psnr_mean": 77.81629043639012,
+  "psnr_min": 76.8507761934144,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/encoder/block.0/nin_shortcut_2": {
+  "ssim_mean": 0.9998809332379655,
+  "ssim_min": 0.9991297182212012,
+  "mae_levels": 0.01250281875475101,
+  "psnr_mean": 74.35126183933255,
+  "psnr_min": 58.38460563189528,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/encoder/attn.0/norm1": {
+  "ssim_mean": 0.9999034773849953,
+  "ssim_min": 0.9992586347789835,
+  "mae_levels": 0.013416036302687506,
+  "psnr_mean": 78.22826706101394,
+  "psnr_min": 57.565110873883256,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/encoder/attn.0/q": {
+  "ssim_mean": 0.9999064055093854,
+  "ssim_min": 0.9992586848215405,
+  "mae_levels": 0.01308211194329112,
+  "psnr_mean": 83.66408534935857,
+  "psnr_min": 57.565498723387336,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/encoder/attn.0/k": {
+  "ssim_mean": 0.9999985082442864,
+  "ssim_min": 0.9999977588195963,
+  "mae_levels": 0.00017813803792843252,
+  "psnr_mean": 85.6795029139116,
+  "psnr_min": 83.8859525142818,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/encoder/attn.0/v": {
+  "ssim_mean": 0.9999989282061319,
+  "ssim_min": 0.99999797682862,
+  "mae_levels": 0.00013186917841578882,
+  "psnr_mean": 87.2960140293309,
+  "psnr_min": 84.99226522996602,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/encoder/attn.0": {
+  "ssim_mean": 0.999618518444964,
+  "ssim_min": 0.9970674975477143,
+  "mae_levels": 0.037390319209730793,
+  "psnr_mean": 72.32185350136074,
+  "psnr_min": 51.562923486563136,
+  "ops": {
+   "Reshape": 4,
+   "Transpose": 4,
+   "Mul": 1,
+   "MatMul": 2,
+   "Softmax": 1,
+   "Add": 1
+  }
+ },
+ "/encoder/attn.0/proj_out": {
+  "ssim_mean": 0.9999050867041444,
+  "ssim_min": 0.9992580905247954,
+  "mae_levels": 0.01322273386651307,
+  "psnr_mean": 80.49586172492363,
+  "psnr_min": 57.564480692304336,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/encoder/block.1/norm1_5": {
+  "ssim_mean": 0.9999879206256699,
+  "ssim_min": 0.9999713819454682,
+  "mae_levels": 0.0014278620724778035,
+  "psnr_mean": 76.92880697331935,
+  "psnr_min": 72.8223027617466,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/encoder/block.1_5": {
+  "ssim_mean": 0.9999655984735607,
+  "ssim_min": 0.9998953507175048,
+  "mae_levels": 0.0038936774510456296,
+  "psnr_mean": 72.91219260019142,
+  "psnr_min": 67.56094367780291,
+  "ops": {
+   "Sigmoid": 2,
+   "Mul": 2,
+   "Add": 1
+  }
+ },
+ "/encoder/block.1/conv1_5": {
+  "ssim_mean": 0.9998861236464369,
+  "ssim_min": 0.9991305483927283,
+  "mae_levels": 0.011832304321409692,
+  "psnr_mean": 77.74402310133252,
+  "psnr_min": 58.38876444697299,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/encoder/block.1/norm2_5": {
+  "ssim_mean": 0.9999901432785647,
+  "ssim_min": 0.9999661825601366,
+  "mae_levels": 0.0011255512114682897,
+  "psnr_mean": 78.46348232721927,
+  "psnr_min": 72.64540548675075,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/encoder/block.1/conv2_5": {
+  "ssim_mean": 0.9999904296320069,
+  "ssim_min": 0.9999855874259442,
+  "mae_levels": 0.0011626804470366014,
+  "psnr_mean": 77.6644817994565,
+  "psnr_min": 75.12288995835846,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/encoder/attn.1/norm1": {
+  "ssim_mean": 0.9998889197385351,
+  "ssim_min": 0.9991303179535763,
+  "mae_levels": 0.011501786344939036,
+  "psnr_mean": 80.00788130639732,
+  "psnr_min": 58.38864724272468,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/encoder/attn.1/q": {
+  "ssim_mean": 0.9999993847471833,
+  "ssim_min": 0.999998679590286,
+  "mae_levels": 7.492589104651781e-05,
+  "psnr_mean": 89.45025763893298,
+  "psnr_min": 85.91470241883471,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/encoder/attn.1/k": {
+  "ssim_mean": 0.9999994124654943,
+  "ssim_min": 0.9999990463070051,
+  "mae_levels": 6.865254223054063e-05,
+  "psnr_mean": 90.1645989823261,
+  "psnr_min": 86.51836686202762,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/encoder/attn.1/v": {
+  "ssim_mean": 0.999999466485551,
+  "ssim_min": 0.9999989966217502,
+  "mae_levels": 6.420994282108072e-05,
+  "psnr_mean": 90.11658989650739,
+  "psnr_min": 87.44953710193678,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/encoder/attn.1": {
+  "ssim_mean": 0.9998857746701333,
+  "ssim_min": 0.9992553934105052,
+  "mae_levels": 0.015499719522167332,
+  "psnr_mean": 71.67986434900135,
+  "psnr_min": 57.556054745250776,
+  "ops": {
+   "Reshape": 4,
+   "Transpose": 4,
+   "Mul": 1,
+   "MatMul": 2,
+   "Softmax": 1,
+   "Add": 1
+  }
+ },
+ "/encoder/attn.1/proj_out": {
+  "ssim_mean": 0.9999989418251742,
+  "ssim_min": 0.9999980374491012,
+  "mae_levels": 0.00013110931131599113,
+  "psnr_mean": 87.02774265587468,
+  "psnr_min": 84.27708170291507,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/encoder/block_1/norm1": {
+  "ssim_mean": 0.9996463933554462,
+  "ssim_min": 0.9972577828413083,
+  "mae_levels": 0.03397830954633363,
+  "psnr_mean": 73.57988981160403,
+  "psnr_min": 52.07793260646818,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/encoder/block_1": {
+  "ssim_mean": 0.9996867612972078,
+  "ssim_min": 0.9991296195508579,
+  "mae_levels": 0.03499160818789704,
+  "psnr_mean": 67.67529798334364,
+  "psnr_min": 57.6243668254576,
+  "ops": {
+   "Sigmoid": 2,
+   "Mul": 2,
+   "Add": 1
+  }
+ },
+ "/encoder/block_1/conv1": {
+  "ssim_mean": 0.9999039989615734,
+  "ssim_min": 0.9992601754786343,
+  "mae_levels": 0.013374796756454033,
+  "psnr_mean": 78.4209228549922,
+  "psnr_min": 57.57204891316496,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/encoder/block_1/norm2": {
+  "ssim_mean": 0.9997936534873507,
+  "ssim_min": 0.999128883994873,
+  "mae_levels": 0.024796607817627603,
+  "psnr_mean": 73.93243591993973,
+  "psnr_min": 57.57039830477193,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/encoder/block_1/conv2": {
+  "ssim_mean": 0.9997931953598561,
+  "ssim_min": 0.9991295330916377,
+  "mae_levels": 0.02480190308649377,
+  "psnr_mean": 73.94410783794066,
+  "psnr_min": 57.55750632894194,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/encoder/attn_1/norm1": {
+  "ssim_mean": 0.9999963494654005,
+  "ssim_min": 0.9999936531224194,
+  "mae_levels": 0.000420160129564473,
+  "psnr_mean": 82.14393155030307,
+  "psnr_min": 80.40355620849233,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/encoder/attn_1/q": {
+  "ssim_mean": 0.9999994751383046,
+  "ssim_min": 0.9999986178809115,
+  "mae_levels": 6.812463393290891e-05,
+  "psnr_mean": 90.01979614087335,
+  "psnr_min": 86.7131503959861,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/encoder/attn_1/k": {
+  "ssim_mean": 0.9999992860953614,
+  "ssim_min": 0.999998477294894,
+  "mae_levels": 7.963359700546846e-05,
+  "psnr_mean": 89.43640725634674,
+  "psnr_min": 86.25956167222783,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/encoder/attn_1/v": {
+  "ssim_mean": 0.9999996611213637,
+  "ssim_min": 0.9999993264234374,
+  "mae_levels": 4.5638373819545386e-05,
+  "psnr_mean": 91.6795527684983,
+  "psnr_min": 90.36643679603516,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/encoder/attn_1": {
+  "ssim_mean": 0.9996886130089638,
+  "ssim_min": 0.9991281758574803,
+  "mae_levels": 0.03383294494630096,
+  "psnr_mean": 68.53973468330332,
+  "psnr_min": 58.08571115075559,
+  "ops": {
+   "Reshape": 4,
+   "Transpose": 4,
+   "Mul": 1,
+   "MatMul": 2,
+   "Softmax": 1,
+   "Add": 1
+  }
+ },
+ "/encoder/attn_1/proj_out": {
+  "ssim_mean": 0.999998806922531,
+  "ssim_min": 0.9999961800573897,
+  "mae_levels": 0.00014518685763076355,
+  "psnr_mean": 87.27137741106228,
+  "psnr_min": 81.90227597661347,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/encoder/block_2/norm1": {
+  "ssim_mean": 0.9996940635230249,
+  "ssim_min": 0.9991294167328275,
+  "mae_levels": 0.034073012672717895,
+  "psnr_mean": 70.27872062053058,
+  "psnr_min": 57.53549444621602,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/encoder/block_2": {
+  "ssim_mean": 0.9996425582390074,
+  "ssim_min": 0.9972558659948045,
+  "mae_levels": 0.034266453894656324,
+  "psnr_mean": 72.7993375832167,
+  "psnr_min": 52.07356334297625,
+  "ops": {
+   "Sigmoid": 2,
+   "Mul": 2,
+   "Add": 1
+  }
+ },
+ "/encoder/block_2/conv1": {
+  "ssim_mean": 0.9999952630994956,
+  "ssim_min": 0.9999828299695311,
+  "mae_levels": 0.0005259006607777339,
+  "psnr_mean": 81.95351119519376,
+  "psnr_min": 75.33229724175786,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/encoder/block_2/norm2": {
+  "ssim_mean": 0.9999955189600946,
+  "ssim_min": 0.9999941547744282,
+  "mae_levels": 0.0005193468574621329,
+  "psnr_mean": 81.12781974174578,
+  "psnr_min": 79.69169193089142,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/encoder/block_2/conv2": {
+  "ssim_mean": 0.9999954503509612,
+  "ssim_min": 0.9999846988483784,
+  "mae_levels": 0.0004752419040870981,
+  "psnr_mean": 82.26742569275362,
+  "psnr_min": 76.05964922655792,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/encoder/norm_out": {
+  "ssim_mean": 0.9999031925659686,
+  "ssim_min": 0.9992265815312554,
+  "mae_levels": 0.008980412494724588,
+  "psnr_mean": 91.78299829097064,
+  "psnr_min": 59.54997658617864,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/encoder": {
+  "ssim_mean": 0.9997984152499735,
+  "ssim_min": 0.9991296916955198,
+  "mae_levels": 0.02419943272789271,
+  "psnr_mean": 86.65027759623669,
+  "psnr_min": 57.566759473541836,
+  "ops": {
+   "Sigmoid": 1,
+   "Mul": 1
+  }
+ },
+ "/encoder/conv_out": {
+  "ssim_mean": 0.9997983990705024,
+  "ssim_min": 0.9991296551532572,
+  "mae_levels": 0.024199172449013706,
+  "psnr_mean": 86.18388080284005,
+  "psnr_min": 57.56680797124221,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/quant_conv": {
+  "ssim_mean": 0.9999997871771003,
+  "ssim_min": 0.9999994588630311,
+  "mae_levels": 2.0787754625994914e-05,
+  "psnr_mean": 95.58853767652786,
+  "psnr_min": 91.90227597661347,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/quantize": {
+  "ssim_mean": 0.9985765408606576,
+  "ssim_min": 0.9963322478424835,
+  "mae_levels": 0.18622025045459234,
+  "psnr_mean": 63.68522547060675,
+  "psnr_min": 47.50309061415078,
+  "ops": {
+   "Transpose": 3,
+   "Reshape": 2,
+   "Pow": 4,
+   "ReduceSum": 3,
+   "Add": 4,
+   "MatMul": 2,
+   "Mul": 3,
+   "Sub": 4,
+   "ConstantOfShape": 1,
+   "Cast": 2,
+   "Expand": 1,
+   "ScatterElements": 1,
+   "ReduceMean": 3,
+   "Log": 1,
+   "Neg": 1,
+   "Exp": 1
+  }
+ },
+ "/post_quant_conv": {
+  "ssim_mean": 0.9999845180910805,
+  "ssim_min": 0.9999787625092097,
+  "mae_levels": 0.0015920883577130729,
+  "psnr_mean": 76.163652852192,
+  "psnr_min": 74.75491527998133,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/conv_in": {
+  "ssim_mean": 0.9999811782859862,
+  "ssim_min": 0.999963097955618,
+  "mae_levels": 0.002010596330235259,
+  "psnr_mean": 75.27991280540039,
+  "psnr_min": 71.92470654809894,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/block_1/norm1": {
+  "ssim_mean": 0.9999822258978082,
+  "ssim_min": 0.9999336620342291,
+  "mae_levels": 0.0017980790557886595,
+  "psnr_mean": 76.88512327149787,
+  "psnr_min": 69.79900969199262,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/decoder/block_1": {
+  "ssim_mean": 0.999983399217996,
+  "ssim_min": 0.9999787870945419,
+  "mae_levels": 0.001898777594875889,
+  "psnr_mean": 75.44138709702106,
+  "psnr_min": 73.4625906278806,
+  "ops": {
+   "Sigmoid": 2,
+   "Mul": 2,
+   "Add": 1
+  }
+ },
+ "/decoder/block_1/conv1": {
+  "ssim_mean": 0.9999921056676235,
+  "ssim_min": 0.9999687597728432,
+  "mae_levels": 0.0008728625478326979,
+  "psnr_mean": 80.11660493717707,
+  "psnr_min": 72.9393525803822,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/block_1/norm2": {
+  "ssim_mean": 0.9999819107738466,
+  "ssim_min": 0.999952357842327,
+  "mae_levels": 0.002083438967299678,
+  "psnr_mean": 75.55290056288702,
+  "psnr_min": 70.85802568327745,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/decoder/block_1/conv2": {
+  "ssim_mean": 0.9999872315010523,
+  "ssim_min": 0.9999637961970469,
+  "mae_levels": 0.0013867000416134534,
+  "psnr_mean": 77.4036931547005,
+  "psnr_min": 71.87472661940849,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/attn_1/norm1": {
+  "ssim_mean": 0.9999858684902321,
+  "ssim_min": 0.999972052698878,
+  "mae_levels": 0.0015410463158127552,
+  "psnr_mean": 76.59828449475198,
+  "psnr_min": 72.6267060183823,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/decoder/attn_1/norm2": {
+  "ssim_mean": 0.9999827823261376,
+  "ssim_min": 0.9999796689090159,
+  "mae_levels": 0.0019071891132915741,
+  "psnr_mean": 75.43498630032391,
+  "psnr_min": 73.66713849451763,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/decoder/attn_1/q": {
+  "ssim_mean": 0.9999915916241516,
+  "ssim_min": 0.9999892634051321,
+  "mae_levels": 0.0009129680893360526,
+  "psnr_mean": 78.60347876780719,
+  "psnr_min": 76.53363206164234,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/attn_1/k": {
+  "ssim_mean": 0.9999964974792708,
+  "ssim_min": 0.9999944144362763,
+  "mae_levels": 0.0003853659555447253,
+  "psnr_mean": 82.4768192114633,
+  "psnr_min": 80.91741196418334,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/attn_1/v": {
+  "ssim_mean": 0.9999941522712248,
+  "ssim_min": 0.9999892012902578,
+  "mae_levels": 0.0005932964369576021,
+  "psnr_mean": 80.7930698603853,
+  "psnr_min": 77.20182580660618,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/attn_1": {
+  "ssim_mean": 0.9999761350508276,
+  "ssim_min": 0.9999724932830818,
+  "mae_levels": 0.0026090454122340567,
+  "psnr_mean": 74.03891162720316,
+  "psnr_min": 72.70199188753124,
+  "ops": {
+   "Reshape": 4,
+   "Transpose": 4,
+   "Mul": 1,
+   "MatMul": 2,
+   "Softmax": 1,
+   "Add": 1
+  }
+ },
+ "/decoder/attn_1/proj_out": {
+  "ssim_mean": 0.9999897180257882,
+  "ssim_min": 0.9999797221253921,
+  "mae_levels": 0.0011839671129654228,
+  "psnr_mean": 77.74990578970738,
+  "psnr_min": 73.9719957913804,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/block_2/norm1": {
+  "ssim_mean": 0.9999826931005823,
+  "ssim_min": 0.9999359553215763,
+  "mae_levels": 0.0019272818375098977,
+  "psnr_mean": 76.36158965857967,
+  "psnr_min": 69.89990802799569,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/decoder/block_2": {
+  "ssim_mean": 0.9999660446585814,
+  "ssim_min": 0.999877351243616,
+  "mae_levels": 0.0036818886034539755,
+  "psnr_mean": 73.55578511001244,
+  "psnr_min": 67.03732716866867,
+  "ops": {
+   "Sigmoid": 2,
+   "Mul": 2,
+   "Add": 1
+  }
+ },
+ "/decoder/block_2/conv1": {
+  "ssim_mean": 0.9999851380986529,
+  "ssim_min": 0.9999392661330568,
+  "mae_levels": 0.0016026593180012982,
+  "psnr_mean": 77.45897660304806,
+  "psnr_min": 70.25064238720543,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/block_2/norm2": {
+  "ssim_mean": 0.9999847345835335,
+  "ssim_min": 0.9999782112994776,
+  "mae_levels": 0.0017730645411201396,
+  "psnr_mean": 75.77746240232523,
+  "psnr_min": 73.53290017412716,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/decoder/block_2/conv2": {
+  "ssim_mean": 0.9999900528536709,
+  "ssim_min": 0.9999677062587516,
+  "mae_levels": 0.001110499624147887,
+  "psnr_mean": 78.46798943351271,
+  "psnr_min": 72.81417751181988,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/block.0/norm1": {
+  "ssim_mean": 0.9999848761188431,
+  "ssim_min": 0.9999761397232763,
+  "mae_levels": 0.0017958818308316804,
+  "psnr_mean": 75.82744363855262,
+  "psnr_min": 73.62975844424746,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/decoder/block.0": {
+  "ssim_mean": 0.999972116751622,
+  "ssim_min": 0.9999408690517346,
+  "mae_levels": 0.0031245099418614197,
+  "psnr_mean": 73.49394760036827,
+  "psnr_min": 69.90987844328518,
+  "ops": {
+   "Sigmoid": 2,
+   "Mul": 2,
+   "Add": 1
+  }
+ },
+ "/decoder/block.0/conv1": {
+  "ssim_mean": 0.9999844305645071,
+  "ssim_min": 0.9999448071897696,
+  "mae_levels": 0.0017199280100282932,
+  "psnr_mean": 76.72349298412198,
+  "psnr_min": 70.53410979529893,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/block.0/norm2": {
+  "ssim_mean": 0.9999743576743281,
+  "ssim_min": 0.9999023977035141,
+  "mae_levels": 0.002894759031817351,
+  "psnr_mean": 74.72075961440166,
+  "psnr_min": 67.9461002490834,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/decoder/block.0/conv2": {
+  "ssim_mean": 0.9999922561359794,
+  "ssim_min": 0.9999895727739736,
+  "mae_levels": 0.0009265560375826265,
+  "psnr_mean": 78.55411717695164,
+  "psnr_min": 76.51455893121019,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/attn.0/norm1": {
+  "ssim_mean": 0.9999899328997188,
+  "ssim_min": 0.9999876821926779,
+  "mae_levels": 0.0011019168783271693,
+  "psnr_mean": 77.80327100828242,
+  "psnr_min": 76.20605448838683,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/decoder/attn.0/norm2": {
+  "ssim_mean": 0.9999905246669538,
+  "ssim_min": 0.999977882866315,
+  "mae_levels": 0.0011122776246574873,
+  "psnr_mean": 78.08625096692501,
+  "psnr_min": 73.96564181099455,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/decoder/attn.0/q": {
+  "ssim_mean": 0.9999970628451376,
+  "ssim_min": 0.9999964421129163,
+  "mae_levels": 0.0003599824770522675,
+  "psnr_mean": 82.70689468545174,
+  "psnr_min": 80.81375680946502,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/attn.0/k": {
+  "ssim_mean": 0.9999966797830364,
+  "ssim_min": 0.9999922520774126,
+  "mae_levels": 0.00039124143064450667,
+  "psnr_mean": 82.66985306444647,
+  "psnr_min": 78.35420935723835,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/attn.0/v": {
+  "ssim_mean": 0.9999962780350928,
+  "ssim_min": 0.9999914443587483,
+  "mae_levels": 0.00041295137760244405,
+  "psnr_mean": 82.19407493140459,
+  "psnr_min": 78.1720407986667,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/attn.0": {
+  "ssim_mean": 0.9999727243379058,
+  "ssim_min": 0.9999619256040057,
+  "mae_levels": 0.0030731024190311373,
+  "psnr_mean": 73.40813822016453,
+  "psnr_min": 71.1159504970554,
+  "ops": {
+   "Reshape": 4,
+   "Transpose": 4,
+   "Mul": 1,
+   "MatMul": 2,
+   "Softmax": 1,
+   "Add": 1
+  }
+ },
+ "/decoder/attn.0/proj_out": {
+  "ssim_mean": 0.9999917965675623,
+  "ssim_min": 0.999988038595546,
+  "mae_levels": 0.0009054928035412413,
+  "psnr_mean": 78.7712112842319,
+  "psnr_min": 76.31737210745884,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/block.1/norm1": {
+  "ssim_mean": 0.9999802531881755,
+  "ssim_min": 0.9999510557998564,
+  "mae_levels": 0.002309526204147261,
+  "psnr_mean": 74.95658236224935,
+  "psnr_min": 70.47402197533194,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/decoder/block.1": {
+  "ssim_mean": 0.9999685548544706,
+  "ssim_min": 0.9999311406755826,
+  "mae_levels": 0.0035222909249954526,
+  "psnr_mean": 73.04212824737016,
+  "psnr_min": 69.18878907492852,
+  "ops": {
+   "Sigmoid": 2,
+   "Mul": 2,
+   "Add": 1
+  }
+ },
+ "/decoder/block.1/conv1": {
+  "ssim_mean": 0.9999871616716882,
+  "ssim_min": 0.9999766157078855,
+  "mae_levels": 0.0014352117164245781,
+  "psnr_mean": 76.75498768189681,
+  "psnr_min": 73.50235626048999,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/block.1/norm2": {
+  "ssim_mean": 0.9999661548013946,
+  "ssim_min": 0.9998851094473145,
+  "mae_levels": 0.003764943779174801,
+  "psnr_mean": 73.30059973933714,
+  "psnr_min": 67.25566465501421,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/decoder/block.1/conv2": {
+  "ssim_mean": 0.99998892316565,
+  "ssim_min": 0.9999704384268115,
+  "mae_levels": 0.001236853722265674,
+  "psnr_mean": 77.81791532121358,
+  "psnr_min": 73.06996455302172,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/attn.1/norm1": {
+  "ssim_mean": 0.9999935809676888,
+  "ssim_min": 0.9999899953995505,
+  "mae_levels": 0.0007389903624643868,
+  "psnr_mean": 79.54584757123122,
+  "psnr_min": 78.42454198455039,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/decoder/attn.1/norm2": {
+  "ssim_mean": 0.9999932694742601,
+  "ssim_min": 0.9999910593554847,
+  "mae_levels": 0.0008357569776679119,
+  "psnr_mean": 78.938932811626,
+  "psnr_min": 77.47320443472786,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/decoder/attn.1/q": {
+  "ssim_mean": 0.9999978518433486,
+  "ssim_min": 0.9999969636590241,
+  "mae_levels": 0.000257565217023914,
+  "psnr_mean": 84.16637567688292,
+  "psnr_min": 81.90227597661347,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/attn.1/k": {
+  "ssim_mean": 0.9999979175435213,
+  "ssim_min": 0.999995138007496,
+  "mae_levels": 0.0002437115231235243,
+  "psnr_mean": 84.93557090430005,
+  "psnr_min": 81.0236017242863,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/attn.1/v": {
+  "ssim_mean": 0.9999962305592804,
+  "ssim_min": 0.9999933970833188,
+  "mae_levels": 0.00041034719884258664,
+  "psnr_mean": 82.09084195474269,
+  "psnr_min": 79.23411702528468,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/attn.1": {
+  "ssim_mean": 0.9999736023595953,
+  "ssim_min": 0.9999664720993491,
+  "mae_levels": 0.0029506733380935124,
+  "psnr_mean": 73.49140883043734,
+  "psnr_min": 71.79439539751255,
+  "ops": {
+   "Reshape": 4,
+   "Transpose": 4,
+   "Mul": 1,
+   "MatMul": 2,
+   "Softmax": 1,
+   "Add": 1
+  }
+ },
+ "/decoder/attn.1/proj_out": {
+  "ssim_mean": 0.9999957692975507,
+  "ssim_min": 0.9999937572666615,
+  "mae_levels": 0.0004975880768526286,
+  "psnr_mean": 81.33964147414906,
+  "psnr_min": 78.91837698163573,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/block.2/norm1": {
+  "ssim_mean": 0.999969345275431,
+  "ssim_min": 0.9998979754219166,
+  "mae_levels": 0.0035238476599797064,
+  "psnr_mean": 73.68390683576422,
+  "psnr_min": 67.63814927553018,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/decoder/block.2": {
+  "ssim_mean": 0.9999689501257826,
+  "ssim_min": 0.9999347376085354,
+  "mae_levels": 0.0034946229312704524,
+  "psnr_mean": 73.02530668949585,
+  "psnr_min": 69.39142689151788,
+  "ops": {
+   "Sigmoid": 2,
+   "Mul": 2,
+   "Add": 1
+  }
+ },
+ "/decoder/block.2/conv1": {
+  "ssim_mean": 0.9999886518455394,
+  "ssim_min": 0.9999841641609764,
+  "mae_levels": 0.0013456996125676968,
+  "psnr_mean": 77.01413706904358,
+  "psnr_min": 75.42015481959183,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/block.2/norm2": {
+  "ssim_mean": 0.9999779050567423,
+  "ssim_min": 0.99995895802012,
+  "mae_levels": 0.00262656860622712,
+  "psnr_mean": 74.15468811844326,
+  "psnr_min": 71.11924601623643,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/decoder/block.2/conv2": {
+  "ssim_mean": 0.9999866306843931,
+  "ssim_min": 0.9999529363494255,
+  "mae_levels": 0.0014202368559357303,
+  "psnr_mean": 77.59167321958118,
+  "psnr_min": 71.18011131746545,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/attn.2/norm1": {
+  "ssim_mean": 0.9999952258609377,
+  "ssim_min": 0.9999929928020693,
+  "mae_levels": 0.0006091512171757518,
+  "psnr_mean": 80.4647114384539,
+  "psnr_min": 79.0733782752188,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/decoder/attn.2/norm2": {
+  "ssim_mean": 0.9999821180234807,
+  "ssim_min": 0.9999380559305588,
+  "mae_levels": 0.0019650451417152492,
+  "psnr_mean": 76.10650548918767,
+  "psnr_min": 69.98878220098834,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/decoder/attn.2/q": {
+  "ssim_mean": 0.9999969474051668,
+  "ssim_min": 0.9999956403205947,
+  "mae_levels": 0.00039782138443800186,
+  "psnr_mean": 82.29379491501525,
+  "psnr_min": 80.56495196535911,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/attn.2/k": {
+  "ssim_mean": 0.9999977440685789,
+  "ssim_min": 0.999994564404417,
+  "mae_levels": 0.0002564604244875701,
+  "psnr_mean": 84.35826848941986,
+  "psnr_min": 80.12385148805903,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/attn.2/v": {
+  "ssim_mean": 0.9999979889681032,
+  "ssim_min": 0.9999969957066502,
+  "mae_levels": 0.00028630570459431404,
+  "psnr_mean": 83.80754338039986,
+  "psnr_min": 81.45260452144824,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/attn.2": {
+  "ssim_mean": 0.9999753233530297,
+  "ssim_min": 0.9999677093772088,
+  "mae_levels": 0.002845491825367308,
+  "psnr_mean": 73.7251974018053,
+  "psnr_min": 71.81756468979239,
+  "ops": {
+   "Reshape": 4,
+   "Transpose": 4,
+   "Mul": 1,
+   "MatMul": 2,
+   "Softmax": 1,
+   "Add": 1
+  }
+ },
+ "/decoder/attn.2/proj_out": {
+  "ssim_mean": 0.999995232091021,
+  "ssim_min": 0.9999930272740902,
+  "mae_levels": 0.0005688365141925944,
+  "psnr_mean": 80.77883394067094,
+  "psnr_min": 77.97051378785373,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/upsample": {
+  "ssim_mean": 0.9999791511762111,
+  "ssim_min": 0.9999545115794294,
+  "mae_levels": 0.002255178472215791,
+  "psnr_mean": 74.95200971624348,
+  "psnr_min": 71.11485254614092,
+  "ops": {
+   "Concat": 1,
+   "Resize": 1
+  }
+ },
+ "/decoder/upsample/conv": {
+  "ssim_mean": 0.9999689288559074,
+  "ssim_min": 0.9999451849642975,
+  "mae_levels": 0.0034916056804001894,
+  "psnr_mean": 72.90892312050158,
+  "psnr_min": 70.07778359379685,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/block.0/norm1_1": {
+  "ssim_mean": 0.9999696996419519,
+  "ssim_min": 0.9998970607066167,
+  "mae_levels": 0.003308590617974727,
+  "psnr_mean": 73.88930058884428,
+  "psnr_min": 67.75153027342581,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/decoder/block.0_1": {
+  "ssim_mean": 0.9999527119453213,
+  "ssim_min": 0.9999350873721363,
+  "mae_levels": 0.005189632191974214,
+  "psnr_mean": 71.06455201315316,
+  "psnr_min": 68.97434697457898,
+  "ops": {
+   "Sigmoid": 2,
+   "Mul": 2,
+   "Add": 1
+  }
+ },
+ "/decoder/block.0/conv1_1": {
+  "ssim_mean": 0.9999876435357179,
+  "ssim_min": 0.9999816816162576,
+  "mae_levels": 0.0014245976488780343,
+  "psnr_mean": 76.75115963051209,
+  "psnr_min": 74.4133511878633,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/block.0/norm2_1": {
+  "ssim_mean": 0.9999698465794465,
+  "ssim_min": 0.9999127764701593,
+  "mae_levels": 0.00341447834580233,
+  "psnr_mean": 73.36734331365543,
+  "psnr_min": 68.3652697414165,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/decoder/block.0/conv2_1": {
+  "ssim_mean": 0.9999849737302043,
+  "ssim_min": 0.9999812904317711,
+  "mae_levels": 0.001755573198669591,
+  "psnr_mean": 75.7486381166718,
+  "psnr_min": 73.96775877170869,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/block.0/nin_shortcut": {
+  "ssim_mean": 0.999956924773276,
+  "ssim_min": 0.999945305986225,
+  "mae_levels": 0.004441658315686436,
+  "psnr_mean": 71.69933211485215,
+  "psnr_min": 70.87669166395608,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/attn.0/norm1_1": {
+  "ssim_mean": 0.9999908250725029,
+  "ssim_min": 0.9999875658304765,
+  "mae_levels": 0.0012066364868296153,
+  "psnr_mean": 77.39092017166772,
+  "psnr_min": 75.88167606333384,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/decoder/attn.0/norm2_1": {
+  "ssim_mean": 0.9999832647354238,
+  "ssim_min": 0.9999758974623267,
+  "mae_levels": 0.0021790859417097908,
+  "psnr_mean": 74.89509023764191,
+  "psnr_min": 72.7067408708574,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/decoder/attn.0/q_1": {
+  "ssim_mean": 0.999991845981702,
+  "ssim_min": 0.9999902934589165,
+  "mae_levels": 0.00110934656587236,
+  "psnr_mean": 77.79475478107187,
+  "psnr_min": 76.33559682920543,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/attn.0/k_1": {
+  "ssim_mean": 0.9999975252487129,
+  "ssim_min": 0.9999964858438657,
+  "mae_levels": 0.00031917003457393456,
+  "psnr_mean": 83.29792239076926,
+  "psnr_min": 80.8342908657756,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/attn.0/v_1": {
+  "ssim_mean": 0.9999984995688505,
+  "ssim_min": 0.9999976736876971,
+  "mae_levels": 0.00017721975503814935,
+  "psnr_mean": 85.56442339920225,
+  "psnr_min": 83.66318856717028,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/attn.0_1": {
+  "ssim_mean": 0.9999543796770171,
+  "ssim_min": 0.9999446544316177,
+  "mae_levels": 0.005155126770524099,
+  "psnr_mean": 71.07167372267205,
+  "psnr_min": 69.80387755518007,
+  "ops": {
+   "Reshape": 4,
+   "Transpose": 4,
+   "Mul": 1,
+   "MatMul": 2,
+   "Softmax": 1,
+   "Add": 1
+  }
+ },
+ "/decoder/attn.0/proj_out_1": {
+  "ssim_mean": 0.9999903424195182,
+  "ssim_min": 0.9999811518763311,
+  "mae_levels": 0.0011994174617213638,
+  "psnr_mean": 77.63173889684703,
+  "psnr_min": 74.3736466564516,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/block.1/norm1_1": {
+  "ssim_mean": 0.9999820271676109,
+  "ssim_min": 0.9999702216000045,
+  "mae_levels": 0.00212542946095462,
+  "psnr_mean": 75.01131042755387,
+  "psnr_min": 72.1153535683528,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/decoder/block.1_1": {
+  "ssim_mean": 0.9999492153778483,
+  "ssim_min": 0.9999329057839975,
+  "mae_levels": 0.005647335394106112,
+  "psnr_mean": 70.68566580296147,
+  "psnr_min": 68.75275677368542,
+  "ops": {
+   "Sigmoid": 2,
+   "Mul": 2,
+   "Add": 1
+  }
+ },
+ "/decoder/block.1/conv1_1": {
+  "ssim_mean": 0.9999874499544236,
+  "ssim_min": 0.9999789084773415,
+  "mae_levels": 0.0015096551368448674,
+  "psnr_mean": 76.56847971935235,
+  "psnr_min": 73.75294263042484,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/block.1/norm2_1": {
+  "ssim_mean": 0.9999772592558118,
+  "ssim_min": 0.9999642639789483,
+  "mae_levels": 0.002694900089383334,
+  "psnr_mean": 74.06528651359636,
+  "psnr_min": 71.30560927911456,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/decoder/block.1/conv2_1": {
+  "ssim_mean": 0.999987176348669,
+  "ssim_min": 0.9999812493746558,
+  "mae_levels": 0.0014711749489293435,
+  "psnr_mean": 76.55772383556854,
+  "psnr_min": 74.3044532944796,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/attn.1/norm1_1": {
+  "ssim_mean": 0.9999873156182513,
+  "ssim_min": 0.9999740715961071,
+  "mae_levels": 0.001354341378961288,
+  "psnr_mean": 77.08956137657509,
+  "psnr_min": 74.09888461129528,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/decoder/attn.1/norm2_1": {
+  "ssim_mean": 0.9999798712707746,
+  "ssim_min": 0.9999755294391344,
+  "mae_levels": 0.002269021138839311,
+  "psnr_mean": 74.61390624657761,
+  "psnr_min": 73.42318580313263,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/decoder/attn.1/q_1": {
+  "ssim_mean": 0.9999900343936493,
+  "ssim_min": 0.9999852748808467,
+  "mae_levels": 0.001169521807956042,
+  "psnr_mean": 77.57845017257122,
+  "psnr_min": 75.38773363542342,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/attn.1/k_1": {
+  "ssim_mean": 0.9999963784382019,
+  "ssim_min": 0.999994489214017,
+  "mae_levels": 0.00038740617013865997,
+  "psnr_mean": 82.13174128698518,
+  "psnr_min": 80.86527514572938,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/attn.1/v_1": {
+  "ssim_mean": 0.9999975387994882,
+  "ssim_min": 0.9999943296947731,
+  "mae_levels": 0.00023094380638244427,
+  "psnr_mean": 84.59114421553659,
+  "psnr_min": 81.99539015208131,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/attn.1_1": {
+  "ssim_mean": 0.9999445797295788,
+  "ssim_min": 0.9999137571197251,
+  "mae_levels": 0.006143612004253507,
+  "psnr_mean": 70.38662078078153,
+  "psnr_min": 67.94557104115988,
+  "ops": {
+   "Reshape": 4,
+   "Transpose": 4,
+   "Mul": 1,
+   "MatMul": 2,
+   "Softmax": 1,
+   "Add": 1
+  }
+ },
+ "/decoder/attn.1/proj_out_1": {
+  "ssim_mean": 0.9999887710159552,
+  "ssim_min": 0.9999863652063411,
+  "mae_levels": 0.0012707350596730116,
+  "psnr_mean": 77.170145254582,
+  "psnr_min": 75.30628285224603,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/block.2/norm1_1": {
+  "ssim_mean": 0.9999785568420367,
+  "ssim_min": 0.999943642791284,
+  "mae_levels": 0.0024955404336046705,
+  "psnr_mean": 74.64135937400877,
+  "psnr_min": 70.01341706405985,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/decoder/block.2_1": {
+  "ssim_mean": 0.9999410422360823,
+  "ssim_min": 0.9999264886236011,
+  "mae_levels": 0.006363402087640191,
+  "psnr_mean": 70.16601703146449,
+  "psnr_min": 68.40626332212017,
+  "ops": {
+   "Sigmoid": 2,
+   "Mul": 2,
+   "Add": 1
+  }
+ },
+ "/decoder/block.2/conv1_1": {
+  "ssim_mean": 0.9999809651682007,
+  "ssim_min": 0.9999491265147633,
+  "mae_levels": 0.002188212434600656,
+  "psnr_mean": 75.21519944878835,
+  "psnr_min": 70.61847913371489,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/block.2/norm2_1": {
+  "ssim_mean": 0.9999715149403741,
+  "ssim_min": 0.9999606778601101,
+  "mae_levels": 0.0033750987250541487,
+  "psnr_mean": 72.9895485122225,
+  "psnr_min": 71.47044004885241,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/decoder/block.2/conv2_1": {
+  "ssim_mean": 0.999984127710785,
+  "ssim_min": 0.9999760285620686,
+  "mae_levels": 0.0018039306903361307,
+  "psnr_mean": 75.69254292649869,
+  "psnr_min": 73.03907820919297,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/attn.2/norm1_1": {
+  "ssim_mean": 0.9999838669489953,
+  "ssim_min": 0.999967944917065,
+  "mae_levels": 0.0014636861126676726,
+  "psnr_mean": 76.92180973218834,
+  "psnr_min": 73.236717612073,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/decoder/attn.2/norm2_1": {
+  "ssim_mean": 0.9999817611727095,
+  "ssim_min": 0.9999756737972071,
+  "mae_levels": 0.002104417970469341,
+  "psnr_mean": 74.94712585473897,
+  "psnr_min": 73.1376481798467,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/decoder/attn.2/q_1": {
+  "ssim_mean": 0.9999920424874114,
+  "ssim_min": 0.9999894136448351,
+  "mae_levels": 0.0010147855227771174,
+  "psnr_mean": 78.12424143152123,
+  "psnr_min": 77.04420163756592,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/attn.2/k_1": {
+  "ssim_mean": 0.9999973147965477,
+  "ssim_min": 0.9999964450493118,
+  "mae_levels": 0.0003453373967637896,
+  "psnr_mean": 82.74717832285958,
+  "psnr_min": 82.14586943520791,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/attn.2/v_1": {
+  "ssim_mean": 0.9999983964161225,
+  "ssim_min": 0.9999976497777888,
+  "mae_levels": 0.00018986977692980744,
+  "psnr_mean": 85.51171704181002,
+  "psnr_min": 83.92771192082316,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/attn.2_1": {
+  "ssim_mean": 0.9999435174847692,
+  "ssim_min": 0.9999368238626801,
+  "mae_levels": 0.006182705979048686,
+  "psnr_mean": 70.26504631794171,
+  "psnr_min": 69.3788952589709,
+  "ops": {
+   "Reshape": 4,
+   "Transpose": 4,
+   "Mul": 1,
+   "MatMul": 2,
+   "Softmax": 1,
+   "Add": 1
+  }
+ },
+ "/decoder/attn.2/proj_out_1": {
+  "ssim_mean": 0.9999915631781752,
+  "ssim_min": 0.9999899608662471,
+  "mae_levels": 0.0010334163807745878,
+  "psnr_mean": 78.12830353620294,
+  "psnr_min": 76.40184642466872,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/upsample_1": {
+  "ssim_mean": 0.9999582696728224,
+  "ssim_min": 0.9999524210559576,
+  "mae_levels": 0.004447935135807879,
+  "psnr_mean": 71.69472930373624,
+  "psnr_min": 70.53026987920524,
+  "ops": {
+   "Concat": 1,
+   "Resize": 1
+  }
+ },
+ "/decoder/upsample/conv_1": {
+  "ssim_mean": 0.999923952150577,
+  "ssim_min": 0.9999155238628453,
+  "mae_levels": 0.008398723977194322,
+  "psnr_mean": 68.93999478816154,
+  "psnr_min": 67.99934938133559,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/block.0/norm1_2": {
+  "ssim_mean": 0.9999774765731193,
+  "ssim_min": 0.9999694338452049,
+  "mae_levels": 0.0027492312964422227,
+  "psnr_mean": 73.8233229094177,
+  "psnr_min": 71.88782356787166,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/decoder/block.0_2": {
+  "ssim_mean": 0.9999209129239859,
+  "ssim_min": 0.9999118488219502,
+  "mae_levels": 0.008624021720704533,
+  "psnr_mean": 68.82957142650125,
+  "psnr_min": 67.72127275564023,
+  "ops": {
+   "Sigmoid": 2,
+   "Mul": 2,
+   "Add": 1
+  }
+ },
+ "/decoder/block.0/conv1_2": {
+  "ssim_mean": 0.9999850227577199,
+  "ssim_min": 0.999980247760717,
+  "mae_levels": 0.0018267147263617556,
+  "psnr_mean": 75.51196854166825,
+  "psnr_min": 74.21387764824487,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/block.0/norm2_2": {
+  "ssim_mean": 0.9999732706779288,
+  "ssim_min": 0.9999669387987757,
+  "mae_levels": 0.003199980581487516,
+  "psnr_mean": 73.16447161622075,
+  "psnr_min": 71.4348419411902,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/decoder/block.0/conv2_2": {
+  "ssim_mean": 0.9999797771961008,
+  "ssim_min": 0.9999738113087024,
+  "mae_levels": 0.0023951806712974033,
+  "psnr_mean": 74.41229205102258,
+  "psnr_min": 72.62359725316793,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/block.1/norm1_2": {
+  "ssim_mean": 0.9999737276274935,
+  "ssim_min": 0.9999602463877804,
+  "mae_levels": 0.0031218565483787097,
+  "psnr_mean": 73.33526273968018,
+  "psnr_min": 71.01715659104448,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/decoder/block.1_2": {
+  "ssim_mean": 0.9999248113140833,
+  "ssim_min": 0.9999176987507112,
+  "mae_levels": 0.008304565337742265,
+  "psnr_mean": 69.00110357150888,
+  "psnr_min": 67.8736724212076,
+  "ops": {
+   "Sigmoid": 2,
+   "Mul": 2,
+   "Add": 1
+  }
+ },
+ "/decoder/block.1/conv1_2": {
+  "ssim_mean": 0.9999794706444625,
+  "ssim_min": 0.9999740686461793,
+  "mae_levels": 0.0023938909819465337,
+  "psnr_mean": 74.39026743544396,
+  "psnr_min": 73.14815530953398,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/block.1/norm2_2": {
+  "ssim_mean": 0.9999685791622804,
+  "ssim_min": 0.9999616550049145,
+  "mae_levels": 0.003756280262501299,
+  "psnr_mean": 72.45006705934787,
+  "psnr_min": 70.90065998654094,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/decoder/block.1/conv2_2": {
+  "ssim_mean": 0.9999823400114386,
+  "ssim_min": 0.9999771512563472,
+  "mae_levels": 0.0020891735318523397,
+  "psnr_mean": 75.01545116657321,
+  "psnr_min": 73.81791543373237,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/block.2/norm1_2": {
+  "ssim_mean": 0.9999698265861123,
+  "ssim_min": 0.9999590982352567,
+  "mae_levels": 0.003606685560472167,
+  "psnr_mean": 72.61655209559586,
+  "psnr_min": 71.49673203504697,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/decoder/block.2_2": {
+  "ssim_mean": 0.9999248968593021,
+  "ssim_min": 0.9999178804554563,
+  "mae_levels": 0.008207360292970534,
+  "psnr_mean": 69.05493084081363,
+  "psnr_min": 67.90082244117411,
+  "ops": {
+   "Sigmoid": 2,
+   "Mul": 2,
+   "Add": 1
+  }
+ },
+ "/decoder/block.2/conv1_2": {
+  "ssim_mean": 0.9999733524739979,
+  "ssim_min": 0.999966102244091,
+  "mae_levels": 0.003100039199251947,
+  "psnr_mean": 73.25598672440606,
+  "psnr_min": 72.0522322481516,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/block.2/norm2_2": {
+  "ssim_mean": 0.9999627890531297,
+  "ssim_min": 0.999954466704501,
+  "mae_levels": 0.00439329504785646,
+  "psnr_mean": 71.7385596449346,
+  "psnr_min": 70.75879497439004,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/decoder/block.2/conv2_2": {
+  "ssim_mean": 0.9999775124765494,
+  "ssim_min": 0.9999739872594902,
+  "mae_levels": 0.0025891306324521413,
+  "psnr_mean": 74.04045165908009,
+  "psnr_min": 73.2188600835451,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/upsample_2": {
+  "ssim_mean": 0.9999557523303507,
+  "ssim_min": 0.9999478058763931,
+  "mae_levels": 0.004792826425616958,
+  "psnr_mean": 71.4265061041613,
+  "psnr_min": 70.13873209556779,
+  "ops": {
+   "Concat": 1,
+   "Resize": 1
+  }
+ },
+ "/decoder/upsample/conv_2": {
+  "ssim_mean": 0.9999143668292523,
+  "ssim_min": 0.999904853059504,
+  "mae_levels": 0.009061568205140924,
+  "psnr_mean": 68.62460506751032,
+  "psnr_min": 67.8861821124851,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/block.0/norm1_3": {
+  "ssim_mean": 0.9999403324948968,
+  "ssim_min": 0.9999301092191848,
+  "mae_levels": 0.006605244506557306,
+  "psnr_mean": 69.95612126857574,
+  "psnr_min": 69.28352209068281,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/decoder/block.0_3": {
+  "ssim_mean": 0.9999065210132067,
+  "ssim_min": 0.9998920828520506,
+  "mae_levels": 0.009932849114625553,
+  "psnr_mean": 68.18312749971335,
+  "psnr_min": 67.76623065510111,
+  "ops": {
+   "Sigmoid": 2,
+   "Mul": 2,
+   "Add": 1
+  }
+ },
+ "/decoder/block.0/conv1_3": {
+  "ssim_mean": 0.9999620994991527,
+  "ssim_min": 0.9999558284605589,
+  "mae_levels": 0.004097821948421121,
+  "psnr_mean": 72.01989778945435,
+  "psnr_min": 71.61089879179265,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/block.0/norm2_3": {
+  "ssim_mean": 0.9999445093093893,
+  "ssim_min": 0.9999335858398151,
+  "mae_levels": 0.006087181833027144,
+  "psnr_mean": 70.31767181682443,
+  "psnr_min": 69.77555829905234,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/decoder/block.0/conv2_3": {
+  "ssim_mean": 0.9999696411860522,
+  "ssim_min": 0.9999648778470316,
+  "mae_levels": 0.0033431295154062735,
+  "psnr_mean": 72.92395140190403,
+  "psnr_min": 72.4619380873657,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/block.0/nin_shortcut_1": {
+  "ssim_mean": 0.9999080243659804,
+  "ssim_min": 0.9998842498010725,
+  "mae_levels": 0.009504269794892717,
+  "psnr_mean": 68.42127585867988,
+  "psnr_min": 67.00823146893636,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/block.1/norm1_3": {
+  "ssim_mean": 0.9999592968409006,
+  "ssim_min": 0.9999553838935287,
+  "mae_levels": 0.0043189664625004065,
+  "psnr_mean": 71.77160193655371,
+  "psnr_min": 70.86838576648005,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/decoder/block.1_3": {
+  "ssim_mean": 0.9999246376475314,
+  "ssim_min": 0.9999138918958755,
+  "mae_levels": 0.008063110184413635,
+  "psnr_mean": 69.09807496583667,
+  "psnr_min": 68.48583276220955,
+  "ops": {
+   "Sigmoid": 2,
+   "Mul": 2,
+   "Add": 1
+  }
+ },
+ "/decoder/block.1/conv1_3": {
+  "ssim_mean": 0.9999724313928915,
+  "ssim_min": 0.9999684916006129,
+  "mae_levels": 0.0030477362319514256,
+  "psnr_mean": 73.29896232377516,
+  "psnr_min": 72.83696662987846,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/block.1/norm2_3": {
+  "ssim_mean": 0.9999616297729979,
+  "ssim_min": 0.9999549408853923,
+  "mae_levels": 0.004314846224353075,
+  "psnr_mean": 71.79767669937374,
+  "psnr_min": 71.17009298587399,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/decoder/block.1/conv2_3": {
+  "ssim_mean": 0.9999782994182441,
+  "ssim_min": 0.9999750761794977,
+  "mae_levels": 0.002460002517827853,
+  "psnr_mean": 74.28042018294741,
+  "psnr_min": 73.75294263042484,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/block.2/norm1_3": {
+  "ssim_mean": 0.9999607690403277,
+  "ssim_min": 0.9999541681664148,
+  "mae_levels": 0.00427620524281358,
+  "psnr_mean": 71.86041540229687,
+  "psnr_min": 71.35637754375243,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/decoder/block.2_3": {
+  "ssim_mean": 0.9999333863231674,
+  "ssim_min": 0.9999244921084023,
+  "mae_levels": 0.007163326964716443,
+  "psnr_mean": 69.62045966918326,
+  "psnr_min": 69.04806687675392,
+  "ops": {
+   "Sigmoid": 2,
+   "Mul": 2,
+   "Add": 1
+  }
+ },
+ "/decoder/block.2/conv1_3": {
+  "ssim_mean": 0.9999691377758795,
+  "ssim_min": 0.999962970797989,
+  "mae_levels": 0.0033340064190712226,
+  "psnr_mean": 72.92167216194741,
+  "psnr_min": 72.45744925511178,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/block.2/norm2_3": {
+  "ssim_mean": 0.9999626448024987,
+  "ssim_min": 0.9999580950634,
+  "mae_levels": 0.004122168267580162,
+  "psnr_mean": 71.96202222953966,
+  "psnr_min": 71.47759481953,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/decoder/block.2/conv2_3": {
+  "ssim_mean": 0.9999802925366821,
+  "ssim_min": 0.9999762129853356,
+  "mae_levels": 0.00221091868220058,
+  "psnr_mean": 74.71860793352496,
+  "psnr_min": 74.31132323235144,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/upsample_3": {
+  "ssim_mean": 0.9999631493988653,
+  "ssim_min": 0.9999580945278144,
+  "mae_levels": 0.0037856233852207044,
+  "psnr_mean": 72.36913306412276,
+  "psnr_min": 71.75350829521683,
+  "ops": {
+   "Concat": 1,
+   "Resize": 1
+  }
+ },
+ "/decoder/upsample/conv_3": {
+  "ssim_mean": 0.9999442682914286,
+  "ssim_min": 0.9999355598839555,
+  "mae_levels": 0.005865534704239117,
+  "psnr_mean": 70.54234408123935,
+  "psnr_min": 69.36419830816314,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/block.0/norm1_4": {
+  "ssim_mean": 0.9999685351881682,
+  "ssim_min": 0.999959712328628,
+  "mae_levels": 0.003377941577703547,
+  "psnr_mean": 72.85410667505903,
+  "psnr_min": 71.92735307153187,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/decoder/block.0_4": {
+  "ssim_mean": 0.999947232988779,
+  "ssim_min": 0.9999412341247044,
+  "mae_levels": 0.005550678844408741,
+  "psnr_mean": 70.75073142236201,
+  "psnr_min": 69.90572132147928,
+  "ops": {
+   "Sigmoid": 2,
+   "Mul": 2,
+   "Add": 1
+  }
+ },
+ "/decoder/block.0/conv1_4": {
+  "ssim_mean": 0.9999819020712226,
+  "ssim_min": 0.9999779668829013,
+  "mae_levels": 0.002061607662032783,
+  "psnr_mean": 75.0434158230233,
+  "psnr_min": 74.2340930989535,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/block.0/norm2_4": {
+  "ssim_mean": 0.9999772512382672,
+  "ssim_min": 0.9999719124764918,
+  "mae_levels": 0.0026476765385685663,
+  "psnr_mean": 73.95649642450945,
+  "psnr_min": 73.39897030713414,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/decoder/block.0/conv2_4": {
+  "ssim_mean": 0.9999870361680369,
+  "ssim_min": 0.9999847017618799,
+  "mae_levels": 0.0015242133236792466,
+  "psnr_mean": 76.34344165478296,
+  "psnr_min": 75.85543462507235,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/block.1/norm1_4": {
+  "ssim_mean": 0.9999821193470686,
+  "ssim_min": 0.9999783457148931,
+  "mae_levels": 0.002058284997064619,
+  "psnr_mean": 75.03073570971102,
+  "psnr_min": 73.99111370113336,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/decoder/block.1_4": {
+  "ssim_mean": 0.9999557590985725,
+  "ssim_min": 0.9999469760543556,
+  "mae_levels": 0.004638132257633876,
+  "psnr_mean": 71.55667924785392,
+  "psnr_min": 70.39331670251451,
+  "ops": {
+   "Sigmoid": 2,
+   "Mul": 2,
+   "Add": 1
+  }
+ },
+ "/decoder/block.1/conv1_4": {
+  "ssim_mean": 0.9999862582491809,
+  "ssim_min": 0.9999826971013248,
+  "mae_levels": 0.0015560475071751956,
+  "psnr_mean": 76.21131195384098,
+  "psnr_min": 75.59830544429877,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/block.1/norm2_4": {
+  "ssim_mean": 0.9999797329379683,
+  "ssim_min": 0.9999574320090833,
+  "mae_levels": 0.0022910813063514723,
+  "psnr_mean": 74.79273422325689,
+  "psnr_min": 71.43129812637176,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/decoder/block.1/conv2_4": {
+  "ssim_mean": 0.9999909595124405,
+  "ssim_min": 0.9999892047087208,
+  "mae_levels": 0.001074532886610191,
+  "psnr_mean": 77.84201975019408,
+  "psnr_min": 76.97171093941957,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/block.2/norm1_4": {
+  "ssim_mean": 0.9999834822967135,
+  "ssim_min": 0.9999807820785803,
+  "mae_levels": 0.0019318134382362295,
+  "psnr_mean": 75.33156579599927,
+  "psnr_min": 74.48908838475751,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/decoder/block.2_4": {
+  "ssim_mean": 0.9999578428477186,
+  "ssim_min": 0.9999475122254047,
+  "mae_levels": 0.004351643845235675,
+  "psnr_mean": 71.821802027896,
+  "psnr_min": 70.62141785818861,
+  "ops": {
+   "Sigmoid": 2,
+   "Mul": 2,
+   "Add": 1
+  }
+ },
+ "/decoder/block.2/conv1_4": {
+  "ssim_mean": 0.9999835459553357,
+  "ssim_min": 0.9999812367140043,
+  "mae_levels": 0.0018590900633103091,
+  "psnr_mean": 75.48848832821866,
+  "psnr_min": 74.94427640114834,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/block.2/norm2_4": {
+  "ssim_mean": 0.9999494727165879,
+  "ssim_min": 0.9999404345963769,
+  "mae_levels": 0.005134953604677972,
+  "psnr_mean": 71.05964138497093,
+  "psnr_min": 70.4306675654534,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/decoder/block.2/conv2_4": {
+  "ssim_mean": 0.9999895777939455,
+  "ssim_min": 0.9999846860855738,
+  "mae_levels": 0.0011817664453062093,
+  "psnr_mean": 77.49162916502777,
+  "psnr_min": 75.2861566237518,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/upsample_4": {
+  "ssim_mean": 0.9999736477281658,
+  "ssim_min": 0.999965828662925,
+  "mae_levels": 0.002650019176830831,
+  "psnr_mean": 74.03683730622879,
+  "psnr_min": 72.69882878118672,
+  "ops": {
+   "Concat": 1,
+   "Resize": 1
+  }
+ },
+ "/decoder/upsample/conv_4": {
+  "ssim_mean": 0.9999596214427704,
+  "ssim_min": 0.9999526450605364,
+  "mae_levels": 0.004165302158790629,
+  "psnr_mean": 72.08386891632591,
+  "psnr_min": 71.04407464436323,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/block.0/norm1_5": {
+  "ssim_mean": 0.9999782207585477,
+  "ssim_min": 0.9999754646147591,
+  "mae_levels": 0.0023378393571266143,
+  "psnr_mean": 74.45149957038385,
+  "psnr_min": 73.9550724584451,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/decoder/block.0_5": {
+  "ssim_mean": 0.9999681351975194,
+  "ssim_min": 0.9999637107824048,
+  "mae_levels": 0.0033370260426696108,
+  "psnr_mean": 73.04493555790424,
+  "psnr_min": 71.93530233211432,
+  "ops": {
+   "Sigmoid": 2,
+   "Mul": 2,
+   "Add": 1
+  }
+ },
+ "/decoder/block.0/conv1_5": {
+  "ssim_mean": 0.9999893717737025,
+  "ssim_min": 0.9999881432044379,
+  "mae_levels": 0.001149044383927933,
+  "psnr_mean": 77.59329747626963,
+  "psnr_min": 77.07873816008006,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/block.0/norm2_5": {
+  "ssim_mean": 0.9999875449535327,
+  "ssim_min": 0.9999858964711346,
+  "mae_levels": 0.0013705936943753105,
+  "psnr_mean": 76.76274547170169,
+  "psnr_min": 75.73927167218774,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/decoder/block.0/conv2_5": {
+  "ssim_mean": 0.9999925892011254,
+  "ssim_min": 0.9999919016617453,
+  "mae_levels": 0.0008278881289874862,
+  "psnr_mean": 79.11695653429229,
+  "psnr_min": 77.9651948100682,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/block.0/nin_shortcut_2": {
+  "ssim_mean": 0.9999653171042834,
+  "ssim_min": 0.9999597271273029,
+  "mae_levels": 0.0035751969726210975,
+  "psnr_mean": 72.77184131931426,
+  "psnr_min": 71.62445702417791,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/block.1/norm1_5": {
+  "ssim_mean": 0.9999847993195974,
+  "ssim_min": 0.9999814593288933,
+  "mae_levels": 0.0016980038380920437,
+  "psnr_mean": 75.91032882146122,
+  "psnr_min": 74.42509840849341,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/decoder/block.1_5": {
+  "ssim_mean": 0.9999714475325319,
+  "ssim_min": 0.9999642658294959,
+  "mae_levels": 0.002937893223489141,
+  "psnr_mean": 73.65255983436238,
+  "psnr_min": 72.39066764987436,
+  "ops": {
+   "Sigmoid": 2,
+   "Mul": 2,
+   "Add": 1
+  }
+ },
+ "/decoder/block.1/conv1_5": {
+  "ssim_mean": 0.9999920896760339,
+  "ssim_min": 0.9999908211373102,
+  "mae_levels": 0.0008469189575133207,
+  "psnr_mean": 78.9324538469851,
+  "psnr_min": 77.53053787225728,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/block.1/norm2_5": {
+  "ssim_mean": 0.9999899790498461,
+  "ssim_min": 0.9999872169315652,
+  "mae_levels": 0.0010614888993681904,
+  "psnr_mean": 77.97932714047931,
+  "psnr_min": 76.76122776688514,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/decoder/block.1/conv2_5": {
+  "ssim_mean": 0.999994168282578,
+  "ssim_min": 0.9999928901172993,
+  "mae_levels": 0.0006474816159823815,
+  "psnr_mean": 80.1876175889,
+  "psnr_min": 78.82019017370243,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/block.2/norm1_5": {
+  "ssim_mean": 0.9999850387060308,
+  "ssim_min": 0.99998156267036,
+  "mae_levels": 0.0017525612238733501,
+  "psnr_mean": 76.18901413216696,
+  "psnr_min": 74.54919098831161,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/decoder/block.2_5": {
+  "ssim_mean": 0.9999686885739376,
+  "ssim_min": 0.9999626687209963,
+  "mae_levels": 0.0032388697831858826,
+  "psnr_mean": 73.27166051002055,
+  "psnr_min": 72.00750812719542,
+  "ops": {
+   "Sigmoid": 2,
+   "Mul": 2,
+   "Add": 1
+  }
+ },
+ "/decoder/block.2/conv1_5": {
+  "ssim_mean": 0.9999905599874422,
+  "ssim_min": 0.9999889636211344,
+  "mae_levels": 0.0010018453358107138,
+  "psnr_mean": 78.38821563759367,
+  "psnr_min": 76.88794855860392,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/block.2/norm2_5": {
+  "ssim_mean": 0.9999890090787154,
+  "ssim_min": 0.9999877206593153,
+  "mae_levels": 0.0011859138816344705,
+  "psnr_mean": 77.52068592000805,
+  "psnr_min": 75.99500568951031,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/decoder/block.2/conv2_5": {
+  "ssim_mean": 0.9999930155392551,
+  "ssim_min": 0.9999920352635162,
+  "mae_levels": 0.0007451410055903107,
+  "psnr_mean": 79.55704430974201,
+  "psnr_min": 78.25080102385616,
+  "ops": {
+   "Conv": 1
+  }
+ },
+ "/decoder/norm_out": {
+  "ssim_mean": 0.9999424241286932,
+  "ssim_min": 0.999916105386278,
+  "mae_levels": 0.005851290053933145,
+  "psnr_mean": 70.71324953767548,
+  "psnr_min": 69.5013239487949,
+  "ops": {
+   "Reshape": 2,
+   "InstanceNormalization": 1,
+   "Unsqueeze": 2,
+   "Mul": 1,
+   "Add": 1
+  }
+ },
+ "/decoder": {
+  "ssim_mean": 0.9999634462062457,
+  "ssim_min": 0.9999566043436264,
+  "mae_levels": 0.0036852262153513893,
+  "psnr_mean": 72.72878199103462,
+  "psnr_min": 71.55830087322725,
+  "ops": {
+   "Sigmoid": 1,
+   "Mul": 1
+  }
+ },
+ "/decoder/conv_out": {
+  "ssim_mean": 0.9998825053747273,
+  "ssim_min": 0.9998569337920015,
+  "mae_levels": 0.011789608724999123,
+  "psnr_mean": 67.81565786229916,
+  "psnr_min": 67.18669202847082,
+  "ops": {
+   "Conv": 1
+  }
+ }
+}

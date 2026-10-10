@@ -1,0 +1,33 @@
+{
+ "name": "isl_quant",
+ "model": "G:\\pinokio\\api\\roop-ultimate\\app\\output\\restorer_fp16\\restoreformer_single_output.onnx",
+ "fp16": true,
+ "fp32_ops": [],
+ "fp32_modules": [
+  "G:/pinokio/bin/miniforge/Library/quantize",
+  "/quant_conv",
+  "/post_quant_conv",
+  "/encoder/conv_out",
+  "/encoder/norm_out",
+  "/decoder/conv_in"
+ ],
+ "constrained_layers": 11,
+ "failed_layers": [],
+ "n_failed": 0,
+ "build_seconds": 20.5,
+ "engine_bytes": 171275548,
+ "tensorrt": "10.9.0.34",
+ "constrained_names_sample": [
+  "/encoder/norm_out/Reshape",
+  "/encoder/norm_out/InstanceNormalization",
+  "/encoder/norm_out/Reshape_1",
+  "/encoder/norm_out/Unsqueeze",
+  "/encoder/norm_out/Mul",
+  "/encoder/norm_out/Unsqueeze_1",
+  "/encoder/norm_out/Add",
+  "/encoder/conv_out/Conv",
+  "/quant_conv/Conv",
+  "/post_quant_conv/Conv",
+  "/decoder/conv_in/Conv"
+ ]
+}

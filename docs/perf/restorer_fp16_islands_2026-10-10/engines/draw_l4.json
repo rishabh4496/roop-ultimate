@@ -1,0 +1,21 @@
+{
+ "name": "draw_l4",
+ "model": "G:\\pinokio\\api\\roop-ultimate\\app\\output\\restorer_fp16\\restoreformer_single_output.onnx",
+ "fp16": true,
+ "opt_level": 4,
+ "no_timing_cache": true,
+ "fp32_ops": [],
+ "fp32_except_ops": [],
+ "fp32_modules": [],
+ "primary_output": "2701",
+ "anchors": 0,
+ "anchors_missing": 0,
+ "anchor_sample": [],
+ "constrained_layers": 0,
+ "failed_layers": [],
+ "n_failed": 0,
+ "build_seconds": 209.4,
+ "engine_bytes": 156380012,
+ "tensorrt": "10.9.0.34",
+ "constrained_names_sample": []
+}

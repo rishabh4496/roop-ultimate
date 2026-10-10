@@ -1,0 +1,37 @@
+{
+ "name": "isl_dec_hi",
+ "model": "G:\\pinokio\\api\\roop-ultimate\\app\\output\\restorer_fp16\\restoreformer_single_output.onnx",
+ "fp16": true,
+ "fp32_ops": [],
+ "fp32_modules": [
+  "G:/pinokio/bin/miniforge/Library/decoder/block.1",
+  "/decoder/attn.1",
+  "/decoder/attn.1_1",
+  "/decoder/block.2",
+  "/decoder/attn.2",
+  "/decoder/attn.2_1",
+  "/decoder/upsample",
+  "/decoder/norm_out",
+  "/decoder/conv_out"
+ ],
+ "constrained_layers": 240,
+ "failed_layers": [],
+ "n_failed": 0,
+ "build_seconds": 40.5,
+ "engine_bytes": 218858444,
+ "tensorrt": "10.9.0.34",
+ "constrained_names_sample": [
+  "/decoder/attn.1/norm1/Reshape",
+  "/decoder/attn.1/norm1/InstanceNormalization",
+  "/decoder/attn.1/norm1/Reshape_1",
+  "/decoder/attn.1/norm1/Unsqueeze",
+  "/decoder/attn.1/norm1/Mul",
+  "/decoder/attn.1/norm1/Unsqueeze_1",
+  "/decoder/attn.1/norm1/Add",
+  "/decoder/attn.1/norm2/Reshape",
+  "/decoder/attn.1/norm2/InstanceNormalization",
+  "/decoder/attn.1/norm2/Reshape_1",
+  "/decoder/attn.1/norm2/Unsqueeze",
+  "/decoder/attn.1/norm2/Mul"
+ ]
+}

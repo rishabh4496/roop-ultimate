@@ -1,0 +1,133 @@
+{
+  "gpu": "NVIDIA GeForce RTX 4070",
+  "crops": 32,
+  "reference": "ORT CPU FP32",
+  "arms": {
+    "ort:mixed": {
+      "ssim_mean": 0.9974730757120588,
+      "ssim_min": 0.9948329698988403,
+      "mae_levels": 0.3227841487656684,
+      "psnr_mean": 52.37473215169128,
+      "psnr_min": 41.6281497263897,
+      "identity_cos_mean": 0.9993177000433207,
+      "identity_cos_min": 0.9981160759925842,
+      "identity_delta_mean": 0.0006822999566793442,
+      "nonfinite_outputs": 0,
+      "ms_per_face": 20.328970000264235,
+      "ms_rounds": [
+        22.497,
+        20.064,
+        20.329
+      ],
+      "speed_vs_ort:mixed": 1.0
+    },
+    "native:native_fp16": {
+      "ssim_mean": 0.9965763460259376,
+      "ssim_min": 0.9943212551574261,
+      "mae_levels": 0.4051910649698671,
+      "psnr_mean": 50.75467874841749,
+      "psnr_min": 40.993346516938296,
+      "identity_cos_mean": 0.9991777576506138,
+      "identity_cos_min": 0.9982099533081055,
+      "identity_delta_mean": 0.0008222423493862152,
+      "nonfinite_outputs": 0,
+      "ms_per_face": 19.12845999977435,
+      "ms_rounds": [
+        19.181,
+        19.128,
+        19.074
+      ],
+      "speed_vs_ort:mixed": 1.0627604104305337
+    },
+    "native:isl_quant": {
+      "ssim_mean": 0.996567850207194,
+      "ssim_min": 0.9932741275936798,
+      "mae_levels": 0.3941359569684565,
+      "psnr_mean": 50.88910256741392,
+      "psnr_min": 44.501921281338774,
+      "identity_cos_mean": 0.9991819690912962,
+      "identity_cos_min": 0.9977589845657349,
+      "identity_delta_mean": 0.000818030908703804,
+      "nonfinite_outputs": 0,
+      "ms_per_face": 19.422955000482034,
+      "ms_rounds": [
+        19.342,
+        19.49,
+        19.423
+      ],
+      "speed_vs_ort:mixed": 1.0466466096307032
+    },
+    "native:isl_enc": {
+      "ssim_mean": 0.9972736932646642,
+      "ssim_min": 0.9950724081199508,
+      "mae_levels": 0.3053903836086753,
+      "psnr_mean": 52.12598804183355,
+      "psnr_min": 48.35956721530969,
+      "identity_cos_mean": 0.9993727970868349,
+      "identity_cos_min": 0.9984378218650818,
+      "identity_delta_mean": 0.0006272029131650925,
+      "nonfinite_outputs": 0,
+      "ms_per_face": 31.05349999968894,
+      "ms_rounds": [
+        30.971,
+        31.053,
+        31.082
+      ],
+      "speed_vs_ort:mixed": 0.6546434379528191
+    },
+    "native:isl_dec": {
+      "ssim_mean": 0.997339724038653,
+      "ssim_min": 0.9938525872175373,
+      "mae_levels": 0.35263553984240403,
+      "psnr_mean": 51.78391877352313,
+      "psnr_min": 42.48353275285176,
+      "identity_cos_mean": 0.9993240721523762,
+      "identity_cos_min": 0.9971174597740173,
+      "identity_delta_mean": 0.0006759278476238251,
+      "nonfinite_outputs": 0,
+      "ms_per_face": 37.60994500044035,
+      "ms_rounds": [
+        37.61,
+        37.677,
+        37.52
+      ],
+      "speed_vs_ort:mixed": 0.5405211307813989
+    },
+    "native:isl_dec_hi": {
+      "ssim_mean": 0.9971431272256523,
+      "ssim_min": 0.9925958492502136,
+      "mae_levels": 0.34328447148684504,
+      "psnr_mean": 51.80949838733535,
+      "psnr_min": 43.800824851835955,
+      "identity_cos_mean": 0.9992856848984957,
+      "identity_cos_min": 0.9976197481155396,
+      "identity_delta_mean": 0.0007143151015043259,
+      "nonfinite_outputs": 0,
+      "ms_per_face": 29.657305000000633,
+      "ms_rounds": [
+        29.661,
+        29.652,
+        29.657
+      ],
+      "speed_vs_ort:mixed": 0.6854624855584079
+    },
+    "native:isl_dec_lo": {
+      "ssim_mean": 0.9966870256981619,
+      "ssim_min": 0.9927719014000992,
+      "mae_levels": 0.3689957099282277,
+      "psnr_mean": 51.234610810134306,
+      "psnr_min": 43.67693004139617,
+      "identity_cos_mean": 0.9992102775722742,
+      "identity_cos_min": 0.9978644251823425,
+      "identity_delta_mean": 0.0007897224277257919,
+      "nonfinite_outputs": 0,
+      "ms_per_face": 26.091960000485415,
+      "ms_rounds": [
+        26.086,
+        26.092,
+        26.138
+      ],
+      "speed_vs_ort:mixed": 0.7791277466271616
+    }
+  }
+}

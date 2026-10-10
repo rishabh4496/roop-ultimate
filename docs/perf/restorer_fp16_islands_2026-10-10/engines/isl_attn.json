@@ -1,0 +1,38 @@
+{
+ "name": "isl_attn",
+ "model": "G:\\pinokio\\api\\roop-ultimate\\app\\output\\restorer_fp16\\restoreformer_single_output.onnx",
+ "fp16": true,
+ "fp32_ops": [],
+ "fp32_modules": [
+  "G:/pinokio/bin/miniforge/Library/encoder/attn.0",
+  "/encoder/attn.1",
+  "/encoder/attn_1",
+  "/decoder/attn_1",
+  "/decoder/attn.0",
+  "/decoder/attn.1",
+  "/decoder/attn.2",
+  "/decoder/attn.0_1",
+  "/decoder/attn.1_1",
+  "/decoder/attn.2_1"
+ ],
+ "constrained_layers": 265,
+ "failed_layers": [],
+ "n_failed": 0,
+ "build_seconds": 23.1,
+ "engine_bytes": 178342084,
+ "tensorrt": "10.9.0.34",
+ "constrained_names_sample": [
+  "/encoder/attn.1/norm1/Reshape",
+  "/encoder/attn.1/norm1/InstanceNormalization",
+  "/encoder/attn.1/norm1/Reshape_1",
+  "/encoder/attn.1/norm1/Unsqueeze",
+  "/encoder/attn.1/norm1/Mul",
+  "/encoder/attn.1/norm1/Unsqueeze_1",
+  "/encoder/attn.1/norm1/Add",
+  "/encoder/attn.1/q/Conv",
+  "/encoder/attn.1/k/Conv",
+  "/encoder/attn.1/v/Conv",
+  "/encoder/attn.1/Reshape",
+  "/encoder/attn.1/Reshape_1"
+ ]
+}

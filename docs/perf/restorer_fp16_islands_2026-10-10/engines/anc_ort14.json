@@ -1,0 +1,26 @@
+{
+ "name": "anc_ort14",
+ "model": "G:\\pinokio\\api\\roop-ultimate\\app\\output\\restorer_fp16\\restoreformer_single_output.onnx",
+ "fp16": true,
+ "fp32_ops": [],
+ "fp32_except_ops": [],
+ "fp32_modules": [],
+ "primary_output": "2701",
+ "anchors": 14,
+ "anchors_missing": 0,
+ "anchor_sample": [
+  "1348",
+  "1358",
+  "onnx::MatMul_1314",
+  "onnx::Shape_1298",
+  "onnx::ArgMin_1295",
+  "input.1"
+ ],
+ "constrained_layers": 0,
+ "failed_layers": [],
+ "n_failed": 0,
+ "build_seconds": 16.7,
+ "engine_bytes": 159330044,
+ "tensorrt": "10.9.0.34",
+ "constrained_names_sample": []
+}

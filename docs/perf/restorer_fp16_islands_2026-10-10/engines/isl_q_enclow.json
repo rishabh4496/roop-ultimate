@@ -1,0 +1,41 @@
+{
+ "name": "isl_q_enclow",
+ "model": "G:\\pinokio\\api\\roop-ultimate\\app\\output\\restorer_fp16\\restoreformer_single_output.onnx",
+ "fp16": true,
+ "fp32_ops": [],
+ "fp32_except_ops": [],
+ "fp32_modules": [
+  "/quantize",
+  "/quant_conv",
+  "/post_quant_conv",
+  "/decoder/conv_in",
+  "/encoder/block.1",
+  "/encoder/attn.0",
+  "/encoder/attn.1",
+  "/encoder/block_1",
+  "/encoder/attn_1",
+  "/encoder/block_2",
+  "/encoder/norm_out",
+  "/encoder/conv_out"
+ ],
+ "constrained_layers": 261,
+ "failed_layers": [],
+ "n_failed": 0,
+ "build_seconds": 20.4,
+ "engine_bytes": 269056220,
+ "tensorrt": "10.9.0.34",
+ "constrained_names_sample": [
+  "/encoder/block.1/norm1/Reshape",
+  "/encoder/block.1/norm1/InstanceNormalization",
+  "/encoder/block.1/norm1/Reshape_1",
+  "/encoder/block.1/norm1/Unsqueeze",
+  "/encoder/block.1/norm1/Mul",
+  "/encoder/block.1/norm1/Unsqueeze_1",
+  "/encoder/block.1/norm1/Add",
+  "/encoder/block.1/Sigmoid",
+  "/encoder/block.1/Mul",
+  "/encoder/block.1/conv1/Conv",
+  "/encoder/block.1/norm2/Reshape",
+  "/encoder/block.1/norm2/InstanceNormalization"
+ ]
+}

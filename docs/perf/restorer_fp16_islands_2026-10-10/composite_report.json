@@ -1,0 +1,369 @@
+{
+ "date": "2026-10-10 22:27:46",
+ "frames": 300,
+ "clips": [
+  "d4",
+  "s7"
+ ],
+ "reference": "rf_fp32",
+ "reference_env": {
+  "ROOP_TRT_MODEL_PRECISION": "restoreformer_plus_plus:fp32"
+ },
+ "variants": {
+  "prod": {
+   "env": {},
+   "restorer_session": {
+    "d4": {
+     "tag": "enhancer:restoreformer++",
+     "file": "restoreformer_plus_plus.onnx",
+     "provider": "TensorrtExecutionProvider",
+     "trt_fp16": "on",
+     "input": "input:1x3x512x512"
+    },
+    "s7": {
+     "tag": "enhancer:restoreformer++",
+     "file": "restoreformer_plus_plus.onnx",
+     "provider": "TensorrtExecutionProvider",
+     "trt_fp16": "on",
+     "input": "input:1x3x512x512"
+    }
+   },
+   "metrics": {
+    "d4.identity_cos": 0.6464863922145155,
+    "d4.identity_delta_vs_reference": 0.00023650882976828728,
+    "d4.ssim": 0.9863386271742167,
+    "d4.psnr_db": 46.19693849828581,
+    "d4.eye_drift_px": 2.044907766990291,
+    "d4.mouth_drift_px": 6.575533980582524,
+    "d4.skin_detail": 64.03742511361915,
+    "d4.identity_jitter": 0.01378472306644989,
+    "s7.identity_cos": 0.6357897941110897,
+    "s7.identity_delta_vs_reference": 0.0008685683498190042,
+    "s7.ssim": 0.9858727316087799,
+    "s7.psnr_db": 46.002500584449926,
+    "s7.eye_drift_px": 9.522261467889908,
+    "s7.mouth_drift_px": 7.853545871559634,
+    "s7.skin_detail": 159.90999162671372,
+    "s7.identity_jitter": 0.016679674460087918,
+    "ALL.identity_cos": 0.6427850296961872,
+    "ALL.identity_delta_vs_reference": 0.00045522148908742416,
+    "ALL.ssim": 0.9861774125182401,
+    "ALL.psnr_db": 46.129656807466404,
+    "ALL.eye_drift_px": 4.632309523809524,
+    "ALL.mouth_drift_px": 7.017766666666667,
+    "ALL.skin_detail": 97.21237670068997,
+    "ALL.identity_jitter": 0.014749706864329233
+   },
+   "per_clip": {
+    "d4": {
+     "d4.identity_cos": 0.6464863922145155,
+     "d4.identity_delta_vs_reference": 0.00023650882976828728,
+     "d4.ssim": 0.9863386271742167,
+     "d4.psnr_db": 46.19693849828581,
+     "d4.eye_drift_px": 2.044907766990291,
+     "d4.mouth_drift_px": 6.575533980582524,
+     "d4.skin_detail": 64.03742511361915,
+     "d4.identity_jitter": 0.01378472306644989,
+     "ALL.identity_cos": 0.6464863922145155,
+     "ALL.identity_delta_vs_reference": 0.00023650882976828728,
+     "ALL.ssim": 0.9863386271742167,
+     "ALL.psnr_db": 46.19693849828581,
+     "ALL.eye_drift_px": 2.044907766990291,
+     "ALL.mouth_drift_px": 6.575533980582524,
+     "ALL.skin_detail": 64.03742511361915,
+     "ALL.identity_jitter": 0.01378472306644989
+    },
+    "s7": {
+     "s7.identity_cos": 0.6357897941110897,
+     "s7.identity_delta_vs_reference": 0.0008685683498190042,
+     "s7.ssim": 0.9858727316087799,
+     "s7.psnr_db": 46.002500584449926,
+     "s7.eye_drift_px": 9.522261467889908,
+     "s7.mouth_drift_px": 7.853545871559634,
+     "s7.skin_detail": 159.90999162671372,
+     "s7.identity_jitter": 0.016679674460087918,
+     "ALL.identity_cos": 0.6357897941110897,
+     "ALL.identity_delta_vs_reference": 0.0008685683498190042,
+     "ALL.ssim": 0.9858727316087799,
+     "ALL.psnr_db": 46.002500584449926,
+     "ALL.eye_drift_px": 9.522261467889908,
+     "ALL.mouth_drift_px": 7.853545871559634,
+     "ALL.skin_detail": 159.90999162671372,
+     "ALL.identity_jitter": 0.016679674460087918
+    }
+   },
+   "identical_to_reference": {
+    "d4": false,
+    "s7": false
+   }
+  },
+  "native_fp16": {
+   "env": {
+    "ROOP_RESTORER_NATIVE_ENGINE": "G:/pinokio/api/roop-ultimate/app/output/restorer_fp16/engines/native_fp16.engine"
+   },
+   "restorer_session": {
+    "d4": {
+     "tag": "enhancer:restoreformer++",
+     "file": "native_fp16.engine",
+     "provider": "TensorrtNativeEngine",
+     "trt_fp16": "islands",
+     "input": "input:1x3x512x512"
+    },
+    "s7": {
+     "tag": "enhancer:restoreformer++",
+     "file": "native_fp16.engine",
+     "provider": "TensorrtNativeEngine",
+     "trt_fp16": "islands",
+     "input": "input:1x3x512x512"
+    }
+   },
+   "metrics": {
+    "d4.identity_cos": 0.6464290660599772,
+    "d4.identity_delta_vs_reference": 0.0001791826752300761,
+    "d4.ssim": 0.9855972739987587,
+    "d4.psnr_db": 45.977671573485615,
+    "d4.eye_drift_px": 2.0440533980582525,
+    "d4.mouth_drift_px": 6.5799029126213595,
+    "d4.skin_detail": 64.01051313669116,
+    "d4.identity_jitter": 0.013453728873424288,
+    "s7.identity_cos": 0.6356933444990907,
+    "s7.identity_delta_vs_reference": 0.0007721187378199162,
+    "s7.ssim": 0.98509777173597,
+    "s7.psnr_db": 45.77831730881349,
+    "s7.eye_drift_px": 9.522495412844037,
+    "s7.mouth_drift_px": 7.862192660550459,
+    "s7.skin_detail": 159.85433851906902,
+    "s7.identity_jitter": 0.01626626457794271,
+    "ALL.identity_cos": 0.6427141655833529,
+    "ALL.identity_delta_vs_reference": 0.0003843573762532271,
+    "ALL.ssim": 0.9854244303586192,
+    "ALL.psnr_db": 45.90868866920225,
+    "ALL.eye_drift_px": 4.631831746031746,
+    "ALL.mouth_drift_px": 7.023615873015874,
+    "ALL.skin_detail": 97.17551938011715,
+    "ALL.identity_jitter": 0.01439124077493043
+   },
+   "per_clip": {
+    "d4": {
+     "d4.identity_cos": 0.6464290660599772,
+     "d4.identity_delta_vs_reference": 0.0001791826752300761,
+     "d4.ssim": 0.9855972739987587,
+     "d4.psnr_db": 45.977671573485615,
+     "d4.eye_drift_px": 2.0440533980582525,
+     "d4.mouth_drift_px": 6.5799029126213595,
+     "d4.skin_detail": 64.01051313669116,
+     "d4.identity_jitter": 0.013453728873424288,
+     "ALL.identity_cos": 0.6464290660599772,
+     "ALL.identity_delta_vs_reference": 0.0001791826752300761,
+     "ALL.ssim": 0.9855972739987587,
+     "ALL.psnr_db": 45.977671573485615,
+     "ALL.eye_drift_px": 2.0440533980582525,
+     "ALL.mouth_drift_px": 6.5799029126213595,
+     "ALL.skin_detail": 64.01051313669116,
+     "ALL.identity_jitter": 0.013453728873424288
+    },
+    "s7": {
+     "s7.identity_cos": 0.6356933444990907,
+     "s7.identity_delta_vs_reference": 0.0007721187378199162,
+     "s7.ssim": 0.98509777173597,
+     "s7.psnr_db": 45.77831730881349,
+     "s7.eye_drift_px": 9.522495412844037,
+     "s7.mouth_drift_px": 7.862192660550459,
+     "s7.skin_detail": 159.85433851906902,
+     "s7.identity_jitter": 0.01626626457794271,
+     "ALL.identity_cos": 0.6356933444990907,
+     "ALL.identity_delta_vs_reference": 0.0007721187378199162,
+     "ALL.ssim": 0.98509777173597,
+     "ALL.psnr_db": 45.77831730881349,
+     "ALL.eye_drift_px": 9.522495412844037,
+     "ALL.mouth_drift_px": 7.862192660550459,
+     "ALL.skin_detail": 159.85433851906902,
+     "ALL.identity_jitter": 0.01626626457794271
+    }
+   },
+   "identical_to_reference": {
+    "d4": false,
+    "s7": false
+   }
+  },
+  "isl_q_enclow": {
+   "env": {
+    "ROOP_RESTORER_NATIVE_ENGINE": "G:/pinokio/api/roop-ultimate/app/output/restorer_fp16/engines/isl_q_enclow.engine"
+   },
+   "restorer_session": {
+    "d4": {
+     "tag": "enhancer:restoreformer++",
+     "file": "isl_q_enclow.engine",
+     "provider": "TensorrtNativeEngine",
+     "trt_fp16": "islands",
+     "input": "input:1x3x512x512"
+    },
+    "s7": {
+     "tag": "enhancer:restoreformer++",
+     "file": "isl_q_enclow.engine",
+     "provider": "TensorrtNativeEngine",
+     "trt_fp16": "islands",
+     "input": "input:1x3x512x512"
+    }
+   },
+   "metrics": {
+    "d4.identity_cos": 0.646204834256546,
+    "d4.identity_delta_vs_reference": -4.504912820116686e-05,
+    "d4.ssim": 0.9870548140459111,
+    "d4.psnr_db": 46.381580330147834,
+    "d4.eye_drift_px": 2.040143203883495,
+    "d4.mouth_drift_px": 6.556046116504854,
+    "d4.skin_detail": 64.10022322504554,
+    "d4.identity_jitter": 0.013359641664742775,
+    "s7.identity_cos": 0.6354548622505994,
+    "s7.identity_delta_vs_reference": 0.0005336364893286526,
+    "s7.ssim": 0.9867883469489972,
+    "s7.psnr_db": 46.26555419720756,
+    "s7.eye_drift_px": 9.522857798165136,
+    "s7.mouth_drift_px": 7.8340917431192665,
+    "s7.skin_detail": 159.91587171768663,
+    "s7.identity_jitter": 0.016393835286855823,
+    "ALL.identity_cos": 0.6424850026735359,
+    "ALL.identity_delta_vs_reference": 0.00015519446643613575,
+    "ALL.ssim": 0.9869626079711058,
+    "ALL.psnr_db": 46.3414316047812,
+    "ALL.eye_drift_px": 4.6293999999999995,
+    "ALL.mouth_drift_px": 6.998290476190475,
+    "ALL.skin_detail": 97.25547937011817,
+    "ALL.identity_jitter": 0.014371039538780458
+   },
+   "per_clip": {
+    "d4": {
+     "d4.identity_cos": 0.646204834256546,
+     "d4.identity_delta_vs_reference": -4.504912820116686e-05,
+     "d4.ssim": 0.9870548140459111,
+     "d4.psnr_db": 46.381580330147834,
+     "d4.eye_drift_px": 2.040143203883495,
+     "d4.mouth_drift_px": 6.556046116504854,
+     "d4.skin_detail": 64.10022322504554,
+     "d4.identity_jitter": 0.013359641664742775,
+     "ALL.identity_cos": 0.646204834256546,
+     "ALL.identity_delta_vs_reference": -4.504912820116686e-05,
+     "ALL.ssim": 0.9870548140459111,
+     "ALL.psnr_db": 46.381580330147834,
+     "ALL.eye_drift_px": 2.040143203883495,
+     "ALL.mouth_drift_px": 6.556046116504854,
+     "ALL.skin_detail": 64.10022322504554,
+     "ALL.identity_jitter": 0.013359641664742775
+    },
+    "s7": {
+     "s7.identity_cos": 0.6354548622505994,
+     "s7.identity_delta_vs_reference": 0.0005336364893286526,
+     "s7.ssim": 0.9867883469489972,
+     "s7.psnr_db": 46.26555419720756,
+     "s7.eye_drift_px": 9.522857798165136,
+     "s7.mouth_drift_px": 7.8340917431192665,
+     "s7.skin_detail": 159.91587171768663,
+     "s7.identity_jitter": 0.016393835286855823,
+     "ALL.identity_cos": 0.6354548622505994,
+     "ALL.identity_delta_vs_reference": 0.0005336364893286526,
+     "ALL.ssim": 0.9867883469489972,
+     "ALL.psnr_db": 46.26555419720756,
+     "ALL.eye_drift_px": 9.522857798165136,
+     "ALL.mouth_drift_px": 7.8340917431192665,
+     "ALL.skin_detail": 159.91587171768663,
+     "ALL.identity_jitter": 0.016393835286855823
+    }
+   },
+   "identical_to_reference": {
+    "d4": false,
+    "s7": false
+   }
+  },
+  "isl_enc_quant": {
+   "env": {
+    "ROOP_RESTORER_NATIVE_ENGINE": "G:/pinokio/api/roop-ultimate/app/output/restorer_fp16/engines/isl_enc_quant.engine"
+   },
+   "restorer_session": {
+    "d4": {
+     "tag": "enhancer:restoreformer++",
+     "file": "isl_enc_quant.engine",
+     "provider": "TensorrtNativeEngine",
+     "trt_fp16": "islands",
+     "input": "input:1x3x512x512"
+    },
+    "s7": {
+     "tag": "enhancer:restoreformer++",
+     "file": "isl_enc_quant.engine",
+     "provider": "TensorrtNativeEngine",
+     "trt_fp16": "islands",
+     "input": "input:1x3x512x512"
+    }
+   },
+   "metrics": {
+    "d4.identity_cos": 0.6462565102164342,
+    "d4.identity_delta_vs_reference": 6.626831686965658e-06,
+    "d4.ssim": 0.9875540065356461,
+    "d4.psnr_db": 46.542242407611056,
+    "d4.eye_drift_px": 2.043878640776699,
+    "d4.mouth_drift_px": 6.56177427184466,
+    "d4.skin_detail": 64.10483134210118,
+    "d4.identity_jitter": 0.013542093760680251,
+    "s7.identity_cos": 0.6357514090181928,
+    "s7.identity_delta_vs_reference": 0.0008301832569222242,
+    "s7.ssim": 0.9874373619975043,
+    "s7.psnr_db": 46.494267106037086,
+    "s7.eye_drift_px": 9.520004587155965,
+    "s7.mouth_drift_px": 7.837954128440367,
+    "s7.skin_detail": 159.90679290462214,
+    "s7.identity_jitter": 0.016122125835145325,
+    "ALL.identity_cos": 0.6426214117065665,
+    "ALL.identity_delta_vs_reference": 0.0002916034994667853,
+    "ALL.ssim": 0.9875136438224477,
+    "ALL.psnr_db": 46.525641430241016,
+    "ALL.eye_drift_px": 4.630855555555556,
+    "ALL.mouth_drift_px": 7.003373015873016,
+    "ALL.skin_detail": 97.25535137484653,
+    "ALL.identity_jitter": 0.014402104452168609
+   },
+   "per_clip": {
+    "d4": {
+     "d4.identity_cos": 0.6462565102164342,
+     "d4.identity_delta_vs_reference": 6.626831686965658e-06,
+     "d4.ssim": 0.9875540065356461,
+     "d4.psnr_db": 46.542242407611056,
+     "d4.eye_drift_px": 2.043878640776699,
+     "d4.mouth_drift_px": 6.56177427184466,
+     "d4.skin_detail": 64.10483134210118,
+     "d4.identity_jitter": 0.013542093760680251,
+     "ALL.identity_cos": 0.6462565102164342,
+     "ALL.identity_delta_vs_reference": 6.626831686965658e-06,
+     "ALL.ssim": 0.9875540065356461,
+     "ALL.psnr_db": 46.542242407611056,
+     "ALL.eye_drift_px": 2.043878640776699,
+     "ALL.mouth_drift_px": 6.56177427184466,
+     "ALL.skin_detail": 64.10483134210118,
+     "ALL.identity_jitter": 0.013542093760680251
+    },
+    "s7": {
+     "s7.identity_cos": 0.6357514090181928,
+     "s7.identity_delta_vs_reference": 0.0008301832569222242,
+     "s7.ssim": 0.9874373619975043,
+     "s7.psnr_db": 46.494267106037086,
+     "s7.eye_drift_px": 9.520004587155965,
+     "s7.mouth_drift_px": 7.837954128440367,
+     "s7.skin_detail": 159.90679290462214,
+     "s7.identity_jitter": 0.016122125835145325,
+     "ALL.identity_cos": 0.6357514090181928,
+     "ALL.identity_delta_vs_reference": 0.0008301832569222242,
+     "ALL.ssim": 0.9874373619975043,
+     "ALL.psnr_db": 46.494267106037086,
+     "ALL.eye_drift_px": 9.520004587155965,
+     "ALL.mouth_drift_px": 7.837954128440367,
+     "ALL.skin_detail": 159.90679290462214,
+     "ALL.identity_jitter": 0.016122125835145325
+    }
+   },
+   "identical_to_reference": {
+    "d4": false,
+    "s7": false
+   }
+  }
+ },
+ "wall_minutes": 23.9
+}

@@ -1,0 +1,75 @@
+{
+  "gpu": "NVIDIA GeForce RTX 4070",
+  "crops": 32,
+  "reference": "ORT CPU FP32",
+  "arms": {
+    "native:native_fp16": {
+      "ssim_mean": 0.9965763460259376,
+      "ssim_min": 0.9943212551574261,
+      "mae_levels": 0.4051910649698671,
+      "psnr_mean": 50.75467874841749,
+      "psnr_min": 40.993346516938296,
+      "identity_cos_mean": 0.9991777576506138,
+      "identity_cos_min": 0.9982099533081055,
+      "identity_delta_mean": 0.0008222423493862152,
+      "nonfinite_outputs": 0,
+      "ms_per_face": 21.25506000011228,
+      "ms_rounds": [
+        20.944,
+        21.311,
+        21.255
+      ]
+    },
+    "native:isl_enc_quant": {
+      "ssim_mean": 0.9981565508514332,
+      "ssim_min": 0.9962255867362352,
+      "mae_levels": 0.2091322655992793,
+      "psnr_mean": 54.53532000008012,
+      "psnr_min": 49.93023084284146,
+      "identity_cos_mean": 0.9995523653924465,
+      "identity_cos_min": 0.9988855123519897,
+      "identity_delta_mean": 0.00044763460755348206,
+      "nonfinite_outputs": 0,
+      "ms_per_face": 32.182599999941885,
+      "ms_rounds": [
+        32.183,
+        32.164,
+        32.255
+      ]
+    },
+    "native:isl_q_enclow": {
+      "ssim_mean": 0.9978540482290708,
+      "ssim_min": 0.9954173047395349,
+      "mae_levels": 0.27199281507684203,
+      "psnr_mean": 53.23984786760997,
+      "psnr_min": 44.10777819794477,
+      "identity_cos_mean": 0.999509846791625,
+      "identity_cos_min": 0.9988704323768616,
+      "identity_delta_mean": 0.0004901532083749771,
+      "nonfinite_outputs": 0,
+      "ms_per_face": 27.959540000301786,
+      "ms_rounds": [
+        28.093,
+        27.939,
+        27.96
+      ]
+    },
+    "native:isl_q_enchigh": {
+      "ssim_mean": 0.9978532399207227,
+      "ssim_min": 0.9960472270363252,
+      "mae_levels": 0.25464514831323104,
+      "psnr_mean": 53.25714327657738,
+      "psnr_min": 47.767799943559844,
+      "identity_cos_mean": 0.9994922634214163,
+      "identity_cos_min": 0.9988893270492554,
+      "identity_delta_mean": 0.0005077365785837173,
+      "nonfinite_outputs": 0,
+      "ms_per_face": 27.317245000449475,
+      "ms_rounds": [
+        27.317,
+        27.381,
+        26.949
+      ]
+    }
+  }
+}
