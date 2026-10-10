@@ -1,0 +1,65 @@
+{
+  "axe": {
+    "home": {
+      "color-contrast": 1
+    },
+    "faceswap": {
+      "aria-hidden-focus": 26,
+      "color-contrast": 2,
+      "heading-order": 1,
+      "label-title-only": 2,
+      "nested-interactive": 3
+    },
+    "batch": {
+      "button-name": 1,
+      "label": 3,
+      "select-name": 4
+    },
+    "processing": {
+      "color-contrast": 4
+    },
+    "facemgr": {
+      "aria-hidden-focus": 1
+    },
+    "extras": {},
+    "gallery": {
+      "color-contrast": 2,
+      "label-title-only": 1
+    },
+    "history": {},
+    "settings": {
+      "aria-hidden-focus": 10,
+      "button-name": 1,
+      "color-contrast": 2,
+      "heading-order": 1
+    }
+  },
+  "navVisibility": {
+    "1024": [
+      "Batch Matrix",
+      "Face Manager",
+      "Editor",
+      "Outputs",
+      "History",
+      "Settings"
+    ],
+    "1280": [
+      "Face Manager",
+      "Editor",
+      "Outputs",
+      "History",
+      "Settings"
+    ],
+    "1440": [
+      "Outputs",
+      "History",
+      "Settings"
+    ]
+  },
+  "tabStops": {
+    "faceswap": 291
+  },
+  "idleRequests": {
+    "stub500": 196
+  }
+}

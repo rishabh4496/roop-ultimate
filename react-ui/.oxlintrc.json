@@ -20,7 +20,7 @@
       "env": { "node": true }
     },
     {
-      "files": ["mock-server/**"],
+      "files": ["mock-server/**", "e2e/**"],
       "env": { "node": true }
     },
     {

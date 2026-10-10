@@ -10,7 +10,12 @@
 //
 // Run with: node .render-check/stage14-async-check.mjs
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync as readRaw } from 'node:fs';
+// The wiring checks below match multi-line snippets ('payload: {\n ...'). The
+// repo stores LF, but a Windows checkout with core.autocrlf=true has CRLF in the
+// working tree, where those matches never hit -- the check then failed on a
+// source that is correct. Normalise on read so it means the same on both.
+const readFileSync = (path, enc) => readRaw(path, enc).replace(/\r\n/g, '\n');
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import process from 'node:process';

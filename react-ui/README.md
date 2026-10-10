@@ -25,6 +25,36 @@ npm run build    # production build into dist/
 npm run lint     # oxlint
 ```
 
+## Checks
+
+```bash
+npm run check          # lint + build + e2e + every .render-check script
+npm run test:e2e       # Playwright + axe only (needs a fresh `npm run build`)
+npm run test:e2e:baseline   # re-record e2e/allowlist.json
+```
+
+One-time setup: `npm install` here **and** at the repo root (the mock server's
+`express`/`tsx` live there), then `npx playwright install chromium`.
+
+`e2e/` runs against a production build served by `vite preview`, with
+`mock-server/` standing in for `app/api.py` (ports 4310/4311, override with
+`E2E_PREVIEW_PORT` / `E2E_MOCK_PORT`). It says nothing about the real backend.
+The suite refuses to run if `dist/` is missing or older than `src/`.
+
+| Spec | Asserts |
+| --- | --- |
+| `a11y.spec.js` | axe (WCAG 2.x A/AA + best-practice) on all 9 tabs |
+| `idle-requests.spec.js` | idle Face Swap: preview `500` -> <= 6 `/api/target/preview` requests in 30 s; valid PNG -> 0 after the first load |
+| `nav-visibility.spec.js` | every nav tab fully visible, page not scrolling sideways, at 1024/1280/1440/1920 px |
+| `tab-stops.spec.js` | Tab presses to walk the Face Swap tab (real key presses) |
+
+**`e2e/allowlist.json` is the record of what is broken today**, so the suite is
+green now and fails only on regressions: a new axe rule or more nodes for a known
+one, a newly clipped tab, more tab stops, more idle requests than the ceiling.
+Improvements do not fail -- they print a `tighten allowlist` annotation; run
+`npm run test:e2e:baseline` and commit the diff. Read that diff first: whatever it
+records stops failing the suite. Entries should shrink over time, not grow.
+
 The backend must be running for the UI to work. In Pinokio, use the **React UI** start
 menu entry (`start_react.js`), which launches `python run.py` (Gradio core + FastAPI on 8001)
 and then the Vite dev server.
