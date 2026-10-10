@@ -51,7 +51,7 @@ function FilterSection({ title, icon, query, onlyModified, onResetKeys, children
       type="button"
       onClick={() => onResetKeys(modifiedKeys, title)}
       title={`Reset the ${modifiedKeys.length} changed setting${modifiedKeys.length === 1 ? '' : 's'} in ${title}`}
-      className="flex items-center gap-1 px-2 py-1 rounded-lg text-nano font-bold tracking-wide text-white/45 hover:text-[var(--accent)] bg-white/[0.04] hover:bg-[var(--accent)]/12 border border-white/10 hover:border-[var(--accent)]/30 apple-transition"
+      className="flex items-center gap-1 px-2 py-1 rounded-lg text-nano font-bold tracking-wide text-muted hover:text-accent bg-white/[0.04] hover:bg-[var(--accent)]/12 border border-white/10 hover:border-[var(--accent)]/30 apple-transition"
     >
       <Icon.reset size={10} />
       {modifiedKeys.length}
@@ -251,7 +251,7 @@ export default function Settings({ meta, settings, setSettings, notify }) {
     <div className="space-y-6">
       <div className="flex flex-wrap items-center gap-3">
         <div className="relative flex-1 min-w-[16rem] max-w-md">
-          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-white/30 pointer-events-none"><Icon.search size={14} /></span>
+          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted pointer-events-none"><Icon.search size={14} /></span>
           <input
             type="search"
             value={query}
@@ -273,7 +273,7 @@ export default function Settings({ meta, settings, setSettings, notify }) {
               title={onlyModified ? 'Show all settings' : 'Show only settings you have changed'}
               className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-mini font-semibold border apple-transition ${
                 onlyModified
-                  ? 'bg-[var(--accent)]/15 border-[var(--accent)]/40 text-[var(--accent)]'
+                  ? 'bg-[var(--accent)]/15 border-[var(--accent)]/40 text-accent'
                   : 'bg-white/[0.04] border-white/10 text-white/55 hover:text-white hover:border-white/20'
               }`}
             >
@@ -346,7 +346,7 @@ export default function Settings({ meta, settings, setSettings, notify }) {
 
           <div className="flex items-center justify-between mb-1">
             <span className="text-xs font-medium text-white/70">Interface Theme</span>
-            <span className="text-micro text-[var(--accent)] font-bold">
+            <span className="text-micro text-accent font-bold">
               {p.theme_follow_system ? 'Following system' : (p.selected_theme || 'Default')}
             </span>
           </div>
@@ -487,7 +487,7 @@ export default function Settings({ meta, settings, setSettings, notify }) {
                     ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300'
                     : isTrtDegraded
                     ? 'bg-amber-500/15 border-amber-500/30 text-amber-300'
-                    : 'bg-white/5 border-white/10 text-white/40'
+                    : 'bg-white/5 border-white/10 text-muted'
                 }`}
                 title={
                   isTrtDegraded
@@ -503,19 +503,19 @@ export default function Settings({ meta, settings, setSettings, notify }) {
                     : (p.trt_precision || 'mixed')
                 }
               </span>
-              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-nano font-semibold border ${isCudaActive && !isTrtActive ? 'bg-cyan-500/15 border-cyan-500/30 text-cyan-300' : 'bg-white/5 border-white/10 text-white/40'}`}>
+              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-nano font-semibold border ${isCudaActive && !isTrtActive ? 'bg-cyan-500/15 border-cyan-500/30 text-cyan-300' : 'bg-white/5 border-white/10 text-muted'}`}>
                 ⚡ CUDA Active
               </span>
-              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-nano font-semibold border ${p.perf_nvdec !== 'off' ? 'bg-cyan-500/15 border-cyan-500/30 text-cyan-300' : 'bg-white/5 border-white/10 text-white/40'}`}>
+              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-nano font-semibold border ${p.perf_nvdec !== 'off' ? 'bg-cyan-500/15 border-cyan-500/30 text-cyan-300' : 'bg-white/5 border-white/10 text-muted'}`}>
                 🎬 NVDEC GPU Decode
               </span>
-              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-nano font-semibold border ${(p.output_video_codec === 'hevc_nvenc' || p.output_video_codec === 'h264_nvenc') ? 'bg-purple-500/15 border-purple-500/30 text-purple-300' : 'bg-white/5 border-white/10 text-white/40'}`}>
+              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-nano font-semibold border ${(p.output_video_codec === 'hevc_nvenc' || p.output_video_codec === 'h264_nvenc') ? 'bg-purple-500/15 border-purple-500/30 text-purple-300' : 'bg-white/5 border-white/10 text-muted'}`}>
                 🎥 NVENC GPU Encode
               </span>
-              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-nano font-semibold border ${p.perf_batch_swap !== 'off' ? 'bg-amber-500/15 border-amber-500/30 text-amber-300' : 'bg-white/5 border-white/10 text-white/40'}`}>
+              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-nano font-semibold border ${p.perf_batch_swap !== 'off' ? 'bg-amber-500/15 border-amber-500/30 text-amber-300' : 'bg-white/5 border-white/10 text-muted'}`}>
                 📦 Batched Swap (X-Frame)
               </span>
-              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-nano font-semibold border ${p.auto_thread_selection ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300' : 'bg-white/5 border-white/10 text-white/40'}`}>
+              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-nano font-semibold border ${p.auto_thread_selection ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300' : 'bg-white/5 border-white/10 text-muted'}`}>
                 🌊 Dynamic Concurrency Scaling
               </span>
             </div>
@@ -530,7 +530,7 @@ export default function Settings({ meta, settings, setSettings, notify }) {
               <span className={`px-2 py-0.5 rounded-md text-nano font-bold uppercase tracking-wider ${isTrtActive ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40' : isCudaActive ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40' : 'bg-white/10 text-white/80 border border-white/20'}`}>
                 Active: {activeProvider}
               </span>
-              <span className={`px-2 py-0.5 rounded-md text-nano font-bold uppercase tracking-wider ${isTrtAvailable ? 'bg-emerald-500/10 text-emerald-300/80 border border-emerald-500/20' : 'bg-white/5 text-white/40 border border-white/10'}`}>
+              <span className={`px-2 py-0.5 rounded-md text-nano font-bold uppercase tracking-wider ${isTrtAvailable ? 'bg-emerald-500/10 text-emerald-300/80 border border-emerald-500/20' : 'bg-white/5 text-muted border border-white/10'}`}>
                 TRT Available: {isTrtAvailable ? 'Yes' : 'No'}
               </span>
               <span className={`px-2 py-0.5 rounded-md text-nano font-bold uppercase tracking-wider ${isTrtAllowed ? 'bg-emerald-500/10 text-emerald-300/80 border border-emerald-500/20' : 'bg-amber-500/10 text-amber-300/80 border border-amber-500/20'}`}>
@@ -557,7 +557,7 @@ export default function Settings({ meta, settings, setSettings, notify }) {
                 <p className="text-white/70">
                   {trtFailureReason || 'TensorRT runtime is unavailable or failed initialization on this session.'}
                 </p>
-                <p className="text-white/40 text-nano">
+                <p className="text-muted text-nano">
                   TensorRT controls remain configured below and will take effect when TensorRT runtime is active.
                 </p>
               </div>
@@ -629,7 +629,7 @@ export default function Settings({ meta, settings, setSettings, notify }) {
         </FilterSection>
 
         <FilterSection title="Advanced performance (restart to apply)" icon={Icon.meter} query={query} onlyModified={onlyModified} onResetKeys={resetKeys}>
-          <p className="text-xs text-white/40 -mt-2">These override the launcher env and the VRAM auto-tuner. Leave on "auto" unless you know what you're tuning. Changes take effect after restarting the app.</p>
+          <p className="text-xs text-muted -mt-2">These override the launcher env and the VRAM auto-tuner. Leave on "auto" unless you know what you're tuning. Changes take effect after restarting the app.</p>
           {showTrtSettings && <>
             {isTrtDegraded && (
               <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-200/90 -mt-1 mb-2">
@@ -683,7 +683,7 @@ export default function Settings({ meta, settings, setSettings, notify }) {
         </FilterSection>
 
         <FilterSection title="Identity &amp; tracking (restart to apply)" icon={Icon.users ?? Icon.meter} query={query} onlyModified={onlyModified} onResetKeys={resetKeys}>
-          <p className="text-xs text-white/40 -mt-2">Who the pipeline thinks each face is, and how it follows them between frames. Every one of these ships ON and "auto" keeps it that way — turn one off only to see what it was doing. Changes take effect after restarting the app.</p>
+          <p className="text-xs text-muted -mt-2">Who the pipeline thinks each face is, and how it follows them between frames. Every one of these ships ON and "auto" keeps it that way — turn one off only to see what it was doing. Changes take effect after restarting the app.</p>
           <Select label="Recognition model" info="ROOP_ADAFACE — Which model decides whether two faces are the same person. 'default' is buffalo_l's w600k; 'adaface' is a second model with its own distance scale, and every identity constant in the pipeline is rescaled to match it rather than reused blindly, so the gates keep their intended relationship to the match threshold. Worth trying when people who look alike keep getting confused." {...bind('recognizer', 'default')} options={m.recognizers || ['default', 'adaface']} />
           <Slider label="Identity confidence threshold" info="ROOP_IDENTITY_CONFIDENCE_THRESHOLD — Minimum cosine similarity (0.0 to 1.0) required to swap a face. If similarity drops below this (due to extreme profile angle or motion blur), the swap is cleanly skipped rather than mapping onto an incorrect person. 0.0 disables." min={0.0} max={1.0} step={0.01} {...bind('identity_confidence_threshold', 0.0)} />
           <Select label="Interacting-face demarcation" info="ROOP_FACE_DEMARCATE — When two swapped faces touch, decides which pixels belong to whom along the contact boundary instead of letting the two swaps bleed into each other. Off = the older behaviour, where a face near the join could take on its neighbour's swap." {...bind('face_demarcate', 'auto')} options={m.tristate || ['auto', 'on', 'off']} />

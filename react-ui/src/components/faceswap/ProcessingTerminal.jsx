@@ -140,7 +140,7 @@ function RuntimeSection({ name, section }) {
   const status = section?.status || 'UNKNOWN';
   const statusTone = status === 'AVAILABLE'
     ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/25'
-    : status === 'NOT_APPLICABLE' ? 'text-white/35 bg-white/5 border-white/10' : 'text-amber-300 bg-amber-500/10 border-amber-500/25';
+    : status === 'NOT_APPLICABLE' ? 'text-muted bg-white/5 border-white/10' : 'text-amber-300 bg-amber-500/10 border-amber-500/25';
   return (
     <div className="rounded-xl border border-white/[0.08] bg-black/40 px-3 py-2 min-w-0 shadow-sm backdrop-blur-sm">
       <div className="flex items-center justify-between gap-2 border-b border-white/5 pb-1.5">
@@ -150,12 +150,12 @@ function RuntimeSection({ name, section }) {
       <div className="mt-1.5 space-y-0.5">
         {rows.length ? rows.map(([key, value]) => (
           <div key={key} className="flex items-baseline justify-between gap-2 text-micro leading-relaxed">
-            <span className="min-w-0 truncate text-white/40">{key}</span>
+            <span className="min-w-0 truncate text-muted">{key}</span>
             <span className="min-w-0 truncate text-right text-white/80 font-mono" title={String(value)}>{String(value)}</span>
           </div>
-        )) : <span className="text-micro text-white/35 italic">No structured values</span>}
+        )) : <span className="text-micro text-muted italic">No structured values</span>}
       </div>
-      {section?.source && <div className="mt-1 truncate text-nano text-white/30 border-t border-white/5 pt-1" title={section.source}>source: {section.source}</div>}
+      {section?.source && <div className="mt-1 truncate text-nano text-muted border-t border-white/5 pt-1" title={section.source}>source: {section.source}</div>}
     </div>
   );
 }
@@ -201,7 +201,7 @@ export default function ProcessingTerminal({
     const m = (msg || '').toLowerCase();
     if (m.startsWith('⚠') || /error|fail|abort/.test(m)) return 'text-red-400 font-semibold';
     if (m.startsWith('✓') || /\bdone\b|\bpart \d+ written\b/.test(m)) return 'text-emerald-400 font-semibold';
-    if (m.startsWith('▶') || /start/.test(m)) return 'text-[var(--accent)] font-semibold';
+    if (m.startsWith('▶') || /start/.test(m)) return 'text-accent font-semibold';
     if (/combin|encod|audio|mux|finaliz/.test(m)) return 'text-sky-300/90';
     if (/upscal|interpolat/.test(m)) return 'text-fuchsia-300/85';
     return 'text-white/75';
@@ -317,7 +317,7 @@ export default function ProcessingTerminal({
                 Report {showReport ? '▾' : '▸'}
               </button>
             )}
-            <span className="shrink-0 px-1 text-nano font-semibold uppercase tracking-[0.14em] text-white/45">
+            <span className="shrink-0 px-1 text-nano font-semibold uppercase tracking-[0.14em] text-muted">
               {parts.length ? `${parts.length} part${parts.length > 1 ? 's' : ''}` : 'no parts yet'}
             </span>
             {errorCount > 0 && (
@@ -351,7 +351,7 @@ export default function ProcessingTerminal({
         <div className="flex items-center gap-2 shrink-0">
           {showSearch ? (
             <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-white/10 border border-white/20 text-xs">
-              <Icon.search size={12} className="text-white/40" />
+              <Icon.search size={12} className="text-muted" />
               <input
                 ref={searchInputRef}
                 type="text"
@@ -371,7 +371,7 @@ export default function ProcessingTerminal({
                 <button
                   type="button"
                   onClick={() => setSearchQuery('')}
-                  className="text-white/40 hover:text-white text-nano"
+                  className="text-muted hover:text-white text-nano"
                   aria-label="Clear search filter"
                 >
                   ✕
@@ -380,7 +380,7 @@ export default function ProcessingTerminal({
               <button
                 type="button"
                 onClick={() => { setShowSearch(false); setSearchQuery(''); }}
-                className="text-white/40 hover:text-white text-nano border-l border-white/10 pl-1"
+                className="text-muted hover:text-white text-nano border-l border-white/10 pl-1"
                 aria-label="Close search input"
               >
                 Done
@@ -446,7 +446,7 @@ export default function ProcessingTerminal({
 
       {/* Selected part's header */}
       {activePart && (
-        <div className="shrink-0 px-3.5 py-1.5 border-b border-white/[0.06] bg-white/[0.02] text-micro text-white/45 flex items-center gap-2">
+        <div className="shrink-0 px-3.5 py-1.5 border-b border-white/[0.06] bg-white/[0.02] text-micro text-muted flex items-center gap-2">
           <span className="text-white/80 font-bold">Chapter {activePart.index}</span>
           <span>·</span>
           <span>frames {fmtN(activePart.first)}–{fmtN(activePart.last)}</span>
@@ -472,7 +472,7 @@ export default function ProcessingTerminal({
         <div className="shrink-0 max-h-72 overflow-y-auto border-b border-white/[0.08] bg-black/50 p-3 custom-scrollbar animate-slide-down">
           <div className="mb-2 flex items-center justify-between gap-2">
             <span className="text-nano font-bold uppercase tracking-[0.16em] text-white/60">Structured runtime report</span>
-            <span className="text-nano text-white/35 font-mono">authoritative backend state</span>
+            <span className="text-nano text-muted font-mono">authoritative backend state</span>
           </div>
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
             {SECTION_ORDER.map((name) => <RuntimeSection key={name} name={name} section={runtime.sections[name]} />)}
@@ -487,13 +487,13 @@ export default function ProcessingTerminal({
         className={`selectable ${bodyClass} min-h-0 overflow-y-auto px-3.5 py-2.5 text-mini leading-relaxed custom-scrollbar`}
       >
         {shown.length === 0 ? (
-          <div className="text-white/30 italic py-4 text-center">
+          <div className="text-muted italic py-4 text-center">
             {log.length === 0 ? 'waiting for engine output…' : searchQuery ? 'no log entries match the search filter' : 'nothing logged for this chapter yet…'}
           </div>
         ) : (
           shown.map((l) => (
             <div key={l.seq} className="flex gap-2.5 py-0.5 whitespace-pre-wrap break-words hover:bg-white/[0.02] rounded px-1 -mx-1 transition-colors">
-              <span className="shrink-0 text-white/30 tabular-nums font-mono text-micro select-none">{l.t}</span>
+              <span className="shrink-0 text-muted tabular-nums font-mono text-micro select-none">{l.t}</span>
               <span className="shrink-0 text-white/25 select-none">›</span>
               <FormattedLogMessage msg={l.msg} toneClass={structuredLineTone(l)} />
             </div>
@@ -519,7 +519,7 @@ export default function ProcessingTerminal({
 
       {/* Pinned status line — rewritten in place, never scrolled into history */}
       <div className="shrink-0 flex items-center gap-2 px-3.5 py-2 border-t border-white/10 bg-black/40 text-mini">
-        <span className="text-[var(--accent)] font-bold">›</span>
+        <span className="text-accent font-bold">›</span>
         <span className="truncate tabular-nums text-white/90 font-semibold">{authoritativeStatus || (paused ? 'paused' : 'idle')}</span>
         <span className="ml-auto inline-block h-3.5 w-2 shrink-0 bg-[var(--accent)] shadow-[0_0_6px_var(--accent-glow)] animate-pulse" />
       </div>

@@ -78,7 +78,7 @@ export default function StudioWorkspace({
             >
               <Layout size={13} className={isRec709 ? 'text-gray-300' : 'text-rose-400'} aria-hidden="true" />
               <span>{WORKSPACE_PRESETS[activePreset]?.label || 'Custom Workspace'}</span>
-              <ChevronDown size={12} className="text-white/40" aria-hidden="true" />
+              <ChevronDown size={12} className="text-muted" aria-hidden="true" />
             </button>
 
             {presetDropdownOpen && (
@@ -112,7 +112,7 @@ export default function StudioWorkspace({
                         <span>{item.label}</span>
                         {isSelected && <Check size={12} aria-hidden="true" />}
                       </div>
-                      <span className="text-nano text-white/40 mt-0.5">{item.description}</span>
+                      <span className="text-nano text-muted mt-0.5">{item.description}</span>
                     </button>
                   );
                 })}
@@ -129,7 +129,7 @@ export default function StudioWorkspace({
               className={`flex items-center gap-1 px-2 py-0.5 rounded text-micro font-medium transition-colors ${
                 panels.preview
                   ? isRec709 ? 'bg-[#2C2C2C] text-white' : 'bg-rose-500/20 text-rose-300'
-                  : 'text-white/40 hover:text-white/70'
+                  : 'text-muted hover:text-white/70'
               }`}
             >
               <Monitor size={11} aria-hidden="true" />
@@ -143,7 +143,7 @@ export default function StudioWorkspace({
               className={`flex items-center gap-1 px-2 py-0.5 rounded text-micro font-medium transition-colors ${
                 panels.timeline
                   ? isRec709 ? 'bg-[#2C2C2C] text-white' : 'bg-rose-500/20 text-rose-300'
-                  : 'text-white/40 hover:text-white/70'
+                  : 'text-muted hover:text-white/70'
               }`}
             >
               <Film size={11} aria-hidden="true" />
@@ -157,7 +157,7 @@ export default function StudioWorkspace({
               className={`flex items-center gap-1 px-2 py-0.5 rounded text-micro font-medium transition-colors ${
                 panels.facebank
                   ? isRec709 ? 'bg-[#2C2C2C] text-white' : 'bg-rose-500/20 text-rose-300'
-                  : 'text-white/40 hover:text-white/70'
+                  : 'text-muted hover:text-white/70'
               }`}
             >
               <Users size={11} aria-hidden="true" />
@@ -171,7 +171,7 @@ export default function StudioWorkspace({
               className={`flex items-center gap-1 px-2 py-0.5 rounded text-micro font-medium transition-colors ${
                 panels.queue
                   ? isRec709 ? 'bg-[#2C2C2C] text-white' : 'bg-rose-500/20 text-rose-300'
-                  : 'text-white/40 hover:text-white/70'
+                  : 'text-muted hover:text-white/70'
               }`}
             >
               <Layers size={11} aria-hidden="true" />
@@ -185,7 +185,7 @@ export default function StudioWorkspace({
               className={`flex items-center gap-1 px-2 py-0.5 rounded text-micro font-medium transition-colors ${
                 panels.telemetry
                   ? isRec709 ? 'bg-[#2C2C2C] text-white' : 'bg-rose-500/20 text-rose-300'
-                  : 'text-white/40 hover:text-white/70'
+                  : 'text-muted hover:text-white/70'
               }`}
             >
               <Activity size={11} aria-hidden="true" />
@@ -207,7 +207,7 @@ export default function StudioWorkspace({
                 : 'bg-white/5 hover:bg-white/10 text-white/60 hover:text-white/90 border-white/10'
             }`}
           >
-            <SunMedium size={12} className={isRec709 ? 'text-amber-300' : 'text-white/40'} aria-hidden="true" />
+            <SunMedium size={12} className={isRec709 ? 'text-amber-300' : 'text-muted'} aria-hidden="true" />
             <span>Rec.709 Neutral Mode</span>
             {isRec709 && (
               <span className="w-2 h-2 rounded-full bg-white ml-0.5 shadow-sm" title="D65 100% White Reference" />
@@ -220,7 +220,7 @@ export default function StudioWorkspace({
             onClick={resetLayout}
             aria-label="Reset workspace to default layout"
             title="Reset Layout"
-            className="p-1.5 rounded hover:bg-white/10 text-white/40 hover:text-white transition-colors"
+            className="p-1.5 rounded hover:bg-white/10 text-muted hover:text-white transition-colors"
           >
             <RotateCcw size={13} aria-hidden="true" />
           </button>
@@ -251,7 +251,7 @@ export default function StudioWorkspace({
               {/* Injected Preview Component */}
               <div className="w-full h-full">
                 {renderPreview ? renderPreview({ isRec709 }) : (
-                  <div className="flex items-center justify-center h-full text-white/30 text-mini">
+                  <div className="flex items-center justify-center h-full text-muted text-mini">
                     <span>Cinematic Preview Viewport</span>
                   </div>
                 )}
@@ -270,7 +270,7 @@ export default function StudioWorkspace({
               }`}
             >
               {renderTimeline ? renderTimeline({ isRec709 }) : (
-                <div className="flex items-center justify-center h-full text-white/30 text-mini">
+                <div className="flex items-center justify-center h-full text-muted text-mini">
                   <span>Cinematic Timeline Deck</span>
                 </div>
               )}
@@ -289,7 +289,7 @@ export default function StudioWorkspace({
             }`}
           >
             {renderFaceBank ? renderFaceBank({ isRec709 }) : (
-              <div className="flex items-center justify-center h-full text-white/30 text-mini">
+              <div className="flex items-center justify-center h-full text-muted text-mini">
                 <span>Face Bank Identity Router</span>
               </div>
             )}

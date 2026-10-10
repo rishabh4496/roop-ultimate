@@ -67,7 +67,7 @@ export default function CommandPalette({ open, onClose, commands }) {
         onKeyDown={onKeyDown}
       >
         <div className="flex items-center gap-3 px-4 py-3 border-b border-white/10">
-          <span className="text-white/40 text-lg">⌘</span>
+          <span className="text-muted text-lg">⌘</span>
           <input
             ref={inputRef}
             value={query}
@@ -75,15 +75,15 @@ export default function CommandPalette({ open, onClose, commands }) {
             placeholder="Search actions, themes, settings…"
             className="flex-1 bg-transparent text-white text-sm placeholder-white/30 focus:outline-none"
           />
-          <kbd className="text-nano font-mono text-white/45 bg-white/5 px-1.5 py-0.5 rounded border border-white/10">ESC</kbd>
+          <kbd className="text-nano font-mono text-muted bg-white/5 px-1.5 py-0.5 rounded border border-white/10">ESC</kbd>
         </div>
         <div ref={listRef} className="max-h-[52vh] overflow-y-auto py-2">
           {filtered.length === 0 ? (
-            <div className="px-4 py-8 text-center text-sm text-white/30">No matching commands</div>
+            <div className="px-4 py-8 text-center text-sm text-muted">No matching commands</div>
           ) : (
             groups.map((g) => (
               <div key={g.section} className="mb-1">
-                <div className="px-4 py-1 text-nano font-semibold uppercase tracking-[0.14em] text-white/45">{g.section}</div>
+                <div className="px-4 py-1 text-nano font-semibold uppercase tracking-[0.14em] text-muted">{g.section}</div>
                 {g.items.map(({ c, i }) => (
                   <button
                     key={c.id}
@@ -98,12 +98,12 @@ export default function CommandPalette({ open, onClose, commands }) {
                         centred box keeps every title in the list on the same
                         left edge regardless of the glyph's own width — the
                         thing emoji could never be relied on to do. */}
-                    <span className="w-6 grid place-items-center shrink-0 text-white/45">
+                    <span className="w-6 grid place-items-center shrink-0 text-muted">
                       {c.icon ? <c.icon size={16} /> : <span className="h-1 w-1 rounded-full bg-current" />}
                     </span>
                     <span className="flex-1 min-w-0">
                       <span className="block text-sm font-semibold text-white/90 truncate">{c.title}</span>
-                      {c.subtitle && <span className="block text-mini text-white/45 truncate">{c.subtitle}</span>}
+                      {c.subtitle && <span className="block text-mini text-muted truncate">{c.subtitle}</span>}
                     </span>
                     {i === sel && <kbd className="text-nano font-mono text-white/50 bg-white/5 px-1.5 py-0.5 rounded border border-white/10 shrink-0">↵</kbd>}
                   </button>

@@ -347,6 +347,7 @@
 /* ── AMOLED family: true #000000 for OLED power saving (no ambient glow) ─── */
 .theme-amoled {
   --bg-gradient: #000000;
+  --bg-base: #000000;
   --card-bg: rgba(12, 12, 12, 0.72);
   --surface-2: rgba(255, 255, 255, 0.028);
   --text-main: #f4f4f5;
@@ -364,6 +365,7 @@
 
 .theme-amoled-ice {
   --bg-gradient: #000000;
+  --bg-base: #000000;
   --card-bg: rgba(12, 12, 12, 0.72);
   --surface-2: rgba(255, 255, 255, 0.028);
   --text-main: #eaf6ff;
@@ -381,6 +383,7 @@
 
 .theme-amoled-matrix {
   --bg-gradient: #000000;
+  --bg-base: #000000;
   --card-bg: rgba(12, 12, 12, 0.72);
   --surface-2: rgba(255, 255, 255, 0.028);
   --text-main: #e5ffe9;
@@ -398,6 +401,7 @@
 
 .theme-amoled-gold {
   --bg-gradient: #000000;
+  --bg-base: #000000;
   --card-bg: rgba(12, 12, 12, 0.72);
   --surface-2: rgba(255, 255, 255, 0.028);
   --text-main: #fbf4dd;
@@ -415,6 +419,7 @@
 
 .theme-amoled-violet {
   --bg-gradient: #000000;
+  --bg-base: #000000;
   --card-bg: rgba(12, 12, 12, 0.72);
   --surface-2: rgba(255, 255, 255, 0.028);
   --text-main: #f3ecff;
@@ -681,6 +686,12 @@
       radial-gradient(circle at 50% -10%, var(--accent-glow), transparent 38%),
       var(--bg-gradient);
     background-size: 100% 100%, 100% 100%;
+    /* AFTER the shorthand, which resets it. NOT a third layer inside it: five
+       themes (the AMOLED family) set `--bg-gradient` to a plain colour, which is
+       only legal as the FINAL layer, so a layer after it made the whole
+       declaration invalid and the page painted white. Those themes set
+       `--bg-base` to the same colour, so they are unchanged. */
+    background-color: var(--bg-base);
     font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     -webkit-font-smoothing: antialiased;
     letter-spacing: -0.01em;
@@ -1076,6 +1087,63 @@ html[data-render-lite] .animate-scanner-sweep {
   color: oklch(from var(--accent-hover) clamp(0, (0.62 - l) * 1000, 1) 0 h);
 }
 
+/* ── Ink on an accent fill, in EVERY theme ─────────────────────────────────
+   Hand-written accent surfaces (`bg-[var(--accent)] text-white`, 140+ of them)
+   are the same problem .fill-accent solves for the primitive: white on the
+   default crimson is 3.83:1. They were only corrected under light themes. This
+   applies the same computed ink to the utility itself, in all modes, and
+   repoints `--color-white` so a `text-white/N` child lands on the right side.
+   Unlayered, so it beats the utilities layer's `text-white` without `!important`.
+   Needs a real `bg-[var(--accent)]` FILL: `/N` tints are different classes and
+   keep their own (page-coloured) ink. */
+.bg-\[var\(--accent\)\] {
+  --color-white: oklch(from var(--accent) clamp(0, (0.62 - l) * 1000, 1) 0 h);
+  color: #ffffff;
+  color: oklch(from var(--accent) clamp(0, (0.62 - l) * 1000, 1) 0 h);
+}
+
+/* ── Muted text: ONE token, at least 4.5:1 ─────────────────────────────────
+   Secondary text was written as `text-white/30 … /45` in ~410 places -- four
+   different greys, none of which reaches AA on the panels they sit on (measured
+   3.0:1 - 4.5:1, computed backgrounds, e2e/contrast.js). `text-muted` replaces
+   them: a percentage (`--muted-pct`) of `--color-white`, so it follows every
+   repoint that already makes `text-white/N` right -- the page ink in light
+   themes, white inside a dark scrim, the computed ink inside an accent fill.
+   The percentage is held to 4.5:1 against the surfaces it sits on by
+   e2e/contrast.spec.js; to change how quiet "quiet" is, change the token, not
+   the call sites. */
+/* The page canvas colour UNDER `--bg-gradient`. The gradients are opaque, so it
+   never shows -- but a tool (or a browser that has not painted the gradient)
+   that cannot evaluate a gradient assumes WHITE, and then judges every
+   translucent dark panel against it: axe reported the Processing tab's nav at
+   1.5:1 (#e7e7e7 on #bfbfbf) while it renders at ~14:1. A real base colour makes
+   the stack decidable and keeps first paint on-theme. */
+:root { --bg-base: #0A0B11; }
+
+:root { --muted-pct: 62%; }
+@utility text-muted {
+  color: color-mix(in oklab, var(--color-white) var(--muted-pct), transparent);
+}
+
+/* ── The accent as TEXT colour ─────────────────────────────────────────────
+   `text-[var(--accent)]` (105 uses) puts the accent on the page's tinted panels:
+   the default crimson is 3.1:1 - 4.3:1 there. The fill is fine as a surface;
+   as ink it has to be lifted (dark themes) or sunk (light themes) to a
+   readable lightness, keeping its hue and chroma so it still reads as "the
+   accent". `oklch(from …)` does it for all 38 presets and any custom theme by
+   construction; the plain `var(--accent)` first is the fallback for an engine
+   without relative colour. */
+:root { --accent-ink: var(--accent); --accent-ink: oklch(from var(--accent) max(l, 0.78) c h); }
+
+/* A per-person colour (PERSON_COLORS) used as TEXT on the dark panels: same
+   lift, same reason. The colour arrives as `--person`; the swatch/border that
+   uses the colour as a FILL keeps the raw value. */
+.text-person { color: var(--person); color: oklch(from var(--person) max(l, 0.78) c h); }
+[data-theme-mode="light"] .text-person { color: var(--person); color: oklch(from var(--person) min(l, 0.5) c h); }
+@utility text-accent {
+  color: var(--accent-ink);
+}
+
 /* The status hues are fixed, so their ink does not need computing — but it does
    need to be right: --danger is #F87171 on dark (white 2.6:1, black 8.1:1) and
    #B91C1C on light (white 6.4:1). Same expression, same reason. */
@@ -1228,6 +1296,12 @@ input[type="range"]::-webkit-slider-thumb:active {
 [data-theme-mode="light"] {
   --color-white: var(--text-main);
 
+  /* Tokens defined above for the dark default; this is their light value. */
+  --bg-base: #eef1f6;          /* canvas colour under --bg-gradient */
+  --muted-pct: 74%;            /* `text-muted`: 74% of the page ink */
+  --accent-ink: var(--accent); /* `text-accent`: sunk to L <= 0.5 on a light page */
+  --accent-ink: oklch(from var(--accent) min(l, 0.5) c h);
+
   /* The status tokens are tuned for dark surfaces; on a light page the same
      hues carry no contrast as INK (#34D399 on white is 1.9:1, well under the
      4.5:1 small text needs). These are the 700-weight equivalents, all above
@@ -1265,19 +1339,9 @@ input[type="range"]::-webkit-slider-thumb:active {
     --color-white: #fff;
   }
 
-  /* An accent fill must not follow the PAGE's ink — it is its own surface. It
-     was assumed dark enough for white in every theme; measured, no theme's
-     accent reaches 4.5:1 against white and the default crimson manages 3.83
-     (see .fill-accent). So the ink is computed from the fill's own lightness
-     here too, and `--color-white` is repointed to match so any `text-white/N`
-     on a child lands on the correct side rather than at its intended alpha of
-     the wrong colour. */
-  .bg-\[var\(--accent\)\],
-  .bg-\[\#E94560\] {
-    --color-white: oklch(from var(--accent) clamp(0, (0.62 - l) * 1000, 1) 0 h);
-    color: #ffffff;
-    color: oklch(from var(--accent) clamp(0, (0.62 - l) * 1000, 1) 0 h);
-  }
+  /* (The accent-fill ink rule that used to sit here is now global -- see
+     "Ink on an accent fill" below. It was scoped to light themes, so the DEFAULT
+     dark theme kept `text-white` on crimson at 3.83:1.) */
 
   /* Native <option> lists are painted by the OS, so they inherit none of the
      above and still need explicit colours. */

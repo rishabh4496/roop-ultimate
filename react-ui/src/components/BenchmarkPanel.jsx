@@ -315,8 +315,8 @@ export default function BenchmarkPanel({ notify, onSettingsApplied }) {
               {/* Hardware context */}
               <div id="benchmark-hardware-card" className="p-3.5 rounded-xl bg-white/[0.02] border border-white/10 flex flex-col justify-between">
                 <div>
-                  <div className="text-micro font-semibold uppercase tracking-wider text-white/40 mb-1 flex items-center gap-1.5">
-                    <Icon.cpu size={12} className="text-[var(--accent)]" />
+                  <div className="text-micro font-semibold uppercase tracking-wider text-muted mb-1 flex items-center gap-1.5">
+                    <Icon.cpu size={12} className="text-accent" />
                     <span>Target Hardware Profile</span>
                   </div>
                   <div className="text-sm font-semibold text-white/90">
@@ -340,21 +340,21 @@ export default function BenchmarkPanel({ notify, onSettingsApplied }) {
 
               {/* Active Pipeline Models */}
               <div id="benchmark-models-card" className="p-3.5 rounded-xl bg-white/[0.02] border border-white/10">
-                <div className="text-micro font-semibold uppercase tracking-wider text-white/40 mb-1.5 flex items-center gap-1.5">
-                  <Icon.wand size={12} className="text-[var(--accent)]" />
+                <div className="text-micro font-semibold uppercase tracking-wider text-muted mb-1.5 flex items-center gap-1.5">
+                  <Icon.wand size={12} className="text-accent" />
                   <span>Pipeline Models Locked For Test</span>
                 </div>
                 <div className="space-y-1 text-xs">
                   <div className="flex justify-between py-0.5 border-b border-white/[0.04]">
-                    <span className="text-white/40">Face Swapper</span>
+                    <span className="text-muted">Face Swapper</span>
                     <span className="font-mono text-white/85 font-medium">{prompt?.active_models?.swapper || result?.active_models?.swapper || 'Inswapper / RealSwap'}</span>
                   </div>
                   <div className="flex justify-between py-0.5 border-b border-white/[0.04]">
-                    <span className="text-white/40">Enhancer / Restorer</span>
+                    <span className="text-muted">Enhancer / Restorer</span>
                     <span className="font-mono text-white/85 font-medium">{prompt?.active_models?.enhancer || result?.active_models?.enhancer || 'None / GPEN'}</span>
                   </div>
                   <div className="flex justify-between py-0.5">
-                    <span className="text-white/40">Mask & Alignment</span>
+                    <span className="text-muted">Mask & Alignment</span>
                     <span className="font-mono text-white/85 font-medium">{prompt?.active_models?.mask_engine || result?.active_models?.mask_engine || 'RealityUX / Box'}</span>
                   </div>
                 </div>
@@ -379,7 +379,7 @@ export default function BenchmarkPanel({ notify, onSettingsApplied }) {
               <div id="benchmark-setup-controls" className="p-4 rounded-xl bg-white/[0.03] border border-white/10 space-y-3.5">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                   <div>
-                    <h4 className="text-sm font-semibold text-white/90">Benchmark Configuration</h4>
+                    <h3 className="text-sm font-semibold text-white/90">Benchmark Configuration</h3>
                     <p className="text-xs text-white/50">Simulates real video frame processing on isolated synthetic workloads to measure true sustained FPS and hardware limits.</p>
                   </div>
                   <div className="flex items-center gap-2">
@@ -414,7 +414,7 @@ export default function BenchmarkPanel({ notify, onSettingsApplied }) {
                           }`}
                         >
                           <div className="text-xs font-bold">{opt.label}</div>
-                          <div className="text-nano text-white/45 mt-0.5 line-clamp-1">{opt.desc}</div>
+                          <div className="text-nano text-muted mt-0.5 line-clamp-1">{opt.desc}</div>
                         </button>
                       ))}
                     </div>
@@ -437,7 +437,7 @@ export default function BenchmarkPanel({ notify, onSettingsApplied }) {
                           }`}
                         >
                           <div className="text-xs font-bold">{m.label}</div>
-                          <div className="text-nano text-white/45 mt-0.5">{m.frames} frames measured</div>
+                          <div className="text-nano text-muted mt-0.5">{m.frames} frames measured</div>
                         </button>
                       ))}
                     </div>
@@ -489,37 +489,37 @@ export default function BenchmarkPanel({ notify, onSettingsApplied }) {
                 {/* Live Real-time Telemetry Metrics */}
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
                   <div className="p-3 rounded-xl bg-white/[0.04] border border-white/10">
-                    <div className="text-micro text-white/40 uppercase tracking-wider font-semibold">Live Throughput</div>
+                    <div className="text-micro text-muted uppercase tracking-wider font-semibold">Live Throughput</div>
                     <div className="text-lg font-mono font-bold text-white mt-1">
                       <AnimatedNumber value={progress.current_fps || 0} decimals={1} suffix=" FPS" />
                     </div>
-                    <div className="text-nano text-white/40 mt-0.5">Average: {Number(progress.average_fps || 0).toFixed(1)} FPS</div>
+                    <div className="text-nano text-muted mt-0.5">Average: {Number(progress.average_fps || 0).toFixed(1)} FPS</div>
                   </div>
 
                   <div className="p-3 rounded-xl bg-white/[0.04] border border-white/10">
-                    <div className="text-micro text-white/40 uppercase tracking-wider font-semibold">VRAM Footprint</div>
+                    <div className="text-micro text-muted uppercase tracking-wider font-semibold">VRAM Footprint</div>
                     <div className="text-lg font-mono font-bold text-cyan-400 mt-1">
                       {progress.vram_used_mb ? `${Math.round(progress.vram_used_mb)} MB` : 'Monitoring...'}
                     </div>
-                    <div className="text-nano text-white/40 mt-0.5">
+                    <div className="text-nano text-muted mt-0.5">
                       {progress.vram_pct ? `${Math.round(progress.vram_pct)}% of card` : 'Allocation steady'}
                     </div>
                   </div>
 
                   <div className="p-3 rounded-xl bg-white/[0.04] border border-white/10">
-                    <div className="text-micro text-white/40 uppercase tracking-wider font-semibold">GPU Load</div>
+                    <div className="text-micro text-muted uppercase tracking-wider font-semibold">GPU Load</div>
                     <div className="text-lg font-mono font-bold text-emerald-400 mt-1">
                       {progress.gpu_pct != null ? `${Math.round(progress.gpu_pct)}%` : 'Active'}
                     </div>
-                    <div className="text-nano text-white/40 mt-0.5">Engine saturation</div>
+                    <div className="text-nano text-muted mt-0.5">Engine saturation</div>
                   </div>
 
                   <div className="p-3 rounded-xl bg-white/[0.04] border border-white/10">
-                    <div className="text-micro text-white/40 uppercase tracking-wider font-semibold">Time Remaining</div>
+                    <div className="text-micro text-muted uppercase tracking-wider font-semibold">Time Remaining</div>
                     <div className="text-lg font-mono font-bold text-white/90 mt-1">
                       {progress.eta_sec != null ? `${Math.ceil(progress.eta_sec)}s` : 'Calculating...'}
                     </div>
-                    <div className="text-nano text-white/40 mt-0.5">Elapsed: {Math.floor(progress.elapsed_sec || 0)}s</div>
+                    <div className="text-nano text-muted mt-0.5">Elapsed: {Math.floor(progress.elapsed_sec || 0)}s</div>
                   </div>
                 </div>
 
@@ -541,7 +541,7 @@ export default function BenchmarkPanel({ notify, onSettingsApplied }) {
                     {/* Score Circle */}
                     <div className="h-16 w-16 rounded-2xl bg-black/50 border border-white/15 flex flex-col items-center justify-center shrink-0 shadow-lg">
                       <span className="text-2xl font-black text-white font-mono leading-none">{result.score || 0}</span>
-                      <span className="text-nano text-white/40 font-semibold uppercase mt-0.5">Score</span>
+                      <span className="text-nano text-muted font-semibold uppercase mt-0.5">Score</span>
                     </div>
 
                     <div>
@@ -551,7 +551,7 @@ export default function BenchmarkPanel({ notify, onSettingsApplied }) {
                         }`}>
                           {result.badge || 'Evaluated'}
                         </span>
-                        <span className="text-xs text-white/40 font-mono">
+                        <span className="text-xs text-muted font-mono">
                           {formatTimestamp(result.timestamp)}
                         </span>
                         {result.applied && (
@@ -604,53 +604,53 @@ export default function BenchmarkPanel({ notify, onSettingsApplied }) {
                 {/* Key Telemetry Metrics Grid */}
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5">
                   <div className="p-3 rounded-xl bg-white/[0.02] border border-white/10">
-                    <div className="text-micro text-white/40 uppercase tracking-wider font-semibold">Average FPS</div>
+                    <div className="text-micro text-muted uppercase tracking-wider font-semibold">Average FPS</div>
                     <div className="text-lg font-mono font-bold text-white mt-1">
                       {Number(result.average_fps || 0).toFixed(2)}
                     </div>
-                    <div className="text-nano text-white/40 mt-0.5">Sustained rate</div>
+                    <div className="text-nano text-muted mt-0.5">Sustained rate</div>
                   </div>
 
                   <div className="p-3 rounded-xl bg-white/[0.02] border border-white/10">
-                    <div className="text-micro text-white/40 uppercase tracking-wider font-semibold">1% Low FPS</div>
+                    <div className="text-micro text-muted uppercase tracking-wider font-semibold">1% Low FPS</div>
                     <div className="text-lg font-mono font-bold text-cyan-400 mt-1">
                       {Number(result.p1_low_fps || 0).toFixed(2)}
                     </div>
-                    <div className="text-nano text-white/40 mt-0.5">Frame pacing floor</div>
+                    <div className="text-nano text-muted mt-0.5">Frame pacing floor</div>
                   </div>
 
                   <div className="p-3 rounded-xl bg-white/[0.02] border border-white/10">
-                    <div className="text-micro text-white/40 uppercase tracking-wider font-semibold">Avg Latency</div>
+                    <div className="text-micro text-muted uppercase tracking-wider font-semibold">Avg Latency</div>
                     <div className="text-lg font-mono font-bold text-white/90 mt-1">
                       {Math.round(result.avg_latency_ms || 0)} ms
                     </div>
-                    <div className="text-nano text-white/40 mt-0.5">Per-frame transit</div>
+                    <div className="text-nano text-muted mt-0.5">Per-frame transit</div>
                   </div>
 
                   <div className="p-3 rounded-xl bg-white/[0.02] border border-white/10">
-                    <div className="text-micro text-white/40 uppercase tracking-wider font-semibold">P99 Latency</div>
+                    <div className="text-micro text-muted uppercase tracking-wider font-semibold">P99 Latency</div>
                     <div className="text-lg font-mono font-bold text-amber-300 mt-1">
                       {Math.round(result.p99_latency_ms || 0)} ms
                     </div>
-                    <div className="text-nano text-white/40 mt-0.5">Worst-case spike</div>
+                    <div className="text-nano text-muted mt-0.5">Worst-case spike</div>
                   </div>
 
                   <div className="p-3 rounded-xl bg-white/[0.02] border border-white/10">
-                    <div className="text-micro text-white/40 uppercase tracking-wider font-semibold">Peak VRAM</div>
+                    <div className="text-micro text-muted uppercase tracking-wider font-semibold">Peak VRAM</div>
                     <div className="text-lg font-mono font-bold text-purple-300 mt-1">
                       {Math.round(result.peak_vram_mb || 0)} MB
                     </div>
-                    <div className="text-nano text-white/40 mt-0.5">Max memory hold</div>
+                    <div className="text-nano text-muted mt-0.5">Max memory hold</div>
                   </div>
 
                   <div className="p-3 rounded-xl bg-white/[0.02] border border-white/10">
-                    <div className="text-micro text-white/40 uppercase tracking-wider font-semibold">Thermal Retention</div>
+                    <div className="text-micro text-muted uppercase tracking-wider font-semibold">Thermal Retention</div>
                     <div className={`text-lg font-mono font-bold mt-1 ${
                       result.thermal?.throttling_detected ? 'text-rose-400' : 'text-emerald-400'
                     }`}>
                       {result.thermal?.retention_pct != null ? `${result.thermal.retention_pct}%` : '100%'}
                     </div>
-                    <div className="text-nano text-white/40 mt-0.5">
+                    <div className="text-nano text-muted mt-0.5">
                       {result.thermal?.throttling_detected ? 'Throttling noted' : 'Stable thermals'}
                     </div>
                   </div>
@@ -659,14 +659,14 @@ export default function BenchmarkPanel({ notify, onSettingsApplied }) {
                 {/* Bottleneck Evidence Checklist (if present) */}
                 {result.bottleneck_evidence && result.bottleneck_evidence.length > 0 && (
                   <div className="p-3.5 rounded-xl bg-white/[0.02] border border-white/10 space-y-1.5">
-                    <div className="text-micro font-bold uppercase tracking-wider text-white/40 flex items-center gap-1.5">
-                      <Icon.search size={12} className="text-[var(--accent)]" />
+                    <div className="text-micro font-bold uppercase tracking-wider text-muted flex items-center gap-1.5">
+                      <Icon.search size={12} className="text-accent" />
                       <span>Bottleneck Diagnostic Evidence</span>
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
                       {result.bottleneck_evidence.map((item, idx) => (
                         <div key={idx} className="flex items-start gap-2 text-white/70">
-                          <span className="text-[var(--accent)] font-bold shrink-0">•</span>
+                          <span className="text-accent font-bold shrink-0">•</span>
                           <span>{item}</span>
                         </div>
                       ))}
@@ -684,7 +684,7 @@ export default function BenchmarkPanel({ notify, onSettingsApplied }) {
                           type="checkbox"
                           checked={allowLossy}
                           onChange={(e) => setAllowLossy(e.target.checked)}
-                          className="rounded bg-white/10 border-white/20 text-[var(--accent)] focus:ring-0"
+                          className="rounded bg-white/10 border-white/20 text-accent focus:ring-0"
                         />
                         <span>Allow lossy temporary frames (JPEG / NVDEC boost)</span>
                       </label>
@@ -714,7 +714,7 @@ export default function BenchmarkPanel({ notify, onSettingsApplied }) {
                                 {p.label}
                               </span>
                               {p.key === 'balanced' && (
-                                <span className="px-1.5 py-0.2 rounded text-nano bg-[var(--accent)]/20 text-[var(--accent)] font-semibold uppercase">
+                                <span className="px-1.5 py-0.2 rounded text-nano bg-[var(--accent)]/20 text-accent font-semibold uppercase">
                                   Default
                                 </span>
                               )}
@@ -736,13 +736,13 @@ export default function BenchmarkPanel({ notify, onSettingsApplied }) {
                   <div className="rounded-xl border border-white/10 overflow-hidden bg-white/[0.02]">
                     <div className="px-3.5 py-2.5 bg-white/[0.04] border-b border-white/10 flex items-center justify-between">
                       <span className="text-xs font-bold text-white/80">Settings Comparison & Delta</span>
-                      <span className="text-micro text-white/40">Differences highlight tuning improvements</span>
+                      <span className="text-micro text-muted">Differences highlight tuning improvements</span>
                     </div>
 
                     <div className="overflow-x-auto">
                       <table className="w-full text-left text-xs border-collapse">
                         <thead>
-                          <tr className="border-b border-white/10 text-white/45 text-micro uppercase tracking-wider">
+                          <tr className="border-b border-white/10 text-muted text-micro uppercase tracking-wider">
                             <th className="py-2.5 px-3.5">Setting</th>
                             <th className="py-2.5 px-3.5">Current Value</th>
                             <th className="py-2.5 px-3.5 text-cyan-300">Recommended</th>
@@ -755,7 +755,7 @@ export default function BenchmarkPanel({ notify, onSettingsApplied }) {
                             <tr key={i} className={`hover:bg-white/[0.02] ${row.changed ? 'bg-[var(--accent)]/[0.03]' : ''}`}>
                               <td className="py-2 px-3.5 font-medium text-white/90">
                                 <div>{row.setting}</div>
-                                <div className="text-nano font-mono text-white/40">{row.key}</div>
+                                <div className="text-nano font-mono text-muted">{row.key}</div>
                               </td>
                               <td className="py-2 px-3.5 font-mono text-white/60">
                                 {String(row.current)}
@@ -805,9 +805,9 @@ export default function BenchmarkPanel({ notify, onSettingsApplied }) {
             </div>
 
             {loadingProfiles ? (
-              <div className="py-8 text-center text-xs text-white/40">Loading saved profiles...</div>
+              <div className="py-8 text-center text-xs text-muted">Loading saved profiles...</div>
             ) : profiles.length === 0 ? (
-              <div className="py-8 text-center text-xs text-white/40 border border-dashed border-white/10 rounded-xl">
+              <div className="py-8 text-center text-xs text-muted border border-dashed border-white/10 rounded-xl">
                 No optimization profiles stored yet. Run a benchmark to record baseline hardware metrics.
               </div>
             ) : (
@@ -821,7 +821,7 @@ export default function BenchmarkPanel({ notify, onSettingsApplied }) {
                       <div className="flex items-center gap-2">
                         <span className="text-sm font-bold text-white font-mono">{p.score || 0} pts</span>
                         <span className="text-xs font-semibold text-white/80">{p.workload || 'General Workload'}</span>
-                        <span className="text-micro text-white/40 font-mono">{formatTimestamp(p.timestamp)}</span>
+                        <span className="text-micro text-muted font-mono">{formatTimestamp(p.timestamp)}</span>
                         {p.applied && (
                           <span className="px-1.5 py-0.2 rounded text-nano bg-emerald-500/20 text-emerald-300 font-bold uppercase">
                             Applied

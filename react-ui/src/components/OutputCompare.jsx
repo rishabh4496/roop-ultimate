@@ -52,9 +52,9 @@ function Media({ file, url, mediaRef, className, style, onMeta }) {
 function Label({ side, file, entry }) {
   return (
     <div className="min-w-0">
-      <div className="text-nano font-semibold uppercase tracking-[0.14em] text-white/45">{side}</div>
+      <div className="text-nano font-semibold uppercase tracking-[0.14em] text-muted">{side}</div>
       <div className="text-sm font-semibold text-white/85 truncate" title={file.name}>{file.name}</div>
-      <div className="text-micro font-mono text-white/45 truncate">
+      <div className="text-micro font-mono text-muted truncate">
         {entry?.duration_s > 0 && <>{fmtDur(entry.duration_s)} · </>}
         {entry?.fps > 0 && <span className="text-emerald-400/80">{entry.fps.toFixed(1)} fps · </span>}
         {entry?.settings?.swap_model || '—'}
@@ -205,7 +205,7 @@ export default function OutputCompare({ a, b, aUrl, bUrl, historyA, historyB, on
             <button
               type="button"
               onClick={onClose}
-              className="text-white/40 hover:text-white text-xl leading-none px-1"
+              className="text-muted hover:text-white text-xl leading-none px-1"
               aria-label="Close comparison"
               title="Close (Esc)"
             >
@@ -310,23 +310,23 @@ export default function OutputCompare({ a, b, aUrl, bUrl, historyA, historyB, on
 
         {/* What was different about them */}
         <div>
-          <div className="text-nano font-semibold uppercase tracking-[0.14em] text-white/45 mb-1.5">
+          <div className="text-nano font-semibold uppercase tracking-[0.14em] text-muted mb-1.5">
             {historyA && historyB
               ? `${changed.length} setting${changed.length === 1 ? '' : 's'} differ`
               : 'Settings'}
           </div>
           {!historyA || !historyB ? (
-            <p className="text-note text-white/45 m-0">
+            <p className="text-note text-muted m-0">
               No run-history entry for {!historyA ? a.name : b.name} — it was rendered before
               history was recorded, or by another install.
             </p>
           ) : changed.length === 0 ? (
-            <p className="text-note text-white/45 m-0">These two were rendered with identical settings.</p>
+            <p className="text-note text-muted m-0">These two were rendered with identical settings.</p>
           ) : (
             <div className="rounded-lg border border-white/[0.07] overflow-hidden divide-y divide-white/[0.05]">
               {changed.map(({ k, va, vb }) => (
                 <div key={k} className="grid grid-cols-[1fr_1fr_1fr] gap-2 px-3 py-1.5 text-mini font-mono items-baseline">
-                  <span className="text-white/40 truncate" title={k}>{LABELS[k] || k}</span>
+                  <span className="text-muted truncate" title={k}>{LABELS[k] || k}</span>
                   <span className="text-amber-300/80 truncate text-right">{fmtVal(va)}</span>
                   <span className="text-emerald-300/80 truncate text-right">{fmtVal(vb)}</span>
                 </div>

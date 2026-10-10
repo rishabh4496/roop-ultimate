@@ -5,6 +5,7 @@ import { confirmDialog } from './confirm';
 import { Icon } from '../icons';
 import { targetPersonRecords, normalizeSourceIndex, SKIP } from './faceswap/faceMapping';
 import { applyTargetFacesPayload } from './faceswap/targetPayload';
+import { FocusedInput } from './ui';
 
 // Coarse pose buckets we consider "primary coverage" for a person. Anything the
 // backend labels (e.g. "Left Profile + Up Tilt") is matched against these by
@@ -404,7 +405,7 @@ export default function PersonGroups({
         <div className="flex justify-center gap-2">
           <button type="button" disabled={scanning} onClick={scanFaceBank}
             title="Scan clip into Face Bank, cluster unique faces with DBSCAN, and build distinct character thumbnails"
-            className="px-3 py-1.5 rounded-lg text-mini font-bold bg-[var(--accent)]/20 border border-[var(--accent)]/50 text-[var(--accent)] hover:bg-[var(--accent)]/30 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+            className="px-3 py-1.5 rounded-lg text-mini font-bold bg-[var(--accent)]/20 border border-[var(--accent)]/50 text-accent hover:bg-[var(--accent)]/30 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
             {scanning ? 'Scanning Face Bank…' : 'Scan Face Bank (Clustering)'}
           </button>
           <button type="button" disabled={scanning} onClick={autoCapture}
@@ -413,14 +414,14 @@ export default function PersonGroups({
             Auto-capture
           </button>
         </div>
-        <div className="text-mini text-white/45 leading-relaxed">
+        <div className="text-mini text-muted leading-relaxed">
           Recommended: finds everyone, captures each from their clearest frame, then harvests
           the angles they turn through. Takes a couple of minutes and is worth it — a single
           reference face only matches poses near it, and a person in motion spends most of the
           clip somewhere else.
         </div>
-        <div className="text-mini text-white/30 leading-relaxed">
-          Or scrub to a clear frame and use <span className="text-white/45 font-bold">“Face from frame”</span>.
+        <div className="text-mini text-muted leading-relaxed">
+          Or scrub to a clear frame and use <span className="text-muted font-bold">“Face from frame”</span>.
         </div>
       </div>
     );
@@ -435,23 +436,23 @@ export default function PersonGroups({
     >
       {/* Toolbar */}
       <div className="flex items-center justify-between gap-2">
-        <span className="text-micro font-semibold uppercase tracking-[0.14em] text-white/45">
+        <span className="text-micro font-semibold uppercase tracking-[0.14em] text-muted">
           {people.length} {people.length === 1 ? 'person' : 'people'} · {targetFaces.length} {targetFaces.length === 1 ? 'angle' : 'angles'}
         </span>
         <div className="flex gap-1.5">
           <button type="button" disabled={busy || scanning} onClick={scanFaceBank}
             title="Scan video into Face Bank: extract 512-d embeddings and cluster all unique people (DBSCAN/Agglomerative)"
-            className="px-2 py-1 rounded-lg text-micro font-bold bg-[var(--accent)]/20 border border-[var(--accent)]/50 text-[var(--accent)] hover:bg-[var(--accent)]/30 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+            className="px-2 py-1 rounded-lg text-micro font-bold bg-[var(--accent)]/20 border border-[var(--accent)]/50 text-accent hover:bg-[var(--accent)]/30 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
             {scanning ? 'Scanning…' : 'Face Bank'}
           </button>
           <button type="button" disabled={busy || scanning} onClick={autoCapture}
             title="Re-scan the clip and capture everyone from their own clearest frame, replacing the current people"
-            className="px-2 py-1 rounded-lg text-micro font-bold bg-[var(--accent)]/10 border border-[var(--accent)]/30 text-[var(--accent)] hover:bg-[var(--accent)]/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+            className="px-2 py-1 rounded-lg text-micro font-bold bg-[var(--accent)]/10 border border-[var(--accent)]/30 text-accent hover:bg-[var(--accent)]/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
             {scanning ? 'Scanning…' : 'Auto-capture'}
           </button>
           <button type="button" disabled={busy} onClick={autoCluster}
             title="Group every captured face by identity automatically"
-            className="px-2 py-1 rounded-lg text-micro font-bold bg-[var(--accent)]/10 border border-[var(--accent)]/30 text-[var(--accent)] hover:bg-[var(--accent)]/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+            className="px-2 py-1 rounded-lg text-micro font-bold bg-[var(--accent)]/10 border border-[var(--accent)]/30 text-accent hover:bg-[var(--accent)]/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
             Auto-group
           </button>
           <button type="button" disabled={busy || !targetFaces.length} onClick={clearAllFaces}
@@ -463,7 +464,7 @@ export default function PersonGroups({
       </div>
 
       {sourceFaces.length > 0 && (
-        <div className="text-micro text-white/45 flex items-center gap-1.5 select-none">
+        <div className="text-micro text-muted flex items-center gap-1.5 select-none">
           <span className="h-1 w-1 rounded-full bg-[var(--accent)]" />
           Drag a source face onto a person, or use the dropdown, to choose who they become.
         </div>
@@ -512,12 +513,13 @@ export default function PersonGroups({
               <button type="button" onClick={(e) => { e.stopPropagation(); toggleExpand(rank); }}
                 aria-label={`${open ? 'Collapse' : 'Expand'} ${labelFor(rank)}`}
                 aria-expanded={open}
-                className="text-white/40 hover:text-white/80 transition-transform shrink-0" style={{ transform: open ? 'rotate(90deg)' : 'none' }}><Icon.expand size={13} /></button>
+                className="text-muted hover:text-white/80 transition-transform shrink-0" style={{ transform: open ? 'rotate(90deg)' : 'none' }}><Icon.expand size={13} /></button>
               <img src={targetFaces[indices[0]]} alt="" className="w-8 h-8 rounded-lg object-cover shrink-0 border" style={{ borderColor: color }} />
               <div className="flex-1 min-w-0" onClick={(e) => e.stopPropagation()}>
                 {editingRank === rank ? (
-                  <input
-                    autoFocus
+                  <FocusedInput
+                    select
+                    aria-label={`Name for ${labelFor(rank)}`}
                     value={editValue}
                     onChange={(e) => setEditValue(e.target.value)}
                     onBlur={() => commitName(rank)}
@@ -527,14 +529,14 @@ export default function PersonGroups({
                   />
                 ) : (
                   <div className="flex items-center gap-1.5">
-                    <span className="font-extrabold text-sm truncate" style={{ color }}>{labelFor(rank)}</span>
+                    <span className="font-extrabold text-sm truncate text-person" style={{ '--person': color }}>{labelFor(rank)}</span>
                     <button type="button" title="Rename person"
                       aria-label={`Rename ${labelFor(rank)}`}
                       onClick={() => { setEditingRank(rank); setEditValue(nameFor(rank)); }}
                       className="text-white/25 hover:text-white/70 shrink-0"><Icon.rename size={11} /></button>
                   </div>
                 )}
-                <div className="text-micro text-white/45 font-medium">{indices.length} {indices.length === 1 ? 'angle' : 'angles'}</div>
+                <div className="text-micro text-muted font-medium">{indices.length} {indices.length === 1 ? 'angle' : 'angles'}</div>
               </div>
 
               {/* Mapping dropdown */}
@@ -544,6 +546,7 @@ export default function PersonGroups({
                   value={safeMap}
                   onChange={(e) => setMapping(rank, parseInt(e.target.value, 10))}
                   title="Which source face this person becomes"
+                  aria-label={`Source face for ${labelFor(rank)}`}
                   className={`px-2 py-1 rounded-lg glass-input text-white text-mini font-bold focus:outline-none cursor-pointer max-w-[120px] shrink-0 ${mapValid ? '' : 'text-white/50'}`}
                 >
                   <option value={-1} className="bg-[#121420]">Ignore / Skip</option>
@@ -573,7 +576,7 @@ export default function PersonGroups({
                         <div className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover/angle:block z-40">
                           <div className="p-1.5 rounded-xl bg-black/95 border border-white/10 shadow-2xl flex flex-col items-center gap-1">
                             <img src={targetFaces[i]} alt="" className="w-28 h-28 object-cover rounded-lg" />
-                            <span className="text-micro font-bold text-[var(--accent)] whitespace-nowrap">{pose}</span>
+                            <span className="text-micro font-bold text-accent whitespace-nowrap">{pose}</span>
                           </div>
                           <div className="absolute top-full left-1/2 -translate-x-1/2 -mt-1 w-2 h-2 rotate-45 bg-black/95 border-b border-r border-white/10" />
                         </div>
@@ -605,16 +608,16 @@ export default function PersonGroups({
                 <div className="flex items-center gap-3">
                   <PoseCompass covered={covered} color={color} />
                   <div className="min-w-0">
-                    <div className="text-nano font-semibold uppercase tracking-[0.14em] text-white/45 mb-1">
+                    <div className="text-nano font-semibold uppercase tracking-[0.14em] text-muted mb-1">
                       Angle coverage · {covered.size}/5
                     </div>
                     {missing.length === 0 ? (
-                      <span className="text-micro font-bold" style={{ color }}>✓ Well covered</span>
+                      <span className="text-micro font-bold text-person" style={{ '--person': color }}>✓ Well covered</span>
                     ) : (
                       <div className="flex flex-wrap gap-1">
                         {missing.map((pp) => (
                           <span key={pp} title={`No ${pp} angle captured yet — add one for steadier swaps`}
-                            className="px-1.5 py-0.5 rounded-md text-nano font-semibold border border-dashed border-white/15 text-white/45">
+                            className="px-1.5 py-0.5 rounded-md text-nano font-semibold border border-dashed border-white/15 text-muted">
                             + {pp.replace(' Profile', '')}
                           </span>
                         ))}
@@ -626,7 +629,7 @@ export default function PersonGroups({
                 {/* Auto-capture angles from the whole video (fills coverage). */}
                 <button type="button" disabled={busy || harvesting !== null} onClick={() => autoAngles(rank)}
                   title="Scan the whole video and automatically capture this person at many angles — fills pose coverage so their identity survives turns/profiles without hand-capturing frames. Wrong grabs can be removed with the ✕ on each angle."
-                  className="w-full py-1.5 rounded-lg text-mini font-bold bg-[var(--accent)]/12 border border-[var(--accent)]/35 text-[var(--accent)] hover:bg-[var(--accent)]/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+                  className="w-full py-1.5 rounded-lg text-mini font-bold bg-[var(--accent)]/12 border border-[var(--accent)]/35 text-accent hover:bg-[var(--accent)]/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2">
                   {harvesting === rank
                     ? (<><span className="h-3 w-3 rounded-full border-2 border-[var(--accent)]/40 border-t-[var(--accent)] animate-spin" /> Scanning video for angles…</>)
                     : 'Auto-capture angles (scan whole video)'}

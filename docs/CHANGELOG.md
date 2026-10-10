@@ -5,6 +5,22 @@ full session record is [`SESSION_LOGS.md`](SESSION_LOGS.md); the running enginee
 state lives outside the repository (`RECODE_STATUS.md` in the operator's `roop-keep`
 folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22.
 
+## 2026-10-11
+
+- **React UI accessibility pass: zero axe violations on every tab and Batch strategy (was 65 nodes on 7 tabs, 16 more critical ones on Batch strategies 2-4); Face Swap tab stops 291 -> 265; text contrast measured and fixed.**
+  `Toggle`'s decorative `aria-hidden` switch was a `motion.span` with `whileTap`, which framer gives `tabindex=0`: 26 invisible tab stops on Face Swap (and 10 on Settings), now CSS `group-active`.
+  `Button` silently dropped every prop but six, so `<Button title=...>` icon buttons had no name and the Profiles modal's `type="submit"` Save never submitted; it forwards the rest now.
+  **Space on any focused button on Face Swap did not activate it** (the global play/pause hotkey `preventDefault`ed it - Enter worked): Start Swapping could not be started with Space. Fixed; a keyboard-only
+  run (Refresh Preview, then Start Swapping) is now a test. Face cards are a container with one select button and a SIBLING remove button (no nested interactive); names and labels on all four Batch strategies' controls, the Outputs table's
+  checkboxes and the timeline markers, `h3` -> `h2` Section titles, `autoFocus` (6 sites) replaced by explicit focus-on-mount, and the confirm dialog now restores focus to its opener.
+  **Contrast.** axe cannot judge text over this UI's gradient/glass (~1,040 nodes sat in `incomplete`), so `react-ui/e2e/contrast.js` composites the ancestor backgrounds itself (worst gradient stop). Measured:
+  ~360 text nodes under AA on the default theme, from ~410 hard-coded `text-white/30..45`, white-on-crimson (3.83:1), accent text on tinted panels and a 70%-opacity toolbar. Now one muted token (`text-muted`),
+  an accent-ink token (`text-accent`) and the computed accent-fill ink in every mode (it was light-themes-only): **default theme 298 -> 0** (3 tabs); across all 37 presets x 3 tabs **15,812 -> 4,430, no theme
+  worse**. Not done: the light themes still have 311-760 (translucent-black scrims turn grey on a light page), Gruvbox/Catppuccin ~200-250, a few dark themes tens; they are per-theme ceilings in
+  `allowlist.json` (`npm run test:e2e:themes`). **Regression caught on the way:** the first `--bg-base` change made the five AMOLED themes paint a WHITE page (their plain-colour `--bg-gradient` is only legal as
+  the last background layer); only the theme sweep could see it, so it is kept as an opt-in spec. Lint now has `jsx-a11y` and `react/exhaustive-deps` as errors for new code (55 existing diagnostics in 19
+  files listed per rule as legacy debt).
+
 ## 2026-10-10
 
 - **React UI: a failed frame request is no longer retried forever (`react-ui/src/components/faceswap/retryPolicy.js`).** With a backend answering 500, `useThrottledFrameRequest` re-armed itself from

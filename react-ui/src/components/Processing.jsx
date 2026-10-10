@@ -181,7 +181,7 @@ export default function Processing({ progress, settings, notify, setTab,
                 <div className="text-sm font-bold text-white">
                   {failed ? 'Run failed' : completed ? 'Run complete' : 'Run stopped'}
                 </div>
-                <div className="text-xs text-white/45 truncate max-w-[52ch]">
+                <div className="text-xs text-muted truncate max-w-[52ch]">
                   {progress.error
                     || (elapsedMs > 0 ? `Took ${fmtTime(elapsedMs)}${prog > 0 ? ` · reached ${Math.round(prog * 100)}%` : ''}` : (progress.desc || 'Idle'))}
                 </div>
@@ -270,7 +270,7 @@ export default function Processing({ progress, settings, notify, setTab,
           {out?.path && !failed && (
             <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
               <div className="rounded-2xl glass-panel p-5 shadow-2xl border border-white/5 space-y-3 min-w-0">
-                <div className="text-mini uppercase tracking-[0.14em] text-white/45 font-semibold">Output</div>
+                <div className="text-mini uppercase tracking-[0.14em] text-muted font-semibold">Output</div>
                 {isVideoOutput
                   ? <OutputVideoPlayer src={outUrl} renderKey={out?.path || out?.url} source={outputSource(out)} className="w-full max-h-[52vh] rounded-xl border border-white/5" />
                   : <img src={outUrl} alt="Render output" className="w-full max-h-[52vh] object-contain rounded-xl border border-white/5" />}
@@ -416,7 +416,7 @@ function RunBarLive({ startedAtS, paused, pauseRequested, stopping, error, contr
         <div className="space-y-0.5 min-w-0">
           <div className="flex items-center gap-1.5">
             <span className={`h-2 w-2 rounded-full ${stopping ? 'bg-red-400' : paused || pauseRequested ? 'bg-amber-400' : 'bg-[var(--accent)] animate-ping'}`} />
-            <span className={`text-mini font-semibold uppercase tracking-[0.14em] ${stopping ? 'text-red-400' : paused || pauseRequested ? 'text-amber-400' : 'text-[var(--accent)]'}`}>
+            <span className={`text-mini font-semibold uppercase tracking-[0.14em] ${stopping ? 'text-red-400' : paused || pauseRequested ? 'text-amber-400' : 'text-accent'}`}>
               {stopping ? 'Stopping' : paused ? 'Paused' : pauseRequested ? 'Pause Requested' : 'Processing'}
             </span>
           </div>
@@ -430,15 +430,15 @@ function RunBarLive({ startedAtS, paused, pauseRequested, stopping, error, contr
       {/* Elapsed / ETA compact readout */}
       <div className="flex items-center gap-3 text-xs font-mono shrink-0">
         <div className="flex flex-col">
-          <span className="text-micro uppercase tracking-wider text-white/45 font-bold">Elapsed</span>
+          <span className="text-micro uppercase tracking-wider text-muted font-bold">Elapsed</span>
           <span className="text-white font-bold tabular-nums whitespace-nowrap">{fmtTime(elapsedMs)}</span>
         </div>
         <div className="h-6 w-px bg-white/10" />
         <div className="flex flex-col">
-          <span className="text-micro uppercase tracking-wider text-white/45 font-bold">ETA</span>
+          <span className="text-micro uppercase tracking-wider text-muted font-bold">ETA</span>
           {/* `--:--` read as a clock that had stopped. It is not a time at
               all — it is the absence of one — so it says which. */}
-          <span className={`font-bold tabular-nums whitespace-nowrap ${etaMs > 0 ? 'text-emerald-400' : 'text-white/35'}`}>
+          <span className={`font-bold tabular-nums whitespace-nowrap ${etaMs > 0 ? 'text-emerald-400' : 'text-muted'}`}>
             {etaMs > 0 ? fmtTime(etaMs) : (etaNote || '—')}
           </span>
         </div>
@@ -453,7 +453,7 @@ function RunBarLive({ startedAtS, paused, pauseRequested, stopping, error, contr
             <span className="h-11 w-11 rounded-xl flex items-center justify-center bg-emerald-500/15 border border-emerald-500/40 text-emerald-400 transition-colors duration-200 group-hover:bg-emerald-500/25">
               <svg viewBox="0 0 24 24" className="w-6 h-6" fill="currentColor"><path d="M8 5.14v13.72a1 1 0 0 0 1.53.85l10.9-6.86a1 1 0 0 0 0-1.7L9.53 4.29A1 1 0 0 0 8 5.14z" /></svg>
             </span>
-            <span className="text-micro font-semibold uppercase tracking-[0.14em] text-white/45 group-hover:text-emerald-400 transition-colors">Resume</span>
+            <span className="text-micro font-semibold uppercase tracking-[0.14em] text-muted group-hover:text-emerald-400 transition-colors">Resume</span>
           </motion.button>
         ) : (
           <motion.button type="button" onClick={pause} disabled={pauseRequested || stopping || !!controlBusy} title={pauseRequested ? 'Waiting for a safe checkpoint' : 'Pause'} aria-label={pauseRequested ? 'Pause requested' : 'Pause the run'}
@@ -462,7 +462,7 @@ function RunBarLive({ startedAtS, paused, pauseRequested, stopping, error, contr
             <span className="h-11 w-11 rounded-xl flex items-center justify-center bg-amber-500/15 border border-amber-500/40 text-amber-400 transition-colors duration-200 group-hover:bg-amber-500/25">
               <svg viewBox="0 0 24 24" className="w-6 h-6" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1.5" /><rect x="14" y="5" width="4" height="14" rx="1.5" /></svg>
             </span>
-            <span className="text-micro font-semibold uppercase tracking-[0.14em] text-white/45 group-hover:text-amber-400 transition-colors">{pauseRequested ? 'Requested' : 'Pause'}</span>
+            <span className="text-micro font-semibold uppercase tracking-[0.14em] text-muted group-hover:text-amber-400 transition-colors">{pauseRequested ? 'Requested' : 'Pause'}</span>
           </motion.button>
         )}
         <motion.button type="button" onClick={stop} disabled={stopping} title={stopping ? 'Stopping' : 'Stop'} aria-label={stopping ? 'Stop requested' : 'Stop the run'}
@@ -471,7 +471,7 @@ function RunBarLive({ startedAtS, paused, pauseRequested, stopping, error, contr
           <span className="h-11 w-11 rounded-xl flex items-center justify-center bg-red-500/15 border border-red-500/40 text-red-400 transition-colors duration-200 group-hover:bg-red-500/25">
             <svg viewBox="0 0 24 24" className="w-6 h-6" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2.5" /></svg>
           </span>
-          <span className="text-micro font-semibold uppercase tracking-[0.14em] text-white/45 group-hover:text-red-400 transition-colors">{stopping ? 'Stopping…' : 'Stop'}</span>
+          <span className="text-micro font-semibold uppercase tracking-[0.14em] text-muted group-hover:text-red-400 transition-colors">{stopping ? 'Stopping…' : 'Stop'}</span>
         </motion.button>
       </div>
 
@@ -513,7 +513,7 @@ function RunHeadlineLive({ p, startedAtS, paused, pauseRequested, stopping, elap
       <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-2">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <span className={`text-mini font-semibold uppercase tracking-[0.18em] ${paused ? 'text-amber-400' : 'text-[var(--accent)]'}`}>
+            <span className={`text-mini font-semibold uppercase tracking-[0.18em] ${paused ? 'text-amber-400' : 'text-accent'}`}>
               {paused ? 'Paused' : 'Processing'}
             </span>
             {!paused && <span className="h-px w-8 bg-[var(--accent)]/40" />}
@@ -527,7 +527,7 @@ function RunHeadlineLive({ p, startedAtS, paused, pauseRequested, stopping, elap
                 different rate from the frames and people read progress
                 from the frames. */}
             {frames && (
-              <span className="font-mono text-title font-bold tabular-nums text-white/45 whitespace-nowrap">
+              <span className="font-mono text-title font-bold tabular-nums text-muted whitespace-nowrap">
                 {frames.done.toLocaleString()}
                 <span className="text-white/25"> / {frames.total.toLocaleString()}</span>
               </span>
@@ -539,19 +539,19 @@ function RunHeadlineLive({ p, startedAtS, paused, pauseRequested, stopping, elap
         </div>
         <div className="flex items-stretch gap-5 font-mono">
           <div className="text-right">
-            <div className="text-nano font-semibold uppercase tracking-[0.16em] text-white/45">Elapsed</div>
+            <div className="text-nano font-semibold uppercase tracking-[0.16em] text-muted">Elapsed</div>
             <div className="text-title font-bold tabular-nums text-white/85">{fmtTime(elapsedMs)}</div>
           </div>
           <div className="w-px bg-white/10" />
           <div className="text-right">
-            <div className="text-nano font-semibold uppercase tracking-[0.16em] text-white/45">Time left</div>
-            <div className={`text-title font-bold tabular-nums ${etaMs > 0 ? 'text-emerald-400' : 'text-white/35'}`}>
+            <div className="text-nano font-semibold uppercase tracking-[0.16em] text-muted">Time left</div>
+            <div className={`text-title font-bold tabular-nums ${etaMs > 0 ? 'text-emerald-400' : 'text-muted'}`}>
               {etaMs > 0 ? fmtTime(etaMs) : (etaNote || '—')}
             </div>
           </div>
           <div className="w-px bg-white/10" />
           <div className="text-right">
-            <div className="text-nano font-semibold uppercase tracking-[0.16em] text-white/45">Finishes</div>
+            <div className="text-nano font-semibold uppercase tracking-[0.16em] text-muted">Finishes</div>
             <div className="text-title font-bold tabular-nums text-white/85">
               {etaMs > 0 ? new Date(now + etaMs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}
             </div>
@@ -632,7 +632,7 @@ function RunHeadlineLive({ p, startedAtS, paused, pauseRequested, stopping, elap
                         ? 'text-emerald-400'
                         : state === 'active'
                           ? 'text-white drop-shadow-[0_0_8px_var(--accent-glow)]'
-                          : 'text-white/40'
+                          : 'text-muted'
                     }`}>
                       {state === 'done' ? (
                         <span className="text-emerald-400 font-bold" aria-hidden="true">✓</span>

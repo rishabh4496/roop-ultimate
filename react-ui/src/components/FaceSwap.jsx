@@ -2564,6 +2564,15 @@ export default function FaceSwap({
       // Ignore key events if the user is typing in form controls
       if (['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName)) return;
 
+      // Space ACTIVATES a focused button/link/tab -- it is the keyboard's click.
+      // This handler used to claim it for play/pause unconditionally and call
+      // preventDefault, which suppresses the activation: with focus on "Start
+      // Swapping" (or any button on this tab) Space toggled playback and the
+      // button never fired. Enter was unaffected, so mouse users never noticed.
+      // A character-key shortcut must not override a focused control's own key
+      // (WCAG 2.1.4); Space plays/pauses only when focus is on nothing in particular.
+      if (e.key === ' ' && document.activeElement?.closest?.('button, a[href], summary, [role="button"], [role="tab"], [role="menuitem"], [role="switch"]')) return;
+
       // Ignore while a modal dialog is open (confirm/prompt, command palette),
       // so playback/timeline hotkeys don't fire on the page behind it.
       if (document.querySelector('[role="dialog"]')) return;
@@ -2772,7 +2781,7 @@ export default function FaceSwap({
     : (calibEst?.source === 'global' ? 'Global avg' : 'Heuristic');
   const estSourceClass = estLearned ? 'text-emerald-400 border-emerald-500/30 bg-emerald-500/10'
     : (calibEst?.source === 'global' ? 'text-amber-400 border-amber-500/30 bg-amber-500/10'
-      : 'text-white/45 border-white/10 bg-white/5');
+      : 'text-muted border-white/10 bg-white/5');
 
   return (
     <div className="flex flex-col lg:flex-row gap-4 items-start w-full">
@@ -2825,14 +2834,14 @@ export default function FaceSwap({
         <Section title="Clip advisor">
           <button type="button" disabled={advisorBusy || !targets.length || progress.processing} onClick={runAdvisor}
             title="Samples the selected target (face sizes, count, detection coverage, motion, lighting) and recommends settings tuned to it. Nothing changes until you apply."
-            className="w-full py-2 rounded-lg text-note font-bold bg-[var(--accent)]/10 border border-[var(--accent)]/30 text-[var(--accent)] hover:bg-[var(--accent)]/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+            className="w-full py-2 rounded-lg text-note font-bold bg-[var(--accent)]/10 border border-[var(--accent)]/30 text-accent hover:bg-[var(--accent)]/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2">
             {advisorBusy
               ? (<><span className="h-3 w-3 rounded-full border-2 border-[var(--accent)]/40 border-t-[var(--accent)] animate-spin" /> Analyzing target…</>)
               : 'Analyze target & recommend settings'}
           </button>
           {advice && (
             <div className="space-y-2 mt-2">
-              <div className="text-micro text-white/45 leading-relaxed">
+              <div className="text-micro text-muted leading-relaxed">
                 {advice.stats.sampled_frames} frame{advice.stats.sampled_frames === 1 ? '' : 's'} sampled ·
                 faces found on {advice.stats.detection_coverage}% ·
                 face size {advice.stats.min_face_size_pct}–{advice.stats.max_face_size_pct}% ·
@@ -2849,12 +2858,12 @@ export default function FaceSwap({
                       <div className="flex items-center justify-between gap-2">
                         <span className="text-mini font-bold text-white/85">{ADVISOR_LABELS[r.key] || r.key}</span>
                         <span className="text-mini font-mono shrink-0">
-                          <span className="text-white/35">{fmtAdviceVal(p[r.key] ?? '—')}</span>
-                          <span className="text-white/30"> → </span>
-                          <span className="text-[var(--accent)] font-bold">{fmtAdviceVal(r.value)}</span>
+                          <span className="text-muted">{fmtAdviceVal(p[r.key] ?? '—')}</span>
+                          <span className="text-muted"> → </span>
+                          <span className="text-accent font-bold">{fmtAdviceVal(r.value)}</span>
                         </span>
                       </div>
-                      <div className="text-micro text-white/45 leading-snug mt-0.5">{r.reason}</div>
+                      <div className="text-micro text-muted leading-snug mt-0.5">{r.reason}</div>
                     </div>
                   ))}
                   <div className="flex gap-2">
@@ -2874,7 +2883,7 @@ export default function FaceSwap({
         </Section>
 
         <Section title="Live camera" collapsible defaultOpen={false}>
-          <div className="text-micro text-white/45 leading-relaxed -mt-1">
+          <div className="text-micro text-muted leading-relaxed -mt-1">
             Swap your webcam feed live using the loaded source face{liveObs ? ',' : ''} — optionally
             published as a system <b>virtual camera</b> for OBS / video calls.
           </div>
@@ -2898,12 +2907,12 @@ export default function FaceSwap({
                 options={['', ...liveAudioDevices.filter((d) => d.max_input_channels > 0).map((d) => d.name)]} />
               <Select label="Virtual audio output" value={String(liveAudioOutput)} onChange={setLiveAudioOutput}
                 options={['', ...liveAudioDevices.filter((d) => d.max_output_channels > 0).map((d) => d.name)]} />
-              <div className="text-micro text-white/40">Audio delay follows measured visual latency automatically.</div>
+              <div className="text-micro text-muted">Audio delay follows measured visual latency automatically.</div>
             </div>
           )}
           {!liveActive ? (
             <button type="button" disabled={liveBusy || progress.processing} onClick={startLiveCam}
-              className="w-full py-2 rounded-lg text-note font-bold bg-[var(--accent)]/10 border border-[var(--accent)]/30 text-[var(--accent)] hover:bg-[var(--accent)]/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+              className="w-full py-2 rounded-lg text-note font-bold bg-[var(--accent)]/10 border border-[var(--accent)]/30 text-accent hover:bg-[var(--accent)]/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2">
               {liveBusy
                 ? (<><span className="h-3 w-3 rounded-full border-2 border-[var(--accent)]/40 border-t-[var(--accent)] animate-spin" /> Opening camera…</>)
                 : 'Start live camera'}
@@ -2918,7 +2927,7 @@ export default function FaceSwap({
                 </span>
               </div>
               {liveStatus?.stats && (
-                <div className="text-micro text-white/45 flex flex-wrap gap-x-3 gap-y-1">
+                <div className="text-micro text-muted flex flex-wrap gap-x-3 gap-y-1">
                   <span>{Number(liveStatus.stats.processing_fps || 0).toFixed(1)} FPS</span>
                   <span>{Number(liveStatus.stats.average_latency_ms || 0).toFixed(1)} ms avg</span>
                   <span>{liveStatus.stats.tracked_frames || 0} flow frames</span>
@@ -3005,7 +3014,7 @@ export default function FaceSwap({
               <span className="text-xs font-semibold uppercase tracking-wider text-white/70">
                 Restoration Switcher
               </span>
-              <span className="text-mini text-white/45">
+              <span className="text-mini text-muted">
                 Multi-Model Performance & Quality Selector
               </span>
             </div>
@@ -3029,7 +3038,7 @@ export default function FaceSwap({
                 <div className="text-mini text-white/90 font-medium leading-tight">
                   GPEN-512 / GFPGAN
                 </div>
-                <div className="text-micro text-white/45 mt-0.5">
+                <div className="text-micro text-muted mt-0.5">
                   Realtime scrubbing
                 </div>
               </button>
@@ -3053,7 +3062,7 @@ export default function FaceSwap({
                 <div className="text-mini text-white/90 font-medium leading-tight">
                   CodeFormer
                 </div>
-                <div className="text-micro text-white/45 mt-0.5">
+                <div className="text-micro text-muted mt-0.5">
                   Optimal fidelity weight
                 </div>
               </button>
@@ -3076,7 +3085,7 @@ export default function FaceSwap({
                 <div className="text-mini text-white/90 font-medium leading-tight">
                   Tile Diffusion
                 </div>
-                <div className="text-micro text-white/45 mt-0.5">
+                <div className="text-micro text-muted mt-0.5">
                   Offline rendering only
                 </div>
               </button>
@@ -3262,8 +3271,8 @@ export default function FaceSwap({
                 <div className="flex flex-wrap gap-2">
                   {profiles.map((pr) => (
                     <div key={pr.name} className="flex items-center gap-1 bg-white/5 hover:bg-white/10 border border-white/5 rounded-lg px-2.5 py-1 text-xs transition-colors">
-                      <button onClick={() => loadProfile(pr.name)} className="text-white hover:text-[var(--accent)] font-semibold">{pr.name}</button>
-                      <button onClick={() => deleteProfile(pr.name)} className="text-white/40 hover:text-red-400 ml-1.5" title="Delete preset" aria-label={`Delete preset ${pr.name}`}><Icon.close size={12} /></button>
+                      <button onClick={() => loadProfile(pr.name)} className="text-white hover:text-accent font-semibold">{pr.name}</button>
+                      <button onClick={() => deleteProfile(pr.name)} className="text-muted hover:text-red-400 ml-1.5" title="Delete preset" aria-label={`Delete preset ${pr.name}`}><Icon.close size={12} /></button>
                     </div>
                   ))}
                 </div>
@@ -3277,13 +3286,13 @@ export default function FaceSwap({
               </label>
             </div>
             <div className="flex flex-wrap gap-2 mt-2">
-              <Button size="xs" variant="secondary" onClick={exportRecipe} className="!text-[var(--accent)]">Share Recipe</Button>
+              <Button size="xs" variant="secondary" onClick={exportRecipe} className="!text-accent">Share Recipe</Button>
               <label className="inline-flex items-center justify-center px-2.5 py-1.5 rounded-lg text-xs font-bold bg-white/5 border border-white/10 text-white/80 hover:bg-white/10 hover:text-white cursor-pointer transition-all active:scale-95 focus-within:outline focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-[var(--accent)]">
                 Load Recipe
                 <input type="file" accept=".json" onChange={importRecipe} className="sr-only" />
               </label>
             </div>
-            <p className="text-micro text-white/45 mt-1.5 leading-relaxed">A recipe captures every setting <span className="text-white/45">and</span> the person→source mapping, so anyone can reproduce this exact look.</p>
+            <p className="text-micro text-muted mt-1.5 leading-relaxed">A recipe captures every setting <span className="text-muted">and</span> the person→source mapping, so anyone can reproduce this exact look.</p>
           </Section>
         </div>
 
@@ -3523,7 +3532,7 @@ export default function FaceSwap({
                       progress={tgtProgress} onCancel={() => tgtAbortRef.current?.abort()}
                       onPaths={onAddTargetPaths} />
             {targets.length === 0 ? (
-              <div className="h-24 flex items-center justify-center rounded-xl border border-dashed border-white/10 text-xs text-white/35 bg-black/10 select-none">No target media loaded</div>
+              <div className="h-24 flex items-center justify-center rounded-xl border border-dashed border-white/10 text-xs text-muted bg-black/10 select-none">No target media loaded</div>
             ) : (
               <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
                 {targets.map((t, i) => {
@@ -3562,7 +3571,7 @@ export default function FaceSwap({
                       <div className="shrink-0 opacity-75 hidden text-white/50"><TypeIcon size={16} /></div>
                       <div className="flex-1 min-w-0">
                         <span className="truncate block font-bold text-white/90 group-hover:text-white transition-colors">{t.name}</span>
-                        <div className="flex items-center gap-2 mt-0.5 text-micro font-medium text-white/45">
+                        <div className="flex items-center gap-2 mt-0.5 text-micro font-medium text-muted">
                           {isVideo ? (
                             <span>{t.frames} frames · {t.fps} FPS{duration ? ` · ${duration}s` : ''}</span>
                           ) : (
@@ -3617,7 +3626,7 @@ export default function FaceSwap({
             <div className="p-2.5 rounded-xl bg-black/40 border border-white/10 space-y-1.5 animate-slide-up">
               <div className="flex items-center justify-between text-micro font-bold uppercase tracking-wider text-white/50">
                 <span>⭐ Pinned Quick Identities ({pinnedIdentities.length})</span>
-                <button type="button" onClick={() => { setPinnedIdentities([]); localStorage.removeItem('roop_pinned_identities'); }} className="text-white/30 hover:text-white">Clear</button>
+                <button type="button" onClick={() => { setPinnedIdentities([]); localStorage.removeItem('roop_pinned_identities'); }} className="text-muted hover:text-white">Clear</button>
               </div>
               <div className="flex items-center gap-2 overflow-x-auto py-1">
                 {pinnedIdentities.map((pin, i) => (
@@ -3657,7 +3666,7 @@ export default function FaceSwap({
                 <div className="p-3.5 rounded-xl bg-black/45 border border-white/5 space-y-2 text-xs select-none">
                   <div className="flex items-center justify-between">
                     <span className="font-semibold text-micro uppercase tracking-[0.14em] text-white/50">Selected source details</span>
-                    <span className="px-2 py-0.5 rounded-full bg-[var(--accent)]/10 text-micro text-[var(--accent)] font-bold border border-[var(--accent)]/20">
+                    <span className="px-2 py-0.5 rounded-full bg-[var(--accent)]/10 text-micro text-accent font-bold border border-[var(--accent)]/20">
                       {sourceFacesInfo[selSource].count > 1 ? `${sourceFacesInfo[selSource].count} Reference Faces` : 'Single Face'}
                     </span>
                   </div>
@@ -3665,7 +3674,7 @@ export default function FaceSwap({
                   <div className="space-y-1.5 pt-1">
                     {(sourceFacesInfo[selSource].count || 1) > 1 && Array.isArray(sourceFacesInfo[selSource].poses) && sourceFacesInfo[selSource].poses.length > 0 ? (
                       <>
-                        <div className="text-micro font-bold text-white/45 mb-1">Pose Coverage Breakdown:</div>
+                        <div className="text-micro font-bold text-muted mb-1">Pose Coverage Breakdown:</div>
                         <div className="flex flex-wrap gap-1.5">
                           {Object.entries(
                             (sourceFacesInfo[selSource].poses || []).reduce((acc, p) => {
@@ -3674,7 +3683,7 @@ export default function FaceSwap({
                             }, {})
                           ).map(([pose, cnt]) => (
                             <span key={pose} className="px-2 py-1 rounded-lg bg-white/[0.03] border border-white/5 text-micro text-white/70">
-                              {pose} <span className="text-[var(--accent)] font-extrabold">({cnt})</span>
+                              {pose} <span className="text-accent font-extrabold">({cnt})</span>
                             </span>
                           ))}
                         </div>
@@ -3907,7 +3916,7 @@ export default function FaceSwap({
                       </div>
                       <div>
                         <div className="text-sm font-semibold text-white/85">{ready ? 'Ready to preview' : 'No preview yet'}</div>
-                        <div className="text-xs text-white/40 mt-1 leading-relaxed">
+                        <div className="text-xs text-muted mt-1 leading-relaxed">
                           {ready
                             ? 'Scrub the timeline or press ▶ Start Swapping to render.'
                             : 'Two quick steps and the live swap shows up right here.'}
@@ -4073,12 +4082,12 @@ export default function FaceSwap({
             <TiltCard className="rounded-2xl w-full" max={6}>
             <div className="rounded-2xl glass-panel p-5 shadow-2xl border border-white/5 w-full">
               <div className="flex items-center justify-between mb-4">
-                <span className="text-mini uppercase tracking-[0.14em] text-white/45 font-semibold">Runtime estimation</span>
+                <span className="text-mini uppercase tracking-[0.14em] text-muted font-semibold">Runtime estimation</span>
                 <span className={`text-micro font-semibold uppercase tracking-wide px-2 py-0.5 rounded-full border ${estSourceClass}`}>{estSourceLabel}</span>
               </div>
               <div className="flex items-end gap-3 mb-4">
                 <span className="text-3xl font-bold text-white/95 tabular-nums leading-none">~{fmtTime(estTotalMs)}</span>
-                <span className="text-xs text-white/40 mb-0.5">{Math.round(estPerFrame)} ms/frame{heavyVram ? ' · high VRAM' : ''}</span>
+                <span className="text-xs text-muted mb-0.5">{Math.round(estPerFrame)} ms/frame{heavyVram ? ' · high VRAM' : ''}</span>
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-5 gap-y-2.5 text-mini">
                 {[
@@ -4093,12 +4102,12 @@ export default function FaceSwap({
                   ['Total runs logged', calibEst?.store?.global_samples ?? 0],
                 ].map(([k, v]) => (
                   <div key={k} className="flex flex-col leading-tight min-w-0">
-                    <span className="text-white/35">{k}</span>
+                    <span className="text-muted">{k}</span>
                     <span className="text-white/80 tabular-nums truncate" title={String(v)}>{v}</span>
                   </div>
                 ))}
               </div>
-              <div className="mt-3 pt-3 border-t border-white/5 text-micro text-white/45 leading-snug">
+              <div className="mt-3 pt-3 border-t border-white/5 text-micro text-muted leading-snug">
                 {estLearned
                   ? 'Learned from your completed runs with these settings. Accuracy improves as you process more.'
                   : calibEst?.source === 'global'
@@ -4187,14 +4196,14 @@ export default function FaceSwap({
             </div>
             <div className="grid grid-cols-2 gap-x-8 gap-y-5 py-2 text-sm text-white/80">
               <div className="space-y-2.5">
-                <h4 className="font-bold text-[var(--accent)] text-xs uppercase tracking-wider">Playback & Nav</h4>
+                <h4 className="font-bold text-accent text-xs uppercase tracking-wider">Playback & Nav</h4>
                 <div className="flex items-center justify-between"><span className="text-white/60">Play / Pause</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">Space</kbd></div>
                 <div className="flex items-center justify-between"><span className="text-white/60">Prev / Next Frame</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">← / →</kbd></div>
                 <div className="flex items-center justify-between"><span className="text-white/60">Step 10 Frames</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">Shift + ← / →</kbd></div>
                 <div className="flex items-center justify-between"><span className="text-white/60">Jump to Start/End</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">Home / End</kbd></div>
               </div>
               <div className="space-y-2.5">
-                <h4 className="font-bold text-[var(--accent)] text-xs uppercase tracking-wider">Timeline Trimming</h4>
+                <h4 className="font-bold text-accent text-xs uppercase tracking-wider">Timeline Trimming</h4>
                 <div className="flex items-center justify-between"><span className="text-white/60">Set Start Frame</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">[</kbd></div>
                 <div className="flex items-center justify-between"><span className="text-white/60">Set End Frame</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">]</kbd></div>
                 <div className="flex items-center justify-between"><span className="text-white/60">Reset Range</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">R</kbd></div>
@@ -4203,7 +4212,7 @@ export default function FaceSwap({
                 <div className="flex items-center justify-between"><span className="text-white/60">Pan timeline</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">Shift + Wheel</kbd></div>
               </div>
               <div className="space-y-2.5">
-                <h4 className="font-bold text-[var(--accent)] text-xs uppercase tracking-wider">Compare & Zoom</h4>
+                <h4 className="font-bold text-accent text-xs uppercase tracking-wider">Compare & Zoom</h4>
                 <div className="flex items-center justify-between"><span className="text-white/60">Zoom In / Out</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">+ / -</kbd></div>
                 <div className="flex items-center justify-between"><span className="text-white/60">Toggle Comparison</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">C</kbd></div>
                 <div className="flex items-center justify-between"><span className="text-white/60">Toggle Split View</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">S</kbd></div>
@@ -4212,19 +4221,19 @@ export default function FaceSwap({
                 <div className="flex items-center justify-between"><span className="text-white/60">Auto-swipe</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">A</kbd></div>
               </div>
               <div className="space-y-2.5">
-                <h4 className="font-bold text-[var(--accent)] text-xs uppercase tracking-wider">Preview Tools</h4>
+                <h4 className="font-bold text-accent text-xs uppercase tracking-wider">Preview Tools</h4>
                 <div className="flex items-center justify-between"><span className="text-white/60">Magnifier lens</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">G</kbd></div>
                 <div className="flex items-center justify-between"><span className="text-white/60">Mask brush</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">B</kbd></div>
                 <div className="flex items-center justify-between"><span className="text-white/60">Keypoints &amp; pose</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">D</kbd></div>
               </div>
               <div className="space-y-2.5">
-                <h4 className="font-bold text-[var(--accent)] text-xs uppercase tracking-wider">Queue & Process</h4>
+                <h4 className="font-bold text-accent text-xs uppercase tracking-wider">Queue & Process</h4>
                 <div className="flex items-center justify-between"><span className="text-white/60">Add to Batch Queue</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">Q</kbd></div>
                 <div className="flex items-center justify-between"><span className="text-white/60">Run Swapper / Queue</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">Ctrl + Enter</kbd></div>
                 <div className="flex items-center justify-between"><span className="text-white/60">Toggle Shortcuts HUD</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">?</kbd></div>
               </div>
             </div>
-            <p className="text-xs text-white/40 text-center mt-2">Click anywhere outside this modal or press Esc to close.</p>
+            <p className="text-xs text-muted text-center mt-2">Click anywhere outside this modal or press Esc to close.</p>
           </Card>
         </div>
       )}

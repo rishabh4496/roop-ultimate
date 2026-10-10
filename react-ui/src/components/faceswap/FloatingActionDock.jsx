@@ -131,7 +131,7 @@ export default function FloatingActionDock({
                 exit={{ opacity: 0, y: 10, scale: 0.95 }}
                 className="absolute bottom-full left-0 mb-3 w-56 rounded-2xl border border-white/15 bg-black/85 p-2 shadow-2xl backdrop-blur-2xl"
               >
-                <div className="px-3 py-1.5 text-micro font-semibold uppercase tracking-[0.14em] text-white/45">
+                <div className="px-3 py-1.5 text-micro font-semibold uppercase tracking-[0.14em] text-muted">
                   Workspace Layout Mode
                 </div>
                 <div className="space-y-1">
@@ -204,7 +204,7 @@ export default function FloatingActionDock({
           <button
             onClick={() => setDrawers((d) => ({ ...d, left: !d.left }))}
             className={`rounded-lg p-1.5 text-xs transition-all ${
-              drawers.left ? 'ink-accent bg-white/10' : 'text-white/40 hover:text-white/70'
+              drawers.left ? 'ink-accent bg-white/10' : 'text-muted hover:text-white/70'
             }`}
             title="Toggle Left Faces Sidebar"
             aria-label="Toggle the faces sidebar"
@@ -216,7 +216,7 @@ export default function FloatingActionDock({
           <button
             onClick={() => setDrawers((d) => ({ ...d, right: !d.right }))}
             className={`rounded-lg p-1.5 text-xs transition-all ${
-              drawers.right ? 'ink-accent bg-white/10' : 'text-white/40 hover:text-white/70'
+              drawers.right ? 'ink-accent bg-white/10' : 'text-muted hover:text-white/70'
             }`}
             title="Toggle Right Settings Inspector"
             aria-label="Toggle the settings inspector"
@@ -228,7 +228,7 @@ export default function FloatingActionDock({
           <button
             onClick={() => setDrawers((d) => ({ ...d, bottom: !d.bottom }))}
             className={`rounded-lg p-1.5 text-xs transition-all ${
-              drawers.bottom ? 'ink-accent bg-white/10' : 'text-white/40 hover:text-white/70'
+              drawers.bottom ? 'ink-accent bg-white/10' : 'text-muted hover:text-white/70'
             }`}
             title="Toggle Bottom Timeline & Logs Deck"
             aria-label="Toggle the timeline and logs deck"

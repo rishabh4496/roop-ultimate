@@ -74,7 +74,7 @@ function Meter({ label, value, sub, pct, color, series, max }) {
   return (
     <div className="rounded-lg border border-white/[0.07] bg-white/[0.02] px-2.5 py-2">
       <div className="flex items-baseline justify-between gap-2">
-        <span className="text-nano font-semibold uppercase tracking-[0.14em] text-white/45">{label}</span>
+        <span className="text-nano font-semibold uppercase tracking-[0.14em] text-muted">{label}</span>
         <span className="text-mini font-mono font-bold tabular-nums" style={{ color }}>{value}</span>
       </div>
       {series ? (
@@ -85,7 +85,7 @@ function Meter({ label, value, sub, pct, color, series, max }) {
                style={{ width: `${Math.max(1, Math.min(pct ?? 0, 100))}%`, background: color }} />
         </div>
       )}
-      {sub && <div className="mt-1 text-nano font-mono text-white/45 tabular-nums">{sub}</div>}
+      {sub && <div className="mt-1 text-nano font-mono text-muted tabular-nums">{sub}</div>}
     </div>
   );
 }
@@ -106,9 +106,9 @@ const stageColor = (s) => STAGE_COLORS[s] || (
 function Stat({ label, value, tone = 'text-white/80', sub }) {
   return (
     <div className="min-w-0 rounded-lg border border-white/[0.05] bg-white/[0.02] px-2.5 py-1.5">
-      <div className="text-nano font-semibold uppercase tracking-[0.14em] text-white/45 truncate">{label}</div>
+      <div className="text-nano font-semibold uppercase tracking-[0.14em] text-muted truncate">{label}</div>
       <div className={`font-mono text-plain font-bold tabular-nums truncate ${tone}`}>{value}</div>
-      {sub && <div className="font-mono text-nano text-white/45 truncate">{sub}</div>}
+      {sub && <div className="font-mono text-nano text-muted truncate">{sub}</div>}
     </div>
   );
 }
@@ -296,7 +296,7 @@ export default function DiagnosticsPanel({ desc = '', telemetry, processing, pau
           fragments at narrow widths, and every figure carried the same weight,
           so nothing led the eye. */}
       <div className="lg:col-span-3 grid gap-1.5 grid-cols-2 sm:grid-cols-3 md:grid-cols-5 xl:grid-cols-10">
-        <Stat label="Progress" value={`${(prog * 100).toFixed(1)}%`} tone="text-[var(--accent)]" />
+        <Stat label="Progress" value={`${(prog * 100).toFixed(1)}%`} tone="text-accent" />
         <Stat label="Frames" value={frames ? frames.done.toLocaleString() : '—'}
               sub={frames ? `of ${frames.total.toLocaleString()}` : null} />
         <Stat label="Remaining" value={frames ? frames.left.toLocaleString() : '—'} sub="frames" />
@@ -321,12 +321,12 @@ export default function DiagnosticsPanel({ desc = '', telemetry, processing, pau
       {/* ── Throughput ───────────────────────────────────────────────────── */}
       <div className="lg:col-span-2 rounded-xl border border-white/[0.07] bg-black/30 px-3 py-2.5">
         <div className="flex items-baseline justify-between gap-3">
-          <span className="text-nano font-semibold uppercase tracking-[0.16em] text-white/45">Throughput</span>
+          <span className="text-nano font-semibold uppercase tracking-[0.16em] text-muted">Throughput</span>
           {fpsStats && (
-            <span className="flex items-baseline gap-2.5 font-mono text-micro text-white/45 tabular-nums">
-              <span className="text-compact font-bold text-[var(--accent)]">{fpsStats.cur.toFixed(1)}</span>
+            <span className="flex items-baseline gap-2.5 font-mono text-micro text-muted tabular-nums">
+              <span className="text-compact font-bold text-accent">{fpsStats.cur.toFixed(1)}</span>
               <span>fps</span>
-              <span className="text-white/15">·</span>
+              <span className="text-white/15" aria-hidden="true">·</span>
               <span>avg <span className="text-white/60 font-semibold">{fpsStats.avg.toFixed(1)}</span></span>
               <span>min <span className="text-white/60 font-semibold">{fpsStats.min.toFixed(1)}</span></span>
               <span>max <span className="text-white/60 font-semibold">{fpsStats.max.toFixed(1)}</span></span>
@@ -336,7 +336,7 @@ export default function DiagnosticsPanel({ desc = '', telemetry, processing, pau
         {fpsHist.length > 1 ? (
           <>
             <div className="mt-1.5"><Spark data={fpsHist} height={52} mean={fpsStats?.avg} /></div>
-            <div className="mt-1 flex items-center justify-between font-mono text-nano text-white/45">
+            <div className="mt-1 flex items-center justify-between font-mono text-nano text-muted">
               <span>{fpsHist.length} samples · frames ÷ wall time · dashed = run average</span>
               {fpsStats?.unstable && (
                 <span className="text-amber-400/70">
@@ -347,9 +347,9 @@ export default function DiagnosticsPanel({ desc = '', telemetry, processing, pau
             </div>
           </>
         ) : (
-          <div className="mt-2 h-[52px] flex items-center gap-2 text-micro font-mono text-white/45">
+          <div className="mt-2 h-[52px] flex items-center gap-2 text-micro font-mono text-muted">
             {backendFps != null && (
-              <span className="text-compact font-bold text-[var(--accent)]">
+              <span className="text-compact font-bold text-accent">
                 {backendFps.toFixed(1)} fps
               </span>
             )}
@@ -398,7 +398,7 @@ export default function DiagnosticsPanel({ desc = '', telemetry, processing, pau
             a function of it and it is otherwise unknowable from the UI. */}
         {telemetry?.pools && (
           <div className="col-span-2 lg:col-span-1 rounded-lg border border-white/[0.07] bg-black/30 px-2.5 py-1.5 flex items-center justify-between gap-3">
-            <span className="text-nano font-semibold uppercase tracking-wider text-white/45">
+            <span className="text-nano font-semibold uppercase tracking-wider text-muted">
               Pools running
             </span>
             <span className="text-nano font-mono text-white/70">
@@ -413,8 +413,8 @@ export default function DiagnosticsPanel({ desc = '', telemetry, processing, pau
       {/* ── Stage cost breakdown ─────────────────────────────────────────── */}
       <div className="lg:col-span-2 rounded-xl border border-white/[0.07] bg-black/30 px-3 py-2.5">
         <div className="flex items-baseline justify-between gap-3">
-          <span className="text-nano font-semibold uppercase tracking-[0.16em] text-white/45">Stage cost</span>
-          <span className="font-mono text-nano text-white/45">
+          <span className="text-nano font-semibold uppercase tracking-[0.16em] text-muted">Stage cost</span>
+          <span className="font-mono text-nano text-muted">
             {profile?.enabled ? 'wall-clock summed across threads' : 'profiler off'}
           </span>
         </div>
@@ -430,15 +430,15 @@ export default function DiagnosticsPanel({ desc = '', telemetry, processing, pau
                 <span className="w-9 shrink-0 text-right font-mono text-micro font-semibold tabular-nums text-white/60">
                   {Math.round(s.share * 100)}%
                 </span>
-                <span className="w-16 shrink-0 text-right font-mono text-nano tabular-nums text-white/45">
+                <span className="w-16 shrink-0 text-right font-mono text-nano tabular-nums text-muted">
                   {s.ms_per_call}ms
                 </span>
               </div>
             ))}
           </div>
         ) : (
-          <div className="mt-2 font-mono text-micro leading-relaxed text-white/45">
-            Set <span className="text-white/45">ROOP_PROFILE=1</span> before starting the app to break the
+          <div className="mt-2 font-mono text-micro leading-relaxed text-muted">
+            Set <span className="text-muted">ROOP_PROFILE=1</span> before starting the app to break the
             run down by stage (decode / detect / mask / swap / enhance) and see which one owns the time.
           </div>
         )}
@@ -446,13 +446,13 @@ export default function DiagnosticsPanel({ desc = '', telemetry, processing, pau
 
       {/* ── Effective settings ───────────────────────────────────────────── */}
       <div className="rounded-xl border border-white/[0.07] bg-black/30 px-3 py-2.5">
-        <span className="text-nano font-semibold uppercase tracking-[0.16em] text-white/45">Run config</span>
+        <span className="text-nano font-semibold uppercase tracking-[0.16em] text-muted">Run config</span>
         <div className="mt-2 space-y-1">
           {config.length === 0 ? (
-            <div className="font-mono text-micro text-white/45">—</div>
+            <div className="font-mono text-micro text-muted">—</div>
           ) : config.map(([k, v]) => (
             <div key={k} className="flex items-baseline justify-between gap-2 font-mono text-micro">
-              <span className="text-white/30">{k}</span>
+              <span className="text-muted">{k}</span>
               {/* title: measured, this value really is ellipsised at the card
                   width -- a provider/device string needs 331px and is given
                   190px -- so without a tooltip its tail is unreadable. No

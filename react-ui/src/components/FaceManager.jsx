@@ -144,7 +144,7 @@ export default function FaceManager({ notify, registerFileListener }) {
       <Section title="Extraction options">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-start">
           <label className="block">
-            <span className="text-xs font-semibold uppercase tracking-wider text-white/40">Detector</span>
+            <span className="text-xs font-semibold uppercase tracking-wider text-muted">Detector</span>
             <select
               value={detector}
               onChange={(e) => setDetector(e.target.value)}
@@ -152,7 +152,7 @@ export default function FaceManager({ notify, registerFileListener }) {
             >
               {DETECTORS.map((d) => <option key={d.id} value={d.id} className="bg-[#121420]">{d.label}</option>)}
             </select>
-            <span className="mt-1 block text-mini text-white/45">Engine used to find & align faces on add / cut.</span>
+            <span className="mt-1 block text-mini text-muted">Engine used to find & align faces on add / cut.</span>
           </label>
           <div>
             <Toggle
@@ -165,7 +165,7 @@ export default function FaceManager({ notify, registerFileListener }) {
           <div>
             <Slider label="Quality gate" info={`keep ≥ ${Math.round(threshold * 100)}%`}
                     min={0} max={1} step={0.05} value={threshold} onChange={setThreshold} />
-            <span className="mt-1 block text-mini text-white/45">Faces below this score are dimmed; “Drop below gate” removes them.</span>
+            <span className="mt-1 block text-mini text-muted">Faces below this score are dimmed; “Drop below gate” removes them.</span>
           </div>
         </div>
       </Section>
@@ -194,13 +194,13 @@ export default function FaceManager({ notify, registerFileListener }) {
         <Section title="Faces in faceset">
           {/* Stats + quality gate summary */}
           {stats && (
-            <div className="flex items-center gap-2 text-mini text-white/45 mb-2 flex-wrap">
+            <div className="flex items-center gap-2 text-mini text-muted mb-2 flex-wrap">
               <span><span className="font-bold text-white/70">{faces.length}</span> face{faces.length === 1 ? '' : 's'}</span>
-              <span className="text-white/20">·</span>
+              <span className="text-white/20" aria-hidden="true">·</span>
               <span>avg quality <span className={`font-bold ${TONE[scoreTone(stats.avg)].text}`}>{Math.round(stats.avg * 100)}%</span></span>
               {threshold > 0 && stats.below > 0 && (
                 <>
-                  <span className="text-white/20">·</span>
+                  <span className="text-white/20" aria-hidden="true">·</span>
                   <span className="text-amber-400/80">{stats.below} below gate</span>
                 </>
               )}
@@ -221,7 +221,7 @@ export default function FaceManager({ notify, registerFileListener }) {
           </div>
           {built && (
             <a href={fileUrl(built.path)} download={built.name}
-              className="inline-block mt-2 text-sm text-[var(--accent)] underline">⬇ Download {built.name}</a>
+              className="inline-block mt-2 text-sm text-accent underline">⬇ Download {built.name}</a>
           )}
         </Section>
       </div>
@@ -233,7 +233,7 @@ export default function FaceManager({ notify, registerFileListener }) {
 // with a "will drop" flag so the gate is legible before you commit to pruning.
 function FaceQualityGrid({ faces, scores, meta, threshold, selected, onSelect }) {
   if (!faces.length) {
-    return <div className="text-sm text-white/35 py-8 text-center border border-dashed border-white/10 rounded-lg">No faces yet</div>;
+    return <div className="text-sm text-muted py-8 text-center border border-dashed border-white/10 rounded-lg">No faces yet</div>;
   }
   return (
     <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">

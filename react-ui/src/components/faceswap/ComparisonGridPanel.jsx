@@ -39,10 +39,10 @@ export default function ComparisonGridPanel({
     <div className="space-y-4">
       <div className="p-3.5 rounded-xl bg-black/45 border border-white/5 space-y-2 select-none">
         <div className="flex items-center justify-between gap-2">
-          <span className="text-micro font-semibold uppercase tracking-[0.14em] text-white/45 block">
+          <span className="text-micro font-semibold uppercase tracking-[0.14em] text-muted block">
             {title}
           </span>
-          {subtitle && <span className="text-micro text-white/45">{subtitle}</span>}
+          {subtitle && <span className="text-micro text-muted">{subtitle}</span>}
         </div>
         <div className="flex flex-wrap gap-2">
           {availableItems.map((item) => {

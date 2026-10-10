@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { TRACKER_SLIDERS, TRACKER_DEFAULT_VALUES, TRACKER_GROUPS } from './trackerConfig';
 import { Icon } from '../../icons';
+import { FocusedInput } from '../ui';
 
 const STORAGE_KEY = 'roop_user_slider_presets';
 const GROUPS_KEY = 'roop_slider_tracker_collapsed';
@@ -199,8 +200,8 @@ function TrackerSlider({ slider: s, value, enabled, onSetParam }) {
             : `${s.label} is ${s.format(value)}, the default`}
           className={`shrink-0 text-mini font-mono font-bold tabular-nums px-1.5 py-0.5 rounded border transition-colors ${
             modified && enabled
-              ? 'text-[var(--accent)] bg-[var(--accent)]/10 border-[var(--accent)]/30 hover:bg-[var(--accent)]/20 cursor-pointer'
-              : 'text-white/45 bg-white/[0.03] border-white/10 cursor-default'
+              ? 'text-accent bg-[var(--accent)]/10 border-[var(--accent)]/30 hover:bg-[var(--accent)]/20 cursor-pointer'
+              : 'text-muted bg-white/[0.03] border-white/10 cursor-default'
           }`}
         >
           {s.format(value)}
@@ -208,7 +209,7 @@ function TrackerSlider({ slider: s, value, enabled, onSetParam }) {
       </div>
 
       <div className="flex items-center gap-1.5 mt-1.5">
-        <span className="text-nano font-mono text-white/45 tabular-nums shrink-0">{s.min}</span>
+        <span className="text-nano font-mono text-muted tabular-nums shrink-0">{s.min}</span>
         <div className="relative flex-1 flex items-center">
           <input
             type="range"
@@ -233,7 +234,7 @@ function TrackerSlider({ slider: s, value, enabled, onSetParam }) {
             />
           )}
         </div>
-        <span className="text-nano font-mono text-white/45 tabular-nums shrink-0">{s.max}</span>
+        <span className="text-nano font-mono text-muted tabular-nums shrink-0">{s.max}</span>
       </div>
     </div>
   );
@@ -429,7 +430,7 @@ export default function SliderTrackerBar({
             <button
               type="button"
               onClick={onRefreshPreview}
-              className="px-2.5 py-1.5 rounded-xl text-mini font-semibold bg-[var(--accent)]/10 hover:bg-[var(--accent)]/20 border border-[var(--accent)]/30 text-[var(--accent)] transition-colors"
+              className="px-2.5 py-1.5 rounded-xl text-mini font-semibold bg-[var(--accent)]/10 hover:bg-[var(--accent)]/20 border border-[var(--accent)]/30 text-accent transition-colors"
               title="Force re-render preview with current slider tracker settings"
             >
               Refresh Preview
@@ -463,7 +464,7 @@ export default function SliderTrackerBar({
         <div className="flex flex-wrap items-center justify-between gap-2 mt-3 pt-3 border-t border-white/5 select-none">
           {/* Left preset pills list */}
           <div className="flex flex-wrap items-center gap-1.5">
-            <span className="text-micro font-bold uppercase tracking-wider text-white/45 mr-1">
+            <span className="text-micro font-bold uppercase tracking-wider text-muted mr-1">
               Presets:
             </span>
             {activePreset === 'Custom' && (
@@ -517,14 +518,14 @@ export default function SliderTrackerBar({
           <div className="flex items-center gap-1.5">
             {isSaving ? (
               <div className="flex items-center gap-1.5 bg-black/60 p-1 rounded-xl border border-[var(--accent)]/40 shadow-lg">
-                <input
+                <FocusedInput
                   type="text"
+                  aria-label="Preset name"
                   placeholder="Preset Name..."
                   value={newPresetName}
                   onChange={(e) => setNewPresetName(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && handleSaveCurrentPreset()}
                   className="px-2 py-1 rounded-lg bg-black/80 text-white text-mini border border-white/10 focus:outline-none focus:border-[var(--accent)]"
-                  autoFocus
                 />
                 <button
                   type="button"
@@ -586,26 +587,26 @@ export default function SliderTrackerBar({
                       className="w-full flex items-center gap-2 py-1 text-left group/sec"
                     >
                       <svg
-                        className={`w-2.5 h-2.5 shrink-0 text-white/40 transition-transform duration-200 ${
+                        className={`w-2.5 h-2.5 shrink-0 text-muted transition-transform duration-200 ${
                           collapsed ? '-rotate-90' : 'rotate-0'
                         }`}
                         viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"
                       >
                         <polyline points="6 9 12 15 18 9" />
                       </svg>
-                      <span className="text-micro font-bold uppercase tracking-[0.14em] text-white/45 group-hover/sec:text-white/70 transition-colors">
+                      <span className="text-micro font-bold uppercase tracking-[0.14em] text-muted group-hover/sec:text-white/70 transition-colors">
                         {g.name}
                       </span>
                       {/* Survives collapsing: a folded section must still say
                           that something inside it is doing work, or a knob can
                           be left on with nothing on screen admitting it. */}
                       {activeCount > 0 && (
-                        <span className="px-1.5 py-px rounded-full text-nano font-bold tabular-nums bg-[var(--accent)]/15 text-[var(--accent)] border border-[var(--accent)]/30">
+                        <span className="px-1.5 py-px rounded-full text-nano font-bold tabular-nums bg-[var(--accent)]/15 text-accent border border-[var(--accent)]/30">
                           {activeCount} active
                         </span>
                       )}
                       <span className="flex-1 h-px bg-white/5" />
-                      <span className="text-nano font-mono text-white/45 tabular-nums">
+                      <span className="text-nano font-mono text-muted tabular-nums">
                         {g.sliders.length}
                       </span>
                     </button>

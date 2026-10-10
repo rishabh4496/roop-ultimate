@@ -13,7 +13,7 @@ function MetricBar({ label, score, detail }) {
       <div className="flex items-center justify-between text-mini">
         <span className="font-bold text-white/70">{label}</span>
         <span className="font-black tabular-nums" style={{ color }}>
-          <AnimatedNumber value={score} decimals={0} /><span className="text-white/30 font-medium"> / 100{detail ? ` · ${detail}` : ''}</span>
+          <AnimatedNumber value={score} decimals={0} /><span className="text-muted font-medium"> / 100{detail ? ` · ${detail}` : ''}</span>
         </span>
       </div>
       <div className="h-2 w-full rounded-full bg-white/10 overflow-hidden">
@@ -64,7 +64,7 @@ export default function QualityReport({ outputPath, notify }) {
     return (
       <div className="mt-1 p-3 rounded-xl bg-black/30 border border-white/5 flex items-center justify-between gap-2">
         <span className="text-xs text-white/50 flex items-center gap-1.5"><Icon.warning size={13} className="text-amber-400/80" /> {err}</span>
-        <button type="button" onClick={analyze} className="text-mini font-bold text-[var(--accent)] hover:underline shrink-0">Retry</button>
+        <button type="button" onClick={analyze} className="text-mini font-bold text-accent hover:underline shrink-0">Retry</button>
       </div>
     );
   }
@@ -89,15 +89,15 @@ export default function QualityReport({ outputPath, notify }) {
           </svg>
           <div className="absolute flex flex-col items-center leading-none">
             <span className="text-2xl font-black" style={{ color: gc }}>{g}</span>
-            <span className="text-nano font-bold text-white/45 tabular-nums"><AnimatedNumber value={m.overall_score} decimals={0} /></span>
+            <span className="text-nano font-bold text-muted tabular-nums"><AnimatedNumber value={m.overall_score} decimals={0} /></span>
           </div>
         </div>
         <div className="min-w-0">
-          <div className="text-micro font-semibold uppercase tracking-[0.14em] text-white/45">Quality Report</div>
+          <div className="text-micro font-semibold uppercase tracking-[0.14em] text-muted">Quality Report</div>
           <div className="text-sm font-bold text-white/90">
             {g === 'A' ? 'Excellent result' : g === 'B' ? 'Good result' : g === 'C' ? 'Acceptable' : g === 'D' ? 'Needs work' : 'Poor — review settings'}
           </div>
-          <div className="text-micro text-white/45 mt-0.5">
+          <div className="text-micro text-muted mt-0.5">
             {data.is_video ? `Sampled ${data.sampled} frames` : 'Single image'}
             {!data.has_source && ' · no source loaded (likeness skipped)'}
           </div>
@@ -118,7 +118,7 @@ export default function QualityReport({ outputPath, notify }) {
       </div>
 
       <div className="flex items-center justify-between pt-1">
-        <span className="text-nano text-white/45 leading-tight max-w-[70%]">
+        <span className="text-nano text-muted leading-tight max-w-[70%]">
           Heuristic scores from re-detecting faces in the output. Load the source for likeness.
         </span>
         <button type="button" onClick={analyze} className="text-mini font-bold text-white/50 hover:text-white shrink-0">Re-analyze</button>

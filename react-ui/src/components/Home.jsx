@@ -55,12 +55,12 @@ const Stat = ({ icon: Ico, label, value, sub, tone, onClick, title }) => {
     >
       <div className="flex items-center gap-2 mb-2">
         <MotionIcon icon={Ico} size="sm" variant={tone === 'accent' ? 'accent' : 'subtle'} />
-        <span className="text-nano font-semibold uppercase tracking-[0.12em] text-white/45">{label}</span>
+        <span className="text-nano font-semibold uppercase tracking-[0.12em] text-muted">{label}</span>
       </div>
-      <div className={`text-title font-bold tabular-nums leading-none ${tone === 'accent' ? 'text-[var(--accent)]' : 'text-white/90'}`}>
+      <div className={`text-title font-bold tabular-nums leading-none ${tone === 'accent' ? 'text-accent' : 'text-white/90'}`}>
         {value}
       </div>
-      {sub && <div className="text-nano text-white/45 mt-1 truncate">{sub}</div>}
+      {sub && <div className="text-nano text-muted mt-1 truncate">{sub}</div>}
     </Tag>
   );
 };
@@ -131,7 +131,7 @@ export default function Home({ progress, setTab, setSettings, notify }) {
                 ? (progress.paused ? 'Paused mid-render' : 'Rendering now')
                 : stats.runs > 0 ? 'Ready when you are' : 'Nothing rendered yet'}
             </h2>
-            <p className="text-compact text-white/45 mt-1.5 max-w-prose">
+            <p className="text-compact text-muted mt-1.5 max-w-prose">
               {progress?.processing
                 ? <LiveText select={(s) => s.run.desc || progress.desc || 'Working…'} />
                 : stats.runs > 0
@@ -142,7 +142,7 @@ export default function Home({ progress, setTab, setSettings, notify }) {
           <div className="flex items-center gap-2 shrink-0">
             {progress?.processing ? (
               <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-[var(--accent)]/10 border border-[var(--accent)]/25">
-                <span className="text-display font-bold text-[var(--accent)] tabular-nums leading-none">
+                <span className="text-display font-bold text-accent tabular-nums leading-none">
                   <LiveValue select={(s) => Math.round(selectProg(s) * 100)}>
                     {(pct) => <AnimatedNumber value={pct} suffix="%" />}
                   </LiveValue>
@@ -218,7 +218,7 @@ export default function Home({ progress, setTab, setSettings, notify }) {
             icon={Icon.history}
             action={history?.length ? (
               <button type="button" onClick={() => setTab('history')}
-                      className="text-nano font-semibold text-white/45 hover:text-white apple-transition flex items-center gap-1">
+                      className="text-nano font-semibold text-muted hover:text-white apple-transition flex items-center gap-1">
                 All <Icon.expand size={10} />
               </button>
             ) : null}
@@ -226,7 +226,7 @@ export default function Home({ progress, setTab, setSettings, notify }) {
             {history === null ? (
               <div className="space-y-2">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-14" />)}</div>
             ) : history.length === 0 ? (
-              <p className="text-compact text-white/45 py-6 text-center">
+              <p className="text-compact text-muted py-6 text-center">
                 Finished runs are recorded here with the settings they used.
               </p>
             ) : (
@@ -239,7 +239,7 @@ export default function Home({ progress, setTab, setSettings, notify }) {
                         {e.outputs?.[0] || 'Untitled run'}
                       </div>
                       <div className="flex flex-wrap items-center gap-1 mt-1">
-                        <span className="text-nano text-white/45">{fmtAgo(e.time)}</span>
+                        <span className="text-nano text-muted">{fmtAgo(e.time)}</span>
                         {/* The few settings that most define what a run looked
                             like — the same set the history tab chips. */}
                         {CHIP_KEYS.map((k) => {
@@ -247,7 +247,7 @@ export default function Home({ progress, setTab, setSettings, notify }) {
                           if (v === undefined || v === null || v === '' || v === false) return null;
                           return (
                             <span key={k} title={LABELS[k] || k}
-                                  className="text-nano px-1.5 py-0.5 rounded bg-white/[0.06] text-white/45 truncate max-w-[9rem]">
+                                  className="text-nano px-1.5 py-0.5 rounded bg-white/[0.06] text-muted truncate max-w-[9rem]">
                               {fmtVal(v)}
                             </span>
                           );
@@ -258,7 +258,7 @@ export default function Home({ progress, setTab, setSettings, notify }) {
                       type="button"
                       onClick={() => rerun(e)}
                       title="Load these settings into the Face Swap tab"
-                      className="shrink-0 px-2.5 py-1.5 rounded-lg text-nano font-bold text-white/50 hover:text-[var(--accent)] bg-white/[0.04] hover:bg-[var(--accent)]/12 border border-white/10 hover:border-[var(--accent)]/30 apple-transition opacity-0 group-hover/run:opacity-100 focus-visible:opacity-100"
+                      className="shrink-0 px-2.5 py-1.5 rounded-lg text-nano font-bold text-white/50 hover:text-accent bg-white/[0.04] hover:bg-[var(--accent)]/12 border border-white/10 hover:border-[var(--accent)]/30 apple-transition opacity-0 group-hover/run:opacity-100 focus-visible:opacity-100"
                     >
                       Reuse
                     </button>
@@ -276,7 +276,7 @@ export default function Home({ progress, setTab, setSettings, notify }) {
             icon={Icon.outputs}
             action={outputs?.files?.length ? (
               <button type="button" onClick={() => setTab('gallery')}
-                      className="text-nano font-semibold text-white/45 hover:text-white apple-transition flex items-center gap-1">
+                      className="text-nano font-semibold text-muted hover:text-white apple-transition flex items-center gap-1">
                 All <Icon.expand size={10} />
               </button>
             ) : null}
@@ -284,7 +284,7 @@ export default function Home({ progress, setTab, setSettings, notify }) {
             {outputs === null ? (
               <div className="grid grid-cols-3 gap-2">{[0, 1, 2].map((i) => <Skeleton key={i} className="aspect-video" />)}</div>
             ) : outputs.files.length === 0 ? (
-              <p className="text-compact text-white/45 py-6 text-center">
+              <p className="text-compact text-muted py-6 text-center">
                 Rendered files land in the Outputs tab.
               </p>
             ) : (
@@ -325,7 +325,7 @@ export default function Home({ progress, setTab, setSettings, notify }) {
                           }}
                         />
                       )}
-                      <div className="hidden absolute inset-0 bg-white/5 flex-col items-center justify-center text-white/30 text-nano pointer-events-none p-2 text-center">
+                      <div className="hidden absolute inset-0 bg-white/5 flex-col items-center justify-center text-muted text-nano pointer-events-none p-2 text-center">
                         <Icon.still size={18} className="mb-1 opacity-50" />
                         <span className="truncate w-full">{f.name}</span>
                       </div>

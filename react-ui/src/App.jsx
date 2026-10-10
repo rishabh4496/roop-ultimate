@@ -65,7 +65,7 @@ function TabFallback() {
   return (
     <div className="deferred-fallback flex flex-col items-center justify-center h-[40vh] gap-3">
       <div className="h-7 w-7 rounded-full border-4 border-white/10 border-t-[var(--accent)] animate-spin" />
-      <div className="text-white/35 text-xs font-medium">Loading…</div>
+      <div className="text-muted text-xs font-medium">Loading…</div>
     </div>
   );
 }
@@ -1081,11 +1081,11 @@ export default function App() {
           <MotionIcon icon={Icon.brand} size="md" variant="accent" animate="pulse" />
           <div>
             <h1 className="text-lead font-bold tracking-tight text-white/95 flex items-center gap-1.5">
-              Roop Ultimate <span className="text-white/35 font-medium">Studio</span>
+              Roop Ultimate <span className="text-muted font-medium">Studio</span>
             </h1>
             {(meta?.git_version || meta?.installed_commit?.short) && (
               <span
-                className="text-nano font-mono text-white/45 tracking-wider block mt-0.5"
+                className="text-nano font-mono text-muted tracking-wider block mt-0.5"
                 title={meta?.installed_commit?.sha
                   ? `commit ${meta.installed_commit.sha}${meta.installed_commit.date ? ` · ${meta.installed_commit.date}` : ''}`
                   : undefined}
@@ -1109,7 +1109,7 @@ export default function App() {
                 type="button"
                 onClick={() => { warmTab('processing'); setTab('processing'); }}
                 title="Open the Processing tab"
-                className={`hover:underline ${stopping ? 'text-red-400/90' : progress.paused || progress.pause_requested ? 'text-amber-400/90' : 'text-[var(--accent)]'}`}
+                className={`hover:underline ${stopping ? 'text-red-400/90' : progress.paused || progress.pause_requested ? 'text-amber-400/90' : 'text-accent'}`}
               >
                 {stopping ? 'Stopping' : progress.paused ? 'Paused' : progress.pause_requested ? 'Pause requested' : (
                   <LiveText select={(s) => `Processing ${Math.round(selectProg(s) * 100)}%`} />
@@ -1124,7 +1124,7 @@ export default function App() {
                   it said something else. */}
               {!(progress.paused || progress.pause_requested || stopping) && (
                 <LiveText
-                  className="text-white/40 normal-case font-mono font-medium ml-1 empty:hidden"
+                  className="text-muted normal-case font-mono font-medium ml-1 empty:hidden"
                   select={(s) => {
                     const eta = etaMsOf(s.run, startTime ? Date.now() - startTime : 0);
                     return eta > 0 ? `ETA: ${fmtTime(eta)}` : '';
@@ -1219,7 +1219,7 @@ export default function App() {
         </button>
         <div className="hidden md:flex items-center gap-0.5 px-1 py-1 rounded-xl bg-white/[0.03] border border-white/10" title="UI zoom (Ctrl + / − / 0)">
           <button type="button" onClick={() => bumpZoom(-0.05)} title="Zoom out (Ctrl −)" aria-label="Zoom out" className="h-6 w-6 grid place-items-center rounded-lg text-white/50 hover:text-white hover:bg-white/10 text-base leading-none transition-colors">−</button>
-          <button type="button" onClick={() => setZoom(1)} title="Reset zoom (Ctrl 0)" aria-label="Reset zoom" className="min-w-[44px] text-mini font-semibold text-white/60 hover:text-white tabular-nums transition-colors">{Math.round(zoom * 100)}%</button>
+          <button type="button" onClick={() => setZoom(1)} title="Reset zoom (Ctrl 0)" aria-label={`Reset zoom, ${Math.round(zoom * 100)}%`} className="min-w-[44px] text-mini font-semibold text-white/60 hover:text-white tabular-nums transition-colors">{Math.round(zoom * 100)}%</button>
           <button type="button" onClick={() => bumpZoom(0.05)} title="Zoom in (Ctrl +)" aria-label="Zoom in" className="h-6 w-6 grid place-items-center rounded-lg text-white/50 hover:text-white hover:bg-white/10 text-base leading-none transition-colors">+</button>
         </div>
         <nav className="flex gap-0.5 bg-black/25 p-1 rounded-xl border border-white/[0.06] w-full md:w-auto overflow-x-auto">
@@ -1239,7 +1239,7 @@ export default function App() {
                 whileTap={{ scale: 0.94 }}
                 transition={spring.snappy}
                 className={`relative px-3.5 py-2 rounded-lg text-note font-semibold tracking-wide whitespace-nowrap flex items-center gap-1.5 transition-colors duration-200 ${
-                  active ? 'text-white' : 'text-white/45 hover:text-white/90'
+                  active ? 'text-white' : 'text-muted hover:text-white/90'
                 }`}
               >
                 {active && (
@@ -1253,7 +1253,7 @@ export default function App() {
                     the selected tab is legible from colour and from the pill
                     behind it, not from colour alone. */}
                 <span className="relative z-10 flex items-center gap-1.5">
-                  <t.icon size={14} className={active ? 'text-[var(--accent)]' : undefined} />
+                  <t.icon size={14} className={active ? 'text-accent' : undefined} />
                   {t.label}
                 </span>
               </motion.button>
@@ -1267,19 +1267,19 @@ export default function App() {
       {showHud && (
         <div className="w-full max-w-[1920px] mx-auto mt-2 p-3 sm:p-3.5 bg-black/80 backdrop-blur-xl border border-white/10 rounded-2xl grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs text-white shadow-xl animate-slide-up z-30 relative">
           <div className="flex flex-col">
-            <span className="text-nano font-semibold uppercase tracking-wider text-white/40">Execution Engine</span>
+            <span className="text-nano font-semibold uppercase tracking-wider text-muted">Execution Engine</span>
             <span className="font-mono text-emerald-400 font-bold">{hudValue(progress.runtime?.sections?.PROVIDER?.values?.effective)}</span>
           </div>
           <div className="flex flex-col">
-            <span className="text-nano font-semibold uppercase tracking-wider text-white/40">VRAM Total</span>
+            <span className="text-nano font-semibold uppercase tracking-wider text-muted">VRAM Total</span>
             <span className="font-mono text-amber-300 font-bold">{hudValue(progress.runtime?.sections?.HARDWARE?.values?.vram?.total_gb, ' GB')}</span>
           </div>
           <div className="flex flex-col">
-            <span className="text-nano font-semibold uppercase tracking-wider text-white/40">Configured Workers</span>
+            <span className="text-nano font-semibold uppercase tracking-wider text-muted">Configured Workers</span>
             <span className="font-mono text-cyan-300 font-bold">{hudValue(progress.runtime?.sections?.POOLING?.values?.workers?.configured)}</span>
           </div>
           <div className="flex flex-col">
-            <span className="text-nano font-semibold uppercase tracking-wider text-white/40">Engine Connection</span>
+            <span className="text-nano font-semibold uppercase tracking-wider text-muted">Engine Connection</span>
             <span className={`font-mono font-bold ${offline ? 'text-amber-300' : meta ? 'text-emerald-400' : 'text-white/60'}`}>
               {offline ? 'Local engine unavailable' : meta ? 'Local engine connected' : 'Local engine checking'}
             </span>
@@ -1292,10 +1292,10 @@ export default function App() {
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[70] flex items-center justify-center p-4" onClick={() => setShowShortcutsModal(false)}>
           <div className="bg-[#121216] border border-white/10 rounded-2xl max-w-lg w-full p-6 space-y-4 shadow-2xl animate-scale-in text-white" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between border-b border-white/10 pb-3">
-              <h3 className="text-base font-bold flex items-center gap-2 text-[var(--accent)]">
+              <h3 className="text-base font-bold flex items-center gap-2 text-accent">
                 <Icon.shortcuts size={18} /> Global Keyboard Shortcuts Cheat Sheet
               </h3>
-              <button type="button" onClick={() => setShowShortcutsModal(false)} aria-label="Close shortcuts cheat sheet modal" className="text-white/40 hover:text-white font-bold">✕</button>
+              <button type="button" onClick={() => setShowShortcutsModal(false)} aria-label="Close shortcuts cheat sheet modal" className="text-muted hover:text-white font-bold">✕</button>
             </div>
 
             <div className="space-y-2 text-xs">
@@ -1333,10 +1333,10 @@ export default function App() {
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[70] flex items-center justify-center p-4" onClick={() => setShowSnapshotsModal(false)}>
           <div className="bg-[#121216] border border-white/10 rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl animate-scale-in text-white" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between border-b border-white/10 pb-3">
-              <h3 className="text-base font-bold flex items-center gap-2 text-[var(--accent)]">
+              <h3 className="text-base font-bold flex items-center gap-2 text-accent">
                 <Icon.history size={18} /> Workspace Session Snapshots
               </h3>
-              <button type="button" onClick={() => setShowSnapshotsModal(false)} aria-label="Close workspace snapshots modal" className="text-white/40 hover:text-white font-bold">✕</button>
+              <button type="button" onClick={() => setShowSnapshotsModal(false)} aria-label="Close workspace snapshots modal" className="text-muted hover:text-white font-bold">✕</button>
             </div>
 
             <div className="flex items-center justify-between">
@@ -1348,13 +1348,13 @@ export default function App() {
 
             <div className="max-h-60 overflow-y-auto space-y-2 py-1">
               {snapshots.length === 0 ? (
-                <div className="text-center py-6 text-xs text-white/30">No saved snapshots yet</div>
+                <div className="text-center py-6 text-xs text-muted">No saved snapshots yet</div>
               ) : (
                 snapshots.map((s) => (
                   <div key={s.id} className="p-3 rounded-xl bg-white/5 border border-white/10 flex items-center justify-between gap-2 hover:border-white/20 transition-all">
                     <div className="min-w-0 flex-1">
                       <div className="font-bold text-xs text-white truncate">{s.name}</div>
-                      <div className="text-nano font-mono text-white/40">{new Date(s.time).toLocaleString()}</div>
+                      <div className="text-nano font-mono text-muted">{new Date(s.time).toLocaleString()}</div>
                     </div>
                     <div className="flex items-center gap-1.5 shrink-0">
                       <button type="button" onClick={() => loadSessionSnapshot(s)} className="px-2.5 py-1 rounded bg-white/10 hover:bg-white/20 text-xs font-semibold text-white">Load</button>
@@ -1396,7 +1396,7 @@ export default function App() {
         {!error && !meta && (
           <div className="flex flex-col items-center justify-center h-[50vh] gap-4">
             <div className="h-8 w-8 rounded-full border-4 border-white/10 border-t-[var(--accent)] animate-spin" />
-            <div className="text-white/40 text-sm font-medium">Establishing secure gateway connection…</div>
+            <div className="text-muted text-sm font-medium">Establishing secure gateway connection…</div>
           </div>
         )}
         {!error && meta && settings && (
@@ -1526,7 +1526,7 @@ export default function App() {
           <div className="bg-black/80 px-6 py-4 rounded-2xl border border-white/10 shadow-2xl flex flex-col items-center gap-2">
             {/* animate-bounce is a transform, so it stays on the compositor —
                 this overlay is on screen during a drag and must not repaint. */}
-            <Icon.drop size={34} className="animate-bounce text-[var(--accent)]" />
+            <Icon.drop size={34} className="animate-bounce text-accent" />
             <span className="text-lg font-bold text-white uppercase tracking-wider">Drop media here</span>
           </div>
         </div>

@@ -42,7 +42,7 @@ export default function RecognitionPanel({ notify, onApplied }) {
 
   useEffect(() => { load(); }, [load]);
 
-  if (!data) return <p className="text-xs text-white/40">Reading the recognition backend…</p>;
+  if (!data) return <p className="text-xs text-muted">Reading the recognition backend…</p>;
 
   const { advice, providers, active } = data;
   const spec = models.find((m) => m.key === model);
@@ -79,11 +79,11 @@ export default function RecognitionPanel({ notify, onApplied }) {
         <div className="flex flex-wrap items-center gap-2">
           <span className="px-2 py-0.5 rounded-md border border-white/20 text-nano font-semibold text-white/80">{advice.label}</span>
           <span className="text-white/70">{advice.device_name || 'No GPU detected'}</span>
-          {advice.vram_gb > 0 && <span className="text-white/40">{advice.vram_gb} GB</span>}
-          {advice.architecture && <span className="text-white/40">{advice.architecture} (SM {advice.compute_capability})</span>}
+          {advice.vram_gb > 0 && <span className="text-muted">{advice.vram_gb} GB</span>}
+          {advice.architecture && <span className="text-muted">{advice.architecture} (SM {advice.compute_capability})</span>}
         </div>
         <p className="text-white/60">Suggested: <b className="text-white/80">{providers.find((p) => p.value === advice.provider)?.label}</b> — {advice.strategy}</p>
-        <p className="text-nano text-white/40">{advice.reason}</p>
+        <p className="text-nano text-muted">{advice.reason}</p>
         <div className="flex flex-wrap gap-2 pt-1">
           <Button size="sm" variant="secondary" onClick={() => setProvider(advice.provider)} disabled={busy || provider === advice.provider}>
             Use suggested provider
@@ -107,7 +107,7 @@ export default function RecognitionPanel({ notify, onApplied }) {
       {spec && (
         <div className="-mt-2 flex flex-col gap-0.5">
           <p className="text-white/60">{spec.description}</p>
-          <p className="text-nano text-white/45">{specLine(spec)}</p>
+          <p className="text-nano text-muted">{specLine(spec)}</p>
         </div>
       )}
 
@@ -126,7 +126,7 @@ export default function RecognitionPanel({ notify, onApplied }) {
           {busy ? 'Loading… (may download / build engines)' : 'Apply'}
         </Button>
         <Button size="sm" variant="secondary" onClick={load} disabled={busy}>Refresh</Button>
-        {dirty && !busy && <span className="text-nano text-white/40">Unsaved change</span>}
+        {dirty && !busy && <span className="text-nano text-muted">Unsaved change</span>}
       </div>
 
       {active ? (
@@ -138,14 +138,14 @@ export default function RecognitionPanel({ notify, onApplied }) {
           {active.degraded && ' — a GPU provider was requested but the session is CPU-only'}
         </p>
       ) : (
-        <p className="text-white/40">Nothing loaded yet: the model loads when first used or when you press Apply.</p>
+        <p className="text-muted">Nothing loaded yet: the model loads when first used or when you press Apply.</p>
       )}
       {last?.degraded && last.active.fallback_log?.length > 0 && (
         <ul className="list-disc pl-4 text-nano text-amber-300/80">
           {last.active.fallback_log.map((l) => <li key={l}>{l}</li>)}
         </ul>
       )}
-      <p className="text-nano text-white/40">{data.scope}</p>
+      <p className="text-nano text-muted">{data.scope}</p>
     </div>
   );
 }

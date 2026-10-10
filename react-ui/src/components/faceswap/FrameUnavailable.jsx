@@ -17,7 +17,7 @@ export default function FrameUnavailable({ onRetry, className = '' }) {
     >
       <div className="pointer-events-auto inline-flex items-center gap-2.5 px-3 py-1.5 rounded-xl bg-black/85 backdrop-blur-md border border-amber-400/40 shadow-2xl text-mini font-semibold text-amber-200">
         Frame unavailable
-        <span aria-hidden="true" className="text-white/30">-</span>
+        <span aria-hidden="true" className="text-muted">-</span>
         <button
           type="button"
           onClick={onRetry}

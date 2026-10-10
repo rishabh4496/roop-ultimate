@@ -158,11 +158,11 @@ export default function IdentityBlender({ sourceFaces = [], sourceFacesInfo = []
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-mini text-white/75" title={info?.name || comp.source_id}>{info?.name || 'Not in gallery'}</div>
-                    <div className="text-nano tabular-nums text-white/45">
+                    <div className="text-nano tabular-nums text-muted">
                       share {pct(shareOf(comp))}{d?.cosine_to_blend != null ? ` · cos ${d.cosine_to_blend.toFixed(2)}` : ''}
                     </div>
                   </div>
-                  <button type="button" aria-label="Remove from blend" className="text-white/35 hover:text-white"
+                  <button type="button" aria-label="Remove from blend" className="text-muted hover:text-white"
                     onClick={() => setComponents(components.filter((c) => c.source_id !== comp.source_id))}>✕</button>
                 </div>
                 <input type="range" min={0} max={100} step={1} value={Number(comp.weight) || 0}
@@ -177,7 +177,7 @@ export default function IdentityBlender({ sourceFaces = [], sourceFacesInfo = []
           onChange={(e) => { uploadInto(pendingSlot.current, Array.from(e.target.files || [])); e.target.value = ''; }} />
 
         {components.length === 1 && (
-          <p className="text-mini text-white/45">One source: the dials below edit it; add a second to blend.</p>
+          <p className="text-mini text-muted">One source: the dials below edit it; add a second to blend.</p>
         )}
         {diag?.diagnostics?.missing?.length > 0 && (
           <p className="text-mini text-amber-300/80">{diag.diagnostics.missing.length} blended source(s) are no longer in the gallery and are skipped.</p>
@@ -196,7 +196,7 @@ export default function IdentityBlender({ sourceFaces = [], sourceFacesInfo = []
                   onChange={(v) => setDial(dial.key, v)}
                   modified={Math.abs(Number(recipe.dials?.[dial.key]) || 0) > 1e-9}
                   onReset={() => setDial(dial.key, 0)} />
-                <div className="-mt-1 flex justify-between text-nano text-white/40">
+                <div className="-mt-1 flex justify-between text-nano text-muted">
                   <span title={entry?.render_verdict || ''}>{missing ? (entry?.render_verdict ? 'render-tested: no controllable effect on the swapped face' : 'no fitted direction') : badge ? <span className={badge.weak ? 'text-amber-300/80' : ''}>fit {badge.text}{badge.weak ? ' · weak' : ''}</span> : ''}</span>
                   {clamped && eff != null && <span className="text-amber-300/80">guard → {dial.key === 'age' ? `${eff.toFixed(1)} yr` : eff.toFixed(2)}</span>}
                 </div>
@@ -209,7 +209,7 @@ export default function IdentityBlender({ sourceFaces = [], sourceFacesInfo = []
             modified={Math.abs((Number(recipe.min_cosine) || 0.8) - 0.8) > 1e-9}
             onReset={() => update({ min_cosine: 0.8 })} />
           {diag?.diagnostics?.cosine_to_anchor != null && (
-            <div className="text-nano tabular-nums text-white/45">
+            <div className="text-nano tabular-nums text-muted">
               result vs blended identity: cos {diag.diagnostics.cosine_to_anchor.toFixed(3)}{clamped ? ' (clamped by guard)' : ''}
             </div>
           )}

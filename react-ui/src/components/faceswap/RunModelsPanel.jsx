@@ -41,15 +41,15 @@ const pick = (...vals) => {
 function Row({ label, value, sub, tone = 'text-white/85', dim = false, title }) {
   return (
     <div className="flex items-baseline justify-between gap-2 py-[3px]" title={title}>
-      <span className="shrink-0 text-nano font-semibold uppercase tracking-[0.13em] text-white/40">
+      <span className="shrink-0 text-nano font-semibold uppercase tracking-[0.13em] text-muted">
         {label}
       </span>
       <span className="flex min-w-0 items-baseline gap-1.5">
-        <span className={`truncate font-mono text-micro font-semibold ${dim ? 'text-white/35' : tone}`}
+        <span className={`truncate font-mono text-micro font-semibold ${dim ? 'text-muted' : tone}`}
               title={value == null ? undefined : String(value)}>
           {value == null ? '—' : String(value)}
         </span>
-        {sub && <span className="shrink-0 font-mono text-nano text-white/30">{sub}</span>}
+        {sub && <span className="shrink-0 font-mono text-nano text-muted">{sub}</span>}
       </span>
     </div>
   );
@@ -126,10 +126,10 @@ export default function RunModelsPanel({ runtime = null, settings = null, teleme
   return (
     <div className={`rounded-xl border border-white/[0.07] bg-black/30 px-3 py-2.5 ${className}`}>
       <div className="flex items-baseline justify-between gap-3">
-        <span className="text-nano font-semibold uppercase tracking-[0.16em] text-white/45">
+        <span className="text-nano font-semibold uppercase tracking-[0.16em] text-muted">
           Models in use
         </span>
-        <span className={`font-mono text-nano ${view.stale ? 'text-amber-400/80' : 'text-white/35'}`}
+        <span className={`font-mono text-nano ${view.stale ? 'text-amber-400/80' : 'text-muted'}`}
               title={view.stale
                 ? 'The backend has not published a runtime snapshot for this run yet, so these are the SAVED settings — they may differ from what is loaded.'
                 : 'Read from the running pipeline, not from Settings'}>
@@ -139,7 +139,7 @@ export default function RunModelsPanel({ runtime = null, settings = null, teleme
 
       <div className="mt-1.5 divide-y divide-white/[0.05]">
         <Row label="Swapper" value={view.swapper} sub={ctx(view.pool.swap)}
-             tone="text-[var(--accent)]"
+             tone="text-accent"
              title="The face-swap model this run loaded, and how many inference contexts it holds" />
         <Row label="Enhancer" value={view.enhancer} sub={ctx(view.pool.enhancer)}
              dim={isEmpty(view.enhancer)}

@@ -17,7 +17,7 @@ const KIND = {
   active: 'text-emerald-300',
   stale: 'text-amber-300',
   unknown: 'text-white/50',
-  other: 'text-white/40',
+  other: 'text-muted',
 };
 
 export default function TrtCachePanel({ notify }) {
@@ -56,7 +56,7 @@ export default function TrtCachePanel({ notify }) {
     }
   };
 
-  if (!data) return <p className="text-xs text-white/40">Reading the engine cache…</p>;
+  if (!data) return <p className="text-xs text-muted">Reading the engine cache…</p>;
   const [statusText, statusCls] = STATUS[data.status] || [data.status, STATUS.not_tensorrt[1]];
 
   return (
@@ -64,7 +64,7 @@ export default function TrtCachePanel({ notify }) {
       <div className="flex flex-wrap items-center gap-2">
         <span className={`px-2 py-0.5 rounded-md border text-nano font-semibold ${statusCls}`}>{statusText}</span>
         {data.active_engines > 0 && <span className="text-white/60">{data.active_engines} engine(s) in the active namespace</span>}
-        <span className="text-white/40">{data.total_mb} MB on disk</span>
+        <span className="text-muted">{data.total_mb} MB on disk</span>
       </div>
       <div className="max-h-40 overflow-auto rounded-md border border-white/10">
         <table className="w-full text-nano">
@@ -75,11 +75,11 @@ export default function TrtCachePanel({ notify }) {
                 <td className="px-2 py-1 text-white/60 truncate max-w-[18rem]" title={r.name}>{r.name}</td>
                 <td className="px-2 py-1 text-right text-white/60">{r.engines}</td>
                 <td className="px-2 py-1 text-right text-white/60">{r.size_mb} MB</td>
-                <td className="px-2 py-1 text-white/40">{r.modified}</td>
+                <td className="px-2 py-1 text-muted">{r.modified}</td>
               </tr>
             ))}
             {data.loose_mb > 0 && (
-              <tr><td className="px-2 py-1 text-white/40">other</td><td className="px-2 py-1 text-white/50" colSpan={2}>loose files at the cache root ({data.loose_engines} engine(s))</td><td className="px-2 py-1 text-right text-white/60">{data.loose_mb} MB</td><td /></tr>
+              <tr><td className="px-2 py-1 text-muted">other</td><td className="px-2 py-1 text-white/50" colSpan={2}>loose files at the cache root ({data.loose_engines} engine(s))</td><td className="px-2 py-1 text-right text-white/60">{data.loose_mb} MB</td><td aria-hidden="true" /></tr>
             )}
           </tbody>
         </table>
@@ -95,7 +95,7 @@ export default function TrtCachePanel({ notify }) {
         </Button>
       </div>
       {!data.active_namespace && data.status !== 'not_tensorrt' && (
-        <p className="text-nano text-white/40">"Clear stale" unlocks after a TensorRT preview or render, once the backend knows which namespace is live.</p>
+        <p className="text-nano text-muted">"Clear stale" unlocks after a TensorRT preview or render, once the backend knows which namespace is live.</p>
       )}
     </div>
   );

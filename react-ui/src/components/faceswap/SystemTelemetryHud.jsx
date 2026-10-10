@@ -23,13 +23,13 @@ export default function SystemTelemetryHud() {
           {/* GPU & VRAM */}
           <div className="bg-black/25 p-3 rounded-xl border border-white/5 space-y-2">
             <div className="flex justify-between items-center">
-              <span className="text-white/45 text-micro uppercase font-bold tracking-wider">GPU</span>
+              <span className="text-muted text-micro uppercase font-bold tracking-wider">GPU</span>
               <span className="text-white font-semibold truncate max-w-[200px]">{telemetry.gpu}</span>
             </div>
             {telemetry.vram_total > 0 && (
               <div className="space-y-1">
                 <div className="flex justify-between text-micro">
-                  <span className="text-white/40">VRAM Usage</span>
+                  <span className="text-muted">VRAM Usage</span>
                   <span className="text-emerald-400 font-bold">{telemetry.vram_used} GB / {telemetry.vram_total} GB</span>
                 </div>
                 <div className="w-full bg-white/10 h-1.5 rounded-full overflow-hidden">
@@ -46,7 +46,7 @@ export default function SystemTelemetryHud() {
           <div className="bg-black/25 p-3 rounded-xl border border-white/5 space-y-2.5">
             <div className="space-y-1">
               <div className="flex justify-between items-center text-micro">
-                <span className="text-white/40 uppercase font-bold tracking-wider">CPU Utilization</span>
+                <span className="text-muted uppercase font-bold tracking-wider">CPU Utilization</span>
                 <span className="text-orange-400 font-bold">{telemetry.cpu_percent}%</span>
               </div>
               <div className="w-full bg-white/10 h-1.5 rounded-full overflow-hidden">
@@ -59,7 +59,7 @@ export default function SystemTelemetryHud() {
 
             <div className="space-y-1">
               <div className="flex justify-between items-center text-micro">
-                <span className="text-white/40 uppercase font-bold tracking-wider">System RAM</span>
+                <span className="text-muted uppercase font-bold tracking-wider">System RAM</span>
                 <span className="text-blue-300 font-bold">{telemetry.ram_used} GB / {telemetry.ram_total} GB</span>
               </div>
               {telemetry.ram_total > 0 && (
@@ -75,7 +75,7 @@ export default function SystemTelemetryHud() {
 
           {/* Active threads info */}
           <div className="bg-black/25 px-3 py-2 rounded-xl border border-white/5 flex items-center justify-between">
-            <span className="text-micro text-white/45 uppercase font-bold tracking-wider">Active Python Threads</span>
+            <span className="text-micro text-muted uppercase font-bold tracking-wider">Active Python Threads</span>
             <span className="text-pink-400 font-bold text-xs bg-pink-500/10 px-2 py-0.5 rounded-md border border-pink-500/20">{telemetry.threads}</span>
           </div>
         </div>
@@ -84,7 +84,7 @@ export default function SystemTelemetryHud() {
           <Skeleton className="h-16 w-full" />
           <Skeleton className="h-20 w-full" />
           <Skeleton className="h-9 w-full" />
-          <div className="text-micro text-white/45 italic text-center">Connecting to hardware diagnostics…</div>
+          <div className="text-micro text-muted italic text-center">Connecting to hardware diagnostics…</div>
         </div>
       )}
       <LiveText

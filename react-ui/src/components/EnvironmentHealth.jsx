@@ -44,7 +44,7 @@ const commitLabel = (sha, iso) => {
 
 const Row = ({ label, value, tone = '' }) => (
   <div className="flex items-baseline justify-between gap-3 py-1 border-b border-white/[0.04] last:border-0">
-    <span className="text-micro text-white/45 shrink-0">{label}</span>
+    <span className="text-micro text-muted shrink-0">{label}</span>
     <span className={`text-micro font-mono text-right truncate ${tone || 'text-white/85'}`} title={String(value)}>
       {value}
     </span>
@@ -146,7 +146,7 @@ export default function EnvironmentHealth({ notify, meta }) {
           </button>
         )}
       >
-        <div className="text-micro text-white/45 mb-2">
+        <div className="text-micro text-muted mb-2">
           Measured by the backend on this machine, right now. A value it does not have reads UNKNOWN —
           nothing here is guessed in the browser.
         </div>
@@ -197,7 +197,7 @@ export default function EnvironmentHealth({ notify, meta }) {
       </Section>
 
       <Section title="Updates" icon={Icon.settings}>
-        <div className="text-micro text-white/45 mb-3">
+        <div className="text-micro text-muted mb-3">
           This checks whether a newer commit exists <em>and</em> whether it has passed the compatibility
           gate. It never installs anything: applying an update is Pinokio’s{' '}
           <strong className="text-white/70">Update</strong> action. Python packages, CUDA, TensorRT,
@@ -279,7 +279,7 @@ export default function EnvironmentHealth({ notify, meta }) {
             )}
           </>
         ) : (
-          <div className="text-micro text-white/35">
+          <div className="text-micro text-muted">
             Remote not checked. This is the only part of the app that reaches the internet, so it runs only
             when you ask — offline it simply reports UNVERIFIED and nothing else changes.
           </div>

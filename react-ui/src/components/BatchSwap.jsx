@@ -664,7 +664,7 @@ export default function BatchSwap({ settings = {}, notify }) {
                 type="button"
                 onClick={() => setShowHealthModal(false)}
                 aria-label="Close health breakdown modal"
-                className="text-white/40 hover:text-white font-bold"
+                className="text-muted hover:text-white font-bold"
               >
                 ✕
               </button>
@@ -672,21 +672,21 @@ export default function BatchSwap({ settings = {}, notify }) {
 
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
               <div className="p-3 bg-white/5 rounded-xl border border-white/5">
-                <span className="text-nano text-white/40 block">Staged Jobs</span>
+                <span className="text-nano text-muted block">Staged Jobs</span>
                 <span className="text-lg font-bold text-white">{stagedJobs.length}</span>
               </div>
               <div className="p-3 bg-white/5 rounded-xl border border-white/5">
-                <span className="text-nano text-white/40 block">Total Frames</span>
+                <span className="text-nano text-muted block">Total Frames</span>
                 <span className="text-lg font-bold text-emerald-400">
                   {stagedStats.totalFrames.toLocaleString()}
                 </span>
               </div>
               <div className="p-3 bg-white/5 rounded-xl border border-white/5">
-                <span className="text-nano text-white/40 block">Est. Runtime</span>
+                <span className="text-nano text-muted block">Est. Runtime</span>
                 <span className="text-lg font-bold text-amber-400">{stagedStats.timeStr}</span>
               </div>
               <div className="p-3 bg-white/5 rounded-xl border border-white/5">
-                <span className="text-nano text-white/40 block">Est. Disk Space</span>
+                <span className="text-nano text-muted block">Est. Disk Space</span>
                 <span className="text-lg font-bold text-cyan-400">
                   ~{Math.round(stagedStats.totalFrames * 0.25)} MB
                 </span>
@@ -738,7 +738,7 @@ export default function BatchSwap({ settings = {}, notify }) {
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 glass-panel p-4 rounded-2xl">
         <div>
           <h2 className="text-xl font-bold text-white flex items-center gap-2">
-            <Icon.batch className="text-[var(--accent)]" size={24} />
+            <Icon.batch className="text-accent" size={24} />
             Batch Matrix & Multi-File Workbench
           </h2>
           <p className="text-xs text-white/50 mt-1 max-w-2xl">
@@ -789,7 +789,7 @@ export default function BatchSwap({ settings = {}, notify }) {
             </Button>
           </label>
 
-          <Button size="sm" variant="ghost" onClick={refreshBackendState} title="Refresh media library">
+          <Button size="sm" variant="ghost" onClick={refreshBackendState} title="Refresh media library" aria-label="Refresh media library">
             <Icon.refresh size={14} className={loadingState ? 'animate-spin' : ''} />
           </Button>
         </div>
@@ -799,7 +799,7 @@ export default function BatchSwap({ settings = {}, notify }) {
       <div className="flex flex-wrap items-center justify-between gap-3 p-3.5 bg-white/5 rounded-2xl border border-white/10 text-xs">
         <div className="flex items-center gap-2">
           <span className="font-bold text-white flex items-center gap-1.5">
-            <Icon.settings size={14} className="text-[var(--accent)]" />
+            <Icon.settings size={14} className="text-accent" />
             Quick Slots (1–5):
           </span>
           {[1, 2, 3, 4, 5].map((slot) => {
@@ -815,7 +815,7 @@ export default function BatchSwap({ settings = {}, notify }) {
                       ? 'bg-[var(--accent)] text-black font-bold'
                       : hasSaved
                       ? 'bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30'
-                      : 'bg-white/5 text-white/40 hover:bg-white/10'
+                      : 'bg-white/5 text-muted hover:bg-white/10'
                   }`}
                   title={hasSaved ? `Load Quick Slot #${slot}` : `Slot #${slot} is empty`}
                 >
@@ -824,7 +824,7 @@ export default function BatchSwap({ settings = {}, notify }) {
                 <button
                   type="button"
                   onClick={() => saveQuickSlot(slot)}
-                  className="text-nano text-white/40 hover:text-[var(--accent)] font-bold px-1"
+                  className="text-nano text-muted hover:text-accent font-bold px-1"
                   title={`Save current setup into Quick Slot #${slot}`}
                   aria-label={`Save Quick Slot #${slot}`}
                 >
@@ -841,7 +841,7 @@ export default function BatchSwap({ settings = {}, notify }) {
             type="checkbox"
             checked={autoFallbackEnabled}
             onChange={(e) => setAutoFallbackEnabled(e.target.checked)}
-            className="rounded border-white/20 bg-black/40 text-[var(--accent)] focus:ring-0"
+            className="rounded border-white/20 bg-black/40 text-accent focus:ring-0"
           />
           <span>🛡️ Auto-Fallback Enhancer (Retry with 'None' if GPU Out-Of-Memory Error)</span>
         </label>
@@ -868,7 +868,7 @@ export default function BatchSwap({ settings = {}, notify }) {
         <Card className="p-4">
           <div className="flex items-center justify-between mb-3">
             <span className="text-xs font-semibold uppercase tracking-wider text-white/60 flex items-center gap-1.5">
-              <Icon.faces size={14} className="text-[var(--accent)]" />
+              <Icon.faces size={14} className="text-accent" />
               Loaded Source Facesets ({sourceFaces.length})
             </span>
 
@@ -877,7 +877,7 @@ export default function BatchSwap({ settings = {}, notify }) {
                 <button
                   type="button"
                   onClick={clearAllSourceFacesets}
-                  className="text-micro font-medium text-red-400/80 hover:text-red-400 hover:underline"
+                  className="text-micro font-medium text-[var(--danger)] hover:text-red-400 hover:underline"
                   title="Clear all loaded source facesets"
                 >
                   Clear All
@@ -886,7 +886,7 @@ export default function BatchSwap({ settings = {}, notify }) {
               <button
                 type="button"
                 onClick={() => setShowFacesetLib((v) => !v)}
-                className="text-micro font-semibold text-[var(--accent)] hover:underline flex items-center gap-1"
+                className="text-micro font-semibold text-accent hover:underline flex items-center gap-1"
               >
                 <Icon.faces size={12} />
                 {showFacesetLib ? 'Hide Library' : 'Browse Library'}
@@ -894,12 +894,12 @@ export default function BatchSwap({ settings = {}, notify }) {
             </div>
           </div>
           {sourceFaces.length === 0 ? (
-            <div className="text-xs text-white/40 italic p-3 text-center border border-dashed border-white/10 rounded-xl space-y-1.5">
+            <div className="text-xs text-muted italic p-3 text-center border border-dashed border-white/10 rounded-xl space-y-1.5">
               <p>No source facesets loaded in active workspace.</p>
               <button
                 type="button"
                 onClick={() => setShowFacesetLib(true)}
-                className="text-micro text-[var(--accent)] font-semibold hover:underline block mx-auto"
+                className="text-micro text-accent font-semibold hover:underline block mx-auto"
               >
                 + Browse & Load from Faceset Library
               </button>
@@ -924,7 +924,7 @@ export default function BatchSwap({ settings = {}, notify }) {
                     <span className="font-semibold block truncate max-w-[90px]">
                       {sourceFacesInfo[idx]?.name || `Faceset #${idx + 1}`}
                     </span>
-                    <span className="text-white/40 block">Idx {idx}</span>
+                    <span className="text-muted block">Idx {idx}</span>
                   </div>
 
                   {/* Remove Individual Faceset Button */}
@@ -947,7 +947,7 @@ export default function BatchSwap({ settings = {}, notify }) {
         <Card className="p-4">
           <div className="flex items-center justify-between mb-3">
             <span className="text-xs font-semibold uppercase tracking-wider text-white/60 flex items-center gap-1.5">
-              <Icon.outputs size={14} className="text-[var(--accent)]" />
+              <Icon.outputs size={14} className="text-accent" />
               Loaded Target Media ({targets.length})
             </span>
 
@@ -955,7 +955,7 @@ export default function BatchSwap({ settings = {}, notify }) {
               <button
                 type="button"
                 onClick={clearAllTargetFiles}
-                className="text-micro font-medium text-red-400/80 hover:text-red-400 hover:underline"
+                className="text-micro font-medium text-[var(--danger)] hover:text-red-400 hover:underline"
                 title="Clear all loaded target media"
               >
                 Clear All
@@ -963,7 +963,7 @@ export default function BatchSwap({ settings = {}, notify }) {
             )}
           </div>
           {targets.length === 0 ? (
-            <div className="text-xs text-white/40 italic p-3 text-center border border-dashed border-white/10 rounded-xl">
+            <div className="text-xs text-muted italic p-3 text-center border border-dashed border-white/10 rounded-xl">
               No target media loaded. Click "+ Add Targets" above to upload videos or images.
             </div>
           ) : (
@@ -986,7 +986,7 @@ export default function BatchSwap({ settings = {}, notify }) {
                   <span className="truncate max-w-[110px] font-medium" title={target.name}>
                     {idx + 1}. {target.name}
                   </span>
-                  <span className="text-white/30 text-nano">({target.frames || 1}f)</span>
+                  <span className="text-muted text-nano">({target.frames || 1}f)</span>
 
                   {/* Remove Individual Target File Button */}
                   <button
@@ -1019,10 +1019,10 @@ export default function BatchSwap({ settings = {}, notify }) {
           >
             <div className="flex items-center justify-between mb-1.5">
               <span className="font-bold text-sm text-white flex items-center gap-2">
-                <Icon.compare size={16} className="text-[var(--accent)]" />
+                <Icon.compare size={16} className="text-accent" />
                 1 Faceset ➔ Multi Files
               </span>
-              {batchMode === 'one_to_many' && <Icon.done size={14} className="text-[var(--accent)]" />}
+              {batchMode === 'one_to_many' && <Icon.done size={14} className="text-accent" />}
             </div>
             <p className="text-xs text-white/50 leading-relaxed">
               Apply selected source faceset and target mappings across multiple selected target files.
@@ -1040,10 +1040,10 @@ export default function BatchSwap({ settings = {}, notify }) {
           >
             <div className="flex items-center justify-between mb-1.5">
               <span className="font-bold text-sm text-white flex items-center gap-2">
-                <Icon.split size={16} className="text-[var(--accent)]" />
+                <Icon.split size={16} className="text-accent" />
                 Grouped Multi-Batch
               </span>
-              {batchMode === 'grouped' && <Icon.done size={14} className="text-[var(--accent)]" />}
+              {batchMode === 'grouped' && <Icon.done size={14} className="text-accent" />}
             </div>
             <p className="text-xs text-white/50 leading-relaxed">
               Assign distinct target file groups to different facesets and target face ranks.
@@ -1061,10 +1061,10 @@ export default function BatchSwap({ settings = {}, notify }) {
           >
             <div className="flex items-center justify-between mb-1.5">
               <span className="font-bold text-sm text-white flex items-center gap-2">
-                <Icon.layout size={16} className="text-[var(--accent)]" />
+                <Icon.layout size={16} className="text-accent" />
                 Per-File Matrix
               </span>
-              {batchMode === 'matrix' && <Icon.done size={14} className="text-[var(--accent)]" />}
+              {batchMode === 'matrix' && <Icon.done size={14} className="text-accent" />}
             </div>
             <p className="text-xs text-white/50 leading-relaxed">
               Full matrix grid: explicitly map distinct facesets and target faces per file individually.
@@ -1082,10 +1082,10 @@ export default function BatchSwap({ settings = {}, notify }) {
           >
             <div className="flex items-center justify-between mb-1.5">
               <span className="font-bold text-sm text-white flex items-center gap-2">
-                <Icon.wand size={16} className="text-[var(--accent)]" />
+                <Icon.wand size={16} className="text-accent" />
                 Pro Recipes & Splitter
               </span>
-              {batchMode === 'recipes' && <Icon.done size={14} className="text-[var(--accent)]" />}
+              {batchMode === 'recipes' && <Icon.done size={14} className="text-accent" />}
             </div>
             <p className="text-xs text-white/50 leading-relaxed">
               1-Click Combinatorial Matrix, Sequential Pairs & Multi-Segment Video Splitter.
@@ -1110,7 +1110,7 @@ export default function BatchSwap({ settings = {}, notify }) {
                   <button
                     type="button"
                     onClick={addMode1Mapping}
-                    className="text-micro text-[var(--accent)] hover:underline font-medium"
+                    className="text-micro text-accent hover:underline font-medium"
                   >
                     + Add Person Mapping
                   </button>
@@ -1133,8 +1133,9 @@ export default function BatchSwap({ settings = {}, notify }) {
                     </div>
                     <div className="grid grid-cols-2 gap-2">
                       <div>
-                        <span className="text-nano text-white/40 block mb-0.5">Target Person</span>
+                        <label htmlFor={`m1-map-${mapIdx}-person`} className="text-nano text-muted block mb-0.5">Target Person</label>
                         <select
+                          id={`m1-map-${mapIdx}-person`}
                           value={m.personRank}
                           onChange={(e) => updateMode1Mapping(mapIdx, { personRank: parseInt(e.target.value, 10) })}
                           className="w-full bg-black/60 border border-white/10 rounded-lg px-2 py-1 text-micro text-white"
@@ -1147,8 +1148,9 @@ export default function BatchSwap({ settings = {}, notify }) {
                         </select>
                       </div>
                       <div>
-                        <span className="text-nano text-white/40 block mb-0.5">Source Faceset</span>
+                        <label htmlFor={`m1-map-${mapIdx}-source`} className="text-nano text-muted block mb-0.5">Source Faceset</label>
                         <select
+                          id={`m1-map-${mapIdx}-source`}
                           value={m.sourceIdx}
                           onChange={(e) => updateMode1Mapping(mapIdx, { sourceIdx: parseInt(e.target.value, 10) })}
                           className="w-full bg-black/60 border border-white/10 rounded-lg px-2 py-1 text-micro text-white"
@@ -1166,8 +1168,9 @@ export default function BatchSwap({ settings = {}, notify }) {
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-white/70 mb-1.5">Detection / Swap Mode</label>
+                <label htmlFor="m1-swap-mode" className="block text-xs font-semibold text-white/70 mb-1.5">Detection / Swap Mode</label>
                 <select
+                  id="m1-swap-mode"
                   value={mode1SwapMode}
                   onChange={(e) => setMode1SwapMode(e.target.value)}
                   className="w-full bg-black/50 border border-white/10 rounded-xl px-3 py-2 text-xs text-white"
@@ -1186,8 +1189,9 @@ export default function BatchSwap({ settings = {}, notify }) {
                   Quality Overrides
                 </span>
                 <div>
-                  <label className="block text-nano font-medium text-white/60 mb-1">Face Enhancer</label>
+                  <label htmlFor="m1-enhancer" className="block text-nano font-medium text-white/60 mb-1">Face Enhancer</label>
                   <select
+                    id="m1-enhancer"
                     value={mode1Enhancer}
                     onChange={(e) => setMode1Enhancer(e.target.value)}
                     className="w-full bg-black/50 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white"
@@ -1200,10 +1204,11 @@ export default function BatchSwap({ settings = {}, notify }) {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-nano font-medium text-white/60 mb-1">
+                  <label htmlFor="m1-face-distance" className="block text-nano font-medium text-white/60 mb-1">
                     Max Face Distance ({mode1FaceDistance})
                   </label>
                   <input
+                    id="m1-face-distance"
                     type="range"
                     min="0.2"
                     max="1.2"
@@ -1236,15 +1241,15 @@ export default function BatchSwap({ settings = {}, notify }) {
                   <button
                     type="button"
                     onClick={() => setMode1SelectedTargets(targets.map((_, i) => i))}
-                    className="text-micro text-[var(--accent)] hover:underline"
+                    className="text-micro text-accent hover:underline"
                   >
                     Select All
                   </button>
-                  <span className="text-white/20">|</span>
+                  <span className="text-white/20" aria-hidden="true">|</span>
                   <button
                     type="button"
                     onClick={() => setMode1SelectedTargets([])}
-                    className="text-micro text-white/40 hover:text-white"
+                    className="text-micro text-muted hover:text-white"
                   >
                     Clear
                   </button>
@@ -1252,7 +1257,7 @@ export default function BatchSwap({ settings = {}, notify }) {
               </div>
 
               {targets.length === 0 ? (
-                <div className="p-8 text-center border border-dashed border-white/10 rounded-xl text-xs text-white/40">
+                <div className="p-8 text-center border border-dashed border-white/10 rounded-xl text-xs text-muted">
                   No target files available. Add files using the button in the header.
                 </div>
               ) : (
@@ -1260,14 +1265,13 @@ export default function BatchSwap({ settings = {}, notify }) {
                   {targets.map((target, idx) => {
                     const isSel = mode1SelectedTargets.includes(idx);
                     return (
-                      <div
+                      // A <label>, not a clickable div around a checkbox whose onChange
+                      // did nothing: the label gives the checkbox its name (the file),
+                      // a click anywhere on the card toggles it, and Space on the
+                      // focused checkbox toggles it through the same onChange.
+                      <label
                         key={idx}
-                        onClick={() => {
-                          setMode1SelectedTargets((prev) =>
-                            isSel ? prev.filter((i) => i !== idx) : [...prev, idx]
-                          );
-                        }}
-                        className={`flex items-center gap-3 p-2.5 rounded-xl border cursor-pointer transition-all ${
+                        className={`flex items-center gap-3 p-2.5 rounded-xl border cursor-pointer transition-all has-[:focus-visible]:outline has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-[var(--accent)] ${
                           isSel
                             ? 'bg-[var(--accent)]/15 border-[var(--accent)]/60 text-white'
                             : 'bg-white/5 border-white/5 text-white/60 hover:bg-white/10'
@@ -1276,13 +1280,17 @@ export default function BatchSwap({ settings = {}, notify }) {
                         <input
                           type="checkbox"
                           checked={isSel}
-                          onChange={() => {}} // handled by parent onClick
-                          className="rounded border-white/20 bg-black/40 text-[var(--accent)] focus:ring-0"
+                          onChange={() => {
+                            setMode1SelectedTargets((prev) =>
+                              isSel ? prev.filter((i) => i !== idx) : [...prev, idx]
+                            );
+                          }}
+                          className="rounded border-white/20 bg-black/40 text-accent focus:ring-0"
                         />
                         {targetPreviewUrl(idx, target) && (
                           <img
                             src={targetPreviewUrl(idx, target)}
-                            alt={target.name}
+                            alt=""
                             className="w-10 h-10 rounded-lg object-cover bg-black/50 shrink-0"
                             onError={(e) => {
                               e.target.style.display = 'none';
@@ -1291,11 +1299,11 @@ export default function BatchSwap({ settings = {}, notify }) {
                         )}
                         <div className="min-w-0 flex-1">
                           <span className="text-xs font-medium text-white block truncate">{target.name}</span>
-                          <span className="text-micro text-white/40 block">
+                          <span className="text-micro text-muted block">
                             {target.frames || 1} frames · {target.fps ? `${Math.round(target.fps)} fps` : 'image'}
                           </span>
                         </div>
-                      </div>
+                      </label>
                     );
                   })}
                 </div>
@@ -1325,6 +1333,7 @@ export default function BatchSwap({ settings = {}, notify }) {
                     <input
                       type="text"
                       value={grp.label}
+                      aria-label="Group name"
                       onChange={(e) => updateGroup(grp.id, { label: e.target.value })}
                       className="bg-transparent text-sm font-bold text-white border-b border-transparent hover:border-white/20 focus:border-[var(--accent)] outline-none px-1"
                     />
@@ -1333,7 +1342,7 @@ export default function BatchSwap({ settings = {}, notify }) {
                     <button
                       type="button"
                       onClick={() => removeGroup(grp.id)}
-                      className="text-white/40 hover:text-red-400 text-xs font-medium"
+                      className="text-muted hover:text-red-400 text-xs font-medium"
                     >
                       Remove Group
                     </button>
@@ -1347,7 +1356,7 @@ export default function BatchSwap({ settings = {}, notify }) {
                     <button
                       type="button"
                       onClick={() => addGroupMapping(grp.id)}
-                      className="text-[var(--accent)] hover:underline"
+                      className="text-accent hover:underline"
                     >
                       + Add Mapping
                     </button>
@@ -1356,12 +1365,12 @@ export default function BatchSwap({ settings = {}, notify }) {
                     <div key={mapIdx} className="grid grid-cols-1 md:grid-cols-2 gap-2 p-2 bg-black/60 rounded-xl border border-white/5 relative group/map">
                       <div>
                         <div className="flex items-center justify-between mb-0.5">
-                          <span className="text-nano text-white/40">Target Person</span>
+                          <span className="text-nano text-muted">Target Person</span>
                           {grp.mappings.length > 1 && (
                             <button
                               type="button"
                               onClick={() => removeGroupMapping(grp.id, mapIdx)}
-                              className="text-micro text-white/40 hover:text-red-400 font-bold"
+                              className="text-micro text-muted hover:text-red-400 font-bold"
                               title="Remove mapping"
                               aria-label={`Remove mapping ${mapIdx + 1}`}
                             >
@@ -1371,6 +1380,7 @@ export default function BatchSwap({ settings = {}, notify }) {
                         </div>
                         <select
                           value={m.personRank}
+                          aria-label={`${grp.label}: target person ${mapIdx + 1}`}
                           onChange={(e) => updateGroupMapping(grp.id, mapIdx, { personRank: parseInt(e.target.value, 10) })}
                           className="w-full bg-black/60 border border-white/10 rounded-lg px-2 py-1 text-micro text-white"
                         >
@@ -1382,9 +1392,10 @@ export default function BatchSwap({ settings = {}, notify }) {
                         </select>
                       </div>
                       <div>
-                        <span className="text-nano text-white/40 block mb-0.5">Source Faceset</span>
+                        <span className="text-nano text-muted block mb-0.5">Source Faceset</span>
                         <select
                           value={m.sourceIdx}
+                          aria-label={`${grp.label}: source faceset ${mapIdx + 1}`}
                           onChange={(e) => updateGroupMapping(grp.id, mapIdx, { sourceIdx: parseInt(e.target.value, 10) })}
                           className="w-full bg-black/60 border border-white/10 rounded-lg px-2 py-1 text-micro text-white"
                         >
@@ -1451,6 +1462,7 @@ export default function BatchSwap({ settings = {}, notify }) {
               <div className="flex flex-wrap items-center gap-2 flex-1">
                 <input
                   type="text"
+                  aria-label="Search target files"
                   placeholder="🔍 Search target files..."
                   value={matrixSearch}
                   onChange={(e) => setMatrixSearch(e.target.value)}
@@ -1458,6 +1470,7 @@ export default function BatchSwap({ settings = {}, notify }) {
                 />
                 <select
                   value={matrixFilterStatus}
+                  aria-label="Filter targets by status"
                   onChange={(e) => setMatrixFilterStatus(e.target.value)}
                   className="bg-black/60 border border-white/10 rounded-xl px-3 py-1.5 text-xs text-white"
                 >
@@ -1487,32 +1500,32 @@ export default function BatchSwap({ settings = {}, notify }) {
             {/* Quick Bulk Toggles */}
             <div className="flex items-center justify-between border-t border-white/10 pt-2 text-micro">
               <div className="flex items-center gap-2">
-                <span className="text-white/40 font-semibold">Bulk Select:</span>
+                <span className="text-muted font-semibold">Bulk Select:</span>
                 <button
                   type="button"
                   onClick={() => bulkToggleMatrixEnable(true)}
-                  className="text-[var(--accent)] hover:underline font-medium"
+                  className="text-accent hover:underline font-medium"
                 >
                   Enable All
                 </button>
-                <span className="text-white/20">|</span>
+                <span className="text-white/20" aria-hidden="true">|</span>
                 <button
                   type="button"
                   onClick={() => bulkToggleMatrixEnable(false)}
-                  className="text-white/40 hover:text-white"
+                  className="text-muted hover:text-white"
                 >
                   Disable All
                 </button>
               </div>
 
               <div className="flex items-center gap-2">
-                <span className="text-white/40 font-semibold">Bulk Enhancer:</span>
+                <span className="text-muted font-semibold">Bulk Enhancer:</span>
                 {ENHANCER_OPTIONS.slice(0, 4).map((enh) => (
                   <button
                     key={enh}
                     type="button"
                     onClick={() => bulkSetMatrixEnhancer(enh)}
-                    className="text-white/60 hover:text-[var(--accent)] hover:underline"
+                    className="text-white/60 hover:text-accent hover:underline"
                   >
                     {enh}
                   </button>
@@ -1523,7 +1536,7 @@ export default function BatchSwap({ settings = {}, notify }) {
 
           {/* Matrix Table */}
           {filteredMatrixTargets.length === 0 ? (
-            <div className="p-8 text-center border border-dashed border-white/10 rounded-xl text-xs text-white/40">
+            <div className="p-8 text-center border border-dashed border-white/10 rounded-xl text-xs text-muted">
               No target files match the current search or filter criteria.
             </div>
           ) : (
@@ -1545,7 +1558,7 @@ export default function BatchSwap({ settings = {}, notify }) {
                     className={`flex flex-col gap-3 p-3.5 rounded-xl border transition-all ${
                       cfg.enabled
                         ? 'bg-black/40 border-white/10 text-white'
-                        : 'bg-white/5 border-white/5 opacity-50 text-white/40'
+                        : 'bg-white/5 border-white/5 opacity-50 text-muted'
                     }`}
                   >
                     <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-white/5 pb-2">
@@ -1553,13 +1566,14 @@ export default function BatchSwap({ settings = {}, notify }) {
                         <input
                           type="checkbox"
                           checked={cfg.enabled}
+                          aria-label={`Include ${target.name}`}
                           onChange={(e) =>
                             setMatrixConfig((prev) => ({
                               ...prev,
                               [tIdx]: { ...cfg, enabled: e.target.checked },
                             }))
                           }
-                          className="rounded border-white/20 bg-black/40 text-[var(--accent)] focus:ring-0"
+                          className="rounded border-white/20 bg-black/40 text-accent focus:ring-0"
                         />
                         {targetPreviewUrl(tIdx, target) && (
                           <img
@@ -1575,7 +1589,7 @@ export default function BatchSwap({ settings = {}, notify }) {
                           <span className="text-xs font-semibold block truncate" title={target.name}>
                             {tIdx + 1}. {target.name}
                           </span>
-                          <span className="text-micro text-white/40 block">
+                          <span className="text-micro text-muted block">
                             {target.frames || 1} frames · {target.fps ? `${Math.round(target.fps)} fps` : 'image'}
                           </span>
                         </div>
@@ -1583,12 +1597,13 @@ export default function BatchSwap({ settings = {}, notify }) {
 
                       {/* Trim Segment Range Controls */}
                       <div className="flex items-center gap-2 text-micro shrink-0">
-                        <span className="text-white/40 font-medium">Trim:</span>
+                        <span className="text-muted font-medium">Trim:</span>
                         <input
                           type="number"
                           min="1"
                           max={target.frames || 999999}
                           value={cfg.frameStart ?? 1}
+                          aria-label={`${target.name}: trim start frame`}
                           disabled={!cfg.enabled}
                           onChange={(e) =>
                             setMatrixConfig((prev) => ({
@@ -1598,12 +1613,13 @@ export default function BatchSwap({ settings = {}, notify }) {
                           }
                           className="w-16 bg-black/60 border border-white/10 rounded px-1.5 py-0.5 text-center text-white"
                         />
-                        <span className="text-white/30">to</span>
+                        <span className="text-muted">to</span>
                         <input
                           type="number"
                           min="1"
                           max={target.frames || 999999}
                           value={cfg.frameEnd ?? target.frames ?? 1}
+                          aria-label={`${target.name}: trim end frame`}
                           disabled={!cfg.enabled}
                           onChange={(e) =>
                             setMatrixConfig((prev) => ({
@@ -1617,7 +1633,7 @@ export default function BatchSwap({ settings = {}, notify }) {
                         <button
                           type="button"
                           onClick={() => addMatrixMapping(tIdx)}
-                          className="text-micro text-[var(--accent)] hover:underline font-medium ml-2"
+                          className="text-micro text-accent hover:underline font-medium ml-2"
                         >
                           + Add Target Person Pair
                         </button>
@@ -1630,12 +1646,12 @@ export default function BatchSwap({ settings = {}, notify }) {
                         <div key={mapIdx} className="grid grid-cols-1 sm:grid-cols-2 gap-2 bg-black/60 p-2 rounded-xl border border-white/5 relative">
                           <div>
                             <div className="flex items-center justify-between mb-0.5">
-                              <span className="text-nano text-white/40">Target Person</span>
+                              <span className="text-nano text-muted">Target Person</span>
                               {cfg.mappings.length > 1 && (
                                 <button
                                   type="button"
                                   onClick={() => removeMatrixMapping(tIdx, mapIdx)}
-                                  className="text-micro text-white/40 hover:text-red-400 font-bold"
+                                  className="text-micro text-muted hover:text-red-400 font-bold"
                                   title="Remove mapping"
                                   aria-label={`Remove mapping ${mapIdx + 1}`}
                                 >
@@ -1645,6 +1661,7 @@ export default function BatchSwap({ settings = {}, notify }) {
                             </div>
                             <select
                               value={m.personRank}
+                              aria-label={`${target.name}: target person ${mapIdx + 1}`}
                               disabled={!cfg.enabled}
                               onChange={(e) => updateMatrixMapping(tIdx, mapIdx, { personRank: parseInt(e.target.value, 10) })}
                               className="w-full bg-black/60 border border-white/10 rounded-lg px-2 py-1 text-micro text-white"
@@ -1657,9 +1674,10 @@ export default function BatchSwap({ settings = {}, notify }) {
                             </select>
                           </div>
                           <div>
-                            <span className="text-nano text-white/40 block mb-0.5">Assigned Faceset</span>
+                            <span className="text-nano text-muted block mb-0.5">Assigned Faceset</span>
                             <select
                               value={m.sourceIdx}
+                              aria-label={`${target.name}: assigned faceset ${mapIdx + 1}`}
                               disabled={!cfg.enabled}
                               onChange={(e) => updateMatrixMapping(tIdx, mapIdx, { sourceIdx: parseInt(e.target.value, 10) })}
                               className="w-full bg-black/60 border border-white/10 rounded-lg px-2 py-1 text-micro text-white"
@@ -1695,7 +1713,7 @@ export default function BatchSwap({ settings = {}, notify }) {
             <Card className="p-4 space-y-3 bg-black/40 flex flex-col justify-between">
               <div>
                 <h3 className="font-bold text-sm text-white flex items-center gap-2 mb-1">
-                  <Icon.batch size={18} className="text-[var(--accent)]" />
+                  <Icon.batch size={18} className="text-accent" />
                   Cartesian Combinatorial Matrix
                 </h3>
                 <p className="text-xs text-white/50">
@@ -1712,7 +1730,7 @@ export default function BatchSwap({ settings = {}, notify }) {
             <Card className="p-4 space-y-3 bg-black/40 flex flex-col justify-between">
               <div>
                 <h3 className="font-bold text-sm text-white flex items-center gap-2 mb-1">
-                  <Icon.split size={18} className="text-[var(--accent)]" />
+                  <Icon.split size={18} className="text-accent" />
                   1-to-1 Sequential Pairer
                 </h3>
                 <p className="text-xs text-white/50">
@@ -1729,7 +1747,7 @@ export default function BatchSwap({ settings = {}, notify }) {
             <Card className="p-4 space-y-3 bg-black/40 flex flex-col justify-between">
               <div className="space-y-2">
                 <h3 className="font-bold text-sm text-white flex items-center gap-2">
-                  <Icon.split size={18} className="text-[var(--accent)]" />
+                  <Icon.split size={18} className="text-accent" />
                   Multi-Segment Video Splitter
                 </h3>
                 <p className="text-xs text-white/50">
@@ -1741,6 +1759,7 @@ export default function BatchSwap({ settings = {}, notify }) {
                     <span className="text-micro text-white/60 block">Target Video</span>
                     <select
                       value={splitTargetIdx}
+                      aria-label="Target video"
                       onChange={(e) => setSplitTargetIdx(parseInt(e.target.value, 10))}
                       className="w-full bg-black/60 border border-white/10 rounded-lg px-2 py-1 text-micro text-white"
                     >
@@ -1758,6 +1777,7 @@ export default function BatchSwap({ settings = {}, notify }) {
                       min="2"
                       max="32"
                       value={splitSegmentCount}
+                      aria-label="Number of equal segments"
                       onChange={(e) => setSplitSegmentCount(parseInt(e.target.value, 10) || 2)}
                       className="w-full bg-black/60 border border-white/10 rounded-lg px-2 py-1 text-micro text-white text-center"
                     />
@@ -1849,9 +1869,9 @@ export default function BatchSwap({ settings = {}, notify }) {
                   </div>
 
                   {/* Center: Pair Arrow */}
-                  <div className="flex flex-col items-center justify-center shrink-0 text-white/40">
-                    <span className="text-xs font-bold text-[var(--accent)]">➔</span>
-                    <span className="text-nano font-mono text-white/30">{job.total_frames || 1}f</span>
+                  <div className="flex flex-col items-center justify-center shrink-0 text-muted">
+                    <span className="text-xs font-bold text-accent">➔</span>
+                    <span className="text-nano font-mono text-muted">{job.total_frames || 1}f</span>
                   </div>
 
                   {/* Right: Source Faceset Preview */}
@@ -1897,7 +1917,7 @@ export default function BatchSwap({ settings = {}, notify }) {
                   <button
                     type="button"
                     onClick={() => removeStagedJob(job.id)}
-                    className="text-white/30 hover:text-red-400 p-1 font-bold shrink-0 self-start"
+                    className="text-muted hover:text-red-400 p-1 font-bold shrink-0 self-start"
                     title="Remove job"
                     aria-label={`Remove job ${job.label || job.id}`}
                   >

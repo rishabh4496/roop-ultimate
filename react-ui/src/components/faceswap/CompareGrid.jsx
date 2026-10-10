@@ -200,7 +200,7 @@ export default function CompareGrid({ items, previews, times, timers, gridColsCl
       }}
     >
       {items.length === 0 && emptyHint && (
-        <div className="col-span-full flex items-center justify-center text-xs text-white/40 font-semibold p-6 text-center">
+        <div className="col-span-full flex items-center justify-center text-xs text-muted font-semibold p-6 text-center">
           {emptyHint}
         </div>
       )}
@@ -214,11 +214,11 @@ export default function CompareGrid({ items, previews, times, timers, gridColsCl
               <img src={previews[label]} alt={label} className="max-w-full max-h-full object-contain pointer-events-none" draggable={false} />
             </div>
           ) : (
-            <div className="flex flex-col items-center justify-center gap-2 text-white/40 text-xs px-3 text-center">
+            <div className="flex flex-col items-center justify-center gap-2 text-muted text-xs px-3 text-center">
               <span className="h-4 w-4 rounded-full border-2 border-white/20 border-t-[var(--accent)] animate-spin" />
               <span className="font-semibold">Rendering {label}…</span>
               {timers[label] && (
-                <span className="text-micro text-white/45 font-mono">
+                <span className="text-micro text-muted font-mono">
                   Elapsed: {timers[label]}
                 </span>
               )}
@@ -243,7 +243,7 @@ export default function CompareGrid({ items, previews, times, timers, gridColsCl
             {zoom.toFixed(1)}× — Reset
           </button>
         ) : items.length > 0 && (
-          <span className="px-2.5 py-1 rounded-full bg-black/50 backdrop-blur text-micro font-semibold text-white/45 pointer-events-none select-none">
+          <span className="px-2.5 py-1 rounded-full bg-black/50 backdrop-blur text-micro font-semibold text-muted pointer-events-none select-none">
             Scroll or double-click to zoom all
           </span>
         )}

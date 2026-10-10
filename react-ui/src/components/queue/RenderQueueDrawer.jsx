@@ -242,7 +242,7 @@ export default function RenderQueueDrawer({
             <span className="text-nano px-1.5 py-0.5 rounded bg-white/10 text-white/70">
               {jobs.length} {jobs.length === 1 ? 'Job' : 'Jobs'}
             </span>
-            {isOpen ? <ChevronDown size={14} className="text-white/40" aria-hidden="true" /> : <ChevronUp size={14} className="text-white/40" aria-hidden="true" />}
+            {isOpen ? <ChevronDown size={14} className="text-muted" aria-hidden="true" /> : <ChevronUp size={14} className="text-muted" aria-hidden="true" />}
           </button>
 
           {/* Active Status Badge */}
@@ -265,7 +265,7 @@ export default function RenderQueueDrawer({
               aria-label={audioNotify ? 'Disable render complete audio chime' : 'Enable render complete audio chime'}
               title="Play chime on batch completion"
               className={`p-1.5 rounded transition-colors ${
-                audioNotify ? 'text-rose-400 bg-rose-500/10' : 'text-white/40 hover:text-white/70'
+                audioNotify ? 'text-rose-400 bg-rose-500/10' : 'text-muted hover:text-white/70'
               }`}
             >
               {audioNotify ? <Volume2 size={13} aria-hidden="true" /> : <VolumeX size={13} aria-hidden="true" />}
@@ -278,7 +278,7 @@ export default function RenderQueueDrawer({
               aria-label={desktopNotify ? 'Disable desktop completion notifications' : 'Enable desktop completion notifications'}
               title="Show system desktop notification on finish"
               className={`p-1.5 rounded transition-colors ${
-                desktopNotify ? 'text-sky-400 bg-sky-500/10' : 'text-white/40 hover:text-white/70'
+                desktopNotify ? 'text-sky-400 bg-sky-500/10' : 'text-muted hover:text-white/70'
               }`}
             >
               {desktopNotify ? <Bell size={13} aria-hidden="true" /> : <BellOff size={13} aria-hidden="true" />}
@@ -341,7 +341,7 @@ export default function RenderQueueDrawer({
               onClick={clear}
               disabled={busy || running || jobs.length === 0}
               aria-label="Clear all jobs in queue"
-              className="p-1.5 rounded text-white/40 hover:text-white/80 hover:bg-white/10 transition-colors disabled:opacity-30"
+              className="p-1.5 rounded text-muted hover:text-white/80 hover:bg-white/10 transition-colors disabled:opacity-30"
             >
               <Trash2 size={13} aria-hidden="true" />
             </button>
@@ -369,7 +369,7 @@ export default function RenderQueueDrawer({
                   <span className="text-compact font-semibold text-white/95 truncate">
                     {activeJob.name || activeJob.target || 'Processing Task'}
                   </span>
-                  <span className="text-nano text-white/40 font-mono">
+                  <span className="text-nano text-muted font-mono">
                     ID: {activeJob.id}
                   </span>
                 </div>
@@ -393,13 +393,13 @@ export default function RenderQueueDrawer({
                 {/* Rolling 100-Frame ETA & Speed */}
                 <div className="grid grid-cols-2 gap-2 pt-2 border-t border-white/5 text-mini">
                   <div className="flex flex-col">
-                    <span className="text-nano text-white/40">Rolling 100f ETA:</span>
+                    <span className="text-nano text-muted">Rolling 100f ETA:</span>
                     <span className="font-mono font-semibold text-emerald-400">
                       {formatDuration(activeJobDetails.etaSeconds)}
                     </span>
                   </div>
                   <div className="flex flex-col">
-                    <span className="text-nano text-white/40">Render Speed:</span>
+                    <span className="text-nano text-muted">Render Speed:</span>
                     <span className="font-mono text-white/80 truncate">
                       {speedMultiplier}
                     </span>
@@ -418,10 +418,10 @@ export default function RenderQueueDrawer({
           {/* Jobs List Table */}
           <div className="flex-1 overflow-y-auto p-3 scrollbar-thin">
             {jobs.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-full text-center text-white/40">
+              <div className="flex flex-col items-center justify-center h-full text-center text-muted">
                 <Layers size={32} className="mb-2 text-white/20" aria-hidden="true" />
                 <span className="text-plain font-medium text-white/60">Queue is Empty</span>
-                <span className="text-mini text-white/40 max-w-sm mt-0.5">
+                <span className="text-mini text-muted max-w-sm mt-0.5">
                   Add render jobs from Face Swap or Batch Swap to process multiple targets sequentially.
                 </span>
               </div>
@@ -446,7 +446,7 @@ export default function RenderQueueDrawer({
                     >
                       {/* Priority Controls & Order */}
                       <div className="flex items-center gap-1.5">
-                        <span className="text-nano font-mono text-white/30 w-5 text-center">
+                        <span className="text-nano font-mono text-muted w-5 text-center">
                           #{idx + 1}
                         </span>
                         <div className="flex flex-col">
@@ -455,7 +455,7 @@ export default function RenderQueueDrawer({
                             onClick={() => handleMoveUp(idx)}
                             disabled={idx === 0 || running}
                             aria-label={`Prioritize job ${job.id || idx + 1} up`}
-                            className="p-0.5 text-white/30 hover:text-white disabled:opacity-20"
+                            className="p-0.5 text-muted hover:text-white disabled:opacity-20"
                           >
                             <ArrowUp size={11} aria-hidden="true" />
                           </button>
@@ -464,7 +464,7 @@ export default function RenderQueueDrawer({
                             onClick={() => handleMoveDown(idx)}
                             disabled={idx === jobs.length - 1 || running}
                             aria-label={`Prioritize job ${job.id || idx + 1} down`}
-                            className="p-0.5 text-white/30 hover:text-white disabled:opacity-20"
+                            className="p-0.5 text-muted hover:text-white disabled:opacity-20"
                           >
                             <ArrowDown size={11} aria-hidden="true" />
                           </button>
@@ -481,7 +481,7 @@ export default function RenderQueueDrawer({
                             {stateLabel}
                           </span>
                         </div>
-                        <div className="flex items-center gap-3 text-nano text-white/40 font-mono mt-0.5">
+                        <div className="flex items-center gap-3 text-nano text-muted font-mono mt-0.5">
                           <span>{job.resolution || '1920x1080'}</span>
                           <span>&bull;</span>
                           <span>{job.encoder || 'NVENC'}</span>
@@ -535,7 +535,7 @@ export default function RenderQueueDrawer({
                             disabled={running}
                             aria-label={`Remove job ${job.name || idx + 1} from queue`}
                             title="Remove from queue"
-                            className="p-1.5 rounded hover:bg-white/10 text-white/40 hover:text-rose-400 transition-colors disabled:opacity-20"
+                            className="p-1.5 rounded hover:bg-white/10 text-muted hover:text-rose-400 transition-colors disabled:opacity-20"
                           >
                             <Trash2 size={13} aria-hidden="true" />
                           </button>

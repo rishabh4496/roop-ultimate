@@ -53,3 +53,26 @@ export async function openTab(page, id) {
   // waiting for quiet would turn a finding into a 60 s timeout.
   await page.waitForTimeout(SETTLE_MS);
 }
+
+// Views that are not a tab of their own but a state a tab can be in, and that
+// have their own markup. The Batch Matrix tab is four different forms behind one
+// hash: auditing only its default left Strategies 2-4 (16 critical axe
+// violations) unseen.
+export const STRATEGY_BUTTONS = '[class~="lg:grid-cols-4"] > button';
+export const STATES = [
+  { id: 'batch/grouped', tab: 'batch', strategy: 1 },
+  { id: 'batch/matrix', tab: 'batch', strategy: 2 },
+  { id: 'batch/recipes', tab: 'batch', strategy: 3 },
+];
+
+export async function openState(page, state) {
+  await openTab(page, state.tab);
+  await page.locator(STRATEGY_BUTTONS).nth(state.strategy).click();
+  await page.waitForTimeout(600);
+}
+
+/** Every view the a11y and contrast audits cover: the 9 tabs, then the states. */
+export const VIEWS = [
+  ...TABS.map((t) => ({ id: t.id, open: (page) => openTab(page, t.id) })),
+  ...STATES.map((s) => ({ id: s.id, open: (page) => openState(page, s) })),
+];

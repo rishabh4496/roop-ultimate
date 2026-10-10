@@ -76,7 +76,7 @@ const MOTION_ICON_SIZES = {
 };
 
 const MOTION_ICON_VARIANTS = {
-  accent: 'bg-[var(--accent)]/15 border-[var(--accent)]/30 text-[var(--accent)] shadow-[0_0_12px_rgba(233,69,96,0.25)]',
+  accent: 'bg-[var(--accent)]/15 border-[var(--accent)]/30 text-accent shadow-[0_0_12px_rgba(233,69,96,0.25)]',
   emerald: 'bg-emerald-500/15 border-emerald-500/30 text-emerald-400 shadow-[0_0_12px_rgba(52,211,153,0.25)]',
   amber: 'bg-amber-500/15 border-amber-500/30 text-amber-400 shadow-[0_0_12px_rgba(251,191,36,0.25)]',
   purple: 'bg-purple-500/15 border-purple-500/30 text-purple-400 shadow-[0_0_12px_rgba(168,85,247,0.25)]',
@@ -120,7 +120,7 @@ export const Section = ({ title, icon, iconVariant = 'accent', action, children,
   ) : (
     <span className="h-3.5 w-[3px] rounded-full bg-[var(--accent)]/80 shrink-0" />
   );
-  const label = 'text-mini font-semibold uppercase tracking-[0.14em] text-white/45';
+  const label = 'text-mini font-semibold uppercase tracking-[0.14em] text-muted';
   return (
     <Card className={`p-3.5 sm:p-4.5 ${className}`} tilt={tilt} glare={glare} hover={hover} elevation={elevation}>
       {title && (
@@ -130,10 +130,13 @@ export const Section = ({ title, icon, iconVariant = 'accent', action, children,
                     className="flex items-center gap-2 min-w-0 group/sec">
               {marker}
               <span className={`${label} group-hover/sec:text-white/60 transition-colors`}>{title}</span>
-              <svg className={`w-3 h-3 text-white/30 transition-transform duration-200 ${open ? 'rotate-90' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M9 6l6 6-6 6" /></svg>
+              <svg className={`w-3 h-3 text-muted transition-transform duration-200 ${open ? 'rotate-90' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M9 6l6 6-6 6" /></svg>
             </button>
           ) : (
-            <h3 className={`${label} flex items-center gap-2`}>{marker}{title}</h3>
+            // h2, not h3: a tab's page has one h1 (the app title) and its panels
+            // are the next level down. h3 skipped a level on every tab that opens
+            // with a Section (Face Swap, Settings) -- axe heading-order.
+            <h2 className={`${label} flex items-center gap-2`}>{marker}{title}</h2>
           )}
           {action}
         </div>
@@ -174,7 +177,7 @@ export const InfoBadge = ({ info }) => (
       type="button"
       aria-label={typeof info === 'string' ? info : 'More information'}
       onClick={(e) => e.preventDefault()}
-      className="text-micro text-white/45 hover:text-white/60 focus-visible:text-white/60 cursor-help bg-white/5 rounded-full w-4.5 h-4.5 flex items-center justify-center font-bold apple-transition"
+      className="text-micro text-muted hover:text-white/60 focus-visible:text-white/60 cursor-help bg-white/5 rounded-full w-4.5 h-4.5 flex items-center justify-center font-bold apple-transition"
     >
       ?
     </button>
@@ -200,7 +203,7 @@ export const ResetMark = ({ label, onReset }) => (
     onClick={(e) => { e.preventDefault(); onReset(); }}
     title={`Changed from default — click to reset${label ? ` “${label}”` : ''}`}
     aria-label={label ? `Reset ${label} to default` : 'Reset to default'}
-    className="shrink-0 mt-0.5 inline-flex items-center gap-1 px-1.5 h-4.5 rounded-full bg-[var(--accent)]/12 border border-[var(--accent)]/30 text-[var(--accent)] hover:bg-[var(--accent)]/25 apple-transition group/reset"
+    className="shrink-0 mt-0.5 inline-flex items-center gap-1 px-1.5 h-4.5 rounded-full bg-[var(--accent)]/12 border border-[var(--accent)]/30 text-accent hover:bg-[var(--accent)]/25 apple-transition group/reset"
   >
     <span className="h-1 w-1 rounded-full bg-[var(--accent)] group-hover/reset:hidden" />
     <Icon.reset size={9} className="hidden group-hover/reset:block" />
@@ -348,20 +351,51 @@ export const Toggle = ({ label, info, checked, onChange, modified, onReset, sett
       {modified && onReset && <ResetMark label={label} onReset={onReset} />}
       {info && <InfoBadge info={info} />}
     </span>
-    <motion.span
-      aria-hidden
-      whileTap={disabled ? undefined : { scale: 0.9 }}
-      transition={spring.snappy}
-      className={`relative block shrink-0 mt-0.5 w-10 h-[22px] rounded-full transition-colors duration-200 border peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-[var(--accent)] ${checked ? 'bg-[var(--accent)] border-[var(--accent)]' : 'bg-white/[0.06] border-white/10 group-hover/toggle:border-white/20'}`}
+    {/* A plain span with a CSS press, NOT a motion.span with `whileTap`: framer
+        gives any element that has tap handlers `tabindex="0"` so it is keyboard
+        reachable, and this one is `aria-hidden` and decorative (the checkbox
+        above is the control). That made every toggle a second, invisible tab
+        stop AND an aria-hidden-focus violation -- 26 of the 291 stops on Face
+        Swap. `group-active` is the label being pressed, so the whole row
+        still squashes the switch. */}
+    <span
+      aria-hidden="true"
+      className={`relative block shrink-0 mt-0.5 w-10 h-[22px] rounded-full transition duration-200 border peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-[var(--accent)] ${disabled ? '' : 'group-active/toggle:scale-90'} ${checked ? 'bg-[var(--accent)] border-[var(--accent)]' : 'bg-white/[0.06] border-white/10 group-hover/toggle:border-white/20'}`}
     >
       <motion.span
         className="absolute top-[2px] left-[2px] w-[16px] h-[16px] rounded-full bg-white shadow-[0_1px_3px_rgba(0,0,0,0.5)]"
         animate={{ x: checked ? 18 : 0 }}
         transition={spring.bouncy}
       />
-    </motion.span>
+    </span>
   </label>
 );
+
+// A field that takes focus when it APPEARS: the inline rename box, the filter box
+// of a popover the user just opened. These used `autoFocus`, which a11y linting
+// rejects because it also fires on page load, where it yanks a screen-reader user
+// out of their reading position. Here it is an explicit effect on mount, and
+// every use is a field the user has just asked for, so the move is expected.
+function useFocusOnMount(ref, select) {
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.focus({ preventScroll: true });
+    if (select && typeof el.select === 'function') el.select();
+    // mount only: re-focusing on every render would fight the user's own focus
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+}
+export const FocusedInput = ({ select = false, ...props }) => {
+  const ref = useRef(null);
+  useFocusOnMount(ref, select);
+  return <input ref={ref} {...props} />;
+};
+export const FocusedTextarea = ({ select = false, ...props }) => {
+  const ref = useRef(null);
+  useFocusOnMount(ref, select);
+  return <textarea ref={ref} {...props} />;
+};
 
 export const TextInput = ({ label, info, value, onChange, placeholder, type = 'text', modified, onReset, settingKey }) => (
   <Field label={label} info={info} modified={modified} onReset={onReset} settingKey={settingKey}>
@@ -375,7 +409,12 @@ export const TextInput = ({ label, info, value, onChange, placeholder, type = 't
   </Field>
 );
 
-export const Button = ({ children, onClick, variant = 'primary', disabled, className = '', size = 'md' }) => {
+// `...rest` carries `title`, `aria-label`, `data-*`, `id` and the like to the
+// <button>. It used to take only the six props below and DROP everything else, so
+// `<Button title="Refresh media library"><Icon.refresh/></Button>` rendered a
+// button with no name at all (and no tooltip): axe button-name, on every
+// icon-only Button in the app.
+export const Button = ({ children, onClick, variant = 'primary', disabled, className = '', size = 'md', ...rest }) => {
   const variants = {
     // `.fill-accent` rather than the utilities spelled out, so there is ONE
     // definition of "accent-filled button" in the app — this primitive and the
@@ -412,6 +451,7 @@ export const Button = ({ children, onClick, variant = 'primary', disabled, class
   return (
     <motion.button
       type="button"
+      {...rest}
       onClick={onClick}
       disabled={disabled}
       whileHover={disabled ? undefined : { y: -2, scale: 1.03 }}
@@ -430,7 +470,7 @@ export const FaceGallery = ({ title, faces, selected, onSelect, onRemove, empty,
   return (
     <div>
       <div className="flex items-center gap-2 mb-2">
-        <span className="text-xs font-semibold uppercase tracking-wider text-white/40">{title}</span>
+        <span className="text-xs font-semibold uppercase tracking-wider text-muted">{title}</span>
         {faces.length > 0 && (
           <span className="px-1.5 py-0.5 rounded-full bg-white/10 text-micro text-white/60 tabular-nums">
             {faces.length}{personCount > 1 ? ` · ${personCount} people` : ''}
@@ -438,7 +478,7 @@ export const FaceGallery = ({ title, faces, selected, onSelect, onRemove, empty,
         )}
       </div>
       {faces.length === 0 ? (
-        <div className="h-24 flex items-center justify-center rounded-lg border border-dashed border-white/10 text-xs text-white/30">
+        <div className="h-24 flex items-center justify-center rounded-lg border border-dashed border-white/10 text-xs text-muted">
           {empty || 'None yet'}
         </div>
       ) : (
@@ -449,13 +489,25 @@ export const FaceGallery = ({ title, faces, selected, onSelect, onRemove, empty,
             const itemInfo = info && info[i];
             const hasMultiFaces = itemInfo && itemInfo.count > 1;
             return (
+              // The card is a plain container: drag, hover and the border. Selecting
+              // is ONE <button> inside it and Remove is its SIBLING -- not a
+              // descendant. The card used to be `role="button" tabIndex=0` with the
+              // Remove button nested inside it, which is an interactive control
+              // inside an interactive control (axe nested-interactive; a screen
+              // reader cannot reach the inner one) and was why the tile needed an
+              // `e.target !== e.currentTarget` guard to keep Enter/Space on Remove
+              // from selecting the face. As siblings each has its own native
+              // activation and no guard is needed.
+              //
+              // No `whileTap` here: framer gives any element with tap handlers
+              // tabindex="0", which would put a second, non-interactive stop on
+              // every card. The press is CSS (`has-[.face-main:active]`).
               <motion.div
                 key={i}
                 layout
                 initial={{ opacity: 0, scale: 0.7 }}
                 animate={{ opacity: 1, scale: 1, transition: { ...spring.snappy, delay: Math.min(i * 0.025, 0.35) } }}
                 whileHover={vertical ? { x: 3 } : { y: -4, scale: 1.04, zIndex: 5 }}
-                whileTap={{ scale: 0.95 }}
                 transition={spring.snappy}
                 draggable={draggable}
                 onDragStart={draggable ? (e) => {
@@ -463,81 +515,65 @@ export const FaceGallery = ({ title, faces, selected, onSelect, onRemove, empty,
                   e.dataTransfer.effectAllowed = 'link';
                 } : undefined}
                 title={draggable ? `Face ${i + 1} — drag onto a person to assign` : undefined}
-                className={`group relative ${vertical ? 'flex items-center gap-3 p-2' : 'aspect-square'} rounded-xl overflow-hidden border-2 transition-colors duration-200 cursor-pointer ${draggable ? 'active:cursor-grabbing' : ''} ${selected === i ? (vertical ? 'bg-white/5' : 'ring-2 ring-[var(--accent)]/30') : 'hover:border-white/30'}`}
+                className={`group relative ${vertical ? 'flex items-center gap-3 p-2' : 'aspect-square'} rounded-xl overflow-hidden border-2 transition-colors duration-200 has-[.face-main:active]:scale-95 ${draggable ? 'active:cursor-grabbing' : ''} ${selected === i ? (vertical ? 'bg-white/5' : 'ring-2 ring-[var(--accent)]/30') : 'hover:border-white/30'}`}
                 style={{ borderColor: selected === i ? (color || 'var(--accent)') : (color ? `${color}66` : 'transparent') }}
-                onClick={() => onSelect(i)}
-                // Selecting a face is the primary action of this whole panel and
-                // it lived on a bare div: no tab stop, no role, no key handling.
-                role="button"
-                tabIndex={0}
-                aria-pressed={selected === i}
-                aria-label={person != null ? `Person ${person + 1}, face ${i + 1}` : `Face ${i + 1}`}
-                // Only when the tile ITSELF has focus. The Remove button is a
-                // descendant, so its Enter/Space bubble up here: unguarded, this
-                // handler selected the face instead of removing it (Space —
-                // preventDefault suppresses the button's own activation) or as
-                // well as removing it (Enter). stopPropagation on the button's
-                // onClick cannot help; that is a different event.
-                onKeyDown={(e) => {
-                  if (e.target !== e.currentTarget) return;
-                  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect?.(i); }
-                }}
               >
-                {vertical ? (
-                  <>
-                    {/* An empty src resolves to the page URL and paints a broken-image
-                        icon, so a face whose crop could not be built gets a plain
-                        placeholder tile — it still occupies its slot, because the
-                        gallery is positionally tied to the backend's faceset list. */}
-                    {src ? (
-                      <img src={src} alt={`face ${i}`} className="w-10 h-10 rounded-lg object-cover shrink-0" />
-                    ) : (
-                      <div className="w-10 h-10 rounded-lg shrink-0 grid place-items-center bg-white/[0.04] text-white/25 text-xs">?</div>
-                    )}
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm font-medium text-white/90">
-                        {person != null ? `Person ${person + 1}` : `Face ${i + 1}`}
+                <button
+                  type="button"
+                  onClick={() => onSelect(i)}
+                  aria-pressed={selected === i}
+                  aria-label={person != null ? `Person ${person + 1}, face ${i + 1}` : `Face ${i + 1}`}
+                  className={`face-main cursor-pointer text-left focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--accent)] ${vertical ? 'flex flex-1 min-w-0 items-center gap-3' : 'absolute inset-0 block w-full h-full'}`}
+                >
+                  {vertical ? (
+                    <>
+                      {/* An empty src resolves to the page URL and paints a broken-image
+                          icon, so a face whose crop could not be built gets a plain
+                          placeholder tile — it still occupies its slot, because the
+                          gallery is positionally tied to the backend's faceset list. */}
+                      {src ? (
+                        <img src={src} alt="" className="w-10 h-10 rounded-lg object-cover shrink-0" />
+                      ) : (
+                        <div className="w-10 h-10 rounded-lg shrink-0 grid place-items-center bg-white/[0.04] text-white/25 text-xs">?</div>
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-medium text-white/90">
+                          {person != null ? `Person ${person + 1}` : `Face ${i + 1}`}
+                        </div>
                       </div>
-                    </div>
-                    {onRemove && (
-                      <button
-                        type="button"
-                        onClick={(e) => { e.stopPropagation(); onRemove(i); }}
-                        title="Remove this face"
-                        aria-label={`Remove face ${i + 1}`}
-                        className="h-7 w-7 shrink-0 rounded-full bg-black/40 text-white/60 hover:bg-[var(--accent-hover)] hover:text-white hover:scale-110 active:scale-90 flex items-center justify-center"
-                      ><Icon.close size={13} /></button>
-                    )}
-                  </>
-                ) : (
-                  <>
-                    {src ? (
-                      <img src={src} alt={`face ${i}`} className="w-full h-full object-cover" />
-                    ) : (
-                      <div className="w-full h-full grid place-items-center bg-white/[0.04] text-white/25 text-lg">?</div>
-                    )}
-                    {hasMultiFaces && (
-                      <span className="absolute top-1 left-1 px-1 py-0.5 rounded bg-black/75 backdrop-blur text-nano font-bold text-[var(--accent)] border border-[var(--accent)]/30 shadow-md pointer-events-none select-none">
-                        {itemInfo.count}F
-                      </span>
-                    )}
-                    {person != null && (
-                      <span className="absolute bottom-1 left-1 px-1.5 rounded-md text-nano font-bold leading-tight text-white shadow-sm"
-                        style={{ backgroundColor: color }}>P{person + 1}</span>
-                    )}
-                    {onRemove && (
-                      <button
-                        type="button"
-                        title="Remove this face"
-                        aria-label={`Remove face ${i + 1}`}
-                        onClick={(e) => { e.stopPropagation(); onRemove(i); }}
-                        // focus-visible as well as group-hover: this is a real
-                        // tab stop, and opacity-0 alone left a keyboard user
-                        // focused on a control they could not see.
-                        className="absolute top-1 right-1 h-6 w-6 rounded-full bg-black/70 text-white/80 leading-none opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:bg-[var(--accent-hover)] hover:scale-110 active:scale-90 transition-all duration-300 flex items-center justify-center"
-                      ><Icon.close size={12} /></button>
-                    )}
-                  </>
+                    </>
+                  ) : (
+                    <>
+                      {src ? (
+                        <img src={src} alt="" className="w-full h-full object-cover" />
+                      ) : (
+                        <div className="w-full h-full grid place-items-center bg-white/[0.04] text-white/25 text-lg">?</div>
+                      )}
+                      {hasMultiFaces && (
+                        <span className="absolute top-1 left-1 px-1 py-0.5 rounded bg-black/75 backdrop-blur text-nano font-bold text-accent border border-[var(--accent)]/30 shadow-md pointer-events-none select-none">
+                          {itemInfo.count}F
+                        </span>
+                      )}
+                      {person != null && (
+                        <span className="absolute bottom-1 left-1 px-1.5 rounded-md text-nano font-bold leading-tight text-white shadow-sm"
+                          style={{ backgroundColor: color }}>P{person + 1}</span>
+                      )}
+                    </>
+                  )}
+                </button>
+                {onRemove && (
+                  <button
+                    type="button"
+                    onClick={() => onRemove(i)}
+                    title="Remove this face"
+                    aria-label={`Remove face ${i + 1}`}
+                    // focus-visible as well as group-hover in the grid layout: this
+                    // is a real tab stop, and opacity-0 alone left a keyboard user
+                    // focused on a control they could not see.
+                    className={vertical
+                      ? 'h-7 w-7 shrink-0 rounded-full bg-black/40 text-white/60 hover:bg-[var(--accent-hover)] hover:text-white hover:scale-110 active:scale-90 flex items-center justify-center'
+                      : 'absolute top-1 right-1 z-10 h-6 w-6 rounded-full bg-black/70 text-white/80 leading-none opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:bg-[var(--accent-hover)] hover:scale-110 active:scale-90 transition-all duration-300 flex items-center justify-center'}
+                  ><Icon.close size={vertical ? 13 : 12} /></button>
                 )}
               </motion.div>
             );

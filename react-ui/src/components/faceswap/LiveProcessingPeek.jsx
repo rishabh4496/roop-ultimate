@@ -102,7 +102,7 @@ export default function LiveProcessingPeek({
         {progressDesc && (
           <div className="absolute bottom-3 left-3 right-3 z-10">
             <div className="px-3 py-1.5 rounded-xl bg-black/80 backdrop-blur-md border border-white/10 text-xs font-mono text-neutral-200 truncate">
-              <span className="text-[var(--accent)] font-bold mr-2">STATE:</span>
+              <span className="text-accent font-bold mr-2">STATE:</span>
               <span>{progressDesc}</span>
             </div>
           </div>

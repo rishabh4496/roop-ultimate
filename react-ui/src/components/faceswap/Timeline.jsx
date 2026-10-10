@@ -100,7 +100,7 @@ const IconBtn = ({ title, onClick, active = false, children, className = '' }) =
     aria-label={title}
     className={`grid place-items-center h-8 w-8 rounded-lg transition-colors ${
       active
-        ? 'bg-[var(--accent)]/12 text-[var(--accent)]'
+        ? 'bg-[var(--accent)]/12 text-accent'
         : 'text-[var(--text-muted)] hover:text-[var(--text-main)] hover:bg-white/[0.06]'
     } ${className}`}
   >
@@ -436,7 +436,7 @@ export default function Timeline({
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
         <div className="flex items-baseline gap-2.5 min-w-0">
           <span className="text-mini font-semibold uppercase tracking-[0.18em] text-[var(--text-muted)]">Timeline</span>
-          <span className="font-mono text-micro tabular-nums text-[var(--text-muted)]/55 truncate">
+          <span className="font-mono text-micro tabular-nums text-muted truncate">
             {maxFrames.toLocaleString()} frames · {fps} fps · {fmtTC(maxFrames, fps)}
           </span>
           {zoomed && (
@@ -451,10 +451,10 @@ export default function Timeline({
                       onCommit={(v) => setFrameMarkerVal('start', v)} />
           <RangeField label="Out" value={endFrame} min={startFrame} max={maxFrames}
                       onCommit={(v) => setFrameMarkerVal('end', v)} />
-          <span className="inline-flex items-baseline gap-1.5 rounded-lg border border-[var(--accent)]/25 bg-[var(--accent)]/[0.08] px-2 py-1 font-mono text-mini tabular-nums text-[var(--accent)]"
+          <span className="inline-flex items-baseline gap-1.5 rounded-lg border border-[var(--accent)]/25 bg-[var(--accent)]/[0.08] px-2 py-1 font-mono text-mini tabular-nums text-accent"
                 title="Length of the selected range — this is what gets rendered">
             {fmtTC(rangeLen, fps)}
-            <span className="text-nano opacity-60">{rangeLen.toLocaleString()} f · {rangeShare}%</span>
+            <span className="text-nano">{rangeLen.toLocaleString()} f · {rangeShare}%</span>
           </span>
         </div>
       </div>
@@ -471,7 +471,7 @@ export default function Timeline({
           return (
             <React.Fragment key={f}>
               <span className="absolute bottom-0 w-px h-2.5 bg-[var(--text-muted)]/40" style={{ left: `${pct}%` }} />
-              <span className="absolute bottom-3 font-mono text-nano tabular-nums text-[var(--text-muted)]/60 whitespace-nowrap"
+              <span className="absolute bottom-3 font-mono text-nano tabular-nums text-muted whitespace-nowrap"
                     style={{ left: `${pct}%`, transform: anchor(pct) }}>
                 {ticks.frameMode ? fmtTCF(f, fps) : fmtTC(f, fps)}
               </span>
@@ -486,6 +486,7 @@ export default function Timeline({
             type="button"
             onClick={(e) => { if (e.altKey) persistMarkers(markers.filter((x) => x !== m)); else setFrame(m); }}
             title={`Marker at frame ${m} (${fmtTC(m, fps)}) — click to jump, alt-click to remove`}
+            aria-label={`Marker at frame ${m}`}
             className="absolute bottom-0 -translate-x-1/2 h-3.5 w-2.5 z-10 grid place-items-end"
             style={{ left: `${pctOf(m)}%` }}
           >
@@ -513,7 +514,7 @@ export default function Timeline({
               />
               <div className="mt-1 flex items-baseline justify-between px-0.5 font-mono text-micro tabular-nums">
                 <span className="text-[var(--text-main)] font-semibold">{fmtTC(hoverFrame, fps)}</span>
-                <span className="text-[var(--text-muted)]/60">f {hoverFrame.toLocaleString()}</span>
+                <span className="text-muted">f {hoverFrame.toLocaleString()}</span>
               </div>
             </div>
             <span className="w-2.5 h-2.5 rotate-45 -mt-[6px] border-b border-r border-[var(--border-strong)] bg-[var(--card-bg)]" />
@@ -569,7 +570,7 @@ export default function Timeline({
               <span className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 h-9 w-2.5 rounded-full bg-white shadow-[0_1px_4px_rgba(0,0,0,0.7)] grid place-items-center gap-[2px]">
                 <span className="block h-[7px] w-px bg-black/25" />
               </span>
-              <span className={`absolute top-1 text-nano font-bold uppercase tracking-wider text-white/70 ${
+              <span className={`absolute top-1 rounded px-1 bg-black/70 text-nano font-bold uppercase tracking-wider text-white ${
                 which === 'start' ? 'left-1.5' : 'right-1.5'}`}>
                 {which === 'start' ? 'In' : 'Out'}
               </span>
@@ -656,7 +657,7 @@ export default function Timeline({
         {/* Read-out */}
         <div className="flex items-baseline gap-2 font-mono">
           <span className="text-lead font-semibold tabular-nums text-[var(--text-main)]">{fmtTC(frame, fps)}</span>
-          <span className="text-mini tabular-nums text-[var(--text-muted)]/45">/ {fmtTC(maxFrames, fps)}</span>
+          <span className="text-mini tabular-nums text-muted">/ {fmtTC(maxFrames, fps)}</span>
           <span className="mx-1 h-4 w-px bg-[var(--border-color)] self-center" />
           <input
             type="number"
@@ -675,8 +676,9 @@ export default function Timeline({
             }}
             className="w-[8ch] rounded-md border border-[var(--border-color)] bg-[var(--input-bg)] py-0.5 text-center text-mini font-semibold tabular-nums text-[var(--text-main)] outline-none transition-colors focus:border-[var(--accent)]"
             title="Type a frame number and press Enter to jump"
+            aria-label="Frame number"
           />
-          <span className="text-micro tabular-nums text-[var(--text-muted)]/40">/ {maxFrames.toLocaleString()}</span>
+          <span className="text-micro tabular-nums text-muted">/ {maxFrames.toLocaleString()}</span>
         </div>
 
         {/* Transport */}
@@ -737,7 +739,7 @@ export default function Timeline({
             <button type="button"
                     onClick={async () => { await setFrameMarkerVal('start', 1); await setFrameMarkerVal('end', maxFrames); }}
                     title="Reset the range to the whole clip (R)"
-                    className="px-2 py-1 rounded-md text-mini font-semibold text-[var(--text-muted)]/70 hover:text-[var(--text-main)] hover:bg-white/[0.06] transition-colors">
+                    className="px-2 py-1 rounded-md text-mini font-semibold text-muted hover:text-[var(--text-main)] hover:bg-white/[0.06] transition-colors">
               Full
             </button>
           </div>

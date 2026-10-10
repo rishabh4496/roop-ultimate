@@ -47,12 +47,12 @@ export default class ErrorBoundary extends React.Component {
     return (
       <div role="alert" className="flex flex-col items-center justify-center h-[45vh] gap-4 text-center px-6">
         {isChunk
-          ? <Icon.disconnected size={30} className="text-white/40" />
+          ? <Icon.disconnected size={30} className="text-muted" />
           : <Icon.warning size={30} className="text-amber-400/80" />}
         <div className="text-sm font-semibold text-white/80">
           {isChunk ? 'This panel could not be loaded' : 'Something went wrong in this panel'}
         </div>
-        <div className="text-xs text-white/40 max-w-md leading-relaxed selectable">
+        <div className="text-xs text-muted max-w-md leading-relaxed selectable">
           {isChunk
             ? 'The UI bundle for this tab failed to download — usually the server restarted. Retry once it is back up.'
             : String(error?.message || error)}

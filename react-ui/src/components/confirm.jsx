@@ -30,6 +30,7 @@ export function ConfirmHost() {
   const [dialog, setDialog] = useState(null);
   const [text, setText] = useState('');
   const inputRef = useRef(null);
+  const confirmRef = useRef(null);
 
   useEffect(() => {
     _emit = (d) => { setText(d.defaultValue || ''); setDialog(d); };
@@ -49,11 +50,22 @@ export function ConfirmHost() {
     [close, dialog?.kind],
   );
 
-  // Focus the input (prompt) for immediate typing; Esc cancels, Enter confirms.
+  // Move focus into the dialog when it opens -- the input for a prompt, the
+  // confirm button otherwise -- and hand it back to whatever opened it when it
+  // closes, so a keyboard user lands where they were instead of on <body>. (The
+  // confirm button used to carry `autoFocus`, which only works on first mount of
+  // the element and never restored anything.) Esc cancels, Enter confirms.
   useEffect(() => {
-    if (dialog?.kind !== 'prompt') return undefined;
-    const timer = setTimeout(() => inputRef.current?.select(), 30);
-    return () => clearTimeout(timer);
+    if (!dialog) return undefined;
+    const opener = document.activeElement;
+    const timer = setTimeout(() => {
+      if (dialog.kind === 'prompt') { inputRef.current?.focus(); inputRef.current?.select(); }
+      else confirmRef.current?.focus();
+    }, 30);
+    return () => {
+      clearTimeout(timer);
+      if (opener instanceof HTMLElement && opener.isConnected) opener.focus({ preventScroll: true });
+    };
   }, [dialog]);
   useEffect(() => {
     if (!dialog) return;
@@ -110,7 +122,7 @@ export function ConfirmHost() {
                 className="px-4 py-2 rounded-xl text-compact font-semibold bg-white/[0.05] hover:bg-white/[0.09] text-white/70 hover:text-white border border-white/10 transition-colors"
               >{dialog.cancelLabel || 'Cancel'}</button>
               <button
-                type="button" onClick={onConfirm} autoFocus={dialog.kind !== 'prompt'}
+                type="button" onClick={onConfirm} ref={confirmRef}
                 className={`px-4 py-2 rounded-xl text-compact font-semibold border transition-colors ${
                   danger
                     ? 'bg-red-500/15 hover:bg-red-500/25 text-red-300 border-red-500/30'

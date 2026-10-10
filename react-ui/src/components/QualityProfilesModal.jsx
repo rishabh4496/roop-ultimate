@@ -276,7 +276,7 @@ export default function QualityProfilesModal({
               <div>
                 <h2 className="text-lg font-bold text-white flex items-center gap-2">
                   Quality Profiles & Processing Estimator
-                  <span className="text-nano px-2 py-0.5 rounded-full bg-[var(--accent)]/20 text-[var(--accent)] font-mono font-bold">
+                  <span className="text-nano px-2 py-0.5 rounded-full bg-[var(--accent)]/20 text-accent font-mono font-bold">
                     PRESETS & CUSTOM PROFILES
                   </span>
                 </h2>
@@ -300,7 +300,7 @@ export default function QualityProfilesModal({
           <div className="px-6 py-3 border-b border-white/5 bg-black/30 flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2 text-xs text-white/70">
               <span className="font-semibold">Active Profile:</span>
-              <span className="px-2 py-0.5 rounded bg-[var(--accent)]/20 text-[var(--accent)] font-bold font-mono">
+              <span className="px-2 py-0.5 rounded bg-[var(--accent)]/20 text-accent font-bold font-mono">
                 {activeProfileId
                   ? BUILTIN_PROFILES.find((p) => p.id === activeProfileId)?.name ||
                     customProfiles.find((p) => p.id === activeProfileId)?.name ||
@@ -330,10 +330,10 @@ export default function QualityProfilesModal({
                 className="px-6 py-4 bg-[var(--accent)]/5 border-b border-[var(--accent)]/20 space-y-3"
               >
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold uppercase tracking-wider text-[var(--accent)] flex items-center gap-1.5">
+                  <span className="text-xs font-bold uppercase tracking-wider text-accent flex items-center gap-1.5">
                     <Icon.star size={14} /> Create Custom Profile from Current Workspace Settings
                   </span>
-                  <span className="text-nano text-white/40 font-mono">
+                  <span className="text-nano text-muted font-mono">
                     Stores current enhancers, restorer, and hardware tuning
                   </span>
                 </div>
@@ -384,7 +384,7 @@ export default function QualityProfilesModal({
             {/* Built-in Profiles Section */}
             <div className="space-y-3">
               <h3 className="text-xs font-bold uppercase tracking-wider text-white/50 flex items-center gap-2">
-                <Icon.brand size={14} className="text-[var(--accent)]" /> Built-In System Profiles ({BUILTIN_PROFILES.length})
+                <Icon.brand size={14} className="text-accent" /> Built-In System Profiles ({BUILTIN_PROFILES.length})
               </h3>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -425,22 +425,22 @@ export default function QualityProfilesModal({
                       {/* Speed & Time Breakdown */}
                       <div className="grid grid-cols-3 gap-2 p-2.5 rounded-xl bg-black/40 border border-white/5 text-center">
                         <div>
-                          <span className="text-nano text-white/40 block">Est. Speed</span>
+                          <span className="text-nano text-muted block">Est. Speed</span>
                           <span className="text-xs font-bold text-emerald-400 font-mono">~{prof.fps} FPS</span>
                         </div>
                         <div>
-                          <span className="text-nano text-white/40 block">Latency</span>
+                          <span className="text-nano text-muted block">Latency</span>
                           <span className="text-xs font-bold text-amber-400 font-mono">~{prof.msPerFrame} ms/f</span>
                         </div>
                         <div>
-                          <span className="text-nano text-white/40 block">1,000 Frames</span>
+                          <span className="text-nano text-muted block">1,000 Frames</span>
                           <span className="text-xs font-bold text-cyan-400 font-mono">~{prof.timePer1000f} sec</span>
                         </div>
                       </div>
 
                       {/* Settings ON Summary */}
                       <div className="space-y-1.5 pt-1">
-                        <span className="text-nano font-bold uppercase tracking-wider text-white/45 block">
+                        <span className="text-nano font-bold uppercase tracking-wider text-muted block">
                           ⚙️ Settings Summary (ON):
                         </span>
                         <div className="grid grid-cols-2 gap-1.5">
@@ -448,11 +448,11 @@ export default function QualityProfilesModal({
                             <div
                               key={i}
                               className={`px-2 py-1 rounded text-nano flex items-center justify-between ${
-                                st.active ? 'bg-white/5 text-white/90 font-medium' : 'bg-white/[0.02] text-white/40'
+                                st.active ? 'bg-white/5 text-white/90 font-medium' : 'bg-white/[0.02] text-muted'
                               }`}
                             >
                               <span className="truncate">{st.label}:</span>
-                              <span className={`font-mono font-bold ${st.active ? 'text-[var(--accent)]' : 'text-white/30'}`}>
+                              <span className={`font-mono font-bold ${st.active ? 'text-accent' : 'text-muted'}`}>
                                 {st.value}
                               </span>
                             </div>
@@ -486,7 +486,7 @@ export default function QualityProfilesModal({
                   <Icon.star size={14} className="text-purple-400" /> Custom User Profiles ({customProfiles.length})
                 </h3>
 
-                <span className="text-nano text-white/40">
+                <span className="text-nano text-muted">
                   Custom profiles can be applied, overwritten, or deleted anytime.
                 </span>
               </div>
@@ -495,7 +495,7 @@ export default function QualityProfilesModal({
                 <div className="p-8 text-center border border-dashed border-white/10 rounded-xl space-y-2">
                   <Icon.star size={28} className="mx-auto text-white/20" />
                   <p className="text-xs text-white/50">No custom profiles saved yet.</p>
-                  <p className="text-nano text-white/30">
+                  <p className="text-nano text-muted">
                     Click <strong>"➕ Save Workspace as Custom Profile"</strong> above to capture your current settings into a reusable preset.
                   </p>
                 </div>
@@ -554,22 +554,22 @@ export default function QualityProfilesModal({
                         {/* Speed & Time Breakdown */}
                         <div className="grid grid-cols-3 gap-2 p-2.5 rounded-xl bg-black/40 border border-white/5 text-center">
                           <div>
-                            <span className="text-nano text-white/40 block">Est. Speed</span>
+                            <span className="text-nano text-muted block">Est. Speed</span>
                             <span className="text-xs font-bold text-emerald-400 font-mono">~{fps} FPS</span>
                           </div>
                           <div>
-                            <span className="text-nano text-white/40 block">Latency</span>
+                            <span className="text-nano text-muted block">Latency</span>
                             <span className="text-xs font-bold text-amber-400 font-mono">~{msPerFrame} ms/f</span>
                           </div>
                           <div>
-                            <span className="text-nano text-white/40 block">1,000 Frames</span>
+                            <span className="text-nano text-muted block">1,000 Frames</span>
                             <span className="text-xs font-bold text-cyan-400 font-mono">~{timePer1000f} sec</span>
                           </div>
                         </div>
 
                         {/* Settings ON Summary */}
                         <div className="space-y-1.5 pt-1">
-                          <span className="text-nano font-bold uppercase tracking-wider text-white/45 block">
+                          <span className="text-nano font-bold uppercase tracking-wider text-muted block">
                             ⚙️ Settings Summary (ON):
                           </span>
                           <div className="grid grid-cols-2 gap-1.5">
@@ -577,11 +577,11 @@ export default function QualityProfilesModal({
                               <div
                                 key={i}
                                 className={`px-2 py-1 rounded text-nano flex items-center justify-between ${
-                                  st.active ? 'bg-white/5 text-white/90 font-medium' : 'bg-white/[0.02] text-white/40'
+                                  st.active ? 'bg-white/5 text-white/90 font-medium' : 'bg-white/[0.02] text-muted'
                                 }`}
                               >
                                 <span className="truncate">{st.label}:</span>
-                                <span className={`font-mono font-bold ${st.active ? 'text-purple-400' : 'text-white/30'}`}>
+                                <span className={`font-mono font-bold ${st.active ? 'text-purple-400' : 'text-muted'}`}>
                                   {st.value}
                                 </span>
                               </div>

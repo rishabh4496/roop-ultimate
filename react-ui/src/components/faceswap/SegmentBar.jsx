@@ -43,7 +43,7 @@ export default function SegmentBar({
   return (
     <div className="mt-2 rounded-xl border border-white/10 bg-black/20 px-3 py-2">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="text-micro font-bold uppercase tracking-wider text-white/45 mr-1">
+        <span className="text-micro font-bold uppercase tracking-wider text-muted mr-1">
           Segments
         </span>
 
@@ -77,7 +77,7 @@ export default function SegmentBar({
       </div>
 
       {segments.length === 0 ? (
-        <p className="text-mini text-white/45 mt-1.5 mb-0">
+        <p className="text-mini text-muted mt-1.5 mb-0">
           Mark In/Out on the timeline and add it here to swap only the parts you need.
           Each segment renders as its own queued job; join them afterwards for one file.
         </p>
@@ -90,7 +90,7 @@ export default function SegmentBar({
                   <button
                     type="button"
                     onClick={() => onJump(s)}
-                    className="hover:text-[var(--accent)] transition-colors"
+                    className="hover:text-accent transition-colors"
                     title={`Set In/Out to frames ${s.start}–${s.end} and jump there`}
                     aria-label={`Segment ${i + 1}: frames ${s.start} to ${s.end}. Click to select.`}
                   >
@@ -100,7 +100,7 @@ export default function SegmentBar({
                   <button
                     type="button"
                     onClick={() => onRemove(s.id)}
-                    className="px-1 text-white/35 hover:text-red-400 transition-colors"
+                    className="px-1 text-muted hover:text-red-400 transition-colors"
                     title="Remove this segment"
                     aria-label={`Remove segment ${i + 1}`}
                   >
@@ -110,7 +110,7 @@ export default function SegmentBar({
               </li>
             ))}
           </ul>
-          <p className="text-micro text-white/45 mt-1.5 mb-0 tabular-nums">
+          <p className="text-micro text-muted mt-1.5 mb-0 tabular-nums">
             {coveredFrames.toLocaleString()} of {maxFrames.toLocaleString()} frames
             {maxFrames > 0 && ` (${Math.round((coveredFrames / maxFrames) * 100)}% of the clip)`}
             {' — the rest is not rendered.'}

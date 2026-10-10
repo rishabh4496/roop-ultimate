@@ -76,7 +76,7 @@ export default function SourceRoutingPanel({ sourceIndex, sourceLabel, refreshKe
 
   if (sourceIndex == null) {
     return (
-      <div className="rounded-lg border border-slate-700/50 p-2 font-mono text-[10px] text-slate-500" data-testid="source-routing">
+      <div className="rounded-lg border border-slate-700/50 p-2 font-mono text-[10px] text-slate-400" data-testid="source-routing">
         Pose routing: map a source face to this person first.
       </div>
     );

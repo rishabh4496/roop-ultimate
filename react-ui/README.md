@@ -22,7 +22,7 @@ backend in `app/api.py` (started by `app/run.py` on `http://127.0.0.1:8001`).
 npm install
 npm run dev      # vite dev server (Pinokio launches this via start_react.js)
 npm run build    # production build into dist/
-npm run lint     # oxlint
+npm run lint     # oxlint (react hooks, exhaustive-deps, jsx-a11y: all errors)
 ```
 
 ## Checks
@@ -31,6 +31,7 @@ npm run lint     # oxlint
 npm run check          # lint + build + e2e + every .render-check script
 npm run test:e2e       # Playwright + axe only (needs a fresh `npm run build`)
 npm run test:e2e:baseline   # re-record e2e/allowlist.json
+npm run test:e2e:themes     # opt-in (~5 min): contrast under all 37 preset themes
 ```
 
 One-time setup: `npm install` here **and** at the repo root (the mock server's
@@ -43,19 +44,38 @@ The suite refuses to run if `dist/` is missing or older than `src/`.
 
 | Spec | Asserts |
 | --- | --- |
-| `a11y.spec.js` | axe (WCAG 2.x A/AA + best-practice) on all 9 tabs |
+| `a11y.spec.js` | axe (WCAG 2.x A/AA + best-practice) on all 9 tabs and the Batch Matrix strategies -- **zero violations, nothing allowlisted**; the zoom button's name contains its visible "100%" |
+| `contrast.spec.js` | every visible text node meets WCAG AA (4.5:1, 3:1 large) against its **computed** backdrop, on the same views. axe cannot judge text over this UI's gradients and glass (~1,000 "incomplete"), so `e2e/contrast.js` composites the ancestor backgrounds itself (worst gradient stop). Default theme, nothing allowlisted |
+| `keyboard.spec.js` | keyboard only, no mouse event: Tab to *Refresh Preview*, Enter (a preview is requested and shown), Tab to *Start Swapping*, Space (`/api/swap` is POSTed and the UI follows the run to Processing) |
 | `idle-requests.spec.js` | idle Face Swap: preview `500` -> <= 6 stage-frame requests (`/api/target/preview` with no `width`) in 30 s and no URL of any kind more than 6 times; valid PNG -> 0 preview requests after the first load |
 | `frame-unavailable.spec.js` | after the retries are spent the stage says "Frame unavailable - Retry" (placeholder and stale-swap cases), stops asking, and Retry recovers |
 | `idle-cpu.spec.js` | idle CPU with a failing preview is within 2x of the valid-frame case (+2% of a core of slack) |
 | `nav-visibility.spec.js` | every nav tab fully visible, page not scrolling sideways, at 1024/1280/1440/1920 px |
 | `tab-stops.spec.js` | Tab presses to walk the Face Swap tab (real key presses) |
+| `contrast-themes.spec.js` | **opt-in** (`npm run test:e2e:themes`): text below AA under each of the 37 presets (home + face swap + settings), as a per-theme ceiling in `allowlist.json` -> `themeContrast`. Also checks each theme actually applied and that the page kept a painted background |
 
 **`e2e/allowlist.json` is the record of what is broken today**, so the suite is
 green now and fails only on regressions: a new axe rule or more nodes for a known
-one, a newly clipped tab, more tab stops, more idle requests than the ceiling.
+one (none are allowed today), a newly clipped tab, more tab stops, more idle requests
+than the ceiling, a theme with more low-contrast text than its baseline.
 Improvements do not fail -- they print a `tighten allowlist` annotation; run
 `npm run test:e2e:baseline` and commit the diff. Read that diff first: whatever it
 records stops failing the suite. Entries should shrink over time, not grow.
+
+### Colour tokens (contrast)
+
+Secondary text is `text-muted` (a `--muted-pct` of the page ink -- never `text-white/30`..`/45`,
+which measured 3.0-4.5:1) and the accent as *text* is `text-accent` (`--accent-ink`, lifted on dark
+pages, sunk on light ones); a per-person colour as text is `text-person`. An accent *fill*
+(`bg-[var(--accent)]`) gets its ink computed from the fill's lightness in every mode. To change how
+quiet "quiet" is, change the token. `--bg-base` is the canvas colour under the background gradient.
+
+### Lint
+
+`.oxlintrc.json` turns `react/exhaustive-deps` and the `jsx-a11y` rules into **errors**. Files that
+already violated a rule are listed per rule under `overrides` (legacy debt, 55 diagnostics in 19
+files): new files get the full set, and fixing a file means deleting it from that list. Do not add
+a file to it to make lint pass.
 
 The backend must be running for the UI to work. In Pinokio, use the **React UI** start
 menu entry (`start_react.js`), which launches `python run.py` (Gradio core + FastAPI on 8001)

@@ -303,7 +303,7 @@ export default function Gallery({ notify, setSettings, setTab }) {
                 onClick={() => setFilterType(t)}
                 className={`px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-all ${
                   filterType === t
-                    ? 'bg-[#E94560] text-white shadow-[0_2px_8px_rgba(233,69,96,0.3)]'
+                    ? 'bg-[var(--accent)] shadow-[0_2px_8px_var(--accent-glow)]'
                     : 'text-white/60 hover:text-white'
                 }`}
               >
@@ -316,6 +316,7 @@ export default function Gallery({ notify, setSettings, setTab }) {
             value={sortBy}
             onChange={(e) => setSortBy(e.target.value)}
             title="Sort outputs"
+            aria-label="Sort outputs"
             className="px-3 py-2 rounded-xl glass-input text-white text-xs font-bold focus:outline-none cursor-pointer"
           >
             <option value="new" className="bg-[#121420]">Newest first</option>
@@ -327,11 +328,11 @@ export default function Gallery({ notify, setSettings, setTab }) {
       </Card>
 
       {!loading && files.length > 0 && (
-        <div className="flex flex-wrap items-center justify-between gap-3 text-mini text-white/45 -mt-2 px-1">
+        <div className="flex flex-wrap items-center justify-between gap-3 text-mini text-muted -mt-2 px-1">
           <div className="flex items-center gap-2">
             <span className="font-bold text-white/60">{filteredFiles.length}</span> shown
             {filteredFiles.length !== files.length && <span>of {files.length}</span>}
-            <span className="text-white/20">·</span>
+            <span className="text-white/20" aria-hidden="true">·</span>
             <span className="font-bold text-white/60">{fmtSize(totalSize)}</span> total
           </div>
 
@@ -381,7 +382,7 @@ export default function Gallery({ notify, setSettings, setTab }) {
       {loading && (
         <div className="flex flex-col items-center justify-center py-20 gap-3">
           <div className="h-8 w-8 rounded-full border-4 border-white/10 border-t-[#E94560] animate-spin" />
-          <span className="text-white/40 text-sm font-medium">Scanning outputs folder...</span>
+          <span className="text-muted text-sm font-medium">Scanning outputs folder...</span>
         </div>
       )}
 
@@ -426,12 +427,13 @@ export default function Gallery({ notify, setSettings, setTab }) {
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs text-white/80 border-collapse">
                 <thead>
-                  <tr className="border-b border-white/10 bg-black/40 text-white/45 uppercase font-mono text-nano tracking-wider">
+                  <tr className="border-b border-white/10 bg-black/40 text-muted uppercase font-mono text-nano tracking-wider">
                     <th className="p-3 w-10 text-center">
                       <input
                         type="checkbox"
                         checked={allVisibleSelected}
                         onChange={toggleSelectAll}
+                        aria-label="Select all outputs"
                         className="rounded accent-[var(--accent)] cursor-pointer"
                       />
                     </th>
@@ -455,14 +457,15 @@ export default function Gallery({ notify, setSettings, setTab }) {
                             type="checkbox"
                             checked={isSel}
                             onChange={() => toggleSelect(file.name)}
+                            aria-label={`Select ${file.name}`}
                             className="rounded accent-[var(--accent)] cursor-pointer"
                           />
                         </td>
                         <td className="p-3 font-semibold text-white/90 truncate max-w-xs flex items-center gap-2">
                           {file.kind === 'video'
-                            ? <Icon.film size={15} className="text-white/40" />
-                            : <Icon.still size={15} className="text-white/40" />}
-                          <a href={srcUrl} target="_blank" rel="noreferrer" className="hover:text-[var(--accent)] truncate" title={file.name}>
+                            ? <Icon.film size={15} className="text-muted" />
+                            : <Icon.still size={15} className="text-muted" />}
+                          <a href={srcUrl} target="_blank" rel="noreferrer" className="hover:text-accent truncate" title={file.name}>
                             {file.name}
                           </a>
                         </td>
@@ -628,7 +631,7 @@ function VideoHoverCard({ file, srcUrl, dateStr, sizeStr, onDelete, onReveal, on
                   if (e.target.nextElementSibling) e.target.nextElementSibling.style.display = 'flex';
                 }}
               />
-              <div className="hidden w-full h-full flex-col items-center justify-center text-white/30 text-nano p-2 text-center bg-black/50">
+              <div className="hidden w-full h-full flex-col items-center justify-center text-muted text-nano p-2 text-center bg-black/50">
                 <Icon.film size={24} className="mb-1 opacity-50" />
                 <span className="truncate w-full">{file.name}</span>
               </div>
@@ -648,7 +651,7 @@ function VideoHoverCard({ file, srcUrl, dateStr, sizeStr, onDelete, onReveal, on
                 if (e.target.nextElementSibling) e.target.nextElementSibling.style.display = 'flex';
               }}
             />
-            <div className="hidden w-full h-full flex-col items-center justify-center text-white/30 text-nano p-2 text-center bg-black/50">
+            <div className="hidden w-full h-full flex-col items-center justify-center text-muted text-nano p-2 text-center bg-black/50">
               <Icon.still size={24} className="mb-1 opacity-50" />
               <span className="truncate w-full">{file.name}</span>
             </div>
@@ -729,7 +732,7 @@ function VideoHoverCard({ file, srcUrl, dateStr, sizeStr, onDelete, onReveal, on
           >
             {file.name}
           </h4>
-          <span className="text-micro font-mono text-white/45 block mt-0.5">{dateStr}{sizeStr ? ` · ${sizeStr}` : ''}</span>
+          <span className="text-micro font-mono text-muted block mt-0.5">{dateStr}{sizeStr ? ` · ${sizeStr}` : ''}</span>
         </div>
         <div className="flex justify-between items-center shrink-0">
           <span className="text-micro uppercase font-semibold tracking-wider text-[var(--accent)]/80">
@@ -739,7 +742,7 @@ function VideoHoverCard({ file, srcUrl, dateStr, sizeStr, onDelete, onReveal, on
             type="button"
             onClick={onDelete}
             disabled={isBusy}
-            className="text-mini font-bold text-white/45 hover:text-red-400 cursor-pointer transition-colors"
+            className="text-mini font-bold text-muted hover:text-red-400 cursor-pointer transition-colors"
           >
             Delete
           </button>

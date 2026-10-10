@@ -81,7 +81,7 @@ function CachedFaceCrop({ cropKey, src, alt, className = '' }) {
 
   if (loadError || !cachedUrl) {
     return (
-      <div className={`flex items-center justify-center bg-white/5 text-white/30 ${className}`}>
+      <div className={`flex items-center justify-center bg-white/5 text-muted ${className}`}>
         <Users size={20} aria-hidden="true" />
       </div>
     );
@@ -379,13 +379,13 @@ export default function FaceBankRouter({
               {sourceLibrary.length} Faces
             </span>
           </div>
-          <span className="text-nano text-white/40">
+          <span className="text-nano text-muted">
             Tip: Click to select, or drag directly onto target cluster cards below
           </span>
         </div>
 
         {sourceLibrary.length === 0 ? (
-          <div className="flex items-center justify-center p-4 rounded-lg border border-dashed border-white/10 text-mini text-white/40 bg-white/[0.01]">
+          <div className="flex items-center justify-center p-4 rounded-lg border border-dashed border-white/10 text-mini text-muted bg-white/[0.01]">
             <span>No source faces loaded. Import portrait photos in the Source Gallery above.</span>
           </div>
         ) : (
@@ -427,7 +427,7 @@ export default function FaceBankRouter({
                     <span className="text-micro font-medium text-white/90 truncate max-w-[90px]">
                       {srcItem.name || `Source ${sIdx + 1}`}
                     </span>
-                    <span className="text-nano text-white/40">Drag to assign</span>
+                    <span className="text-nano text-muted">Drag to assign</span>
                   </div>
                 </div>
               );
@@ -444,7 +444,7 @@ export default function FaceBankRouter({
           <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
             <div className="flex items-center gap-2">
               <div className="relative">
-                <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-white/40" aria-hidden="true" />
+                <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" aria-hidden="true" />
                 <input
                   type="text"
                   placeholder="Filter identities..."
@@ -467,7 +467,7 @@ export default function FaceBankRouter({
               </div>
             </div>
 
-            <div className="text-nano text-white/40">
+            <div className="text-nano text-muted">
               Showing {filteredClusters.length} of {clusters.length} detected identities
             </div>
           </div>
@@ -477,7 +477,7 @@ export default function FaceBankRouter({
             <div className="flex-1 flex flex-col items-center justify-center p-12 text-center border border-dashed border-white/10 rounded-xl bg-white/[0.01]">
               <Users size={36} className="text-white/20 mb-3" aria-hidden="true" />
               <h3 className="text-plain font-medium text-white/70 mb-1">No Face Clusters Detected</h3>
-              <p className="text-mini text-white/40 max-w-sm">
+              <p className="text-mini text-muted max-w-sm">
                 Click &quot;Scan Video&quot; to perform an automated face detection and DBSCAN clustering pass across the target clip.
               </p>
             </div>
@@ -568,7 +568,7 @@ export default function FaceBankRouter({
                                 setSelectedClusterId(isSelected ? null : clusterId);
                               }}
                               aria-label={`Inspect Actor ${displayRank + 1}`}
-                              className="p-1 rounded text-white/40 hover:text-white/90 hover:bg-white/10 transition-colors"
+                              className="p-1 rounded text-muted hover:text-white/90 hover:bg-white/10 transition-colors"
                             >
                               <Sliders size={13} aria-hidden="true" />
                             </button>
@@ -576,13 +576,13 @@ export default function FaceBankRouter({
 
                           {/* Appearance Frequency */}
                           <div className="flex items-center gap-1.5 text-mini text-white/70">
-                            <Film size={11} className="text-white/40" aria-hidden="true" />
+                            <Film size={11} className="text-muted" aria-hidden="true" />
                             <span>{appearances} frames</span>
                           </div>
 
                           {/* First Detected Timestamp */}
                           <div className="flex items-center gap-1.5 text-micro font-mono text-white/50">
-                            <Clock size={10} className="text-white/40" aria-hidden="true" />
+                            <Clock size={10} className="text-muted" aria-hidden="true" />
                             <span>{formatSmpte(firstFrame, fps)} (F#{firstFrame})</span>
                           </div>
                         </div>
@@ -591,12 +591,12 @@ export default function FaceBankRouter({
                       {/* Confidence & Pose Angle Bar */}
                       <div className="flex items-center justify-between px-2 py-1 rounded bg-white/[0.025] border border-white/5 text-nano">
                         <div className="flex items-center gap-1">
-                          <span className="text-white/40">Confidence:</span>
+                          <span className="text-muted">Confidence:</span>
                           <span className={`font-semibold ${confidence >= 85 ? 'text-emerald-400' : confidence >= 70 ? 'text-amber-400' : 'text-rose-400'}`}>
                             {confidence}%
                           </span>
                         </div>
-                        <div className="flex items-center gap-1 text-white/40">
+                        <div className="flex items-center gap-1 text-muted">
                           <span>Pose:</span>
                           <span className="font-mono text-white/70">{offAxis}&deg; off-axis</span>
                         </div>
@@ -616,9 +616,9 @@ export default function FaceBankRouter({
                           </div>
                         ) : mappedSources.length > 0 ? (
                           <div className="flex flex-col gap-1">
-                            <div className="flex items-center justify-between text-nano text-white/40">
+                            <div className="flex items-center justify-between text-nano text-muted">
                               <span>Mapped Sources ({mappedSources.length})</span>
-                              <span className="text-nano text-white/30">Drag to replace</span>
+                              <span className="text-nano text-muted">Drag to replace</span>
                             </div>
                             <div className="flex flex-wrap gap-1">
                               {mappedSources.map((s, idx) => (
@@ -647,7 +647,7 @@ export default function FaceBankRouter({
                             className={`flex items-center justify-center p-2 rounded-lg border text-micro transition-colors ${
                               isDropTarget
                                 ? 'bg-rose-500/20 border-rose-400 text-rose-200 font-semibold'
-                                : 'border-dashed border-white/15 text-white/40 hover:text-white/70 hover:border-white/25'
+                                : 'border-dashed border-white/15 text-muted hover:text-white/70 hover:border-white/25'
                             }`}
                           >
                             <span>{isDropTarget ? 'Drop Source Here' : '+ Drop Source to Swap'}</span>
@@ -682,7 +682,7 @@ export default function FaceBankRouter({
                 type="button"
                 onClick={() => setSelectedClusterId(null)}
                 aria-label="Close inspector drawer"
-                className="p-1 rounded-md text-white/40 hover:text-white hover:bg-white/10 transition-colors"
+                className="p-1 rounded-md text-muted hover:text-white hover:bg-white/10 transition-colors"
               >
                 <X size={16} aria-hidden="true" />
               </button>
@@ -706,7 +706,7 @@ export default function FaceBankRouter({
                   <span className="text-mini text-white/50">
                     ID: {selectedCluster.person_id || selectedCluster.id}
                   </span>
-                  <div className="flex items-center gap-2 mt-1 text-nano text-white/40">
+                  <div className="flex items-center gap-2 mt-1 text-nano text-muted">
                     <span>{selectedCluster.cluster_size || selectedCluster.count || 1} occurrences</span>
                     <span>&bull;</span>
                     <span>Frame {selectedCluster.best_frame ?? 0}</span>
@@ -785,7 +785,7 @@ export default function FaceBankRouter({
                   className="w-full accent-rose-500 cursor-pointer"
                 />
 
-                <div className="flex justify-between text-nano font-mono text-white/40">
+                <div className="flex justify-between text-nano font-mono text-muted">
                   <span>0.30 (Permissive)</span>
                   <span>0.60 (Default)</span>
                   <span>0.85 (Strict)</span>
@@ -815,7 +815,7 @@ export default function FaceBankRouter({
                   className="w-full accent-rose-500 cursor-pointer"
                 />
 
-                <div className="flex justify-between text-nano font-mono text-white/40">
+                <div className="flex justify-between text-nano font-mono text-muted">
                   <span>-20px (Erode / Tighter)</span>
                   <span>0px (Neutral)</span>
                   <span>+20px (Dilate / Softer)</span>
@@ -832,13 +832,13 @@ export default function FaceBankRouter({
                   <span className="text-micro font-semibold uppercase tracking-wider text-white/60">
                     Assigned Source Identity
                   </span>
-                  <span className="text-nano text-white/40">
+                  <span className="text-nano text-muted">
                     {getMappedSourcesForCluster(selectedCluster.person_id || selectedCluster.id).length} assigned
                   </span>
                 </div>
 
                 {getMappedSourcesForCluster(selectedCluster.person_id || selectedCluster.id).length === 0 ? (
-                  <div className="p-3 rounded-lg border border-dashed border-white/10 text-mini text-white/40 text-center bg-white/[0.01]">
+                  <div className="p-3 rounded-lg border border-dashed border-white/10 text-mini text-muted text-center bg-white/[0.01]">
                     No source assigned. Drag a portrait from the Source Library above.
                   </div>
                 ) : (
@@ -865,7 +865,7 @@ export default function FaceBankRouter({
                           type="button"
                           onClick={() => removeSourceFromCluster(selectedCluster.person_id || selectedCluster.id, s.id ?? idx)}
                           aria-label={`Remove ${s.name || 'Source'} from this cluster`}
-                          className="p-1 rounded text-white/40 hover:text-rose-400 hover:bg-rose-500/10 transition-colors"
+                          className="p-1 rounded text-muted hover:text-rose-400 hover:bg-rose-500/10 transition-colors"
                         >
                           <Trash2 size={13} aria-hidden="true" />
                         </button>

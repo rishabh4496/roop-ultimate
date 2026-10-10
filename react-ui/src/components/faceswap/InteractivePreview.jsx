@@ -523,7 +523,7 @@ export default function InteractivePreview({
             Face {i + 1}
           </span>
           {selectable && (
-            <span className="absolute left-1/2 -translate-x-1/2 -bottom-6 opacity-0 group-hover/face:opacity-100 transition-opacity bg-black/80 backdrop-blur text-[var(--accent)] text-nano font-bold px-1.5 py-0.5 rounded whitespace-nowrap pointer-events-none">
+            <span className="absolute left-1/2 -translate-x-1/2 -bottom-6 opacity-0 group-hover/face:opacity-100 transition-opacity bg-black/80 backdrop-blur text-accent text-nano font-bold px-1.5 py-0.5 rounded whitespace-nowrap pointer-events-none">
               {selected ? 'Selected' : '＋ Use as target'}
             </span>
           )}
@@ -663,7 +663,8 @@ export default function InteractivePreview({
     // be reached at all — the first casualty on the left being the zoom-out
     // button, and on the right the fullscreen one.
     <div className="absolute inset-x-0 bottom-0 z-50 flex justify-center p-3 pointer-events-none">
-      <div className="spring-cluster pointer-events-auto flex flex-wrap justify-center max-w-full items-center gap-0.5 rounded-xl hud-glass p-1 opacity-70 translate-y-0.5 group-hover:opacity-100 group-hover:translate-y-0 focus-within:opacity-100 focus-within:translate-y-0 transition-all duration-300 shadow-2xl border border-white/10">
+      {/* idle opacity 90, not the 70 it was: a resting toolbar still has to be readable (axe/contrast.js measured accent and muted HUD text under 4.5:1 at 70) */}
+      <div className="spring-cluster pointer-events-auto flex flex-wrap justify-center max-w-full items-center gap-0.5 rounded-xl hud-glass p-1 opacity-90 translate-y-0.5 group-hover:opacity-100 group-hover:translate-y-0 focus-within:opacity-100 focus-within:translate-y-0 transition-all duration-300 shadow-2xl border border-white/10">
         {/* View Zoom controls */}
         <button
           onClick={() => zoomBy(1 / 1.4)}
@@ -678,7 +679,7 @@ export default function InteractivePreview({
           onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }}
           className={`px-2 h-7 rounded-lg text-micro font-bold font-mono tabular-nums ${
             zoom > 1
-              ? 'text-[var(--accent)] bg-[var(--accent)]/10 border border-[var(--accent)]/20'
+              ? 'text-accent bg-[var(--accent)]/10 border border-[var(--accent)]/20'
               : 'hud-glass-button'
           }`}
           title="Reset to fit"
@@ -714,12 +715,12 @@ export default function InteractivePreview({
           aria-label="Show detected face boxes"
           className={`px-2 h-7 rounded-lg text-micro font-bold ${
             showBoxes
-              ? 'text-[var(--accent)] bg-[var(--accent)]/10 border border-[var(--accent)]/20'
+              ? 'text-accent bg-[var(--accent)]/10 border border-[var(--accent)]/20'
               : 'hud-glass-button'
           }`}
         >
           Faces
-          {faces.length > 0 && <span className="ml-1 opacity-60 tabular-nums">{faces.length}</span>}
+          {faces.length > 0 && <span className="ml-1 font-normal tabular-nums">{faces.length}</span>}
         </button>
 
         {/* Landmark / pose debug overlay. Only offered when there is something
@@ -732,7 +733,7 @@ export default function InteractivePreview({
             aria-label="Show face keypoints and head pose"
             className={`px-2 h-7 rounded-lg text-micro font-bold ${
               showDebug
-                ? 'text-[var(--accent)] bg-[var(--accent)]/10 border border-[var(--accent)]/20'
+                ? 'text-accent bg-[var(--accent)]/10 border border-[var(--accent)]/20'
                 : 'hud-glass-button'
             }`}
           >
@@ -832,7 +833,7 @@ export default function InteractivePreview({
             <button
               onClick={() => setIsPlaying && setIsPlaying((p) => !p)}
               className={`grid place-items-center h-7 w-7 rounded-lg ${
-                isPlaying ? 'text-[var(--accent)] bg-[var(--accent)]/10 border border-[var(--accent)]/20' : 'hud-glass-button'
+                isPlaying ? 'text-accent bg-[var(--accent)]/10 border border-[var(--accent)]/20' : 'hud-glass-button'
               }`}
               title={isPlaying ? 'Pause (Space)' : 'Play (Space)'}
               aria-label={isPlaying ? 'Pause' : 'Play'}
@@ -847,8 +848,8 @@ export default function InteractivePreview({
                     title="Next frame (→)" aria-label="Next frame">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M16 6h2v12h-2zM4 6l9 6-9 6z"/></svg>
             </button>
-            <span className="px-1 text-micro font-bold font-mono text-white/55 tabular-nums whitespace-nowrap">
-              {frame.toLocaleString()}<span className="opacity-40">/{maxFrames.toLocaleString()}</span>
+            <span className="px-1 text-micro font-bold font-mono text-muted tabular-nums whitespace-nowrap">
+              {frame.toLocaleString()}<span className="font-normal">/{maxFrames.toLocaleString()}</span>
             </span>
           </>
         )}

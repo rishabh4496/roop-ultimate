@@ -27,16 +27,16 @@ function ThemeCard({ theme, active, onChange, onEdit }) {
             <span className="h-2 w-4 rounded-full bg-white/20" />
           </div>
           {active && (
-            <span className="absolute top-1.5 right-1.5 h-5 w-5 rounded-full flex items-center justify-center text-micro font-black text-white shadow" style={{ background: t.accent }}>✓</span>
+            <span className="absolute top-1.5 right-1.5 h-5 w-5 rounded-full flex items-center justify-center text-micro font-black shadow" style={{ background: t.accent, color: `oklch(from ${t.accent} clamp(0, (0.62 - l) * 1000, 1) 0 h)` }}>✓</span>
           )}
         </div>
         {/* Label */}
         <div className="px-2.5 py-2 bg-black/40 backdrop-blur-sm">
           <div className="flex items-center justify-between gap-1">
             <span className="text-mini font-bold text-white/90 truncate">{t.name}</span>
-            <span className={`text-nano font-semibold uppercase tracking-wider px-1 py-0.5 rounded shrink-0 ${t.mode === 'light' ? 'bg-amber-400/15 text-amber-300' : 'bg-white/10 text-white/45'}`}>{t.mode}</span>
+            <span className={`text-nano font-semibold uppercase tracking-wider px-1 py-0.5 rounded shrink-0 ${t.mode === 'light' ? 'bg-amber-400/15 text-amber-300' : 'bg-white/10 text-muted'}`}>{t.mode}</span>
           </div>
-          <div className="text-nano text-white/45 truncate">{t.custom ? 'Your theme' : t.label}</div>
+          <div className="text-nano text-muted truncate">{t.custom ? 'Your theme' : t.label}</div>
         </div>
       </button>
       {t.custom && (
@@ -68,7 +68,7 @@ export default function ThemeGallery({ value, onChange, customThemes = [], onEdi
       <button
         type="button"
         onClick={onCreate}
-        className="tap rounded-xl border-2 border-dashed border-white/15 hover:border-[var(--accent)]/60 hover:bg-white/[0.03] transition-colors flex flex-col items-center justify-center gap-1 py-4 min-h-[86px] text-white/45 hover:text-white/85 focus:outline-none"
+        className="tap rounded-xl border-2 border-dashed border-white/15 hover:border-[var(--accent)]/60 hover:bg-white/[0.03] transition-colors flex flex-col items-center justify-center gap-1 py-4 min-h-[86px] text-muted hover:text-white/85 focus:outline-none"
       >
         <Icon.add size={18} />
         <span className="text-mini font-semibold">New theme</span>

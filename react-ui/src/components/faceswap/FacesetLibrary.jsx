@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { getJSON, postJSON, postFile, fileUrl } from '../../api';
-import { Button } from '../ui';
+import { Button, FocusedInput } from '../ui';
 import { confirmDialog, promptDialog } from '../confirm';
 import { Icon } from '../../icons';
 
@@ -138,7 +138,7 @@ export default function FacesetLibrary({ canSave, onLoaded, notify }) {
               {entries.length}
             </span>
           )}
-          <span className="text-white/40 text-xs">{open ? '▲' : '▼'}</span>
+          <span className="text-muted text-xs">{open ? '▲' : '▼'}</span>
         </span>
       </button>
 
@@ -156,14 +156,14 @@ export default function FacesetLibrary({ canSave, onLoaded, notify }) {
           </div>
 
           {entries.length === 0 ? (
-            <p className="text-mini text-white/45 leading-relaxed">
+            <p className="text-mini text-muted leading-relaxed">
               No saved facesets yet. Select a source face above and hit
               <span className="text-white/55"> Save selected face</span> to keep it here — it survives
               restarts, so you never re-upload. Set the folder to a cloud drive in Settings to sync across devices.
             </p>
           ) : (
             <div>
-              <div className="text-micro uppercase tracking-[0.12em] text-white/45 mb-1.5">Load a faceset</div>
+              <div className="text-micro uppercase tracking-[0.12em] text-muted mb-1.5">Load a faceset</div>
               <div className="relative" ref={pickerRef}>
                 {/* Closed dropdown box (mirrors the Select control) */}
                 <button
@@ -173,11 +173,11 @@ export default function FacesetLibrary({ canSave, onLoaded, notify }) {
                 >
                   <span className="flex items-center gap-2 min-w-0">
                     <Thumb e={selected} size="w-6 h-6" />
-                    <span className={`truncate text-note ${selected ? 'text-white/85' : 'text-white/45'}`}>
+                    <span className={`truncate text-note ${selected ? 'text-white/85' : 'text-muted'}`}>
                       {selected ? selected.name : 'Select a faceset…'}
                     </span>
                   </span>
-                  <span className={`text-white/40 text-xs shrink-0 transition-transform ${pickerOpen ? 'rotate-180' : ''}`}>⌄</span>
+                  <span className={`text-muted text-xs shrink-0 transition-transform ${pickerOpen ? 'rotate-180' : ''}`}>⌄</span>
                 </button>
 
                 {/* Open menu: absolute under the trigger. The library card gets
@@ -187,8 +187,8 @@ export default function FacesetLibrary({ canSave, onLoaded, notify }) {
                   <div className="absolute z-50 left-0 right-0 mt-1 rounded-lg bg-[#181016] border border-white/10 shadow-2xl shadow-black/70 overflow-hidden">
                     {entries.length > 6 && (
                       <div className="p-1.5 border-b border-white/5">
-                        <input
-                          autoFocus
+                        <FocusedInput
+                          aria-label="Search facesets"
                           value={filter}
                           onChange={(ev) => setFilter(ev.target.value)}
                           placeholder={`Search ${entries.length} facesets…`}
@@ -198,7 +198,7 @@ export default function FacesetLibrary({ canSave, onLoaded, notify }) {
                     )}
                     <div className="max-h-60 overflow-y-auto py-1 [scrollbar-width:thin]">
                       {shown.length === 0 ? (
-                        <p className="text-mini text-white/45 py-2 text-center">No match for “{filter}”.</p>
+                        <p className="text-mini text-muted py-2 text-center">No match for “{filter}”.</p>
                       ) : shown.map((e) => (
                         <div
                           key={e.filename}
@@ -207,8 +207,9 @@ export default function FacesetLibrary({ canSave, onLoaded, notify }) {
                         >
                           <Thumb e={e} size="w-8 h-8" />
                           {renaming === e.filename ? (
-                            <input
-                              autoFocus
+                            <FocusedInput
+                              select
+                              aria-label="Rename faceset"
                               value={renameVal}
                               onClick={(ev) => ev.stopPropagation()}
                               onChange={(ev) => setRenameVal(ev.target.value)}
@@ -219,16 +220,16 @@ export default function FacesetLibrary({ canSave, onLoaded, notify }) {
                           ) : (
                             <span className="flex-1 min-w-0 truncate text-note text-white/80" title={e.name}>
                               {e.name}
-                              {e.faces > 1 && <span className="text-white/35"> · {e.faces} faces</span>}
+                              {e.faces > 1 && <span className="text-muted"> · {e.faces} faces</span>}
                             </span>
                           )}
                           {/* focus-within as well as group-hover — these are
                               real tab stops, and opacity-0 alone left a
                               keyboard user focused on invisible controls. */}
-                          <span className="flex items-center gap-1.5 text-mini text-white/45 shrink-0 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+                          <span className="flex items-center gap-1.5 text-mini text-muted shrink-0 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
                             <button type="button" className="hover:text-white/80 transition-colors" title="Rename" aria-label={`Rename faceset ${e.name}`} onClick={(ev) => { ev.stopPropagation(); beginRename(e); }}><Icon.rename size={12} /></button>
                             <a className="hover:text-white/80 transition-colors" title="Export .fsz" aria-label={`Export faceset ${e.name}`} href={fileUrl(e.path)} download={e.filename} onClick={(ev) => ev.stopPropagation()}><Icon.download size={12} /></a>
-                            <button type="button" className="hover:text-[var(--accent)] transition-colors" title="Delete" aria-label={`Delete faceset ${e.name}`} onClick={(ev) => { ev.stopPropagation(); del(e); }}><Icon.trash size={12} /></button>
+                            <button type="button" className="hover:text-accent transition-colors" title="Delete" aria-label={`Delete faceset ${e.name}`} onClick={(ev) => { ev.stopPropagation(); del(e); }}><Icon.trash size={12} /></button>
                           </span>
                         </div>
                       ))}

@@ -42,6 +42,9 @@ NOT_A_SIZE = {
     'left', 'right', 'center', 'justify', 'start', 'end',
     'wrap', 'nowrap', 'balance', 'pretty', 'clip', 'ellipsis',
     'white', 'black', 'transparent', 'current', 'inherit',
+    # Colour utilities defined with `@utility` in index.css (not font sizes):
+    # `text-accent` (readable accent ink), `text-person` (per-person colour ink).
+    'accent', 'person',
     'red', 'green', 'blue', 'amber', 'emerald', 'rose', 'sky', 'slate',
     'zinc', 'gray', 'grey', 'neutral', 'stone', 'orange', 'yellow', 'lime',
     'teal', 'cyan', 'indigo', 'violet', 'purple', 'fuchsia', 'pink',

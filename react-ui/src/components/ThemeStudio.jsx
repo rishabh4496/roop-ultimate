@@ -24,7 +24,7 @@ const Row = ({ label, hint, children }) => (
   <div className="flex items-center justify-between gap-4 py-1.5">
     <div className="min-w-0">
       <div className="text-compact font-semibold text-white/80">{label}</div>
-      {hint && <div className="text-nano text-white/45 mt-0.5 leading-snug">{hint}</div>}
+      {hint && <div className="text-nano text-muted mt-0.5 leading-snug">{hint}</div>}
     </div>
     <div className="shrink-0 flex items-center gap-2">{children}</div>
   </div>
@@ -178,16 +178,16 @@ export default function ThemeStudio({ open, onClose, initial, customThemes, onSa
           <div className="flex items-start justify-between gap-3 mb-5">
             <div>
               <h2 className="text-lead font-bold text-white/95 flex items-center gap-2">
-                <Icon.theme size={16} className="text-[var(--accent)]" />
+                <Icon.theme size={16} className="text-accent" />
                 Theme Studio
               </h2>
-              <p className="text-mini text-white/45 mt-1">
+              <p className="text-mini text-muted mt-1">
                 Six choices; everything else is derived. The page behind this dialog is the preview.
               </p>
             </div>
             <button
               type="button" onClick={cancel} aria-label="Close theme studio"
-              className="h-8 w-8 grid place-items-center rounded-lg text-white/45 hover:text-white hover:bg-white/10 transition-colors shrink-0"
+              className="h-8 w-8 grid place-items-center rounded-lg text-muted hover:text-white hover:bg-white/10 transition-colors shrink-0"
             ><Icon.close size={15} /></button>
           </div>
 
@@ -274,7 +274,7 @@ export default function ThemeStudio({ open, onClose, initial, customThemes, onSa
             {['--card-bg', '--text-main', '--text-muted', '--border-color', '--accent-hover'].map((k) => (
               <span key={k} className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-white/[0.04] border border-white/10">
                 <span className="h-3 w-3 rounded-sm border border-white/20" style={{ background: vars[k] }} />
-                <span className="text-nano font-mono text-white/45">{k.replace('--', '')}</span>
+                <span className="text-nano font-mono text-muted">{k.replace('--', '')}</span>
               </span>
             ))}
           </div>

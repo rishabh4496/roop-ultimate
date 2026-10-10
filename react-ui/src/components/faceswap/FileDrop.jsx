@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { motion, spring } from '../../motion';
+import { FocusedTextarea } from '../ui';
 
 const fmtBytes = (b) => {
   if (!b) return '0 B';
@@ -165,7 +166,7 @@ export default function FileDrop({ label, accept, multiple, onFiles, busy, hint,
                     style={{ width: `${pct}%` }}
                   />
                 </div>
-                <div className="flex items-center justify-center gap-2 text-micro text-white/45 font-mono tabular-nums">
+                <div className="flex items-center justify-center gap-2 text-micro text-muted font-mono tabular-nums">
                   <span>{fmtBytes(progress.loaded)} / {fmtBytes(progress.total)}</span>
                   {rate > 0 && <><span>·</span><span>{fmtBytes(rate)}/s</span></>}
                   {eta > 0 && <><span>·</span><span>{fmtEta(eta)}</span></>}
@@ -185,7 +186,7 @@ export default function FileDrop({ label, accept, multiple, onFiles, busy, hint,
             <motion.div
               animate={drag ? { y: [-1, -5, -1] } : { y: 0 }}
               transition={drag ? { duration: 1.1, repeat: Infinity, ease: 'easeInOut' } : spring.bouncy}
-              className={`p-2 rounded-xl bg-black/20 ${drag ? 'text-[var(--accent)] bg-[var(--accent)]/10' : 'text-white/40 group-hover:text-white/70 group-hover:bg-white/5'} transition-colors duration-200`}
+              className={`p-2 rounded-xl bg-black/20 ${drag ? 'text-accent bg-[var(--accent)]/10' : 'text-muted group-hover:text-white/70 group-hover:bg-white/5'} transition-colors duration-200`}
             >
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
@@ -194,8 +195,8 @@ export default function FileDrop({ label, accept, multiple, onFiles, busy, hint,
               </svg>
             </motion.div>
             <div className="text-left">
-              <span className={`text-xs font-bold tracking-wide block ${drag ? 'text-[var(--accent)]' : 'text-white/80'}`}>{drag ? 'Drop files now' : label}</span>
-              {!drag && hint && <span className="block text-micro text-white/45 mt-0.5">{hint}</span>}
+              <span className={`text-xs font-bold tracking-wide block ${drag ? 'text-accent' : 'text-white/80'}`}>{drag ? 'Drop files now' : label}</span>
+              {!drag && hint && <span className="block text-micro text-muted mt-0.5">{hint}</span>}
             </div>
           </div>
         )}
@@ -211,8 +212,7 @@ export default function FileDrop({ label, accept, multiple, onFiles, busy, hint,
       <div className="mt-1.5">
         {pathOpen ? (
           <div className="space-y-1.5">
-            <textarea
-              autoFocus
+            <FocusedTextarea
               rows={2}
               value={pathText}
               onChange={(e) => setPathText(e.target.value)}
@@ -238,12 +238,12 @@ export default function FileDrop({ label, accept, multiple, onFiles, busy, hint,
                       className="px-2.5 py-1 rounded-lg text-mini font-semibold text-white/50 hover:text-white border border-white/10 hover:border-white/25 transition-colors">
                 Cancel
               </button>
-              <span className="text-micro text-white/45">Ctrl + Enter</span>
+              <span className="text-micro text-muted">Ctrl + Enter</span>
             </div>
           </div>
         ) : (
           <button type="button" onClick={() => setPathOpen(true)}
-                  className="text-micro font-semibold text-white/45 hover:text-[var(--accent)] transition-colors"
+                  className="text-micro font-semibold text-muted hover:text-accent transition-colors"
                   title="Reference a file already on this machine instead of uploading a copy of it">
             or add by path — no copy, no wait
           </button>

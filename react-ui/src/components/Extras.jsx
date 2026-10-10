@@ -152,7 +152,7 @@ export default function Extras({ notify, registerFileListener }) {
         </Section>
 
         <Section title="AI frame post-processing" icon={Icon.wand}>
-          <p className="text-xs text-white/40 -mt-2">Runs on the file picked above. Works on images and videos (video is processed frame-by-frame — can be slow).</p>
+          <p className="text-xs text-muted -mt-2">Runs on the file picked above. Works on images and videos (video is processed frame-by-frame — can be slow).</p>
           <Select label="Operation" value={operation} onChange={setOperation}
             options={frameOps ? Object.keys(frameOps) : ['upscale', 'colorize', 'filter']} />
           {frameOps && (frameOps[operation] || []).length > 0 && (
@@ -174,7 +174,7 @@ export default function Extras({ notify, registerFileListener }) {
           <Button variant="primary" onClick={runEnhance} disabled={enhBusy || !file}>
             {enhBusy ? 'Processing…' : 'Run'}
           </Button>
-          {operation === 'upscale' && <p className="text-micro text-white/45">First run downloads the model (~65 MB). ×4 on video is heavy.</p>}
+          {operation === 'upscale' && <p className="text-micro text-muted">First run downloads the model (~65 MB). ×4 on video is heavy.</p>}
         </Section>
       </div>
 
@@ -183,7 +183,7 @@ export default function Extras({ notify, registerFileListener }) {
           {enhResult.kind === 'video'
             ? <OutputVideoPlayer src={fileUrl(enhResult.path)} renderKey={enhResult.path} className="w-full rounded-lg border border-white/10" />
             : <img src={fileUrl(enhResult.path)} alt="output" className="max-w-full rounded-lg border border-white/10" />}
-          <a href={fileUrl(enhResult.path)} download className="inline-block mt-2 text-sm text-[var(--accent)] underline">⬇ Download</a>
+          <a href={fileUrl(enhResult.path)} download className="inline-block mt-2 text-sm text-accent underline">⬇ Download</a>
         </Section>
       )}
 
@@ -192,12 +192,12 @@ export default function Extras({ notify, registerFileListener }) {
           {result.kind === 'video'
             ? <OutputVideoPlayer src={fileUrl(result.path)} renderKey={result.path} className="w-full rounded-lg border border-white/10" />
             : <img src={fileUrl(result.path)} alt="output" className="max-w-full rounded-lg border border-white/10" />}
-          <a href={fileUrl(result.path)} download className="inline-block mt-2 text-sm text-[var(--accent)] underline">⬇ Download</a>
+          <a href={fileUrl(result.path)} download className="inline-block mt-2 text-sm text-accent underline">⬇ Download</a>
         </Section>
       )}
 
       <Section>
-        <p className="text-xs text-white/40">
+        <p className="text-xs text-muted">
           AI upscale, colorize and stylize filters are available above. The Gradio "Frame Editor"
           (per-frame canvas painting, tracked re-swap, MP4/GIF compile) is not yet ported to React —
           use the legacy Gradio UI for that workflow.

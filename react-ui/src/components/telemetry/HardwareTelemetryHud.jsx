@@ -311,7 +311,7 @@ export default function HardwareTelemetryHud({
         className="flex items-center justify-between px-3 py-2 border-b border-white/10 bg-white/[0.03] cursor-grab active:cursor-grabbing hover:bg-white/[0.06] transition-colors"
       >
         <div className="flex items-center gap-2">
-          <GripHorizontal size={14} className="text-white/40" aria-hidden="true" />
+          <GripHorizontal size={14} className="text-muted" aria-hidden="true" />
           <div className="flex items-center gap-1.5">
             <Activity size={14} className="text-emerald-400" aria-hidden="true" />
             <span className="text-micro font-semibold tracking-wider uppercase text-white/90">
@@ -391,7 +391,7 @@ export default function HardwareTelemetryHud({
               </div>
               <div className="flex items-baseline gap-1 font-mono">
                 <span ref={fpsTextRef} className="text-compact font-bold text-emerald-400">0.0 FPS</span>
-                <span ref={fpsInstantTextRef} className="text-nano text-white/40"></span>
+                <span ref={fpsInstantTextRef} className="text-nano text-muted"></span>
               </div>
             </div>
             <canvas ref={fpsCanvasRef} width={280} height={28} className="w-full h-7 rounded" />

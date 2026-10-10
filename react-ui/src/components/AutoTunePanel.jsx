@@ -49,7 +49,7 @@ export default function AutoTunePanel({ notify, onSettingsApplied }) {
     }
   };
 
-  if (!status) return <p className="text-xs text-white/40">Checking auto-tune…</p>;
+  if (!status) return <p className="text-xs text-muted">Checking auto-tune…</p>;
   const prog = status.progress;
   const running = !!prog?.running;
   const result = status.result;
@@ -100,17 +100,17 @@ export default function AutoTunePanel({ notify, onSettingsApplied }) {
           {result.confirm_meets_600_rule === false && (
             <p className="text-amber-300/80">The target was shorter than 600 frames, so the confirmation is shorter than the acceptance rule. Treat this as screening.</p>
           )}
-          {Object.entries(result.provider_notes || {}).map(([p, why]) => <p key={p} className="text-white/40">{p}: {why}</p>)}
+          {Object.entries(result.provider_notes || {}).map(([p, why]) => <p key={p} className="text-muted">{p}: {why}</p>)}
           {result.screen && (
             <table className="w-full text-nano">
-              <thead><tr className="text-white/40 text-left"><th className="px-1">arm</th><th className="px-1 text-right">screen fps</th><th className="px-1 text-right">swaps</th><th className="px-1">note</th></tr></thead>
+              <thead><tr className="text-muted text-left"><th className="px-1">arm</th><th className="px-1 text-right">screen fps</th><th className="px-1 text-right">swaps</th><th className="px-1">note</th></tr></thead>
               <tbody>
                 {result.screen.map((r) => (
                   <tr key={r.arm} className="border-t border-white/5">
                     <td className="px-1 text-white/80">{r.arm}{r.arm === result.baseline ? ' (current)' : ''}</td>
                     <td className="px-1 text-right">{r.mean_fps}</td>
                     <td className="px-1 text-right">{r.min_swaps}</td>
-                    <td className="px-1 text-white/40">{r.excluded || (result.finalists?.includes(r.arm) ? 'finalist' : '')}</td>
+                    <td className="px-1 text-muted">{r.excluded || (result.finalists?.includes(r.arm) ? 'finalist' : '')}</td>
                   </tr>
                 ))}
               </tbody>

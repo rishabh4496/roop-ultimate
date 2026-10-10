@@ -96,7 +96,7 @@ export default function QueuePanel({
         <div className="text-xs text-white/50">
           {summary}
           {jobs.length > 0 && (
-            <span className="block mt-0.5 text-white/30">
+            <span className="block mt-0.5 text-muted">
               The queue lives on the server — it keeps running if you close this tab, and survives a restart.
             </span>
           )}
@@ -235,7 +235,7 @@ export default function QueuePanel({
                     <button
                       type="button"
                       onClick={() => { onLoadJobSettings(job); notify?.(`Loaded the settings from "${job.target_name}"`); }}
-                      className="text-white/40 hover:text-[var(--accent)] transition-colors"
+                      className="text-muted hover:text-accent transition-colors"
                       title="Load this job's settings into the editor"
                       aria-label={`Load settings from job ${idx + 1}`}
                     >
@@ -246,7 +246,7 @@ export default function QueuePanel({
                     <button
                       type="button"
                       onClick={() => q.duplicate(job.id)}
-                      className="text-white/40 hover:text-white transition-colors"
+                      className="text-muted hover:text-white transition-colors"
                       title="Duplicate this job"
                       aria-label={`Duplicate job ${idx + 1}`}
                     >
@@ -257,7 +257,7 @@ export default function QueuePanel({
                     <button
                       type="button"
                       onClick={() => q.retry(job.id)}
-                      className="text-white/40 hover:text-emerald-300 transition-colors"
+                      className="text-muted hover:text-emerald-300 transition-colors"
                       title="Run this job again"
                       aria-label={`Re-run job ${idx + 1}`}
                     >
@@ -280,7 +280,7 @@ export default function QueuePanel({
                         }))) return;
                         q.cancel(job.id);
                       }}
-                      className="text-white/40 hover:text-orange-300 transition-colors"
+                      className="text-muted hover:text-orange-300 transition-colors"
                       title={isCurrent ? 'Cancel this job at its next safe checkpoint' : 'Cancel this job'}
                       aria-label={`Cancel job ${idx + 1}`}
                     >
@@ -291,7 +291,7 @@ export default function QueuePanel({
                     <button
                       type="button"
                       onClick={() => q.remove(job.id)}
-                      className="text-white/40 hover:text-red-400 font-bold transition-colors"
+                      className="text-muted hover:text-red-400 font-bold transition-colors"
                       title="Remove job"
                       aria-label={`Remove job ${idx + 1}`}
                     >

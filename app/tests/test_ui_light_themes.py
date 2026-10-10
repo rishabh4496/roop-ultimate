@@ -185,15 +185,25 @@ class CustomThemeDerivation(unittest.TestCase):
                 f'white is below 4.5:1 on EVERY theme accent, the default '
                 f'crimson included (3.83)')
 
-        # And the accent-fill rule in the light block must not be left asserting
-        # plain white as its final word.
-        _sel, body = _light_theme_block(css)
-        accent_rule = re.search(r'\.bg-\\\[var\\\(--accent\\\)\\\][^{]*\{([^}]*)\}', body)
+        # The hand-written accent fill (`bg-[var(--accent)]`, 140+ call sites) gets
+        # the computed ink in EVERY mode. It used to live in the light block only,
+        # which left the default DARK theme's `text-white` on crimson at 3.83:1
+        # (react-ui/e2e/contrast.js measured it). So the rule must exist at the top
+        # level, outside any theme-mode block, and must compute its ink.
+        _sel, light_body = _light_theme_block(css)
+        accent_re = r'\.bg-\\\[var\\\(--accent\\\)\\\]\s*\{([^}]*)\}'
+        self.assertIsNone(
+            re.search(accent_re, light_body),
+            'the accent-fill ink rule is back inside the light block, so dark '
+            'themes lose it again')
+        top_level = css.replace(light_body, '')
+        accent_rule = re.search(accent_re, top_level)
         self.assertIsNotNone(
-            accent_rule, 'the light block no longer scopes the accent fill')
+            accent_rule, 'no global accent-fill ink rule: `.bg-[var(--accent)]` with '
+            'white text is 3.83:1 on the default theme')
         self.assertIn(
             'oklch(from var(--accent)', accent_rule.group(1),
-            'the light-mode accent fill still forces white ink unconditionally')
+            'the accent fill forces white ink unconditionally')
 
     def test_status_colours_agree_between_the_css_and_the_derivation(self):
         """The status hues are written twice and cannot be written once.

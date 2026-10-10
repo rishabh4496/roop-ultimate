@@ -1,39 +1,5 @@
 {
-  "axe": {
-    "home": {
-      "color-contrast": 1
-    },
-    "faceswap": {
-      "aria-hidden-focus": 26,
-      "color-contrast": 2,
-      "heading-order": 1,
-      "label-title-only": 2,
-      "nested-interactive": 3
-    },
-    "batch": {
-      "button-name": 1,
-      "label": 3,
-      "select-name": 4
-    },
-    "processing": {
-      "color-contrast": 4
-    },
-    "facemgr": {
-      "aria-hidden-focus": 1
-    },
-    "extras": {},
-    "gallery": {
-      "color-contrast": 2,
-      "label-title-only": 1
-    },
-    "history": {},
-    "settings": {
-      "aria-hidden-focus": 10,
-      "button-name": 1,
-      "color-contrast": 2,
-      "heading-order": 1
-    }
-  },
+  "axe": {},
   "navVisibility": {
     "1024": [
       "Batch Matrix",
@@ -57,7 +23,46 @@
     ]
   },
   "tabStops": {
-    "faceswap": 291
+    "faceswap": 265
   },
-  "idleRequests": {}
+  "idleRequests": {},
+  "themeContrast": {
+    "Default": 0,
+    "Midnight Violet": 13,
+    "Sunset Amber": 27,
+    "Ocean Teal": 30,
+    "Rose Gold": 23,
+    "Dracula": 56,
+    "Solarized Dark": 89,
+    "Emerald Dark": 1,
+    "Nordic Dark": 16,
+    "Cyberpunk Dark": 1,
+    "Monochrome": 4,
+    "Glass Light": 351,
+    "Sakura Light": 348,
+    "Emerald Light": 485,
+    "Nordic Light": 371,
+    "Cyberpunk Light": 311,
+    "AMOLED Black": 0,
+    "AMOLED Ice": 1,
+    "AMOLED Matrix": 1,
+    "AMOLED Gold": 1,
+    "AMOLED Violet": 0,
+    "Crimson Noir": 2,
+    "Deep Space": 11,
+    "Gruvbox Dark": 251,
+    "Tokyo Night": 58,
+    "Catppuccin Mocha": 191,
+    "Blood Moon": 4,
+    "Forest Night": 32,
+    "Espresso": 6,
+    "Royal Purple": 3,
+    "Neon Lime": 28,
+    "Copper Rust": 5,
+    "Steel Slate": 6,
+    "Vaporwave": 27,
+    "Arctic Light": 348,
+    "Latte Light": 760,
+    "Sepia Light": 569
+  }
 }
