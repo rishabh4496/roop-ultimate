@@ -7,6 +7,17 @@ folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22
 
 ## 2026-10-11
 
+- **React UI: the header nav no longer clips tabs. Five primary tabs, the rest under "More", icon-only below 1280px, one utility cluster (`react-ui/src/components/HeaderNav.jsx`).**
+  Nine labelled tabs plus five loose tool buttons shared one `overflow-x-auto` row, so tabs were scrolled out of reach: `e2e/allowlist.json` recorded 6 clipped tabs at 1024px, 5 at 1280 and 3 at 1440 (0 at 1920); the allowlist is empty now, and Face Swap tab stops go 265 -> 259. Now Home / Face Swap / Batch Matrix / Outputs / Settings stay in the strip and
+  Processing (while a run exists) / Face Manager / Editor / History live in a "More" disclosure (Enter/Space opens onto the list, arrows/Home/End move, Escape and click-away close). When the current tab is one of those, the trigger **becomes** that tab (its icon and name, plus a chevron),
+  so the strip still says where you are. Below 1280px the tabs are icon-only (`aria-label` + a tooltip on hover and keyboard focus); Profile / HUD / Snapshots / Search / Zoom are one bordered cluster, icon-only below 1760px (the labelled cluster is ~310px wider; 1760 is where it still fits
+  with the run chip showing and a More tab current - at 1600 it wrapped the header). The width test is `innerWidth / zoom`, not a CSS breakpoint, because the app zooms with CSS `zoom` on `<html>` and a media query cannot see it (125% on a 1440px window lays out like 1152px).
+  The active tab is scrolled into view in the strip (a safety net: the strip only overflows on a phone-width window). `ALL_TABS`, `setTab`, the hash routes and `warmTab` (pointer-enter + focus on every strip tab and every More item) are untouched.
+  **Known and not fixed:** with a run in flight the chip beside the brand adds ~186px, and at 1280-1366px (labelled tabs, icon-only cluster) that is wider than the row, so the header wraps to two rows - nothing is clipped, and 1024/1440/1920 stay on one row (tested).
+  Keeping it on one row there means removing text from the chip (ETA) or the brand. HUD now uses the CPU glyph and Snapshots a camera: icon-only, they shared a gear with the Settings tab and a clock with History.
+  A hover-only tooltip is dismissed by moving the pointer, pressing or scrolling, not by Escape: `test_ui_shortcut_keys.py` forbids a second window-level Escape handler (FaceSwap owns it), so Escape dismisses the tooltip of the control that has keyboard focus. The dropdown is opaque (`--card-bg` over `--bg-base`);
+  `.glass-panel`'s translucent fill let the page chips show through the labels. `e2e/nav-visibility.spec.js` now covers the four widths (clipping, a wrapped header, label density), reachability of every More item, keyboard use, the hash and Back, zoom, tooltips, axe with the menu open, and the run chip.
+
 - **React UI accessibility pass: zero axe violations on every tab and Batch strategy (was 65 nodes on 7 tabs, 16 more critical ones on Batch strategies 2-4); Face Swap tab stops 291 -> 265; text contrast measured and fixed.**
   `Toggle`'s decorative `aria-hidden` switch was a `motion.span` with `whileTap`, which framer gives `tabindex=0`: 26 invisible tab stops on Face Swap (and 10 on Settings), now CSS `group-active`.
   `Button` silently dropped every prop but six, so `<Button title=...>` icon buttons had no name and the Profiles modal's `type="submit"` Save never submitted; it forwards the rest now.

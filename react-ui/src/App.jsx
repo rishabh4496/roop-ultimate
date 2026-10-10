@@ -3,6 +3,7 @@ import { getJSON, postJSON } from './api';
 import { Toasts, Confetti, MotionIcon } from './components/ui';
 import QualityProfilesModal, { BUILTIN_PROFILES } from './components/QualityProfilesModal';
 import CommandPalette from './components/CommandPalette';
+import HeaderControls from './components/HeaderNav';
 import ModelSplash from './components/ModelSplash';
 import ErrorBoundary from './components/ErrorBoundary';
 import { ConfirmHost, confirmDialog, promptDialog } from './components/confirm';
@@ -1076,7 +1077,7 @@ export default function App() {
       </div>
 
       {/* Floating Header Capsule */}
-      <header className="sticky top-2 z-40 mx-auto max-w-[1920px] w-full px-3.5 sm:px-5 py-2.5 rounded-2xl glass-panel flex flex-col md:flex-row items-center justify-between gap-3 border-white/10">
+      <header className="sticky top-2 z-40 mx-auto max-w-[1920px] w-full px-3.5 sm:px-5 py-2.5 rounded-2xl glass-panel flex flex-col md:flex-row md:flex-wrap items-center justify-between gap-3 border-white/10">
         <div className="flex items-center gap-3">
           <MotionIcon icon={Icon.brand} size="md" variant="accent" animate="pulse" />
           <div>
@@ -1177,90 +1178,22 @@ export default function App() {
             </div>
           )}
         </div>
-        <div className="flex items-center gap-2 w-full md:w-auto">
-        <button
-          type="button"
-          onClick={() => setShowProfilesModal(true)}
-          title="Open Quality Profiles & Custom Presets Manager"
-          className="hidden lg:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/[0.03] border border-white/10 hover:border-white/20 text-white/70 hover:text-white transition-all text-xs font-medium"
-        >
-          <MotionIcon icon={Icon.brand} size="sm" variant="accent" />
-          <span>Profile: <strong className="text-white font-bold">{activeQualityProfile ? (BUILTIN_PROFILES.find(p => p.id === activeQualityProfile)?.name.split(' ')[1] || 'Custom') : 'Standard'}</strong></span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setShowHud((v) => !v)}
-          title="Toggle Hardware Telemetry HUD"
-          className={`hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-xl border transition-all text-xs font-medium ${
-            showHud ? 'bg-[var(--accent)]/20 border-[var(--accent)] text-white' : 'bg-white/[0.03] border-white/10 text-white/60 hover:text-white'
-          }`}
-        >
-          <MotionIcon icon={Icon.settings} size="sm" variant={showHud ? 'accent' : 'subtle'} /> HUD
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setShowSnapshotsModal(true)}
-          title="Manage Workspace Session Snapshots"
-          className="hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/[0.03] border border-white/10 text-white/60 hover:text-white transition-all text-xs font-medium"
-        >
-          <MotionIcon icon={Icon.history} size="sm" variant="subtle" /> Snapshots
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setShowPalette(true)}
-          title="Command palette (Ctrl/⌘ + K)"
-          className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white/[0.03] border border-white/10 text-white/60 hover:text-white hover:border-white/20 transition-all text-xs font-medium"
-        >
-          <MotionIcon icon={Icon.search} size="sm" variant="subtle" /> Search
-          <kbd className="text-nano font-mono bg-white/5 px-1.5 py-0.5 rounded border border-white/10">Ctrl K</kbd>
-        </button>
-        <div className="hidden md:flex items-center gap-0.5 px-1 py-1 rounded-xl bg-white/[0.03] border border-white/10" title="UI zoom (Ctrl + / − / 0)">
-          <button type="button" onClick={() => bumpZoom(-0.05)} title="Zoom out (Ctrl −)" aria-label="Zoom out" className="h-6 w-6 grid place-items-center rounded-lg text-white/50 hover:text-white hover:bg-white/10 text-base leading-none transition-colors">−</button>
-          <button type="button" onClick={() => setZoom(1)} title="Reset zoom (Ctrl 0)" aria-label={`Reset zoom, ${Math.round(zoom * 100)}%`} className="min-w-[44px] text-mini font-semibold text-white/60 hover:text-white tabular-nums transition-colors">{Math.round(zoom * 100)}%</button>
-          <button type="button" onClick={() => bumpZoom(0.05)} title="Zoom in (Ctrl +)" aria-label="Zoom in" className="h-6 w-6 grid place-items-center rounded-lg text-white/50 hover:text-white hover:bg-white/10 text-base leading-none transition-colors">+</button>
-        </div>
-        <nav className="flex gap-0.5 bg-black/25 p-1 rounded-xl border border-white/[0.06] w-full md:w-auto overflow-x-auto">
-          {visibleTabs.map((t) => {
-            const active = tab === t.id;
-            return (
-              <motion.button
-                key={t.id}
-                onClick={() => setTab(t.id)}
-                // Start fetching the panel's chunk the instant the pointer or
-                // keyboard focus lands on the tab — by the time the click
-                // registers the module is usually already parsed, so the view
-                // swap is a pure animation with no loading state in between.
-                onPointerEnter={() => warmTab(t.id)}
-                onFocus={() => warmTab(t.id)}
-                aria-current={active ? 'page' : undefined}
-                whileTap={{ scale: 0.94 }}
-                transition={spring.snappy}
-                className={`relative px-3.5 py-2 rounded-lg text-note font-semibold tracking-wide whitespace-nowrap flex items-center gap-1.5 transition-colors duration-200 ${
-                  active ? 'text-white' : 'text-muted hover:text-white/90'
-                }`}
-              >
-                {active && (
-                  <motion.span
-                    layoutId="tab-pill"
-                    className="absolute inset-0 rounded-lg bg-white/[0.08] border border-white/10 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]"
-                    transition={spring.snappy}
-                  />
-                )}
-                {/* The icon takes the accent only while the tab is active, so
-                    the selected tab is legible from colour and from the pill
-                    behind it, not from colour alone. */}
-                <span className="relative z-10 flex items-center gap-1.5">
-                  <t.icon size={14} className={active ? 'text-accent' : undefined} />
-                  {t.label}
-                </span>
-              </motion.button>
-            );
-          })}
-        </nav>
-        </div>
+        <HeaderControls
+          tabs={visibleTabs}
+          tab={tab}
+          onSelect={setTab}
+          warmTab={warmTab}
+          runActive={progress.processing}
+          zoom={zoom}
+          onBumpZoom={bumpZoom}
+          onResetZoom={() => setZoom(1)}
+          profileName={activeQualityProfile ? (BUILTIN_PROFILES.find(p => p.id === activeQualityProfile)?.name.split(' ')[1] || 'Custom') : 'Standard'}
+          onOpenProfiles={() => setShowProfilesModal(true)}
+          showHud={showHud}
+          onToggleHud={() => setShowHud((v) => !v)}
+          onOpenSnapshots={() => setShowSnapshotsModal(true)}
+          onOpenPalette={() => setShowPalette(true)}
+        />
       </header>
 
       {/* Hardware Telemetry HUD Banner */}

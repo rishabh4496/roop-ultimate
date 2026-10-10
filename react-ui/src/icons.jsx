@@ -27,7 +27,7 @@ import {
   Columns2, SquareSplitVertical, Inbox, Clock, Gauge, Cpu, Star,
   CircleCheck, CircleX, CircleAlert, Info, Unplug, Bell, Radio, Image,
   Pencil, Film, PanelLeft, PanelRight, PanelBottom, LayoutGrid, FolderOpen as Folder,
-  Eye, ExternalLink, ChevronRight,
+  Eye, ExternalLink, ChevronRight, Ellipsis, Camera,
   House, RotateCcw, Sun, Moon, Monitor,
 } from 'lucide-react';
 
@@ -64,6 +64,13 @@ export const Icon = {
   outputs: make(FolderOpen, 'outputs'),
   history: make(History, 'history'),
   settings: make(Settings2, 'settings'),
+  // The overflow menu at the end of the tab strip.
+  more: make(Ellipsis, 'more'),
+
+  // Header utilities that would otherwise borrow a tab's glyph. Icon-only, a
+  // gear beside the Settings tab (or a clock beside History) is two buttons
+  // that look identical, so these get their own.
+  snapshot: make(Camera, 'snapshot'),
 
   // Identity + status.
   brand: make(Zap, 'brand'),

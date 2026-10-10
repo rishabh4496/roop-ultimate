@@ -1,29 +1,8 @@
 {
   "axe": {},
-  "navVisibility": {
-    "1024": [
-      "Batch Matrix",
-      "Face Manager",
-      "Editor",
-      "Outputs",
-      "History",
-      "Settings"
-    ],
-    "1280": [
-      "Face Manager",
-      "Editor",
-      "Outputs",
-      "History",
-      "Settings"
-    ],
-    "1440": [
-      "Outputs",
-      "History",
-      "Settings"
-    ]
-  },
+  "navVisibility": {},
   "tabStops": {
-    "faceswap": 265
+    "faceswap": 259
   },
   "idleRequests": {},
   "themeContrast": {
