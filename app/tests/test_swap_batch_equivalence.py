@@ -14,7 +14,8 @@ with the swapper's mean/std) from several clips, each paired with its OWN source
 per crop). Each (crop, source) is run
   * at B=1 through the production swapper session (`Run`),
   * batched through `RunBatchMulti` at B=2/4/8 (groups of consecutive crops, so every batch mixes identities),
-  * at B=1 through a CUDA-FP32 session of the same (batch-relaxed) graph, and at B=1 again (the repeatability control).
+  * at B=1 on two CUDA sessions of the same (batch-relaxed) graph - a GENUINE FP32 one (`fp32_graph`) and the shipped graph's
+    own dtypes (the file is FP16 end to end, so that is FP16 compute) - and at B=1 again (the repeatability control).
 Per row against its B=1 result: max abs diff (model units, [-1, 1]), SSIM (8-bit picture, data_range 255, the canary's
 own implementation) and identity: the AdaFace cosine of the output to its source (AdaFace is not what the pipeline
 matches with; an independent judge), reported as the batched-minus-B=1 delta.
@@ -181,11 +182,36 @@ def to_picture(chw, denormalize):
     return np.clip(np.round(x * 255.0), 0, 255)[:, :, ::-1].astype(np.float32)
 
 
-def fp32_reference(p):
+def fp32_graph(model_arg):
+    """The swap graph with EVERY float16 tensor made float32 (initializers, Constant/attribute tensors, Cast targets).
+
+    hyperswap_1a_256.onnx is FP16 end to end: FP32 I/O, four boundary Casts, 295 FP16 initializers, and all 16
+    InstanceNormalization nodes fed FP16 (checked 2026-10-10). A CUDA/CPU session of the shipped file therefore computes in
+    FP16 - it is NOT an FP32 reference. This builds one."""
+    import onnx
+    from onnx import TensorProto as T, numpy_helper
+    m = onnx.load_from_string(bytes(model_arg)) if isinstance(model_arg, (bytes, bytearray)) else onnx.load(model_arg)
+
+    def up(t):
+        if t.data_type == T.FLOAT16:
+            t.CopyFrom(numpy_helper.from_array(numpy_helper.to_array(t).astype(np.float32), t.name))
+    for init in m.graph.initializer:
+        up(init)
+    for node in m.graph.node:
+        for a in node.attribute:
+            if a.type == onnx.AttributeProto.TENSOR:
+                up(a.t)
+            if node.op_type == "Cast" and a.name == "to" and a.i == T.FLOAT16:
+                a.i = T.FLOAT
+    del m.graph.value_info[:]
+    return m.SerializeToString()
+
+
+def cuda_session(model_arg):
     import onnxruntime
     from roop.utilities import get_onnx_session_options
     return onnxruntime.InferenceSession(
-        p._model_arg, get_onnx_session_options(),
+        model_arg, get_onnx_session_options(),
         providers=[("CUDAExecutionProvider", {"use_tf32": "0"}), "CPUExecutionProvider"])
 
 
@@ -215,30 +241,29 @@ def measure(batches=BATCHES, n=N_CROPS):
 
     b1 = [one(r) for r in rows]
     b1_again = [one(r) for r in rows]
-    ref_sess = fp32_reference(p)
-    in_names = {i.name: i for i in ref_sess.get_inputs()}
+    refs = {"fp32": cuda_session(fp32_graph(p._model_arg)),          # a genuine FP32 graph
+            "graph_dtype": cuda_session(p._model_arg)}               # the shipped FP16 graph on CUDA (what the canary uses)
 
-    def fp32(r):
-        feed = {p.image_input_name: r["blob"],
-                p.embed_input_name: p._compute_source_input(r["src_face"])}
-        return np.asarray(ref_sess.run(None, feed)[0][0], np.float32)
-    ref = [fp32(r) for r in rows]
+    def ref_run(sess, group):
+        feed = {p.image_input_name: np.concatenate([r["blob"] for r in group], axis=0),
+                p.embed_input_name: np.concatenate([p._compute_source_input(r["src_face"]) for r in group], axis=0)}
+        return np.asarray(sess.run(None, feed)[0], np.float32)
 
-    # INFORMATION, not asserted: the same batched-vs-B=1 comparison on the CUDA-FP32 session. The production swapper is
+    ref1 = {k: [ref_run(sess, [r])[0] for r in rows] for k, sess in refs.items()}
+
+    # INFORMATION, not asserted: the same batched-vs-B=1 comparison on the CUDA sessions. The production swapper is
     # TensorRT; ORT's CUDA InstanceNormalization was measured wrong at batch > 1 on this generator (face_engine,
     # 2026-09-28), which is what a TensorRT-less card with >= 10 GB (batching on) would run.
-    cuda_batched = {}
-    for b in batches:
-        rows_out = [None] * n
-        for s in range(0, n, b):
-            group = rows[s:s + b]
-            feed = {p.image_input_name: np.concatenate([r["blob"] for r in group], axis=0),
-                    p.embed_input_name: np.concatenate([p._compute_source_input(r["src_face"]) for r in group], axis=0)}
-            out = np.asarray(ref_sess.run(None, feed)[0], np.float32)
-            for j in range(len(group)):
-                rows_out[s + j] = out[j]
-        cuda_batched[b] = rows_out
-    del ref_sess
+    cuda_batched = {k: {} for k in refs}
+    for k, sess in refs.items():
+        for b in batches:
+            out = [None] * n
+            for s0 in range(0, n, b):
+                res = ref_run(sess, rows[s0:s0 + b])
+                for j in range(len(res)):
+                    out[s0 + j] = res[j]
+            cuda_batched[k][b] = out
+    del refs
 
     def metrics(out, base, r):
         a, b = to_picture(out, denorm), to_picture(base, denorm)
@@ -252,9 +277,11 @@ def measure(batches=BATCHES, n=N_CROPS):
               "providers": [str(x) for x in p.model_swap_insightface.get_providers()],
               "crops": [{"label": r["label"], "src": r["src"]} for r in rows],
               "controls": {"b1_repeat": [metrics(b1_again[i], b1[i], rows[i]) for i in range(n)],
-                           "b1_vs_cuda_fp32": [metrics(b1[i], ref[i], rows[i]) for i in range(n)],
-                           **{"cuda_fp32_B=%d_vs_B=1" % b: [metrics(cuda_batched[b][i], ref[i], rows[i])
-                                                            for i in range(n)] for b in batches}},
+                           "b1_vs_cuda_fp32": [metrics(b1[i], ref1["fp32"][i], rows[i]) for i in range(n)],
+                           "b1_vs_cuda_graph_dtype": [metrics(b1[i], ref1["graph_dtype"][i], rows[i]) for i in range(n)],
+                           **{"cuda_%s_B=%d_vs_B=1" % (k, b): [metrics(cuda_batched[k][b][i], ref1[k][i], rows[i])
+                                                               for i in range(n)]
+                              for k in cuda_batched for b in batches}},
               "batched": {}}
     # PROOF THE BATCH RAN. "Identical" is also what a silent sequential fallback looks like, so every inference the swapper
     # really issues is spied on: the batch dimension of the image feed must be exactly B, n/B times.
@@ -286,8 +313,9 @@ def measure(batches=BATCHES, n=N_CROPS):
                 "max_abs_id_delta": max(abs(m["id_delta"]) for m in ms if m["id_delta"] == m["id_delta"])}
     report["summary"] = {"b1_repeat": agg(report["controls"]["b1_repeat"]),
                          "b1_vs_cuda_fp32": agg(report["controls"]["b1_vs_cuda_fp32"]),
-                         **{"cuda_fp32_B=%d" % b: agg(report["controls"]["cuda_fp32_B=%d_vs_B=1" % b])
-                            for b in batches},
+                         "b1_vs_cuda_graph_dtype": agg(report["controls"]["b1_vs_cuda_graph_dtype"]),
+                         **{"cuda_%s_B=%d" % (k, b): agg(report["controls"]["cuda_%s_B=%d_vs_B=1" % (k, b)])
+                            for k in ("fp32", "graph_dtype") for b in batches},
                          **{"B=%s" % b: agg(v) for b, v in report["batched"].items()}}
     for b in batches:
         s = report["summary"]["B=%d" % b]
@@ -343,7 +371,7 @@ def test_the_instrument_can_tell_rows_apart(report):
     a copy of the production output (otherwise 'SSIM >= 0.998' could pass on a measurement that sees nothing)."""
     assert report["summary"]["b1_repeat"]["min_ssim"] >= 0.9995, "B=1 is not repeatable: the thresholds mean nothing"
     sims = [m["ssim"] for m in report["controls"]["b1_vs_cuda_fp32"]]
-    assert min(sims) < 1.0, "production B=1 is bit-identical to CUDA FP32: is the production session really FP16?"
+    assert min(sims) < 1.0, "production B=1 is bit-identical to a genuine FP32 graph: is the production session really FP16?"
     assert len({c["src"] for c in report["crops"]}) >= 8, "fewer than 8 distinct sources in the 16 rows"
 
 
