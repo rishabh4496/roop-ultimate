@@ -33,6 +33,7 @@ import os
 import sys
 import time
 
+import fixtures
 import numpy as np
 import pytest
 
@@ -110,7 +111,6 @@ def _library_sources(n):
 def _real_crops(p, n):
     """n production-aligned crops from real detections; returns [(label, aligned_uint8_bgr)]."""
     import cv2
-    import fixtures
     from roop.face_analyser import canonicalize_face_alignment
     from roop.face_util import get_all_faces
     crops = []
@@ -394,3 +394,8 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
+
+
+def load_tests(loader, tests, pattern):
+    from app.tests.unittest_shim import load_tests_for
+    return load_tests_for(globals())

@@ -31,6 +31,7 @@ import statistics as st
 import sys
 import time
 
+import fixtures
 import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -88,7 +89,6 @@ def _init_pipeline():
 def _real_faces(n):
     """[(frame, face)] - n real detections spread over the clips (largest face per sampled frame)."""
     import cv2
-    import fixtures
     from roop.face_util import get_all_faces
     out = []
     for rel, k in CLIPS:

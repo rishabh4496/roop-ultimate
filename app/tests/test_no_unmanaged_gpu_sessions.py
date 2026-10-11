@@ -113,3 +113,8 @@ def test_migrated_modules_use_the_factory_and_have_no_raw_gpu_site_left():
             problems.append(f"{relative}: does not use create_strictly_accelerated_session")
     assert not problems, "\n".join(problems)
 
+
+def load_tests(loader, tests, pattern):
+    from app.tests.unittest_shim import load_tests_for
+    return load_tests_for(globals())
+

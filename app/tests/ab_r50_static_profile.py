@@ -23,6 +23,8 @@ import statistics as st
 import sys
 import time
 
+import fixtures
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 APP = os.path.dirname(HERE)
 for _p in (APP, HERE):
@@ -42,7 +44,6 @@ def _used_mib():
 
 def run(args):
     import cv2
-    import fixtures
     from settings import Settings
     import angle_bench as ab
     cfg = Settings(os.path.join(APP, 'config.yaml'))

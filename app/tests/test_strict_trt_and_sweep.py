@@ -109,3 +109,8 @@ def test_a_sweep_over_a_static_batch_1_model_points_at_the_converter(tmp_path):
                               device_id=0, warmup=0, iterations=1)
     with pytest.raises(RuntimeError, match=r"convert_dynamic_shapes\.py .*static\.onnx"):
         verify.sweep(args)
+
+
+def load_tests(loader, tests, pattern):
+    from app.tests.unittest_shim import load_tests_for
+    return load_tests_for(globals())

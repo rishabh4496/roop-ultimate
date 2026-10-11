@@ -335,3 +335,8 @@ def test_create_onnx_session_rejects_a_gpu_request_that_came_up_cpu_only(monkeyp
 def test_create_onnx_session_still_builds_cpu_when_cpu_was_asked_for(monkeypatch):
     op, fake = _op_fake(monkeypatch, lambda chain: [CPU_EP])
     assert op.create_onnx_session("m.onnx", [CPU_EP]).get_providers() == [CPU_EP]
+
+
+def load_tests(loader, tests, pattern):
+    from app.tests.unittest_shim import load_tests_for
+    return load_tests_for(globals())

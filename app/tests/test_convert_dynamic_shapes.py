@@ -227,3 +227,8 @@ def test_prepare_dynamic_model_reuses_a_current_file_and_raises_on_an_unconverti
 
 def test_restoreformer_pp_verifies_only_its_image_output():
     assert cds.PRIMARY_OUTPUTS["restoreformer_plus_plus"] == ("2701",)
+
+
+def load_tests(loader, tests, pattern):
+    from app.tests.unittest_shim import load_tests_for
+    return load_tests_for(globals())
