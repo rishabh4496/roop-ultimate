@@ -115,3 +115,12 @@ def test_in_place_finalize_uses_a_temp_then_replaces(fake_run):
     assert util_ffmpeg.finalize_web_video(src, src, audio_source=src) is True
     assert calls[0][-1] == src + '.web.tmp.mp4'
     assert os.path.isfile(src) and not os.path.exists(src + '.web.tmp.mp4')
+
+
+def load_tests(loader, tests, pattern):
+    """Expose this module's bare `test_*` functions to `unittest discover`."""
+    try:
+        from tests.unittest_shim import load_tests_for
+    except ImportError:  # discovery started from inside tests/
+        from unittest_shim import load_tests_for
+    return load_tests_for(globals())

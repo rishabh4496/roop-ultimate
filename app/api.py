@@ -178,6 +178,21 @@ def _configuration_ready():
     return getattr(roop_globals, "CFG", None) is not None
 
 
+def _render_active() -> bool:
+    """Whether a render job owns the GPU right now (the one `processing` flag the
+    other busy-guards in this module read)."""
+    return bool(_progress.get("processing"))
+
+
+def _render_active_response():
+    """409 for a request that would run inference beside an active render."""
+    return JSONResponse(status_code=409, content={
+        "message": "A render is in progress - swap previews are paused so they do not "
+                   "share the GPU with it. The live view shows the render's own frames.",
+        "render_active": True,
+    })
+
+
 def _configuration_initializing():
     """Consistent response for requests arriving during model/config bootstrap."""
     return JSONResponse(status_code=503, content={
@@ -4419,6 +4434,15 @@ def preview(payload: dict = Body(...)):
     """Render the selected target frame, optionally with a live face swap."""
     if not _configuration_ready():
         return _configuration_initializing()
+    # Refused BEFORE any state is touched. Past this point a preview sets the
+    # process-global `is_preview` (which narrows the pooled sessions' width for
+    # every thread, the render's workers included), runs a swap on the shared
+    # GPU, and ends in `torch.cuda.empty_cache()` - none of which a running
+    # render should have done to it. The React panel already defers its own
+    # previews while processing, but the grid loader, a second tab and a direct
+    # API client do not.
+    if _render_active():
+        return _render_active_response()
     _preview_request_lock.acquire()
     target_context_lock_held = False
     try:
