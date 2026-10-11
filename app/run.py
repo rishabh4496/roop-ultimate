@@ -10,46 +10,71 @@ import numpy as np
 
 _GPU_DLL_HANDLES = []
 
+# nvidia-*-cu12 wheels put their DLLs in <site-packages>/nvidia/<package>/bin.
+# These are the five that onnxruntime-gpu's CUDA/TensorRT providers load
+# (cudart, cuBLAS, cuDNN 9, cuRAND, cuFFT); they are listed first, in this order,
+# and any other nvidia/*/bin (cusparse, nvrtc, ...) follows.
+_NVIDIA_DLL_PACKAGES = ("cuda_runtime", "cublas", "cudnn", "curand", "cufft")
 
-def _register_gpu_runtime_dirs():
-    """Register process-local TensorRT/CUDA DLL directories without PATH edits."""
-    dll_dirs = []
+
+def _gpu_runtime_dirs(search_roots):
+    """Existing GPU DLL directories under ``search_roots``, highest priority first.
+
+    Pure path arithmetic: nothing is imported, so no package can load a DLL from
+    the wrong place while we are still deciding where the right place is.
+    torch/lib leads because it carries a matched CUDA + cuDNN set; a separate
+    nvidia-* wheel with the same file names must not shadow half of it.
+    """
+    found = []
+    seen = set()
 
     def _add(directory):
-        if directory and os.path.isdir(directory) and directory not in dll_dirs:
-            dll_dirs.append(directory)
+        key = os.path.normcase(os.path.abspath(directory))
+        if key not in seen and os.path.isdir(directory):
+            seen.add(key)
+            found.append(os.path.abspath(directory))
 
-    for module_name, resolver in (
-        ("tensorrt", lambda m: os.path.join(
-            os.path.dirname(os.path.dirname(m.__file__)), "tensorrt_libs")),
-        ("tensorrt_libs", lambda m: os.path.dirname(m.__file__)),
-        ("torch", lambda m: os.path.join(os.path.dirname(m.__file__), "lib")),
-    ):
+    for root in search_roots:
+        _add(os.path.join(root, "torch", "lib"))
+        _add(os.path.join(root, "tensorrt_libs"))
+        _add(os.path.join(root, "tensorrt"))
+    for root in search_roots:
+        nvidia = os.path.join(root, "nvidia")
+        for package in _NVIDIA_DLL_PACKAGES:
+            _add(os.path.join(nvidia, package, "bin"))
         try:
-            module = __import__(module_name)
-            if getattr(module, "__file__", None):
-                _add(resolver(module))
-        except Exception:
+            others = sorted(os.listdir(nvidia))
+        except OSError:
             continue
+        for package in others:
+            _add(os.path.join(nvidia, package, "bin"))
+    return found
 
-    try:
-        import nvidia
-        roots = ([os.path.dirname(nvidia.__file__)]
-                 if getattr(nvidia, "__file__", None)
-                 else list(getattr(nvidia, "__path__", [])))
-        for root in roots:
-            for current, _dirs, _files in os.walk(root):
-                if os.path.basename(current).lower() == "bin":
-                    _add(current)
-    except Exception:
-        pass
+
+def _register_gpu_runtime_dirs():
+    """Make the environment's CUDA/cuDNN/TensorRT DLLs loadable on Windows.
+
+    Must run before onnxruntime, insightface, torch or cv2 is imported.
+    ``os.add_dll_directory`` covers Python extension modules; onnxruntime loads
+    its provider DLLs with the classic search order, which does not consult
+    those directories, so they are also prepended to PATH (this also reaches
+    child processes). Idempotent; returns the directories it registered.
+    """
+    dll_dirs = _gpu_runtime_dirs([entry for entry in sys.path if entry])
+    if not dll_dirs or not hasattr(os, "add_dll_directory"):
+        return []
 
     for directory in dll_dirs:
         try:
-            if hasattr(os, "add_dll_directory"):
-                _GPU_DLL_HANDLES.append(os.add_dll_directory(directory))
-        except Exception:
+            _GPU_DLL_HANDLES.append(os.add_dll_directory(directory))
+        except OSError:
             pass
+
+    ours = {os.path.normcase(directory) for directory in dll_dirs}
+    rest = [entry for entry in os.environ.get("PATH", "").split(os.pathsep)
+            if entry and os.path.normcase(os.path.abspath(entry)) not in ours]
+    os.environ["PATH"] = os.pathsep.join(dll_dirs + rest)
+    return dll_dirs
 
 
 _register_gpu_runtime_dirs()
