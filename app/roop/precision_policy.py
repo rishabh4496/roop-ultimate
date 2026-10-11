@@ -417,6 +417,9 @@ def _global_precision() -> str:
 #
 #   ROOP_TRT_MODEL_PRECISION="xseg:mixed;1k3d68:global"      env wins over the table; 'global' drops the table entry
 #
+# 2026-10-11: an ONNX-level FP16 conversion (tools/convert_fp16.py, with Sigmoid/Gemm/normalisation kept FP32) fails the same
+# gates by the same margin (xseg min IoU 0.81, 1k3d68 kps5 p95 9.3% IOD) and is SLOWER on the CUDA EP for xseg/1k3d68 - see
+# docs/perf/aux_fp16_onnx_2026-10-11.md. Do not re-propose an FP16 default for these three.
 # Swappers are refused (they have their own canary and ROOP_SWAP_FP32). Take an entry out of the table to hand a model back
 # to the global setting; nothing else changes - the engine caches are per precision, so both engines stay on disk.
 PRECISION_OVERRIDES: dict = {"xseg": "fp32", "2d106det": "fp32", "1k3d68": "fp32"}

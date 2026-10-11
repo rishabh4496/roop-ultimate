@@ -507,12 +507,94 @@ def cmd_report(args):
     return 0
 
 
+# ── onnx16: tools/convert_fp16.py output on the CUDA EP ──────────────────────────────────────────
+# Why CUDA EP and not TensorRT: TRT already builds its own FP16 engine under 'mixed', so an FP16 ONNX adds nothing there (and
+# with trt_fp16 off TRT would run the FP16 nodes in FP32). The path an FP16 ONNX CHANGES is the CUDA EP - the RTX 3060's
+# provider, where TensorRT is not admitted. Reference is the same CUDA-FP32/TF32-off session `evaluate` uses.
+def _gates(stem, rec):
+    """Pass/fail against the gates in the module docstring. Returns {gate: bool}."""
+    if stem == "xseg":
+        out = {}
+        for key in ("xseg_aligned", "xseg_box"):
+            iou = rec[key]["_raw"]["iou"]
+            out[key + ": IoU>=0.995 on >=99% of faces"] = sum(1 for v in iou if v >= 0.995) >= 0.99 * len(iou)
+            out[key + ": no face < 0.95"] = min(iou) >= 0.95
+        return out
+    lm = rec["landmarks"]
+    out = {"landmark mean-error p95 <= 0.3 frame px": lm["mean_px"]["p95"] <= 0.3}
+    if "kps5_mean_px" in lm:
+        out["refined kps5 p95 <= 0.3 frame px"] = lm["kps5_mean_px"]["p95"] <= 0.3
+    return out
+
+
+def cmd_onnx16(args):
+    import onnxruntime
+    from roop.utilities import get_onnx_session_options
+    sys.path.insert(0, os.path.join(REPO, "tools"))
+    import convert_fp16 as cv
+    _init_pipeline()
+    data = np.load(os.path.join(OUT, "capture.npz"), allow_pickle=True)
+    al, bx = xseg_inputs(data)
+    inputs = {"xseg_aligned": al, "xseg_box": bx, "2d106det": data["2d106det_x"], "1k3d68": data["1k3d68_x"]}
+    res = {"date": time.strftime("%Y-%m-%d %H:%M"), "n": {k: int(len(v)) for k, v in inputs.items()}, "models": {}}
+    for stem in cv.FILES:
+        keys = ("xseg_aligned", "xseg_box") if stem == "xseg" else (stem,)
+        ref = ref_session(stem)
+        refs = {k: run_all(ref, inputs[k]) for k in keys}
+        t32 = trt32_session(stem)
+        entry = res["models"].setdefault(stem, {"timing": {"cuda_fp32": time_gpu_io(ref, inputs[keys[0]][0:1]),
+                                                           "trt_fp32_shipped": time_gpu_io(t32, inputs[keys[0]][0:1])},
+                                                "strategies": {}})
+        del t32
+        for strategy in args.strategies:
+            path, rep = cv.convert(stem, strategy)
+            sess = onnxruntime.InferenceSession(path, get_onnx_session_options(),
+                                                providers=[("CUDAExecutionProvider", {"use_tf32": "0"}), "CPUExecutionProvider"])
+            if sess.get_providers()[0] != "CUDAExecutionProvider":      # a silent CPU fallback would "pass" and time 100x slower
+                raise SystemExit("%s/%s is on %s, not CUDA" % (stem, strategy, sess.get_providers()))
+            rec = {"convert": {k: rep[k] for k in ("blocked_ops", "blocked_nodes", "nodes", "fp16_initializers", "fp32_initializers")}}
+            for key in keys:
+                cand = run_all(sess, inputs[key])
+                if not np.isfinite(cand).all():
+                    rec["non_finite_outputs"] = int((~np.isfinite(cand)).sum())
+                if stem == "xseg":
+                    ms = mask_stats(cand, refs[key])
+                    rec[key] = {k: (summ(v) if isinstance(v, list) else v) for k, v in ms.items()}
+                    rec[key]["_raw"] = {"iou": ms["iou"]}
+                    rec[key]["below_0.995"] = int(sum(1 for v in ms["iou"] if v < 0.995))
+                else:
+                    ls = lm_stats(stem, cand, refs[key], data[stem + "_bbox"])
+                    rec["landmarks"] = {k: summ(v) for k, v in ls.items()}
+                    rec["landmarks"]["over_0.3px_faces"] = int(sum(1 for v in ls["mean_px"] if v > 0.3))
+            rec["timing"] = time_gpu_io(sess, inputs[keys[0]][0:1])
+            rec["gates"] = _gates(stem, rec)
+            entry["strategies"][strategy] = rec
+            print("[onnx16] %-9s %-9s %s  %.3f ms (cuda fp32 %.3f, trt fp32 %.3f)" % (
+                stem, strategy, "PASS" if all(rec["gates"].values()) else "FAIL: " + ", ".join(k for k, v in rec["gates"].items() if not v),
+                rec["timing"]["median_ms"], entry["timing"]["cuda_fp32"]["median_ms"], entry["timing"]["trt_fp32_shipped"]["median_ms"]),
+                flush=True)
+            del sess
+        del ref
+    for entry in res["models"].values():                                  # the raw IoU lists are for the gate, not the json
+        for rec in entry["strategies"].values():
+            for key in ("xseg_aligned", "xseg_box"):
+                if key in rec:
+                    rec[key].pop("_raw", None)
+    os.makedirs(OUT, exist_ok=True)
+    json.dump(res, open(os.path.join(OUT, "onnx16_results.json"), "w"), indent=1)
+    print("[onnx16] wrote", os.path.join(OUT, "onnx16_results.json"), flush=True)
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=("capture", "evaluate", "report", "tf32"))
+    ap.add_argument("cmd", choices=("capture", "evaluate", "report", "tf32", "onnx16"))
     ap.add_argument("--faces", type=int, default=500)
+    ap.add_argument("--strategies", nargs="+", default=["all", "norm", "head", "norm_head"],
+                    help="onnx16 only: tools/convert_fp16.py strategies to score")
     args = ap.parse_args()
-    return {"capture": cmd_capture, "evaluate": cmd_evaluate, "report": cmd_report, "tf32": cmd_tf32}[args.cmd](args)
+    return {"capture": cmd_capture, "evaluate": cmd_evaluate, "report": cmd_report, "tf32": cmd_tf32,
+            "onnx16": cmd_onnx16}[args.cmd](args)
 
 
 if __name__ == "__main__":
