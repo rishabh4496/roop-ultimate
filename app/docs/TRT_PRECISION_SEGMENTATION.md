@@ -13,7 +13,7 @@ stay FP16; intermediate convolutions, matrix multiplications, and activations
 remain unconstrained so TensorRT may select FP8/INT8/FP16 tactics.
 
 The builder sets `PREFER_PRECISION_CONSTRAINTS`, `DIRECT_IO`, and the hardware
-workspace cap (4 GiB on the RTX 4070 tier, 1.5 GiB on the sub-7 GiB tier). It
+workspace cap (2 GiB on the RTX 4070 tier, 1 GiB on the sub-7 GiB tier). It
 tries FP8/INT8, then FP16, then FP32 if an engine cannot be built.
 
 `run_polygraphy_validation()` compares the ONNX FP32 and TensorRT activations

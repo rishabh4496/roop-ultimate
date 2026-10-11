@@ -436,22 +436,48 @@ The opt-in strict path is exposed by `app/roop/trt_session_builder.py`,
 registers the packaged TensorRT/CUDA DLLs on Windows, creates a TensorRT-only
 ONNX Runtime session with explicit min/opt/max profiles and engine/timing
 caches, batches faces across frames, performs affine sampling and compositing
-on CUDA, and sends one rawvideo stream to NVENC. It raises if ORT adds CUDA or
-CPU as a fallback. Run the verifier from `app/` after installing matching
-TensorRT libraries:
+on CUDA, and sends one rawvideo stream to NVENC. It raises if the session is not
+TensorRT-first, if ORT adds CUDA as a fallback, or (via ORT's
+`session.disable_cpu_ep_fallback`) if any node would run on the CPU; ORT's own
+trailing `CPUExecutionProvider` list entry is expected and accepted. Run the
+verifier from `app/` after installing matching TensorRT libraries:
 
 ```bash
 python verify_trt_fps.py --model models/hififace_unofficial_256.onnx \
   --batch-size 8 --warmup 10 --iterations 100
+
+# one engine (profile min 1 / opt 4 / max 8) measured at batch 1, 4 and 8:
+python verify_trt_fps.py --model models/inswapper_128_dynamic.onnx --batch-sizes 1,4,8
 ```
 
+A `--batch-sizes` sweep proves the dynamic profile (every size runs inside one
+engine without a shape rejection), reports fps, per-item latency and the scaling
+against the smallest batch, and fails (exit 3) if any output is NaN/Inf. Finite is
+a tripwire for FP16 overflow, not proof of a correct picture: the swapper's FP16
+failure is wrong colours with finite values, so build and measure the swapper FP32.
+
 The strict path requires a dynamic-batch ONNX export. The shipped
-`inswapper_128.onnx` and SCRFD `det_10g.onnx` files are batch-one exports and
-are rejected rather than repeatedly invoked at batch one; use the existing
-quality-preserving runtime for those models or re-export them with a dynamic
-batch dimension. TensorRT engine, profile, and timing artifacts live under
-`app/models/trt_cache/`; decoded/intermediate video frames are never written
-there.
+`inswapper_128.onnx`, `scrfd_2.5g_kps.onnx` and SCRFD `det_10g.onnx` are batch-one
+exports and are rejected (`StaticBatchError`) rather than repeatedly invoked at
+batch one. Convert them with `tools/convert_dynamic_shapes.py`, which writes
+`<name>_dynamic.onnx` only after proving a batch of N equals N single runs:
+
+```bash
+python tools/convert_dynamic_shapes.py app/models/inswapper_128.onnx --check-batches 1,4,8
+```
+
+Measured on the shipped files (ONNX Runtime, CPU, batches 1/4/8): `inswapper_128`,
+`det_10g`, `scrfd_2.5g_kps` and `restoreformer_plus_plus` (image output only) convert
+with a worst relative error of 0 to 4e-5. **GPEN 256/512 cannot be converted by graph
+surgery**: batch 4 is rejected first at the encoder's flatten into the final Linear, and
+with that fixed by hand batch 2 is rejected next in the generator's styled convolutions,
+whose per-sample weights `[B,256,512,3,3]` are reshaped to `[256,512,3,3]` for one `Conv`
+(batch 1 baked into the weights; undoing it needs a runtime `groups=B`, and ONNX
+`Conv.group` is a compile-time attribute). The tool reports this and writes nothing. SCRFD's outputs fold the batch
+into axis 0 *interleaved per cell* (`index = (cell * N + sample) * anchors + anchor`),
+not batch-major; whatever decodes them must unfold that. TensorRT engine, profile, and
+timing artifacts live under `app/models/trt_cache/`; decoded/intermediate video frames
+are never written there.
 
 #### Offline TensorRT engine builder
 
@@ -468,10 +494,22 @@ It stages `inswapper_128.onnx`, `GPEN-BFR-512.onnx`, and
 `scrfd_2.5g_kps.onnx` under `models/`, then creates machine-specific cache
 artifacts under `models/trt_cache/`. Re-running with `--offline` performs no
 network access and requires all three selected model files to already exist.
-The builder uses a 4096 MiB workspace on the RTX 4070 tier and 1536 MiB on the
+The builder uses a 2048 MiB workspace on the RTX 4070 tier and 1024 MiB on the
 sub-7 GiB RTX 3060 laptop tier. Use `--model <name>` to build one registered
 model, or set `ROOP_TRT_WORKSPACE_BYTES` only when deliberately overriding the
 hardware default.
+
+Models marked dynamic in the registry (inswapper min `target:1x3x128x128,source:1x512`
+/ opt `4x` / max `8x`; SCRFD `1x3x640x640` / `4x` / `8x`) are first converted by
+`tools/convert_dynamic_shapes.py` and built from the verified `_dynamic.onnx`. A model
+that cannot be made batch-dynamic (GPEN) is built as static batch 1 and the summary line
+says so. FP16 is the default; the swapper is built FP32 because inswapper overflows in
+FP16 and TensorRT emits wrong colours without a warning (`ROOP_SWAP_FP16=1` opts in,
+`ROOP_TRT_FP16=0` builds everything FP32). TensorRT builds an engine at the first
+inference, not when the session is created, so the builder runs every batch size in
+the profile, requires finite outputs, and fails if no `.engine` file was written. These
+engines are a flat cache that the app does not load; `tools/prebuild_engines.py` builds
+what the app uses.
 
 The lower-level zero-pickle implementation is split into
 `app/roop/hardware_streamer.py`, `app/roop/optimized_trt_engine.py`, and

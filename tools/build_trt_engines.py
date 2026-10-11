@@ -9,11 +9,32 @@ Run from the repository root::
 
     python tools/build_trt_engines.py
 
-The script is hardware-aware: the RTX 4070 tier uses the established 4 GiB
-workspace cap, while GPUs below 7 GiB use the 1.5 GiB laptop cap.  Set
-``ROOP_TRT_WORKSPACE_BYTES`` to override that cap deliberately.  Use
-``--offline`` after the models have been staged locally to guarantee that no
-network request is attempted.
+The script is hardware-aware: the RTX 4070 tier builds with a 2048 MiB workspace
+and GPUs below 7 GiB (the RTX 3060 laptop) with 1024 MiB, which keeps a build
+from running out of memory next to a loaded app.  Set
+``ROOP_TRT_WORKSPACE_BYTES`` to override that deliberately.  Use ``--offline``
+after the models have been staged locally to guarantee that no network request
+is attempted.
+
+Dynamic batch.  Models marked ``"dynamic"`` in the registry (inswapper, SCRFD,
+GPEN, RestoreFormer++) are static batch-1 exports, which a min 1 / opt 4 / max 8
+optimization profile cannot be built against.  Each is first converted by
+``tools/convert_dynamic_shapes.py`` to ``<name>_dynamic.onnx`` -- and that
+conversion is only accepted when a batch of N is numerically equal to N single
+runs.  A model the surgery cannot make batch-dynamic (GPEN: styled convolutions)
+is built as static batch 1 and the summary says so; it is never presented as
+dynamic.
+
+Precision.  FP16 is the default.  The swapper is the exception: inswapper's
+activations overflow in FP16 and TensorRT emits garbage colours without any
+warning, which is why the app itself forces its swapper to FP32 (commit
+52e7750).  ``ROOP_SWAP_FP16=1`` opts back in; ``ROOP_TRT_FP16=0`` builds everything
+FP32.
+
+An engine is only built at the first INFERENCE, not when the session is created,
+so after creating the session this tool runs it at every batch size in the
+profile (and checks the outputs are finite).  A build that wrote no engine file
+fails.
 """
 from __future__ import annotations
 
@@ -27,7 +48,9 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Any, Mapping, Optional
+from typing import Any, Mapping, NamedTuple, Optional
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))   # convert_dynamic_shapes lives beside this file
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("build_trt")
@@ -35,6 +58,10 @@ logger = logging.getLogger("build_trt")
 MODEL_REGISTRY: Mapping[str, Mapping[str, Any]] = {
     "inswapper_128.onnx": {
         "url": "https://huggingface.co/datasets/Gourieff/ReActor/resolve/main/models/inswapper_128.onnx",
+        "dynamic": True,
+        "swapper": True,
+        # Overflows in FP16 (rainbow output, no warning); the app forces its swapper to FP32.
+        "fp16": False,
         "shapes": {
             "min": "target:1x3x128x128,source:1x512",
             "opt": "target:4x3x128x128,source:4x512",
@@ -49,6 +76,7 @@ MODEL_REGISTRY: Mapping[str, Mapping[str, Any]] = {
         "fallback_urls": (
             "https://huggingface.co/countfloyd/deepfake/resolve/main/GPEN-BFR-512.onnx",
         ),
+        "dynamic": True,
         "shapes": {
             "min": "input:1x3x512x512",
             "opt": "input:2x3x512x512",
@@ -63,10 +91,11 @@ MODEL_REGISTRY: Mapping[str, Mapping[str, Any]] = {
         "fallback_urls": (
             "https://raw.githubusercontent.com/yangjian1218/scrfd_onnx_tensorrt/master/models/scrfd/scrfd_2.5g_kps.onnx",
         ),
+        "dynamic": True,
         "shapes": {
             "min": "input:1x3x640x640",
-            "opt": "input:1x3x640x640",
-            "max": "input:1x3x640x640",
+            "opt": "input:4x3x640x640",
+            "max": "input:8x3x640x640",
         },
     },
 }
@@ -78,16 +107,19 @@ NATIVE_MODEL_REGISTRY: Mapping[str, Mapping[str, Any]] = {
     "gpen_bfr_256.onnx": {
         "url": "https://huggingface.co/facefusion/models-3.0.0/resolve/main/gpen_bfr_256.onnx",
         "family": "gpen",
+        "dynamic": True,
         "shapes": {"min": "input:1x3x256x256", "opt": "input:2x3x256x256", "max": "input:4x3x256x256"},
     },
     "restoreformer_plus_plus.onnx": {
         "url": "https://huggingface.co/countfloyd/deepfake/resolve/main/restoreformer_plus_plus.onnx",
         "family": "restoreformer_pp",
+        "dynamic": True,
         "shapes": {"min": "input:1x3x512x512", "opt": "input:2x3x512x512", "max": "input:4x3x512x512"},
     },
     "xseg.onnx": {
         "url": "https://huggingface.co/countfloyd/deepfake/resolve/main/xseg.onnx",
         "family": "dfl_xseg",
+        "fp16": False,          # per-model FP32 (xseg mixed measured IoU min 0.81); see precision_policy
         "shapes": {"min": "input:1x256x256x3", "opt": "input:1x256x256x3", "max": "input:1x256x256x3"},
     },
 }
@@ -353,19 +385,77 @@ def _workspace_bytes(total_vram: int) -> int:
         except ValueError as error:
             raise ValueError("ROOP_TRT_WORKSPACE_BYTES must be an integer") from error
     # The sub-7 GiB tier is the RTX 3060 laptop profile from AGENTS.md.
-    return (1536 if 0 < total_vram < 7 * 1024**3 else 4096) * 1024**2
+    return (1024 if 0 < total_vram < 7 * 1024**3 else 2048) * 1024**2
 
 
-def _provider_options(model_name: str, config: Mapping[str, Any]) -> dict[str, Any]:
+class ResolvedModel(NamedTuple):
+    """What will actually be built for one registry entry."""
+
+    path: Path
+    shapes: dict           # {"min": "name:1x3x..", "opt": .., "max": ..} for THIS graph
+    dynamic: bool          # True only when a verified _dynamic.onnx is being used
+    note: str
+
+
+def _static_profile(shapes: Mapping[str, str]) -> dict[str, str]:
+    """Collapse a min/opt/max profile to its min tier (batch 1 for a static export)."""
+    return {tier: str(shapes["min"]) for tier in ("min", "opt", "max")}
+
+
+def _verification_size(shapes: Mapping[str, str]) -> int:
+    """Spatial size to verify a dynamic-spatial model at (SCRFD: 640)."""
+    for entry in str(shapes["opt"]).split(","):
+        if ":" in entry:
+            dims = [int(v) for v in entry.split(":", 1)[1].split("x")]
+            if len(dims) == 4:
+                return max(dims[2], dims[3]) if dims[1] <= 4 else max(dims[1], dims[2])
+    return 640
+
+
+def _resolve_model(model_name: str, config: Mapping[str, Any]) -> ResolvedModel:
+    """Download if needed, then convert to a verified dynamic-batch graph when asked to."""
+    model_path = download_file(
+        config["url"], MODELS_DIR / model_name, tuple(config.get("fallback_urls", ()))
+    )
+    shapes = dict(config["shapes"])
+    if not config.get("dynamic"):
+        return ResolvedModel(model_path, shapes, False, "static graph, profile as registered")
+    from convert_dynamic_shapes import prepare_dynamic_model
+
+    batches = sorted({int(str(shapes[tier]).split(":", 1)[1].split("x")[0]) for tier in ("min", "opt", "max")})
+    try:
+        dynamic = prepare_dynamic_model(model_path, batches=batches, size=_verification_size(shapes))
+    except Exception as error:   # not convertible (RuntimeError) or unreadable: either way, say it and go static
+        logger.warning(
+            "%s cannot be made batch-dynamic (%s). Building it as STATIC batch 1; the profile is "
+            "collapsed to %s.", model_name, error, _static_profile(shapes)["min"],
+        )
+        return ResolvedModel(model_path, _static_profile(shapes), False,
+                             f"STATIC batch 1 (not batch-convertible: {str(error)[:160]})")
+    return ResolvedModel(dynamic, shapes, True, f"dynamic batch via {dynamic.name}, verified at batches {batches}")
+
+
+def _fp16_for(config: Mapping[str, Any]) -> bool:
+    """FP16 unless disabled globally or the model is registered as FP32-only."""
+    if os.environ.get("ROOP_TRT_FP16", "1").strip().lower() in {"0", "false", "no", "off"}:
+        return False
+    if config.get("fp16", True):
+        return True
+    # The swapper only: the app's own opt-in for its (broken) FP16 swapper.
+    swap_opt_in = os.environ.get("ROOP_SWAP_FP16", "0").strip().lower() in {"1", "true", "yes", "on"}
+    return bool(config.get("swapper")) and swap_opt_in
+
+
+def _provider_options(resolved: ResolvedModel, config: Mapping[str, Any]) -> dict[str, Any]:
     device_id = _device_id()
     total_vram = _total_vram_bytes(device_id)
     workspace = _workspace_bytes(total_vram)
-    shapes = _resolved_profile_shapes(MODELS_DIR / model_name, config)
+    shapes = _resolved_profile_shapes(resolved.path, {"shapes": resolved.shapes})
+    fp16 = _fp16_for(config)
     options = {
         "device_id": device_id,
         "trt_max_workspace_size": workspace,
-        "trt_fp16_enable": os.environ.get("ROOP_TRT_FP16", "1").strip().lower()
-        not in {"0", "false", "no", "off"},
+        "trt_fp16_enable": fp16,
         "trt_engine_cache_enable": True,
         "trt_engine_cache_path": str(CACHE_DIR),
         "trt_timing_cache_enable": True,
@@ -376,45 +466,104 @@ def _provider_options(model_name: str, config: Mapping[str, Any]) -> dict[str, A
         "trt_profile_max_shapes": shapes["max"],
         # A shared cache directory is safe because every model gets a stable
         # prefix. The model hash also prevents stale files after replacement.
-        "trt_engine_cache_prefix": f"roop_{Path(model_name).stem}_{_sha256(Path(MODELS_DIR / model_name))[:12]}",
+        "trt_engine_cache_prefix": _cache_prefix(resolved.path),
     }
     logger.info(
-        "%s: GPU tier=%s, workspace=%d MiB, device=%d",
-        model_name,
+        "%s: GPU tier=%s, workspace=%d MiB, precision=%s, device=%d",
+        resolved.path.name,
         "laptop-sub7GB" if 0 < total_vram < 7 * 1024**3 else "desktop/default",
         workspace // 1024**2,
+        "FP16" if fp16 else "FP32",
         device_id,
     )
     return options
 
 
-def compile_engine(model_name: str, config: Mapping[str, Any], ort: Any) -> None:
-    """Construct one TensorRT-backed ORT session and release it cleanly."""
-    model_path = download_file(
-        config["url"], MODELS_DIR / model_name, tuple(config.get("fallback_urls", ()))
-    )
+def _cache_prefix(model_path: Path) -> str:
+    return f"roop_{model_path.stem}_{_sha256(model_path)[:12]}"
+
+
+def _engine_files(prefix: str) -> list[Path]:
+    return sorted(CACHE_DIR.glob(f"{prefix}*.engine")) if CACHE_DIR.is_dir() else []
+
+
+def _profile_batches(shapes: Mapping[str, str]) -> list[int]:
+    """Every batch size worth exercising: the profile's min/opt/max plus 1, 4, 8 inside it."""
+    firsts = {tier: int(str(shapes[tier]).split(",")[0].split(":", 1)[1].split("x")[0])
+              for tier in ("min", "opt", "max")}
+    low, high = firsts["min"], firsts["max"]
+    wanted = set(firsts.values()) | {b for b in (1, 4, 8) if low <= b <= high}
+    return sorted(wanted)
+
+
+def _exercise_profile(session: Any, shapes: Mapping[str, str], resolved_name: str) -> list[int]:
+    """Run the session at each batch size; a TensorRT engine is only built by the first run."""
+    import numpy as np
+
+    native = _parse_native_profiles(shapes)
+    batches = _profile_batches(shapes)
+    rng = np.random.RandomState(7)
+    done: list[int] = []
+    for batch in batches:
+        feeds = {}
+        for meta in session.get_inputs():
+            tiers = native[meta.name]
+            dims = list(tiers["opt"])
+            if tiers["min"][0] != tiers["max"][0]:
+                dims[0] = batch
+            dtype = np.float16 if "float16" in str(meta.type) else np.float32
+            feeds[meta.name] = (rng.standard_normal(dims) * 0.5).astype(dtype)
+        try:
+            outputs = session.run(None, feeds)
+        except Exception as error:
+            raise RuntimeError(
+                f"{resolved_name}: batch {batch} was rejected inside the profile "
+                f"{shapes['min']} .. {shapes['max']}: {error}") from error
+        for index, output in enumerate(outputs):
+            if np.issubdtype(output.dtype, np.floating) and not np.isfinite(output).all():
+                raise RuntimeError(
+                    f"{resolved_name}: output {index} is not finite at batch {batch} - the engine "
+                    f"produced NaN/Inf (FP16 overflow?); rebuild it FP32")
+        done.append(batch)
+    return done
+
+
+def compile_engine(model_name: str, config: Mapping[str, Any], ort: Any) -> dict[str, Any]:
+    """Create one strict TensorRT session, build its engine across the profile, verify it."""
+    from roop.strict_session import create_strictly_accelerated_session
+
+    resolved = _resolve_model(model_name, config)
+    options = _provider_options(resolved, config)
+    prefix = options["trt_engine_cache_prefix"]
+    before = len(_engine_files(prefix))
     logger.info(
-        "Building FP16 TensorRT engine cache for %s (this may take several minutes)...",
-        model_name,
+        "Building %s TensorRT engine cache for %s (%s); this may take several minutes...",
+        "FP16" if options["trt_fp16_enable"] else "FP32", model_name, resolved.note,
     )
     start_time = time.time()
     sess_opts = ort.SessionOptions()
     sess_opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
     session = None
     try:
-        session = ort.InferenceSession(
-            str(model_path),
+        session = create_strictly_accelerated_session(
+            str(resolved.path),
+            providers=[("TensorrtExecutionProvider", options), ("CUDAExecutionProvider", {})],
             sess_options=sess_opts,
-            providers=[
-                ("TensorrtExecutionProvider", _provider_options(model_name, config)),
-                ("CUDAExecutionProvider", {}),
-            ],
+            tag=f"build:{Path(model_name).stem}",
         )
         active = [str(provider) for provider in session.get_providers()]
-        if "TensorrtExecutionProvider" not in active:
+        if active[0] != "TensorrtExecutionProvider":
             raise RuntimeError(
-                f"TensorRT was not active for {model_name}; session providers: {active!r}"
+                f"TensorRT is not the active provider for {model_name}; session providers: {active!r}"
             )
+        profile = {"min": options["trt_profile_min_shapes"], "opt": options["trt_profile_opt_shapes"],
+                   "max": options["trt_profile_max_shapes"]}
+        exercised = _exercise_profile(session, profile, model_name)
+        engines = _engine_files(prefix)
+        if len(engines) <= 0:
+            raise RuntimeError(
+                f"{model_name}: the session ran but no engine file matching {prefix}* exists in "
+                f"{CACHE_DIR}; nothing was cached")
     except Exception as error:
         raise RuntimeError(f"engine build failed for {model_name}: {error}") from error
     finally:
@@ -425,9 +574,14 @@ def compile_engine(model_name: str, config: Mapping[str, Any], ort: Any) -> None
             del session
         gc.collect()
     elapsed = time.time() - start_time
-    logger.info(
-        "Engine build completed in %.2f seconds for %s.", elapsed, model_name
-    )
+    logger.info("Engine build completed in %.2f seconds for %s.", elapsed, model_name)
+    return {
+        "model": model_name, "built_from": resolved.path.name, "dynamic": resolved.dynamic,
+        "note": resolved.note, "precision": "FP16" if options["trt_fp16_enable"] else "FP32",
+        "workspace_mib": options["trt_max_workspace_size"] // 1024**2,
+        "profile": profile, "batches_run": exercised,
+        "engines_new": len(_engine_files(prefix)) - before, "seconds": round(elapsed, 1),
+    }
 
 
 def _parse_native_profiles(shapes: Mapping[str, Any]) -> dict[str, dict[str, tuple[int, ...]]]:
@@ -448,17 +602,15 @@ def compile_native_engine(model_name: str, config: Mapping[str, Any]) -> None:
     """Build one precision-segmented native TensorRT engine."""
     from roop.trt_graph_surgery import build_native_engine
 
-    model_path = download_file(
-        config["url"], MODELS_DIR / model_name, tuple(config.get("fallback_urls", ()))
-    )
+    resolved = _resolve_model(model_name, config)
     engine_path = CACHE_DIR / "native" / f"{Path(model_name).stem}.engine"
-    logger.info("Building native precision-segmented TensorRT engine for %s", model_name)
+    logger.info("Building native precision-segmented TensorRT engine for %s (%s)", model_name, resolved.note)
     build_native_engine(
-        model_path,
+        resolved.path,
         engine_path,
         model_family=config.get("family", Path(model_name).stem),
         workspace_bytes=_workspace_bytes(_total_vram_bytes(_device_id())),
-        input_profiles=_parse_native_profiles(config.get("shapes", {})),
+        input_profiles=_parse_native_profiles(resolved.shapes),
     )
 
 
@@ -490,8 +642,12 @@ def main(argv: Optional[list[str]] = None) -> int:
             compile_native_engine(model_name, config)
     else:
         ort = load_onnxruntime()
-        for model_name, config in selected.items():
-            compile_engine(model_name, config, ort)
+        summary = [compile_engine(model_name, config, ort) for model_name, config in selected.items()]
+        for row in summary:
+            logger.info(
+                "  %-28s %-34s %-7s ws=%dMiB batches=%s engines+%d  (%s)",
+                row["model"], row["built_from"], row["precision"], row["workspace_mib"],
+                row["batches_run"], row["engines_new"], "dynamic" if row["dynamic"] else row["note"])
     logger.info("All TensorRT engines successfully built and cached in %s.", CACHE_DIR)
     return 0
 

@@ -477,7 +477,18 @@ class TensorRTSessionConfig:
 
 
 def assert_strict_tensorrt_session(session: Any, model_path: str | os.PathLike[str]) -> None:
-    """Reject an ORT session whose active provider chain is not TRT-only."""
+    """Reject an ORT session that is not running on TensorRT alone.
+
+    ONNX Runtime appends ``CPUExecutionProvider`` to EVERY session's provider list
+    (verified on ORT 1.23.2: ``providers=[TRT]`` reports ``[TRT, CPU]``), so
+    requiring the list to equal ``["TensorrtExecutionProvider"]`` rejected every
+    healthy session -- including already batch-dynamic ones -- and was only ever
+    satisfied by test doubles. What "TensorRT only" can truthfully mean is: TensorRT
+    first, no CUDA fallback, and nothing executing on the CPU. The last part is
+    enforced where it can be: ``build_tensorrt_session`` sets
+    ``session.disable_cpu_ep_fallback``, so a node that TensorRT cannot take makes
+    session construction fail instead of running on the CPU.
+    """
 
     try:
         active = [str(name) for name in session.get_providers()]
@@ -485,10 +496,13 @@ def assert_strict_tensorrt_session(session: Any, model_path: str | os.PathLike[s
         raise TensorRTSessionError(
             f"TensorRT session for {model_path} did not expose its provider chain"
         ) from error
-    if active != ["TensorrtExecutionProvider"]:
+    if not active or active[0] != "TensorrtExecutionProvider" or any(
+        name != "CPUExecutionProvider" for name in active[1:]
+    ):
         raise TensorRTSessionError(
             f"strict TensorRT session rejected for {model_path}: active providers {active!r}; "
-            "CUDAExecutionProvider/CPUExecutionProvider fallbacks are forbidden"
+            "TensorRT must be first and CUDAExecutionProvider fallbacks are forbidden "
+            "(ORT's own trailing CPUExecutionProvider entry is expected)"
         )
 
 
@@ -523,6 +537,9 @@ def build_tensorrt_session(
     settings = config or TensorRTSessionConfig.from_environment()
     options = session_options or ort.SessionOptions()
     options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+    # ORT lists the CPU EP on every session; this is what makes "no CPU fallback" true:
+    # a node TensorRT cannot take fails construction instead of running on the CPU.
+    options.add_session_config_entry("session.disable_cpu_ep_fallback", "1")
     providers = [("TensorrtExecutionProvider", settings.provider_options(path))]
     try:
         session = ort.InferenceSession(str(path), sess_options=options, providers=providers)

@@ -5,9 +5,21 @@ Run from ``app`` for a dynamic-batch export::
     python verify_trt_fps.py --model models/hififace_unofficial_256.onnx \
         --batch-size 8 --warmup 10 --iterations 100
 
-The command intentionally refuses the repository's static batch-one
-``inswapper_128.onnx`` export.  Use a dynamic-batch re-export for this test;
-the legacy processor remains available for models that cannot be re-exported.
+Batch sweep -- one engine, profile min 1 / opt 4 / max 8, measured at 1, 4 and 8::
+
+    python verify_trt_fps.py --model models/inswapper_128_dynamic.onnx --batch-sizes 1,4,8
+
+A sweep proves the dynamic profile: every batch size must run inside ONE engine
+without a shape rejection, and every output must be finite (an FP16 overflow
+produces NaN/Inf, and a throughput number for an engine that emits garbage is
+worthless). Throughput is reported per batch with the scaling against batch 1.
+
+The strict builder refuses the repository's static batch-one exports
+(``inswapper_128.onnx``, ``scrfd_2.5g_kps.onnx``).  Convert them first with
+``tools/convert_dynamic_shapes.py``, which writes ``<name>_dynamic.onnx`` only
+after proving a batch of N equals N single runs.  The single-size mode keeps its
+batch >= 2 rule (``TrtOnnxBatchRunner`` clamps to 2 by design); a sweep that includes
+1 drives the I/O binding directly, which is the point of measuring it.
 Only TensorRT engine/timing cache files are written.  Frames are never dumped
 to disk by this benchmark.
 """
@@ -27,6 +39,7 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 from roop.optimized_processor import TrtOnnxBatchRunner
 from roop.trt_session_builder import (
     Shape,
+    StaticBatchError,
     TensorRTSessionConfig,
     build_tensorrt_session,
     derive_profile_shapes,
@@ -295,12 +308,149 @@ def benchmark(args: argparse.Namespace) -> Dict[str, Any]:
     }
 
 
+def parse_batch_sizes(text: str) -> List[int]:
+    """``"1,4,8"`` -> ``[1, 4, 8]``: sorted, unique, every size >= 1."""
+
+    try:
+        sizes = sorted({int(item) for item in str(text).split(",") if item.strip()})
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(f"invalid --batch-sizes {text!r}") from error
+    if not sizes or sizes[0] < 1:
+        raise argparse.ArgumentTypeError("--batch-sizes needs integers >= 1, e.g. 1,4,8")
+    if sizes[-1] < 2:
+        raise argparse.ArgumentTypeError("--batch-sizes must include a size >= 2 (a dynamic profile)")
+    return sizes
+
+
+def scaling_vs_first(sweep: Sequence[Mapping[str, Any]]) -> Dict[str, float]:
+    """fps of each batch size divided by the smallest batch's fps."""
+
+    if not sweep or not sweep[0].get("fps"):
+        return {}
+    base = float(sweep[0]["fps"])
+    return {str(row["batch_size"]): round(float(row["fps"]) / base, 3) for row in sweep}
+
+
+def _probe_output_shapes(session: Any, feeds: Mapping[str, Any]) -> Dict[str, Shape]:
+    """Actual output shapes at this batch.
+
+    The I/O binding sizes its output buffers from declared symbolic shapes, which
+    cannot express an output whose batch is folded into axis 0 (SCRFD). One host
+    run gives the truth for any model, and also pays the engine build for the shape.
+    """
+
+    host = {name: tensor.detach().cpu().numpy() for name, tensor in feeds.items()}
+    outputs = session.run(None, host)
+    return {meta.name: tuple(int(v) for v in array.shape)
+            for meta, array in zip(session.get_outputs(), outputs)}
+
+
+def _all_finite(tensors: Sequence[Any]) -> bool:
+    for tensor in tensors:
+        if tensor.dtype.is_floating_point and not bool(torch.isfinite(tensor).all()):
+            return False
+    return True
+
+
+def sweep(args: argparse.Namespace) -> Dict[str, Any]:
+    """One strict engine, measured at every batch size in ``--batch-sizes``."""
+
+    if not torch.cuda.is_available():
+        raise RuntimeError("CUDA is unavailable")
+    sizes = list(args.batch_sizes)
+    model = Path(args.model)
+    if not model.is_file():
+        raise FileNotFoundError(model)
+    shape_overrides = dict(args.shape or [])
+    base = TensorRTSessionConfig.from_environment(cache_path=args.cache_dir, device_id=args.device_id)
+    config = replace(
+        base,
+        min_batch=sizes[0],
+        opt_batch=sizes[len(sizes) // 2],
+        max_batch=sizes[-1],
+        shape_overrides=shape_overrides,
+    )
+    try:
+        minimum, optimal, maximum = derive_profile_shapes(
+            model,
+            min_batch=config.min_batch,
+            opt_batch=config.opt_batch,
+            max_batch=config.max_batch,
+            shape_overrides=shape_overrides,
+            require_dynamic_batch=config.require_dynamic_batch,
+            allow_static_batch_one=config.allow_static_batch_one,
+            default_spatial_shape=config.default_spatial_shape,
+        )
+    except StaticBatchError as error:
+        raise RuntimeError(
+            f"{error}\nConvert it first: python tools/convert_dynamic_shapes.py {model}  "
+            f"(writes {model.stem}_dynamic.onnx after verifying batched == single-sample runs)"
+        ) from error
+    cache_path = Path(config.cache_path)
+    before = _cache_snapshot(cache_path)
+    session = build_tensorrt_session(model, config=config)
+    runner = TrtOnnxBatchRunner(model, config=config, session=session)
+    binding = runner.binding
+    rows: List[Dict[str, Any]] = []
+    for batch in sizes:
+        feeds = _make_feeds(session, optimal, batch, args.device_id)
+        shapes = _probe_output_shapes(session, feeds)       # builds the engine on first use
+        for _ in range(max(0, int(args.warmup))):
+            binding.run_gpu(feeds, output_shapes=shapes)
+        torch.cuda.synchronize(args.device_id)
+        latencies: List[float] = []
+        outputs: List[Any] = []
+        with GpuSampler(args.device_id) as sampler:
+            for _ in range(max(1, int(args.iterations))):
+                started = time.perf_counter()
+                outputs = binding.run_gpu(feeds, output_shapes=shapes)
+                torch.cuda.synchronize(args.device_id)
+                latencies.append((time.perf_counter() - started) * 1000.0)
+        elapsed = sum(latencies) / 1000.0
+        ordered = sorted(latencies)
+        rows.append({
+            "batch_size": batch,
+            "iterations": len(latencies),
+            "latency_mean_ms": round(statistics.fmean(latencies), 3),
+            "latency_p50_ms": round(ordered[len(ordered) // 2], 3),
+            "latency_p95_ms": round(ordered[min(len(ordered) - 1, int(len(ordered) * 0.95))], 3),
+            "per_item_ms": round(statistics.fmean(latencies) / batch, 3),
+            "fps": round(len(latencies) * batch / elapsed, 3) if elapsed > 0.0 else 0.0,
+            "outputs_finite": _all_finite(outputs),
+            "output_shapes": {name: list(shape) for name, shape in shapes.items()},
+            "telemetry": sampler.summary(),
+        })
+    after = _cache_snapshot(cache_path)
+    return {
+        "model": str(model),
+        "providers": runner.active_providers,
+        "device_id": args.device_id,
+        "profiles": {"min": minimum, "opt": optimal, "max": maximum},
+        "batch_sizes": sizes,
+        "sweep": rows,
+        "scaling_vs_smallest_batch": scaling_vs_first(rows),
+        "all_outputs_finite": all(row["outputs_finite"] for row in rows),
+        "cache_before": before,
+        "cache_after": after,
+        "cache_artifacts_created": {key: max(0, after[key] - before[key]) for key in after},
+        "cuda_memory_free_mb": round(_device_memory(args.device_id)[0] / 1024**2, 2),
+        "cuda_memory_total_mb": round(_device_memory(args.device_id)[1] / 1024**2, 2),
+    }
+
+
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     """Parse command-line arguments."""
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", required=True, help="dynamic-batch ONNX model")
     parser.add_argument("--batch-size", type=int, default=8)
+    parser.add_argument(
+        "--batch-sizes",
+        type=parse_batch_sizes,
+        default=None,
+        help="sweep one engine over these batch sizes, e.g. 1,4,8 (profile min/opt/max = first/middle/last); "
+             "overrides --batch-size",
+    )
     parser.add_argument("--warmup", type=int, default=10)
     parser.add_argument("--iterations", type=int, default=100)
     parser.add_argument("--device-id", type=int, default=0)
@@ -323,14 +473,19 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
 def main(argv: Optional[Sequence[str]] = None) -> int:
     """Run the verifier and return a shell status."""
 
+    args = parse_args(argv)
     try:
-        result = benchmark(parse_args(argv))
+        result = sweep(args) if args.batch_sizes else benchmark(args)
     except Exception as error:
         print(f"TRT verification FAILED: {error}")
         return 2
     import json
 
     print(json.dumps(result, indent=2, sort_keys=True))
+    if result.get("all_outputs_finite") is False:
+        print("TRT verification FAILED: an engine output contained NaN/Inf (FP16 overflow?); "
+              "the throughput above is for a broken engine")
+        return 3
     return 0
 
 
