@@ -892,7 +892,8 @@ def _checkpoint_segment(project_id, writer=None, frame_idx=None, manager=None):
             for item in segments:
                 path = os.path.join(base, str(item.get("file") or ""))
                 if os.path.isfile(path):
-                    files.append(_project_checkpoint.file_identity(path))
+                    cached_sha = str(item.get("sha256") or "").strip()
+                    files.append(_project_checkpoint.file_identity(path, precomputed_sha256=cached_sha))
             # manifest_path belongs to segment_writer, which owns the manifest.
             # This said `_project_checkpoint.manifest_path` and that function
             # has never existed, so the AttributeError was raised on EVERY
@@ -5236,6 +5237,15 @@ def _run_swap(payload):
     finally:
         _procmgr_runtime.pause_controller.finish()
         roop_globals.pause = False
+        try:
+            from roop.core import release_resources
+        except ImportError as _degrade_error:
+            _swallowed("api.py:_run_swap.release_resources_import", _degrade_error, "cleanup continued")
+        else:
+            try:
+                release_resources()
+            except (AttributeError, OSError, RuntimeError, TypeError) as _degrade_error:
+                _swallowed("api.py:_run_swap.release_resources", _degrade_error, "cleanup continued")
         # Safety net: normally end_processing() clears this, but if batch_process
         # raised before reaching it, clear here so a later terminal Ctrl-C doesn't
         # block in destroy() waiting on a batch that's no longer running.

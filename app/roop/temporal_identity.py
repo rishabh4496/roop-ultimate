@@ -257,7 +257,11 @@ class TemporalIdentityStabilizer:
         clone = _copy_module.copy(self)
         clone._lock = RLock()
         clone.states = {}
+        latest_frame = max((getattr(s, 'last_frame_index', -1) for s in self.states.values()), default=-1)
         for track_id, state in self.states.items():
+            if (latest_frame > 300 and len(self.states) > 64 and
+                    getattr(state, 'last_frame_index', -1) >= 0 and (latest_frame - state.last_frame_index) > 300):
+                continue
             fresh = _copy_module.copy(state)
             fresh.previous_output = None
             fresh.previous_mask = None

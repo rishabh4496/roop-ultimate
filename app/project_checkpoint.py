@@ -120,7 +120,7 @@ def file_sha256(path: str, chunk_size: int = 1024 * 1024) -> str:
     return digest.hexdigest()
 
 
-def file_identity(path: str) -> dict:
+def file_identity(path: str, precomputed_sha256: str = "") -> dict:
     """Return an identity that detects replacement, edits, and truncation."""
     absolute = os.path.abspath(os.path.expanduser(str(path)))
     stat = os.stat(absolute)
@@ -129,7 +129,7 @@ def file_identity(path: str) -> dict:
         "name": os.path.basename(absolute),
         "size": int(stat.st_size),
         "mtime_ns": int(stat.st_mtime_ns),
-        "sha256": file_sha256(absolute),
+        "sha256": str(precomputed_sha256).strip() if precomputed_sha256 else file_sha256(absolute),
     }
 
 

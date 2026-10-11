@@ -20,6 +20,7 @@ from roop.degrade import swallowed as _swallowed
 import os
 import contextlib
 import threading
+import time
 from dataclasses import dataclass
 from queue import Empty, Queue
 import roop.globals
@@ -440,16 +441,27 @@ def _matching_benchmark_knee(model_key, input_shape=None):
     return None
 
 
-def _live_vram_mb():
-    """Return (free, total) device memory in MiB, or (0, 0) if unavailable."""
-    try:
-        import torch
-        if torch.cuda.is_available():
-            free, total = torch.cuda.mem_get_info()
-            return free / (1024 ** 2), total / (1024 ** 2)
-    except Exception as _degrade_error:
-        _swallowed("roop/session_pool.py:446", _degrade_error, "fallback continued")
-        pass
+_live_vram_cache = (0.0, 0.0)
+_live_vram_cached_t = 0.0
+_live_vram_lock = threading.Lock()
+
+def _live_vram_mb(ttl: float = 0.5):
+    """Return (free, total) device memory in MiB, cached with a 500ms lease."""
+    global _live_vram_cache, _live_vram_cached_t
+    now = time.perf_counter()
+    with _live_vram_lock:
+        if now - _live_vram_cached_t < ttl:
+            return _live_vram_cache
+        try:
+            import torch
+            if torch.cuda.is_available():
+                free, total = torch.cuda.mem_get_info()
+                _live_vram_cache = (free / (1024 ** 2), total / (1024 ** 2))
+                _live_vram_cached_t = now
+                return _live_vram_cache
+        except Exception as _degrade_error:
+            _swallowed("roop/session_pool.py:446", _degrade_error, "fallback continued")
+            pass
     return 0.0, 0.0
 
 

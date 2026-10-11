@@ -1,0 +1,5 @@
+arm,phase,render_seconds,output_fps,pipeline_fps,late_window_fps,faces_per_frame,faces_per_sec,peak_vram_mb,peak_gpu_temp_c,peak_gpu_util_pct,harjot_swaps,harjot_candidates,ashna_swaps,ashna_candidates,wrong_facesets
+baseline_null1,baseline,67.85,8.84,12.77,20.52,1.12,14.3,7823,60,81,453,481,241,246,0
+baseline_null2,baseline,61.70,9.72,14.02,21.32,1.12,15.7,7690,59,96,453,481,241,246,0
+post_fix_arm1,final,65.16,9.21,13.05,20.66,1.12,14.6,7721,60,92,453,481,241,246,0
+post_fix_arm2,final,64.92,9.24,13.24,20.55,1.12,14.8,7710,59,88,453,481,241,246,0

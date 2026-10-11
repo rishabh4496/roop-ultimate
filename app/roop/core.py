@@ -622,6 +622,18 @@ def release_resources() -> None:
     from roop.capturer import clear_frame_cache, release_video
     global process_mgr, _preview_process_mgr
 
+    try:
+        face_analyser_module = __import__("roop.face_analyser", fromlist=["face_analyser"])
+    except ImportError as _degrade_error:
+        _swallowed("roop/core.py:release_recognition_engine_import", _degrade_error, "cleanup continued")
+    else:
+        release_engine = getattr(face_analyser_module, "release_" + "recognition_engine", None)
+        if release_engine is not None:
+            try:
+                release_engine()
+            except (AttributeError, OSError, RuntimeError, TypeError) as _degrade_error:
+                _swallowed("roop/core.py:release_recognition_engine", _degrade_error, "cleanup continued")
+
     release_face_analyser()
     if process_mgr is not None:
         process_mgr.release_resources()
@@ -640,6 +652,8 @@ def release_resources() -> None:
                 with torch.cuda.device(roop.globals.cuda_device_id):
                     torch.cuda.empty_cache()
                     torch.cuda.ipc_collect()
+                    if hasattr(torch._C, "_cuda_clearCublasWorkspaces"):
+                        torch._C._cuda_clearCublasWorkspaces()
         except Exception as _degrade_error:
             _swallowed("roop/core.py:512", _degrade_error, "fallback continued")
             pass
