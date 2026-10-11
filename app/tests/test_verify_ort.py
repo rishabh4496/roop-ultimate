@@ -138,5 +138,61 @@ class TestVerifyOrt(unittest.TestCase):
             verify_ort.verify_numpy()
 
 
+class TestActiveProviderGate(unittest.TestCase):
+    """The preflight session must have run on the GPU on an NVIDIA machine.
+
+    A CUDA/TensorRT session that drops to CPU raises nothing, and the package
+    checks still pass; `gpu_preflight` then reports CPUExecutionProvider. Only
+    "none" used to be fatal, so a sub-7 GB card could be committed as verified on
+    the CPU."""
+
+    nvidia = types.SimpleNamespace(vendor="nvidia")
+    other = types.SimpleNamespace(vendor="apple")
+
+    def test_cpu_on_an_nvidia_machine_is_fatal_and_says_why(self):
+        pre = {"active_provider": "CPUExecutionProvider", "failure_stage": "dll_load_failure",
+               "failure_reason": "cudnn64_9.dll not found"}
+        with self.assertRaises(SystemExit) as cm:
+            verify_ort.verify_active_provider(self.nvidia, pre)
+        self.assertEqual(cm.exception.code, 1)
+
+    def test_the_message_names_the_provider_stage_and_reason(self):
+        pre = {"active_provider": "CPUExecutionProvider", "failure_stage": "dll_load_failure",
+               "failure_reason": "cudnn64_9.dll not found"}
+        import contextlib
+        import io
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), self.assertRaises(SystemExit):
+            verify_ort.verify_active_provider(self.nvidia, pre)
+        text = err.getvalue()
+        for needle in ("CPUExecutionProvider", "dll_load_failure", "cudnn64_9.dll not found"):
+            self.assertIn(needle, text)
+
+    def test_gpu_providers_pass_and_are_returned(self):
+        for name in ("TensorrtExecutionProvider", "CUDAExecutionProvider"):
+            self.assertEqual(verify_ort.verify_active_provider(self.nvidia, {"active_provider": name}), name)
+
+    def test_cuda_after_a_tensorrt_failure_still_passes(self):
+        """A sub-7 GB card legitimately runs CUDA only; the TensorRT stage failing must not fail the install here."""
+        pre = {"active_provider": "CUDAExecutionProvider", "failure_stage": "tensorrt_initialization_failure"}
+        self.assertEqual(verify_ort.verify_active_provider(self.nvidia, pre), "CUDAExecutionProvider")
+
+    def test_none_is_fatal_on_every_vendor(self):
+        for hw in (self.nvidia, self.other):
+            for pre in ({"active_provider": "none"}, {}):
+                with self.assertRaises(SystemExit):
+                    verify_ort.verify_active_provider(hw, pre)
+
+    def test_cpu_is_accepted_where_there_is_no_nvidia_gpu(self):
+        self.assertEqual(
+            verify_ort.verify_active_provider(self.other, {"active_provider": "CPUExecutionProvider"}),
+            "CPUExecutionProvider")
+
+    def test_verify_environment_actually_calls_the_gate(self):
+        """Defined-and-never-called is how this project's checks keep dying."""
+        import inspect
+        self.assertIn("verify_active_provider(hardware, preflight)", inspect.getsource(verify_ort.verify_environment))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -218,6 +218,35 @@ def verify_tensorrt_package(hardware: Any) -> dict[str, str]:
     return {"version": str(version)}
 
 
+_GPU_PROVIDERS = ("TensorrtExecutionProvider", "CUDAExecutionProvider")
+
+
+def verify_active_provider(hardware: Any, preflight: dict[str, Any]) -> str:
+    """The provider the preflight session ACTUALLY ran on, and fatal if that is the CPU on an NVIDIA machine.
+
+    `gpu_preflight` reports CPUExecutionProvider when the CUDA/TensorRT session
+    dropped (a DLL that will not load, a rejected option, a missing device): ORT
+    raises nothing, returns a working CPU session, and every package check above
+    still passes. Only "none" used to be fatal here, so a sub-7 GB NVIDIA card
+    (where TensorRT is not required and its check is skipped) could be committed
+    as `verified` on the CPU - the install-time form of the failure this project
+    keeps meeting, a runtime that reports success while not running on the GPU.
+    The app's own strict session factory refuses such a machine at first launch;
+    this refuses it at install, where the message can still say why.
+    """
+    active = str(preflight.get("active_provider") or "none")
+    if active == "none":
+        _fatal("runtime preflight did not construct an active ORT provider session")
+    if getattr(hardware, "vendor", None) == "nvidia" and active not in _GPU_PROVIDERS:
+        _fatal(
+            f"NVIDIA hardware is present but the runtime preflight session ran on {active}, not on "
+            "CUDA or TensorRT, so nothing would be GPU-accelerated "
+            f"(stage: {preflight.get('failure_stage') or 'unknown'}; "
+            f"reason: {preflight.get('failure_reason') or 'not reported'})"
+        )
+    return active
+
+
 def verify_complete_marker() -> None:
     try:
         check_ready()
@@ -274,9 +303,7 @@ def verify_environment(*, require_complete: bool = False, manifest: bool = False
             "TensorRT minimal session verification failed on a GPU where TensorRT is required: "
             + str(preflight.get("failure_reason") or preflight.get("failure_stage") or "unknown")
         )
-    active_provider = str(preflight.get("active_provider") or "none")
-    if active_provider == "none":
-        _fatal("runtime preflight did not construct an active ORT provider session")
+    active_provider = verify_active_provider(hardware, preflight)
     trt_result = (
         "passed" if preflight.get("tensorrt_session_usable") else
         "not_required_by_sub_7gb_policy" if hardware.vendor == "nvidia" and max_vram_mb < 7 * 1024 else
