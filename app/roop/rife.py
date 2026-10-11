@@ -46,8 +46,9 @@ class RIFE:
         model_path = os.path.join(model_dir, MODEL_FILE)
         from roop.utilities import get_onnx_session_options
         providers, _precision = providers_for('rife', _providers(), model_path)
-        self.session = onnxruntime.InferenceSession(
-            model_path, get_onnx_session_options(), providers=providers)
+        from roop.strict_session import create_strictly_accelerated_session
+        self.session = create_strictly_accelerated_session(
+            model_path, providers=providers, tag='frame:rife')
         self._lock = threading.Lock()
         self._pair = None      # (id0-key, prepped img0) cache: reuse across timesteps
 

@@ -600,22 +600,28 @@ class Expression_LivePortrait:
                     ctx = contextlib.nullcontext() if is_patched else _quiet_trt_parser()
                     session_providers, _precision = providers_for(
                         f'liveportrait:{key}', warp_providers, patched_path)
+                    from roop.strict_session import create_strictly_accelerated_session
                     with ctx:
-                        built[key] = onnxruntime.InferenceSession(
-                            patched_path, sess_opts, providers=session_providers)
+                        built[key] = create_strictly_accelerated_session(
+                            patched_path, providers=session_providers, sess_options=sess_opts,
+                            tag=f'expression:liveportrait:{key}')
                 else:
                     session_providers, _precision = providers_for(
                         f'liveportrait:{key}', providers, path)
-                    built[key] = onnxruntime.InferenceSession(
-                        path, sess_opts, providers=session_providers)
+                    from roop.strict_session import create_strictly_accelerated_session
+                    built[key] = create_strictly_accelerated_session(
+                        path, providers=session_providers, sess_options=sess_opts,
+                        tag=f'expression:liveportrait:{key}')
             if parallel >= 2:
                 # A second, independent context for the same model — the two
                 # motion calls can only overlap if they stop sharing one.
                 motion_path = os.path.join(model_dir, MODELS["motion"]["file"])
                 motion_providers, _precision = providers_for(
                     'liveportrait:motion2', providers, motion_path)
-                built["motion2"] = onnxruntime.InferenceSession(
-                    motion_path, sess_opts, providers=motion_providers)
+                from roop.strict_session import create_strictly_accelerated_session
+                built["motion2"] = create_strictly_accelerated_session(
+                    motion_path, providers=motion_providers, sess_options=sess_opts,
+                    tag='expression:liveportrait:motion2')
             return built
 
         # One set of sessions per pool slot. Each slot owns its own TensorRT
@@ -765,8 +771,10 @@ class Expression_LivePortrait:
                 path = os.path.join(self._model_dir, spec["file"])
                 session_providers, _precision = providers_for(
                     f'liveportrait:{key}', self._providers, path)
-                sessions[key] = onnxruntime.InferenceSession(
-                    path, self._sess_opts, providers=session_providers)
+                from roop.strict_session import create_strictly_accelerated_session
+                sessions[key] = create_strictly_accelerated_session(
+                    path, providers=session_providers, sess_options=self._sess_opts,
+                    tag=f'expression:liveportrait:{key}')
             return True
         except Exception as e:
             _swallowed("roop/processors/Expression_LivePortrait.py:blink", e,

@@ -69,7 +69,10 @@ class Mask_XSeg():
                     except Exception as exc:                       # noqa: BLE001
                         print('[XSeg] ROOP_TRT_BOUND=%s failed (%s: %s) -- using the shipped path'
                               % (_bmode, type(exc).__name__, str(exc)[:160]))
-                sess = onnxruntime.InferenceSession(model_path, _sess_opts, providers=providers)
+                from roop.strict_session import create_strictly_accelerated_session
+                sess = create_strictly_accelerated_session(
+                    model_path, providers=providers, sess_options=_sess_opts,
+                    tag='mask:xseg')
                 baseline_probe.log_session('mask:xseg', sess, providers, model_file=model_path)
                 return sess
 

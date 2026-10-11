@@ -465,7 +465,10 @@ class HiFiFaceSwapper(OnnxSpecSwapper):
             if path:
                 if not os.path.isfile(path):
                     raise FileNotFoundError(f"{key}: {path}")
-                setattr(self, attr, onnxruntime.InferenceSession(path, providers=providers))
+                from roop.strict_session import create_strictly_accelerated_session
+                setattr(self, attr, create_strictly_accelerated_session(
+                    path, providers=providers, sess_options=onnxruntime.SessionOptions(),
+                    tag=f'frame:{attr}'))
         stabilize = kwargs.get("stabilize")
         if stabilize:
             from .temporal_stabilizer import TemporalMatrixStabilizer

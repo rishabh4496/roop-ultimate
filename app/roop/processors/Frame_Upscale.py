@@ -103,8 +103,10 @@ class Frame_Upscale():
             from roop.utilities import get_onnx_session_options
             session_providers, _precision = providers_for(
                 f'frame_upscaler:{self.prev_type}', _upscale_providers(), model_path)
-            self.model_upscale = onnxruntime.InferenceSession(
-                model_path, get_onnx_session_options(), providers=session_providers)
+            from roop.strict_session import create_strictly_accelerated_session
+            self.model_upscale = create_strictly_accelerated_session(
+                model_path, providers=session_providers,
+                tag=f'frame:upscale:{self.prev_type}')
             self.model_inputs = self.model_upscale.get_inputs()
             model_outputs = self.model_upscale.get_outputs()
             self.io_binding = self.model_upscale.io_binding()

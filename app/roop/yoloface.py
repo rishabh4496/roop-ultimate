@@ -55,8 +55,9 @@ class YoloFaceDetector:
         model_path = os.path.join(model_dir, "yoloface_8n.onnx")
         from roop.utilities import get_onnx_session_options
         providers, _precision = providers_for('face_detection:yoloface', providers, model_path)
-        self.session = onnxruntime.InferenceSession(
-            model_path, get_onnx_session_options(), providers=providers)
+        from roop.strict_session import create_strictly_accelerated_session
+        self.session = create_strictly_accelerated_session(
+            model_path, providers=providers, tag='detect:yoloface')
         self.input_name = self.session.get_inputs()[0].name
         # yoloface_8n.onnx is exported with a FIXED input of [1,3,640,640].
         # Feeding any other det_size raises InvalidArgument — and because

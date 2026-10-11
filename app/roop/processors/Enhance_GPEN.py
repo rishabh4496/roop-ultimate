@@ -110,7 +110,10 @@ class Enhance_GPEN():
             opts = get_onnx_session_options()
 
             def _build(_i=0):
-                sess = onnxruntime.InferenceSession(model_path, opts, providers=providers)
+                from roop.strict_session import create_strictly_accelerated_session
+                sess = create_strictly_accelerated_session(
+                    model_path, providers=providers, sess_options=opts,
+                    tag=f'enhancer:gpen_{size}')
                 iob = sess.io_binding()
                 iob.bind_output(sess.get_outputs()[0].name, devicename)
                 return (sess, iob)

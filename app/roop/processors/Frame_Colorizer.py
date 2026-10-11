@@ -51,8 +51,10 @@ class Frame_Colorizer():
             providers, _precision = providers_for(
                 f'frame_colorizer:{self.prev_type}',
                 roop.globals.execution_providers, model_path)
-            self.model_colorizer = onnxruntime.InferenceSession(
-                model_path, get_onnx_session_options(), providers=providers)
+            from roop.strict_session import create_strictly_accelerated_session
+            self.model_colorizer = create_strictly_accelerated_session(
+                model_path, providers=providers,
+                tag=f'frame:colorizer:{self.prev_type}')
             self.model_inputs = self.model_colorizer.get_inputs()
             model_outputs = self.model_colorizer.get_outputs()
             self.io_binding = self.model_colorizer.io_binding()

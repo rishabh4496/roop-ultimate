@@ -500,8 +500,10 @@ class Enhance_UltraMax:
             'ultramax', roop.globals.execution_providers, model_path)
 
         def _build(_i=0):
-            sess = onnxruntime.InferenceSession(
-                model_path, opts, providers=session_providers)
+            from roop.strict_session import create_strictly_accelerated_session
+            sess = create_strictly_accelerated_session(
+                model_path, providers=session_providers, sess_options=opts,
+                tag='enhancer:ultramax')
             # One io_binding per slot, held for the life of the run. A binding is
             # not shareable across threads, and rebuilding it per call measured
             # 1.5 ms of the 25 ms budget. The OUTPUT binding never changes, so it
@@ -593,8 +595,10 @@ class Enhance_UltraMax:
             'gpen_realistic', roop.globals.execution_providers, model_path)
 
         def _build_detail(_i=0):
-            sess = onnxruntime.InferenceSession(model_path, opts,
-                                                providers=providers)
+            from roop.strict_session import create_strictly_accelerated_session
+            sess = create_strictly_accelerated_session(
+                model_path, providers=providers, sess_options=opts,
+                tag='enhancer:ultramax:detail')
             iob = sess.io_binding()
             iob.bind_output(sess.get_outputs()[0].name, self.devicename)
             return (sess, iob)

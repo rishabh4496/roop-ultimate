@@ -69,7 +69,9 @@ class Enhance_GFPGAN():
             self.devicename = self.plugin_options["devicename"].replace('mps', 'cpu')
 
             def _build(_i=0):
-                sess = onnxruntime.InferenceSession(model_path, opts, providers=providers)
+                from roop.strict_session import create_strictly_accelerated_session
+                sess = create_strictly_accelerated_session(
+                    model_path, providers=providers, sess_options=opts, tag='enhancer:gfpgan')
                 iob = sess.io_binding()
                 iob.bind_output(sess.get_outputs()[0].name, self.devicename)
                 return (sess, iob)

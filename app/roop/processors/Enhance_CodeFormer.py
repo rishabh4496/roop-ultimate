@@ -86,8 +86,10 @@ class Enhance_CodeFormer():
                 'codeformer_fp16' if want_fp16 else 'codeformer',
                 roop.globals.execution_providers, model_path)
             def _build(_i=0):
-                return onnxruntime.InferenceSession(
-                    model_path, opts, providers=session_providers)
+                from roop.strict_session import create_strictly_accelerated_session
+                return create_strictly_accelerated_session(
+                    model_path, providers=session_providers, sess_options=opts,
+                    tag='enhancer:codeformer_fp16' if want_fp16 else 'enhancer:codeformer')
 
             self.model_codeformer = _build()
             self.model_inputs = self.model_codeformer.get_inputs()

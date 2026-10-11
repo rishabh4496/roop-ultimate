@@ -100,8 +100,9 @@ def _get_session():
                 from roop.utilities import get_onnx_session_options
                 providers, _precision = providers_for(
                     'recognition:adaface', roop.globals.execution_providers, path)
-                _session = onnxruntime.InferenceSession(
-                    path, get_onnx_session_options(), providers=providers)
+                from roop.strict_session import create_strictly_accelerated_session
+                _session = create_strictly_accelerated_session(
+                    path, providers=providers, tag='recognition:adaface')
     return _session
 
 

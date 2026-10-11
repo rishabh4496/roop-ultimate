@@ -210,8 +210,10 @@ class Enhance_GPEN256Pro:
         self._cpu_only = providers == ['CPUExecutionProvider']
 
         def _build(_i=0):
-            sess = onnxruntime.InferenceSession(
-                model_path, opts, providers=providers)
+            from roop.strict_session import create_strictly_accelerated_session
+            sess = create_strictly_accelerated_session(
+                model_path, providers=providers, sess_options=opts,
+                tag='enhancer:gpen256pro')
             iob = sess.io_binding()
             iob.bind_output(sess.get_outputs()[0].name, self.devicename)
             return (sess, iob)

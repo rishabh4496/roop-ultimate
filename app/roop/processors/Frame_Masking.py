@@ -31,8 +31,9 @@ class Frame_Masking():
             from roop.utilities import get_onnx_session_options
             providers, _precision = providers_for(
                 'frame_masking:isnet', roop.globals.execution_providers, model_path)
-            self.model_masking = onnxruntime.InferenceSession(
-                model_path, get_onnx_session_options(), providers=providers)
+            from roop.strict_session import create_strictly_accelerated_session
+            self.model_masking = create_strictly_accelerated_session(
+                model_path, providers=providers, tag='frame:masking')
             self.model_inputs = self.model_masking.get_inputs()
             model_outputs = self.model_masking.get_outputs()
             self.io_binding = self.model_masking.io_binding()

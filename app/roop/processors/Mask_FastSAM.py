@@ -67,8 +67,10 @@ class Mask_FastSAM():
             _sess_opts = get_onnx_session_options()
 
             def _build(_i=0):
-                return onnxruntime.InferenceSession(
-                    model_path, _sess_opts, providers=providers)
+                from roop.strict_session import create_strictly_accelerated_session
+                return create_strictly_accelerated_session(
+                    model_path, providers=providers, sess_options=_sess_opts,
+                    tag='mask:fastsam')
 
             self.model = _build()
             self.input_name = self.model.get_inputs()[0].name

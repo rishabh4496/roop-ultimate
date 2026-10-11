@@ -59,7 +59,10 @@ class Mask_XSeg3():
             self._cpu_only = providers == ['CPUExecutionProvider']
 
             def _build(_i=0):
-                return onnxruntime.InferenceSession(model_path, _sess_opts, providers=providers)
+                from roop.strict_session import create_strictly_accelerated_session
+                return create_strictly_accelerated_session(
+                    model_path, providers=providers, sess_options=_sess_opts,
+                    tag='mask:xseg3')
 
             self.model_xseg3 = _build()
             self.model_inputs = self.model_xseg3.get_inputs()

@@ -772,8 +772,9 @@ class FaceSwapInsightFace():
             self._batch_unsupported = not spec.get("batch_capable", True)
 
             def _build(_i=0):
-                sess = onnxruntime.InferenceSession(
-                    model_arg, get_onnx_session_options(), providers=swap_providers)
+                from roop.strict_session import create_strictly_accelerated_session
+                sess = create_strictly_accelerated_session(
+                    model_arg, providers=swap_providers, tag=f'swapper:{swap_model}')
                 baseline_probe.log_session(f'swapper:{swap_model}', sess,
                                            swap_providers, model_file=model_path)
                 return sess
@@ -1080,8 +1081,9 @@ class FaceSwapInsightFace():
               f"with no error. Rebuilding on a TensorRT FP32 engine.", flush=True)
         fp32 = _force_fp32_providers(providers)
         try:
-            self.model_swap_insightface = onnxruntime.InferenceSession(
-                self._model_arg, get_onnx_session_options(), providers=fp32)
+            from roop.strict_session import create_strictly_accelerated_session
+            self.model_swap_insightface = create_strictly_accelerated_session(
+                self._model_arg, providers=fp32, tag=f'swapper:{swap_model}:fp32')
             baseline_probe.log_session(f'swapper:{swap_model}:fp32-fallback',
                                        self.model_swap_insightface, fp32)
             from roop import predictor
@@ -1120,8 +1122,10 @@ class FaceSwapInsightFace():
         if len(providers) == len(self._swap_providers):
             return False   # no TRT provider to strip — can't help, re-raise
         def _build(_i=0):
-            sess = onnxruntime.InferenceSession(
-                self._model_arg, get_onnx_session_options(), providers=providers)
+            from roop.strict_session import create_strictly_accelerated_session
+            sess = create_strictly_accelerated_session(
+                self._model_arg, providers=providers,
+                tag=f'swapper:{self.loaded_model_key}:no-trt')
             baseline_probe.log_session(f'swapper:{self.loaded_model_key}:no-trt', sess,
                                        providers)
             return sess

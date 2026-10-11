@@ -115,9 +115,18 @@ class EnhancerPoolCase(unittest.TestCase):
             "GraphOptimizationLevel": type("g", (), {"ORT_ENABLE_EXTENDED": 1}),
         })
         CF.resolve_relative_path = lambda p: p
+        # Sessions are built by roop.strict_session, which uses the real onnxruntime;
+        # route its constructor to the stub the way CF.onnxruntime used to be.
+        from roop import strict_session
+        self._factory = strict_session.create_strictly_accelerated_session
+        strict_session.create_strictly_accelerated_session = (
+            lambda path, provider="cuda", *, providers=None, sess_options=None, tag=None, **_kw:
+            CF.onnxruntime.InferenceSession(path, sess_options, providers))
         _FakeSession.reset()
 
     def tearDown(self):
+        from roop import strict_session
+        strict_session.create_strictly_accelerated_session = self._factory
         CF.onnxruntime = self._ort
         CF.resolve_relative_path = self._resolve
         session_pool._resource_manager = self._manager

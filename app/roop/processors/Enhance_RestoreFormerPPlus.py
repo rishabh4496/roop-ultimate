@@ -62,7 +62,10 @@ class Enhance_RestoreFormerPPlus():
                 return (sess, iob)
 
             def _build(_i=0):
-                sess = onnxruntime.InferenceSession(model_path, opts, providers=session_providers)
+                from roop.strict_session import create_strictly_accelerated_session
+                sess = create_strictly_accelerated_session(
+                    model_path, providers=session_providers, sess_options=opts,
+                    tag='enhancer:restoreformer++')
                 baseline_probe.log_session('enhancer:restoreformer++', sess,
                                            session_providers, model_file=model_path)
                 return _bind(sess)

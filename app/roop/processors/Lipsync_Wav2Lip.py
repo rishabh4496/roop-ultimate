@@ -69,7 +69,10 @@ class Lipsync_Wav2Lip:
                     stage='lipsync:wav2lip'
                 )
                 providers, _ = providers_for('lipsync:wav2lip', providers, self.model_path)
-                self.session = onnxruntime.InferenceSession(self.model_path, _sess_opts, providers=providers)
+                from roop.strict_session import create_strictly_accelerated_session
+                self.session = create_strictly_accelerated_session(
+                    self.model_path, providers=providers, sess_options=_sess_opts,
+                    tag='lipsync:wav2lip')
                 self.input_names = [inp.name for inp in self.session.get_inputs()]
                 self.output_names = [out.name for out in self.session.get_outputs()]
                 # Check input shape if available

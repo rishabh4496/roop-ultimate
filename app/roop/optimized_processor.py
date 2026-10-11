@@ -1061,7 +1061,14 @@ def create_onnx_session(
     }
     if "CUDAExecutionProvider" in available_names:
         add_candidate(["CUDAExecutionProvider", "CPUExecutionProvider"])
-    add_candidate(["CPUExecutionProvider"])
+    # A bare CPU session is only a candidate when no GPU provider was asked for.
+    # Offering it after a CUDA/TensorRT request is the silent downgrade this
+    # function exists to prevent: the loop above rejects every GPU-requested
+    # candidate whose active list holds no GPU provider, but a [CPU] candidate
+    # requested no GPU, so it would pass that check and be returned.
+    if not any("cuda" in name.lower() or "tensorrt" in name.lower()
+               for name in available_names):
+        add_candidate(["CPUExecutionProvider"])
 
     last_error: Optional[BaseException] = None
     for candidate in candidates:

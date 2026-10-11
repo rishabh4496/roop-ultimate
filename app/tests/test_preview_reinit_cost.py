@@ -188,7 +188,7 @@ class ProcessorReinitIsCheapTest(unittest.TestCase):
                       'the already-built guard is gone; Initialize() will '
                       'rebuild and leak the session pool on every preview')
         guard = body.index('if self.session is not None:')
-        build = body.index('InferenceSession')
+        build = body.index('create_strictly_accelerated_session')
         self.assertLess(guard, build,
                         'the already-built guard must precede the session build')
 

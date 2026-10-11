@@ -987,7 +987,10 @@ def get_face_swapper() -> Optional[onnxruntime.InferenceSession]:
                 conditional_download(model_dir, [_SWAPPER_URL])
             if os.path.isfile(model_path):
                 providers = getattr(roop.globals, 'execution_providers', ['CUDAExecutionProvider', 'CPUExecutionProvider'])
-                FACE_SWAPPER = onnxruntime.InferenceSession(model_path, providers=providers)
+                from roop.strict_session import create_strictly_accelerated_session
+                FACE_SWAPPER = create_strictly_accelerated_session(
+                    model_path, providers=providers, sess_options=onnxruntime.SessionOptions(),
+                    tag='frame:face_swapper')
                 if 'CudaOrtIOBinding' in globals() and CudaOrtIOBinding is not None:
                     FACE_SWAPPER_IO = CudaOrtIOBinding(
                         FACE_SWAPPER, int(getattr(roop.globals, 'cuda_device_id', 0) or 0))
@@ -1034,7 +1037,10 @@ def get_face_occluder() -> Optional[onnxruntime.InferenceSession]:
 
             if os.path.isfile(model_path):
                 providers = getattr(roop.globals, 'execution_providers', ['CUDAExecutionProvider', 'CPUExecutionProvider'])
-                FACE_OCCLUDER = onnxruntime.InferenceSession(model_path, providers=providers)
+                from roop.strict_session import create_strictly_accelerated_session
+                FACE_OCCLUDER = create_strictly_accelerated_session(
+                    model_path, providers=providers, sess_options=onnxruntime.SessionOptions(),
+                    tag='frame:face_occluder')
     return FACE_OCCLUDER
 
 

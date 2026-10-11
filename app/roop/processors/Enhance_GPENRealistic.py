@@ -162,8 +162,10 @@ class Enhance_GPENRealistic:
             # activations overflow in FP16 and paint a black face. 512 is the
             # classic weight and is FP16-stable — Enhance_GPEN says so itself and
             # only forces FP32 at >=1024 — and 256 more so.
-            sess = onnxruntime.InferenceSession(
-                model_path, opts, providers=session_providers)
+            from roop.strict_session import create_strictly_accelerated_session
+            sess = create_strictly_accelerated_session(
+                model_path, providers=session_providers, sess_options=opts,
+                tag='enhancer:gpen_realistic')
             iob = sess.io_binding()
             iob.bind_output(sess.get_outputs()[0].name, self.devicename)
             return (sess, iob)

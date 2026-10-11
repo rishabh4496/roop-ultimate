@@ -78,12 +78,16 @@ class Mask_MobileSAM():
             _sess_opts = get_onnx_session_options()
 
             def _build_enc(_i=0):
-                return onnxruntime.InferenceSession(
-                    enc_path, _sess_opts, providers=enc_providers)
+                from roop.strict_session import create_strictly_accelerated_session
+                return create_strictly_accelerated_session(
+                    enc_path, providers=enc_providers, sess_options=_sess_opts,
+                    tag='mask:mobilesam:encoder')
 
             self.encoder = _build_enc()
-            self.decoder = onnxruntime.InferenceSession(
-                dec_path, _sess_opts, providers=dec_providers)
+            from roop.strict_session import create_strictly_accelerated_session
+            self.decoder = create_strictly_accelerated_session(
+                dec_path, providers=dec_providers, sess_options=_sess_opts,
+                tag='mask:mobilesam:decoder')
             self.enc_input = self.encoder.get_inputs()[0].name
 
             # replace Mac mps with cpu for the moment

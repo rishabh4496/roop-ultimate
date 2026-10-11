@@ -62,7 +62,10 @@ class Mask_Occluder():
                 'masking:occluder', roop.globals.execution_providers, model_path)
 
             def _build(_i=0):
-                return onnxruntime.InferenceSession(model_path, _sess_opts, providers=providers)
+                from roop.strict_session import create_strictly_accelerated_session
+                return create_strictly_accelerated_session(
+                    model_path, providers=providers, sess_options=_sess_opts,
+                    tag='mask:occluder')
 
             self.model_occluder = _build()
             self.model_inputs = self.model_occluder.get_inputs()
