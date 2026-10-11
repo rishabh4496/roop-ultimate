@@ -36,6 +36,7 @@ def fake_run(monkeypatch, tmp_path):
     monkeypatch.setattr(util_ffmpeg.subprocess, 'run', run)
     monkeypatch.setattr(util_ffmpeg.util, 'audio_sample_rate', lambda p: 48000)
     monkeypatch.setattr(util_ffmpeg.util, 'detect_fps', lambda p: 23.976024)
+    monkeypatch.setattr(util_ffmpeg, '_stream_duration', lambda p, selector: 3.003)
     monkeypatch.delenv('ROOP_FINALIZE_NVENC', raising=False)
     src = tmp_path / 'raw.mp4'
     src.write_bytes(b'x')
@@ -61,6 +62,17 @@ def test_nvenc_command_matches_the_brief(fake_run):
     maps = [cmd[i + 1] for i, a in enumerate(cmd) if a == '-map']
     assert maps == ['0:v:0', '1:a:0?']
     assert '-crf' not in cmd
+
+
+def test_output_is_bounded_by_video_length_not_shortest(fake_run, monkeypatch):
+    calls, _, src, dest = fake_run
+    assert util_ffmpeg.finalize_web_video(src, dest, audio_source=src) is True
+    assert _value_after(calls[0], '-t') == '3.003000' and '-shortest' not in calls[0]
+    # Video length unknown: the old behaviour.
+    calls.clear()
+    monkeypatch.setattr(util_ffmpeg, '_stream_duration', lambda p, selector: None)
+    assert util_ffmpeg.finalize_web_video(src, dest, audio_source=src) is True
+    assert '-shortest' in calls[0] and '-t' not in calls[0]
 
 
 def test_muted_result_is_stripped(fake_run, monkeypatch):

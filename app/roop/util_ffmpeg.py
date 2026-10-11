@@ -69,12 +69,16 @@ _FINALIZE_NVENC_CQ = 19
 
 
 def _finalize_web_video_cmd(raw_video_path: str, dest: str, audio_source, codec: str,
-                            quality: int, fps_arg=None) -> List[str]:
+                            quality: int, fps_arg=None, video_s=None) -> List[str]:
     """The ffmpeg command line finalize_web_video runs for *codec*.
 
     *audio_source* is None for a muted result. *fps_arg* (an exact rational, see
     ``frame_rate_arg``) is stamped with ``-r`` so a fractional rate such as
     24000/1001 is not re-approximated; None leaves the input rate alone.
+    *video_s* (the video's own duration) bounds the output instead of
+    ``-shortest``, as ``restore_audio`` does: AAC ends a packet before its
+    video, and ``-shortest`` is what dropped that render's last frame there.
+    None (duration unknown) keeps ``-shortest``.
     """
     cmd = [
         ffmpeg_binary(), '-hide_banner', '-y', '-loglevel', 'error',
@@ -87,7 +91,7 @@ def _finalize_web_video_cmd(raw_video_path: str, dest: str, audio_source, codec:
             '-map', '1:a:0?',
             '-c:a', 'aac',
             '-b:a', '192k',
-            '-shortest',
+            *(['-t', format(video_s, '.6f')] if video_s else ['-shortest']),
         ])
     else:
         cmd.extend([
@@ -141,6 +145,7 @@ def finalize_web_video(raw_video_path: str, final_video_path: str, audio_source:
         kwargs['creationflags'] = 0x08000000
 
     audio = audio_source if has_audio else None
+    video_s = _stream_duration(raw_video_path, 'v:0') if has_audio else None
     quality = crf if crf is not None else 18
     attempts = []
     if env_bool('ROOP_FINALIZE_NVENC', True):
@@ -152,7 +157,7 @@ def finalize_web_video(raw_video_path: str, final_video_path: str, audio_source:
     res = None
     cmd = []
     for index, (codec, q, rate) in enumerate(attempts):
-        cmd = _finalize_web_video_cmd(raw_video_path, temp_dest, audio, codec, q, rate)
+        cmd = _finalize_web_video_cmd(raw_video_path, temp_dest, audio, codec, q, rate, video_s)
         res = subprocess.run(cmd, **kwargs)
         if res.returncode == 0:
             break
