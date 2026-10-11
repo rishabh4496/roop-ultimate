@@ -930,11 +930,57 @@ def apply() -> int:
     return 0
 
 
+ALL_BRANCHES_REFSPEC = "+refs/heads/*:refs/remotes/origin/*"
+DEFAULT_BRANCH = "main"
+
+
+def sync_branch() -> int:
+    """Move this checkout to the newest commit of the branch it is ON.
+
+    update.js used to run `git checkout main && git pull origin main`, so every
+    device was pinned to `main` however far ahead the working branch was (18
+    commits on 2026-10-12), and a device that was on the working branch was
+    switched BACK to the stale `main`. The clone's fetch refspec was also the
+    single-branch `+refs/heads/main:...`, so even a fetch of another branch
+    never produced or advanced `origin/<branch>`.
+
+    Falls back to `main` only when the checkout is detached or its branch does
+    not exist on the remote. `--ff-only`: a diverged device fails loudly rather
+    than getting a surprise merge commit.
+    """
+    try:
+        if ALL_BRANCHES_REFSPEC not in _git(
+                "config", "--get-all", "remote.origin.fetch", check=False).splitlines():
+            _git("config", "--add", "remote.origin.fetch", ALL_BRANCHES_REFSPEC)
+            print(f"Widened the fetch refspec to {ALL_BRANCHES_REFSPEC}")
+        _git("fetch", "--prune", "origin")
+        branch = _git("rev-parse", "--abbrev-ref", "HEAD", check=False)
+        on_remote = bool(branch and branch != "HEAD" and _git(
+            "rev-parse", "--verify", "--quiet", f"refs/remotes/origin/{branch}", check=False))
+        if not on_remote:
+            print(f"Checkout is on {branch or 'an unknown ref'!r}, which origin does not "
+                  f"have; following {DEFAULT_BRANCH!r} instead")
+            branch = DEFAULT_BRANCH
+            _git("checkout", branch)
+        _git("branch", f"--set-upstream-to=origin/{branch}", branch)
+        before = _git("rev-parse", "--short", "HEAD", check=False)
+        _git("merge", "--ff-only", f"origin/{branch}")
+        after = _git("rev-parse", "--short", "HEAD", check=False)
+    except UpdateError as exc:
+        print(f"Sync failed: {exc}")
+        return 1
+    print(f"Branch {branch}: {before} -> {after}"
+          + ("" if before != after else " (already current)"))
+    return 0
+
+
 def main(argv: Iterable[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("check", "apply"))
+    parser.add_argument("command", choices=("check", "apply", "sync"))
     parser.add_argument("--json", action="store_true", dest="as_json")
     args = parser.parse_args(list(argv) if argv is not None else None)
+    if args.command == "sync":
+        return sync_branch()
     report = check() if args.command == "check" else None
     if args.command == "check":
         print(json.dumps(report, indent=2, sort_keys=True) if args.as_json else _text_report(report))

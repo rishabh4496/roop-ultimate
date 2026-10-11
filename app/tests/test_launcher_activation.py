@@ -107,6 +107,14 @@ class LauncherActivationTests(unittest.TestCase):
         self.assertIn('install_state.py commit --manifest', install)
         self.assertIn('fs.rm', _read("reset.js"))
 
+    def test_update_follows_the_checked_out_branch_not_main(self):
+        """A hard-coded `checkout main`/`pull origin main` pinned every device to
+        a main that was 18 commits behind the working branch."""
+        update = _read("update.js")
+        self.assertIn("update_manager.py sync", update)
+        self.assertNotIn("git checkout main", update)
+        self.assertNotIn("origin main", update)
+
     def test_insightface_numpy_compatibility_is_repaired_on_all_paths(self):
         self.assertIn('numpy==1.26.4', _read('app/requirements.txt'))
         self.assertIn('numpy==1.26.4', _read('install.js'))

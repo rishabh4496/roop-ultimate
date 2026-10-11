@@ -116,12 +116,18 @@ drivers, models, or other critical components are safe to upgrade.
 
 ## Apply behavior
 
-> **Current wiring (2026-09-22):** `update.js` has run a plain
-> `git checkout main && git pull origin main` plus dependency reinstall since
-> commit `66d9e6d` (2026-09-05), which removed the `update_manager.py apply`
-> call because no candidate ever carried a manifest. The gate below is
-> implemented and tested but is not on the Pinokio Update button's path until
-> `update.js` calls `python update_manager.py apply` again.
+> **Current wiring (2026-10-12):** `update.js` runs
+> `python update_manager.py sync`, then the dependency reinstall. `sync`
+> widens the clone's fetch refspec to every branch, fetches, and fast-forwards
+> the branch the checkout is ON (falling back to `main` only when detached or
+> when the branch is not on origin); a diverged checkout fails instead of
+> merging. Before this it ran `git checkout main && git pull origin main`, which
+> pinned every device to `main` (18 commits behind the working branch) and
+> switched devices on the working branch back to it. Commit `66d9e6d`
+> (2026-09-05) had already removed the `update_manager.py apply` call because no
+> candidate ever carried a manifest; the gate below is implemented and tested
+> but is not on the Pinokio Update button's path until `update.js` calls
+> `python update_manager.py apply` again.
 
 `update.js` invokes `app/update_manager.py apply` in the existing Pinokio
 `app/env` environment. The command performs the compatibility check first and

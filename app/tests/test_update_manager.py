@@ -291,5 +291,82 @@ class UpdateManagerTests(unittest.TestCase):
                 self.assertIsNone(update_manager.apply_channel_gated())
 
 
+class SyncBranchTests(unittest.TestCase):
+    """update.js must land every device on the newest commit of ITS branch.
+
+    It used to `git checkout main && git pull origin main`: with the working
+    branch 18 commits ahead of main, every device stayed on (or was switched
+    back to) the stale main, and the single-branch refspec meant a plain fetch
+    could never advance origin/<branch>.
+    """
+
+    def _git(self, cwd, *args):
+        import subprocess
+        return subprocess.run(
+            ["git", "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false",
+             *args], cwd=str(cwd), text=True, capture_output=True, check=True).stdout.strip()
+
+    def _commit(self, repo, name):
+        (repo / name).write_text(name, encoding="utf-8")
+        self._git(repo, "add", name)
+        self._git(repo, "commit", "-m", name)
+
+    def _scenario(self, base):
+        origin, author, device = base / "origin.git", base / "author", base / "device"
+        self._git(base, "init", "--bare", "-b", "main", str(origin))
+        self._git(base, "clone", str(origin), str(author))
+        self._commit(author, "a")
+        self._git(author, "push", "origin", "HEAD:main")
+        self._git(author, "checkout", "-b", "work")
+        self._commit(author, "b")
+        self._git(author, "push", "origin", "work")
+        # The device is a single-branch clone, as the installed ones are.
+        self._git(base, "clone", "--single-branch", "--branch", "work", str(origin), str(device))
+        self.assertEqual(self._git(device, "config", "--get-all", "remote.origin.fetch"),
+                         "+refs/heads/work:refs/remotes/origin/work")
+        return author, device
+
+    def _sync(self, device):
+        def in_device(*args, check=True):
+            return update_manager._run(["git", *args], cwd=device, check=check).stdout.strip()
+
+        with mock.patch.object(update_manager, "_git", side_effect=in_device):
+            return update_manager.sync_branch()
+
+    def test_device_on_a_working_branch_follows_it_not_main(self):
+        with tempfile.TemporaryDirectory() as directory:
+            author, device = self._scenario(Path(directory))
+            self._commit(author, "c")
+            self._git(author, "push", "origin", "work")
+            self.assertEqual(self._sync(device), 0)
+            self.assertEqual(self._git(device, "rev-parse", "--abbrev-ref", "HEAD"), "work")
+            self.assertEqual(self._git(device, "rev-parse", "HEAD"),
+                             self._git(author, "rev-parse", "HEAD"))
+            self.assertTrue((device / "c").exists())
+            # And the next one, with the refspec now widened.
+            self._commit(author, "d")
+            self._git(author, "push", "origin", "work")
+            self.assertEqual(self._sync(device), 0)
+            self.assertEqual(self._git(device, "rev-parse", "HEAD"),
+                             self._git(author, "rev-parse", "HEAD"))
+
+    def test_branch_missing_on_origin_falls_back_to_main(self):
+        with tempfile.TemporaryDirectory() as directory:
+            author, device = self._scenario(Path(directory))
+            self._git(device, "checkout", "-b", "local-only")
+            self.assertEqual(self._sync(device), 0)
+            self.assertEqual(self._git(device, "rev-parse", "--abbrev-ref", "HEAD"), "main")
+
+    def test_diverged_device_fails_instead_of_merging(self):
+        with tempfile.TemporaryDirectory() as directory:
+            author, device = self._scenario(Path(directory))
+            self._commit(device, "local")
+            self._commit(author, "remote")
+            self._git(author, "push", "origin", "work")
+            before = self._git(device, "rev-parse", "HEAD")
+            self.assertEqual(self._sync(device), 1)
+            self.assertEqual(self._git(device, "rev-parse", "HEAD"), before)
+
+
 if __name__ == "__main__":
     unittest.main()

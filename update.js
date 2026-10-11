@@ -12,12 +12,12 @@ module.exports = {
       message: ["python install_state.py stage --stage git_update"]
     }
   }, {
+    // Follow the branch this checkout is on (not a hard-coded main) and fetch
+    // every branch; see update_manager.sync_branch.
     method: "shell.run",
     params: {
-      message: [
-        "git checkout main",
-        "git pull origin main"
-      ]
+      path: "app",
+      message: ["python update_manager.py sync"]
     }
   }, {
     method: "shell.run",
