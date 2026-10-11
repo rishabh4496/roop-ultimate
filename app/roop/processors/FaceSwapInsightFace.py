@@ -706,11 +706,9 @@ class FaceSwapInsightFace():
 
             self.embedding_mode = spec.get("embedding", "normed_emap")
             self.source_crop_key = spec.get("source_crop_key")
-            if self.embedding_mode == "normed_emap":
-                graph = onnx.load(model_path).graph
-                self.emap = self._find_emap(graph)
-            else:
-                self.emap = None
+            # One parse serves the emap lookup now and the graph transforms below.
+            _model, self.emap = self._parse_swap_model(
+                model_path, self.embedding_mode == "normed_emap")
 
             # crossface embedding converter (ghost / simswap / hififace): a tiny
             # MLP that maps the buffalo_l ArcFace embedding into the identity
@@ -756,7 +754,6 @@ class FaceSwapInsightFace():
             # (GHOST) buildable; batch relaxation is opt-in. If neither applies we
             # hand onnxruntime the path so it can memory-map the file directly.
             model_arg = model_path
-            _model = onnx.load(model_path)
             _changed = _freeze_convtranspose_reshape(_model)
             if _BATCH_SWAP:
                 _relax_batch_dim(_model)
@@ -922,6 +919,21 @@ class FaceSwapInsightFace():
         if chan != 1:
             return False
         return all((not isinstance(d, int)) or d == output_size for d in spatial)
+
+    @staticmethod
+    def _parse_swap_model(model_path, want_emap):
+        """Parse the swap net's protobuf ONCE; returns (model, emap-or-None).
+
+        `Initialize` used to call `onnx.load(model_path)` twice for every emap
+        model: once here for the identity matrix, again for the graph transforms
+        below it. For inswapper_128 (554 MB) that is 0.22 s warm / 0.42 s cold of
+        pure duplicate parse per render start (measured 2026-10-12; hyperswap
+        0.17 s, hififace 0.09 s for the one parse the transforms need anyway).
+        The emap is read BEFORE any transform runs, from the pristine graph, so it
+        is the same array it always was."""
+        model = onnx.load(model_path)
+        emap = FaceSwapInsightFace._find_emap(model.graph) if want_emap else None
+        return model, emap
 
     @staticmethod
     def _find_emap(graph):
