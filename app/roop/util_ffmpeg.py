@@ -1,3 +1,4 @@
+from roop.degrade import swallowed as _swallowed
 
 import contextlib
 import os
@@ -5,8 +6,8 @@ import subprocess
 import roop.globals
 import roop.utilities as util
 from roop.ffmpeg_path import (NVENC_PRESET_DEFAULT, NVENC_PRESETS,
-                              ffmpeg_binary)
-from roop.env import env_str
+                              ffmpeg_binary, frame_rate_arg)
+from roop.env import env_bool, env_str
 
 from typing import List, Any
 
@@ -58,29 +59,32 @@ _WIDE_RANGE_CODECS = ('libvpx', 'vp9', 'aom', 'av1', 'svtav1')
 
 
 
-def finalize_web_video(raw_video_path: str, final_video_path: str, audio_source: str = None, crf: int = 18, delete_raw: bool = False) -> bool:
-    """Post-process or re-encode video into a browser-compliant web-compatible MP4.
-    
-    Explicitly includes:
-      - -c:v libx264
-      - -pix_fmt yuv420p
-      - -movflags +faststart
-      - -c:a aac -b:a 192k (or cleanly stripped with -an if muted / no audio)
-    """
-    temp_dest = (final_video_path + ".web.tmp.mp4") if os.path.abspath(raw_video_path) == os.path.abspath(final_video_path) else final_video_path
-    has_audio = False
-    if audio_source and os.path.isfile(audio_source):
-        has_audio = bool(util.audio_sample_rate(audio_source))
+# finalize_web_video's GPU encode: the NVENC ASIC does the H.264 pass, so the
+# host CPU threads stay free for the render. Constant-quality VBR (-b:v 0 lifts
+# the bitrate cap so -cq alone decides) at p6 + "-tune hq". Fixed here rather
+# than read from ROOP_NVENC_PRESET: this is a one-shot web-compliance remux of
+# an already-rendered clip, not the frame loop the preset env was tuned for.
+_FINALIZE_NVENC_PRESET = 'p6'
+_FINALIZE_NVENC_CQ = 19
 
+
+def _finalize_web_video_cmd(raw_video_path: str, dest: str, audio_source, codec: str,
+                            quality: int, fps_arg=None) -> List[str]:
+    """The ffmpeg command line finalize_web_video runs for *codec*.
+
+    *audio_source* is None for a muted result. *fps_arg* (an exact rational, see
+    ``frame_rate_arg``) is stamped with ``-r`` so a fractional rate such as
+    24000/1001 is not re-approximated; None leaves the input rate alone.
+    """
     cmd = [
         ffmpeg_binary(), '-hide_banner', '-y', '-loglevel', 'error',
         '-i', raw_video_path,
     ]
-    if has_audio:
+    if audio_source:
         cmd.extend([
             '-i', audio_source,
             '-map', '0:v:0',
-            '-map', '1:a?',
+            '-map', '1:a:0?',
             '-c:a', 'aac',
             '-b:a', '192k',
             '-shortest',
@@ -90,22 +94,75 @@ def finalize_web_video(raw_video_path: str, final_video_path: str, audio_source:
             '-map', '0:v:0',
             '-an',
         ])
-    quality = crf if crf is not None else 18
+    cmd.extend(['-c:v', codec])
+    if codec == 'h264_nvenc':
+        cmd.extend(['-preset', _FINALIZE_NVENC_PRESET, '-tune', 'hq',
+                    '-rc', 'vbr', '-cq', str(clamp_quality(codec, quality)), '-b:v', '0'])
+    else:
+        cmd.extend(_rate_control(codec, quality))
+    if fps_arg:
+        cmd.extend(['-r', str(fps_arg)])
     cmd.extend([
-        '-c:v', 'libx264',
-        *_rate_control('libx264', quality),
         '-vf', 'pad=ceil(iw/2)*2:ceil(ih/2)*2',
         '-pix_fmt', 'yuv420p',
         '-movflags', '+faststart',
-        temp_dest,
+        dest,
     ])
+    return cmd
+
+
+def finalize_web_video(raw_video_path: str, final_video_path: str, audio_source: str = None, crf: int = 18, delete_raw: bool = False) -> bool:
+    """Post-process or re-encode video into a browser-compliant web-compatible MP4.
+
+    Explicitly includes:
+      - -c:v h264_nvenc (-preset p6 -tune hq -rc vbr -cq 19 -b:v 0), falling back to
+        -c:v libx264 (-crf *crf*) when NVENC cannot encode this clip or this host.
+        ``ROOP_FINALIZE_NVENC=0`` skips NVENC.
+      - -pix_fmt yuv420p, pad=ceil(iw/2)*2:ceil(ih/2)*2 for odd dimensions
+      - -movflags +faststart
+      - -c:a aac -b:a 192k (or cleanly stripped with -an if muted / no audio)
+    """
+    temp_dest = (final_video_path + ".web.tmp.mp4") if os.path.abspath(raw_video_path) == os.path.abspath(final_video_path) else final_video_path
+    has_audio = False
+    if audio_source and os.path.isfile(audio_source):
+        has_audio = bool(util.audio_sample_rate(audio_source))
+
+    fps_arg = None
+    try:
+        fps_arg = frame_rate_arg(util.constant_frame_rate(util.detect_fps(raw_video_path)))
+    except Exception as _degrade_error:
+        _swallowed("util_ffmpeg.py:finalize_web_video", _degrade_error, "input rate kept")
+
     kwargs = {
         'stdout': subprocess.PIPE,
         'stderr': subprocess.PIPE,
     }
     if os.name == 'nt':
         kwargs['creationflags'] = 0x08000000
-    res = subprocess.run(cmd, **kwargs)
+
+    audio = audio_source if has_audio else None
+    quality = crf if crf is not None else 18
+    attempts = []
+    if env_bool('ROOP_FINALIZE_NVENC', True):
+        attempts.append(('h264_nvenc', _FINALIZE_NVENC_CQ, fps_arg))
+    # The software rung is the command this function always ran (no -r), so a
+    # host without NVENC behaves exactly as before.
+    attempts.append(('libx264', quality, None))
+
+    res = None
+    cmd = []
+    for index, (codec, q, rate) in enumerate(attempts):
+        cmd = _finalize_web_video_cmd(raw_video_path, temp_dest, audio, codec, q, rate)
+        res = subprocess.run(cmd, **kwargs)
+        if res.returncode == 0:
+            break
+        if index + 1 < len(attempts):
+            err = (res.stderr or b"").decode("utf-8", "replace").strip().splitlines()
+            print(f"[FFmpeg] finalize_web_video: {codec} failed (exit {res.returncode}: "
+                  f"{err[-1] if err else 'no output'}); retrying with {attempts[index + 1][0]}", flush=True)
+            if os.path.isfile(temp_dest) and temp_dest != final_video_path:
+                with contextlib.suppress(OSError):
+                    os.remove(temp_dest)
     if res.returncode != 0:
         err = (res.stderr or b"").decode("utf-8", "replace").strip()
         print(f"[FFmpeg Error] finalize_web_video failed (exit {res.returncode}):\nCommand: {' '.join(cmd)}\n{err}", flush=True)
