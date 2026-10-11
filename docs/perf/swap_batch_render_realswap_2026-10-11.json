@@ -1,0 +1,1284 @@
+{
+ "date": "2026-10-11",
+ "head": {
+  "head": "ace857d47d0c2c0b7a0abd9b51fc1ef589a10c8a",
+  "short": "ace857d",
+  "dirty_files": [
+   "app/tests/ab_swap_batch_render.py"
+  ]
+ },
+ "swap_model": "realswap",
+ "live_config_swap_model": "hyperswap",
+ "threads": 8,
+ "config": {
+  "swap_model": "realswap",
+  "selected_enhancer": "Restore Ultra",
+  "mask_engine": "DFL XSeg",
+  "provider": "tensorrt",
+  "trt_precision": "mixed",
+  "max_threads": "8",
+  "detector_engine": "scrfd",
+  "face_detector_size": "512",
+  "perf_batch_swap": "on",
+  "perf_batch_max": "auto",
+  "perf_trt_pool": "2",
+  "perf_detmask_pool": "2",
+  "perf_detector_pool": "2"
+ },
+ "clips": {
+  "d4": {
+   "A_fps": [
+    13.94,
+    13.97
+   ],
+   "B_fps": [
+    15.04,
+    15.53
+   ],
+   "chunk_mb": 1285,
+   "A_on_mean": 13.955,
+   "B_off_mean": 15.285,
+   "ratio_on_over_off": 0.913,
+   "A_vs_A_spread_pct": 0.21,
+   "B_vs_B_spread_pct": 3.21,
+   "arms_not_as_labelled": [],
+   "arms": [
+    {
+     "label": "d4_1A",
+     "arm": "A",
+     "returncode": 0,
+     "frame_loop_fps": 13.94,
+     "faces_per_s": 15.1,
+     "faces_per_frame": 1.08,
+     "stabilizer_path": "parallel-blocks",
+     "proof": {
+      "on_line": true,
+      "max_batch": 8,
+      "off_line": false,
+      "report": [
+       "batches: 410   items: 667   avg batch: 1.63   max: 8",
+       "swap inference: 21.77s  (53.10 ms/batch, 32.64 ms/item)"
+      ],
+      "pair_mix_line": [
+       "[Session] swapper:realswap: active=TensorrtExecutionProvider | requested=TensorrtExecutionProvider > CUDAExecutionProvider | NVIDIA GeForce RTX 4070 (cc 8.9, 12281 MiB) | trt_workspace=2.00 GiB, trt_f",
+       "[Runtime] phase=init provider_active=tensorrt requested=tensorrt>cuda>cpu precision=mixed swap_model=realswap batch_mode=sequential target_selection=selected/multi_person selected_person=[0, 1] select"
+      ],
+      "batch_unsupported": false
+     },
+     "ran_as_labelled": true,
+     "failed_frames": 0,
+     "swapped_lines": [
+      "  faces seen                                                       944  100.0%",
+      "  swapped (identity lock)                                          764   80.9%",
+      "  swapped (per-frame match)                                         37    3.9%"
+     ],
+     "wall_seconds": 189.7,
+     "stages": {
+      "frame_total": {
+       "total_s": 206.48,
+       "share_pct": 40.0,
+       "calls": 600,
+       "ms_per_call": 344.13
+      },
+      "swap": {
+       "total_s": 65.91,
+       "share_pct": 12.8,
+       "calls": 667,
+       "ms_per_call": 98.82
+      },
+      "enhance": {
+       "total_s": 53.42,
+       "share_pct": 10.3,
+       "calls": 667,
+       "ms_per_call": 80.09
+      },
+      "stabilize": {
+       "total_s": 44.85,
+       "share_pct": 8.7,
+       "calls": 4806,
+       "ms_per_call": 9.33
+      },
+      "track_detect": {
+       "total_s": 33.03,
+       "share_pct": 6.4,
+       "calls": 600,
+       "ms_per_call": 55.05
+      },
+      "detection": {
+       "total_s": 33.03,
+       "share_pct": 6.4,
+       "calls": 600,
+       "ms_per_call": 55.05
+      },
+      "blend": {
+       "total_s": 26.37,
+       "share_pct": 5.1,
+       "calls": 801,
+       "ms_per_call": 32.92
+      },
+      "mask": {
+       "total_s": 23.88,
+       "share_pct": 4.6,
+       "calls": 1602,
+       "ms_per_call": 14.91
+      },
+      "track_wait": {
+       "total_s": 14.47,
+       "share_pct": 2.8,
+       "calls": 597,
+       "ms_per_call": 24.23
+      },
+      "lighting": {
+       "total_s": 7.22,
+       "share_pct": 1.4,
+       "calls": 1468,
+       "ms_per_call": 4.92
+      },
+      "enhance_recombine": {
+       "total_s": 1.8,
+       "share_pct": 0.3,
+       "calls": 667,
+       "ms_per_call": 2.69
+      },
+      "verify": {
+       "total_s": 1.72,
+       "share_pct": 0.3,
+       "calls": 115,
+       "ms_per_call": 14.99
+      },
+      "alignment": {
+       "total_s": 1.42,
+       "share_pct": 0.3,
+       "calls": 801,
+       "ms_per_call": 1.78
+      },
+      "decode": {
+       "total_s": 1.28,
+       "share_pct": 0.2,
+       "calls": 600,
+       "ms_per_call": 2.14
+      },
+      "encode": {
+       "total_s": 0.91,
+       "share_pct": 0.2,
+       "calls": 600,
+       "ms_per_call": 1.52
+      },
+      "track_decode": {
+       "total_s": 0.16,
+       "share_pct": 0.0,
+       "calls": 600,
+       "ms_per_call": 0.27
+      },
+      "track_consume": {
+       "total_s": 0.14,
+       "share_pct": 0.0,
+       "calls": 597,
+       "ms_per_call": 0.24
+      },
+      "encode_finalize": {
+       "total_s": 0.13,
+       "share_pct": 0.0,
+       "calls": 1,
+       "ms_per_call": 128.19
+      },
+      "faceset_lookup": {
+       "total_s": 0.0,
+       "share_pct": 0.0,
+       "calls": 801,
+       "ms_per_call": 0.0
+      }
+     },
+     "output": {
+      "file": "G:\\pinokio\\api\\roop-ultimate\\app\\output\\ab_swap_batch_realswap_2026-10-11\\d4_1A\\work\\clip_22-00-32.mp4",
+      "sha256": "f04cc20b4b7b8a7807c46e717a5be74ad87148aaef2d3412ab3a8a6be07820da",
+      "decoded_video_md5": "04481a2f584cceb7363c5712daf36b7a",
+      "bytes": 20214744,
+      "rows_csv_sha256": "e6f66e712ef408e20306c0caa4ffd9593cf5ab421059b35df0ce2cebb75da7bd"
+     }
+    },
+    {
+     "label": "d4_2B",
+     "arm": "B",
+     "returncode": 0,
+     "frame_loop_fps": 15.04,
+     "faces_per_s": 16.3,
+     "faces_per_frame": 1.08,
+     "stabilizer_path": "parallel-blocks",
+     "proof": {
+      "on_line": false,
+      "max_batch": null,
+      "off_line": true,
+      "report": [],
+      "pair_mix_line": [
+       "[Session] swapper:realswap: active=TensorrtExecutionProvider | requested=TensorrtExecutionProvider > CUDAExecutionProvider | NVIDIA GeForce RTX 4070 (cc 8.9, 12281 MiB) | trt_workspace=2.00 GiB, trt_f",
+       "[Runtime] phase=init provider_active=tensorrt requested=tensorrt>cuda>cpu precision=mixed swap_model=realswap batch_mode=sequential target_selection=selected/multi_person selected_person=[0, 1] select"
+      ],
+      "batch_unsupported": false
+     },
+     "ran_as_labelled": true,
+     "failed_frames": 0,
+     "swapped_lines": [
+      "  faces seen                                                       944  100.0%",
+      "  swapped (identity lock)                                          764   80.9%",
+      "  swapped (per-frame match)                                         37    3.9%"
+     ],
+     "wall_seconds": 175.3,
+     "stages": {
+      "frame_total": {
+       "total_s": 194.82,
+       "share_pct": 40.1,
+       "calls": 600,
+       "ms_per_call": 324.7
+      },
+      "enhance": {
+       "total_s": 53.48,
+       "share_pct": 11.0,
+       "calls": 667,
+       "ms_per_call": 80.17
+      },
+      "stabilize": {
+       "total_s": 48.07,
+       "share_pct": 9.9,
+       "calls": 4806,
+       "ms_per_call": 10.0
+      },
+      "swap": {
+       "total_s": 34.75,
+       "share_pct": 7.2,
+       "calls": 667,
+       "ms_per_call": 52.1
+      },
+      "track_detect": {
+       "total_s": 33.18,
+       "share_pct": 6.8,
+       "calls": 600,
+       "ms_per_call": 55.3
+      },
+      "detection": {
+       "total_s": 33.18,
+       "share_pct": 6.8,
+       "calls": 600,
+       "ms_per_call": 55.3
+      },
+      "blend": {
+       "total_s": 27.77,
+       "share_pct": 5.7,
+       "calls": 801,
+       "ms_per_call": 34.68
+      },
+      "mask": {
+       "total_s": 27.45,
+       "share_pct": 5.7,
+       "calls": 1602,
+       "ms_per_call": 17.14
+      },
+      "track_wait": {
+       "total_s": 14.43,
+       "share_pct": 3.0,
+       "calls": 597,
+       "ms_per_call": 24.18
+      },
+      "lighting": {
+       "total_s": 8.13,
+       "share_pct": 1.7,
+       "calls": 1468,
+       "ms_per_call": 5.54
+      },
+      "decode": {
+       "total_s": 2.89,
+       "share_pct": 0.6,
+       "calls": 600,
+       "ms_per_call": 4.82
+      },
+      "verify": {
+       "total_s": 2.14,
+       "share_pct": 0.4,
+       "calls": 115,
+       "ms_per_call": 18.59
+      },
+      "enhance_recombine": {
+       "total_s": 2.05,
+       "share_pct": 0.4,
+       "calls": 667,
+       "ms_per_call": 3.08
+      },
+      "alignment": {
+       "total_s": 1.56,
+       "share_pct": 0.3,
+       "calls": 801,
+       "ms_per_call": 1.95
+      },
+      "encode": {
+       "total_s": 1.06,
+       "share_pct": 0.2,
+       "calls": 600,
+       "ms_per_call": 1.76
+      },
+      "track_decode": {
+       "total_s": 0.17,
+       "share_pct": 0.0,
+       "calls": 600,
+       "ms_per_call": 0.28
+      },
+      "track_consume": {
+       "total_s": 0.16,
+       "share_pct": 0.0,
+       "calls": 597,
+       "ms_per_call": 0.27
+      },
+      "encode_finalize": {
+       "total_s": 0.14,
+       "share_pct": 0.0,
+       "calls": 1,
+       "ms_per_call": 140.72
+      },
+      "faceset_lookup": {
+       "total_s": 0.0,
+       "share_pct": 0.0,
+       "calls": 801,
+       "ms_per_call": 0.0
+      }
+     },
+     "output": {
+      "file": "G:\\pinokio\\api\\roop-ultimate\\app\\output\\ab_swap_batch_realswap_2026-10-11\\d4_2B\\work\\clip_22-03-28.mp4",
+      "sha256": "f04cc20b4b7b8a7807c46e717a5be74ad87148aaef2d3412ab3a8a6be07820da",
+      "decoded_video_md5": "04481a2f584cceb7363c5712daf36b7a",
+      "bytes": 20214744,
+      "rows_csv_sha256": "e6f66e712ef408e20306c0caa4ffd9593cf5ab421059b35df0ce2cebb75da7bd"
+     }
+    },
+    {
+     "label": "d4_3B",
+     "arm": "B",
+     "returncode": 0,
+     "frame_loop_fps": 15.53,
+     "faces_per_s": 16.9,
+     "faces_per_frame": 1.08,
+     "stabilizer_path": "parallel-blocks",
+     "proof": {
+      "on_line": false,
+      "max_batch": null,
+      "off_line": true,
+      "report": [],
+      "pair_mix_line": [
+       "[Session] swapper:realswap: active=TensorrtExecutionProvider | requested=TensorrtExecutionProvider > CUDAExecutionProvider | NVIDIA GeForce RTX 4070 (cc 8.9, 12281 MiB) | trt_workspace=2.00 GiB, trt_f",
+       "[Runtime] phase=init provider_active=tensorrt requested=tensorrt>cuda>cpu precision=mixed swap_model=realswap batch_mode=sequential target_selection=selected/multi_person selected_person=[0, 1] select"
+      ],
+      "batch_unsupported": false
+     },
+     "ran_as_labelled": true,
+     "failed_frames": 0,
+     "swapped_lines": [
+      "  faces seen                                                       944  100.0%",
+      "  swapped (identity lock)                                          764   80.9%",
+      "  swapped (per-frame match)                                         37    3.9%"
+     ],
+     "wall_seconds": 171.1,
+     "stages": {
+      "frame_total": {
+       "total_s": 185.76,
+       "share_pct": 39.6,
+       "calls": 600,
+       "ms_per_call": 309.59
+      },
+      "enhance": {
+       "total_s": 52.97,
+       "share_pct": 11.3,
+       "calls": 667,
+       "ms_per_call": 79.42
+      },
+      "stabilize": {
+       "total_s": 45.5,
+       "share_pct": 9.7,
+       "calls": 4806,
+       "ms_per_call": 9.47
+      },
+      "swap": {
+       "total_s": 33.81,
+       "share_pct": 7.2,
+       "calls": 667,
+       "ms_per_call": 50.69
+      },
+      "track_detect": {
+       "total_s": 32.64,
+       "share_pct": 7.0,
+       "calls": 600,
+       "ms_per_call": 54.4
+      },
+      "detection": {
+       "total_s": 32.64,
+       "share_pct": 7.0,
+       "calls": 600,
+       "ms_per_call": 54.4
+      },
+      "mask": {
+       "total_s": 27.92,
+       "share_pct": 6.0,
+       "calls": 1602,
+       "ms_per_call": 17.43
+      },
+      "blend": {
+       "total_s": 26.53,
+       "share_pct": 5.7,
+       "calls": 801,
+       "ms_per_call": 33.12
+      },
+      "track_wait": {
+       "total_s": 14.2,
+       "share_pct": 3.0,
+       "calls": 597,
+       "ms_per_call": 23.79
+      },
+      "lighting": {
+       "total_s": 7.61,
+       "share_pct": 1.6,
+       "calls": 1468,
+       "ms_per_call": 5.19
+      },
+      "decode": {
+       "total_s": 2.9,
+       "share_pct": 0.6,
+       "calls": 600,
+       "ms_per_call": 4.84
+      },
+      "enhance_recombine": {
+       "total_s": 1.99,
+       "share_pct": 0.4,
+       "calls": 667,
+       "ms_per_call": 2.99
+      },
+      "verify": {
+       "total_s": 1.83,
+       "share_pct": 0.4,
+       "calls": 115,
+       "ms_per_call": 15.93
+      },
+      "alignment": {
+       "total_s": 1.48,
+       "share_pct": 0.3,
+       "calls": 801,
+       "ms_per_call": 1.85
+      },
+      "encode": {
+       "total_s": 0.96,
+       "share_pct": 0.2,
+       "calls": 600,
+       "ms_per_call": 1.6
+      },
+      "track_decode": {
+       "total_s": 0.16,
+       "share_pct": 0.0,
+       "calls": 600,
+       "ms_per_call": 0.26
+      },
+      "track_consume": {
+       "total_s": 0.15,
+       "share_pct": 0.0,
+       "calls": 597,
+       "ms_per_call": 0.26
+      },
+      "encode_finalize": {
+       "total_s": 0.15,
+       "share_pct": 0.0,
+       "calls": 1,
+       "ms_per_call": 150.68
+      },
+      "faceset_lookup": {
+       "total_s": 0.0,
+       "share_pct": 0.0,
+       "calls": 801,
+       "ms_per_call": 0.0
+      }
+     },
+     "output": {
+      "file": "G:\\pinokio\\api\\roop-ultimate\\app\\output\\ab_swap_batch_realswap_2026-10-11\\d4_3B\\work\\clip_22-06-22.mp4",
+      "sha256": "f04cc20b4b7b8a7807c46e717a5be74ad87148aaef2d3412ab3a8a6be07820da",
+      "decoded_video_md5": "04481a2f584cceb7363c5712daf36b7a",
+      "bytes": 20214744,
+      "rows_csv_sha256": "e6f66e712ef408e20306c0caa4ffd9593cf5ab421059b35df0ce2cebb75da7bd"
+     }
+    },
+    {
+     "label": "d4_4A",
+     "arm": "A",
+     "returncode": 0,
+     "frame_loop_fps": 13.97,
+     "faces_per_s": 15.2,
+     "faces_per_frame": 1.08,
+     "stabilizer_path": "parallel-blocks",
+     "proof": {
+      "on_line": true,
+      "max_batch": 8,
+      "off_line": false,
+      "report": [
+       "batches: 408   items: 667   avg batch: 1.63   max: 8",
+       "swap inference: 21.67s  (53.10 ms/batch, 32.48 ms/item)"
+      ],
+      "pair_mix_line": [
+       "[Session] swapper:realswap: active=TensorrtExecutionProvider | requested=TensorrtExecutionProvider > CUDAExecutionProvider | NVIDIA GeForce RTX 4070 (cc 8.9, 12281 MiB) | trt_workspace=2.00 GiB, trt_f",
+       "[Runtime] phase=init provider_active=tensorrt requested=tensorrt>cuda>cpu precision=mixed swap_model=realswap batch_mode=sequential target_selection=selected/multi_person selected_person=[0, 1] select"
+      ],
+      "batch_unsupported": false
+     },
+     "ran_as_labelled": true,
+     "failed_frames": 0,
+     "swapped_lines": [
+      "  faces seen                                                       944  100.0%",
+      "  swapped (identity lock)                                          764   80.9%",
+      "  swapped (per-frame match)                                         37    3.9%"
+     ],
+     "wall_seconds": 177.8,
+     "stages": {
+      "frame_total": {
+       "total_s": 208.08,
+       "share_pct": 40.0,
+       "calls": 600,
+       "ms_per_call": 346.79
+      },
+      "swap": {
+       "total_s": 65.57,
+       "share_pct": 12.6,
+       "calls": 667,
+       "ms_per_call": 98.3
+      },
+      "enhance": {
+       "total_s": 54.55,
+       "share_pct": 10.5,
+       "calls": 667,
+       "ms_per_call": 81.78
+      },
+      "stabilize": {
+       "total_s": 44.39,
+       "share_pct": 8.5,
+       "calls": 4806,
+       "ms_per_call": 9.24
+      },
+      "track_detect": {
+       "total_s": 33.24,
+       "share_pct": 6.4,
+       "calls": 600,
+       "ms_per_call": 55.4
+      },
+      "detection": {
+       "total_s": 33.23,
+       "share_pct": 6.4,
+       "calls": 600,
+       "ms_per_call": 55.39
+      },
+      "blend": {
+       "total_s": 26.19,
+       "share_pct": 5.0,
+       "calls": 801,
+       "ms_per_call": 32.7
+      },
+      "mask": {
+       "total_s": 25.78,
+       "share_pct": 5.0,
+       "calls": 1602,
+       "ms_per_call": 16.09
+      },
+      "track_wait": {
+       "total_s": 14.45,
+       "share_pct": 2.8,
+       "calls": 597,
+       "ms_per_call": 24.2
+      },
+      "lighting": {
+       "total_s": 7.05,
+       "share_pct": 1.4,
+       "calls": 1468,
+       "ms_per_call": 4.8
+      },
+      "enhance_recombine": {
+       "total_s": 1.82,
+       "share_pct": 0.3,
+       "calls": 667,
+       "ms_per_call": 2.73
+      },
+      "verify": {
+       "total_s": 1.68,
+       "share_pct": 0.3,
+       "calls": 115,
+       "ms_per_call": 14.6
+      },
+      "alignment": {
+       "total_s": 1.47,
+       "share_pct": 0.3,
+       "calls": 801,
+       "ms_per_call": 1.83
+      },
+      "decode": {
+       "total_s": 1.23,
+       "share_pct": 0.2,
+       "calls": 600,
+       "ms_per_call": 2.06
+      },
+      "encode": {
+       "total_s": 0.89,
+       "share_pct": 0.2,
+       "calls": 600,
+       "ms_per_call": 1.48
+      },
+      "track_decode": {
+       "total_s": 0.17,
+       "share_pct": 0.0,
+       "calls": 600,
+       "ms_per_call": 0.29
+      },
+      "track_consume": {
+       "total_s": 0.16,
+       "share_pct": 0.0,
+       "calls": 597,
+       "ms_per_call": 0.27
+      },
+      "encode_finalize": {
+       "total_s": 0.14,
+       "share_pct": 0.0,
+       "calls": 1,
+       "ms_per_call": 136.69
+      },
+      "faceset_lookup": {
+       "total_s": 0.0,
+       "share_pct": 0.0,
+       "calls": 801,
+       "ms_per_call": 0.0
+      }
+     },
+     "output": {
+      "file": "G:\\pinokio\\api\\roop-ultimate\\app\\output\\ab_swap_batch_realswap_2026-10-11\\d4_4A\\work\\clip_22-09-20.mp4",
+      "sha256": "f04cc20b4b7b8a7807c46e717a5be74ad87148aaef2d3412ab3a8a6be07820da",
+      "decoded_video_md5": "04481a2f584cceb7363c5712daf36b7a",
+      "bytes": 20214744,
+      "rows_csv_sha256": "e6f66e712ef408e20306c0caa4ffd9593cf5ab421059b35df0ce2cebb75da7bd"
+     }
+    }
+   ]
+  },
+  "s7": {
+   "A_fps": [
+    18.45,
+    19.16
+   ],
+   "B_fps": [
+    19.46,
+    18.86
+   ],
+   "chunk_mb": 1365,
+   "A_on_mean": 18.805,
+   "B_off_mean": 19.16,
+   "ratio_on_over_off": 0.9815,
+   "A_vs_A_spread_pct": 3.78,
+   "B_vs_B_spread_pct": 3.13,
+   "arms_not_as_labelled": [],
+   "arms": [
+    {
+     "label": "s7_1A",
+     "arm": "A",
+     "returncode": 0,
+     "frame_loop_fps": 18.45,
+     "faces_per_s": 16.2,
+     "faces_per_frame": 0.88,
+     "stabilizer_path": "parallel-blocks",
+     "proof": {
+      "on_line": true,
+      "max_batch": 8,
+      "off_line": false,
+      "report": [
+       "batches: 356   items: 526   avg batch: 1.48   max: 8",
+       "swap inference: 12.85s  (36.10 ms/batch, 24.43 ms/item)"
+      ],
+      "pair_mix_line": [
+       "[Session] swapper:realswap: active=TensorrtExecutionProvider | requested=TensorrtExecutionProvider > CUDAExecutionProvider | NVIDIA GeForce RTX 4070 (cc 8.9, 12281 MiB) | trt_workspace=2.00 GiB, trt_f",
+       "[Runtime] phase=init provider_active=tensorrt requested=tensorrt>cuda>cpu precision=mixed swap_model=realswap batch_mode=sequential target_selection=selected/multi_person selected_person=[0] selected_"
+      ],
+      "batch_unsupported": false
+     },
+     "ran_as_labelled": true,
+     "failed_frames": 0,
+     "swapped_lines": [
+      "  faces seen                                                       652  100.0%",
+      "  swapped (identity lock)                                          652  100.0%"
+     ],
+     "wall_seconds": 180.9,
+     "stages": {
+      "frame_total": {
+       "total_s": 158.46,
+       "share_pct": 39.9,
+       "calls": 600,
+       "ms_per_call": 264.1
+      },
+      "enhance": {
+       "total_s": 40.71,
+       "share_pct": 10.2,
+       "calls": 526,
+       "ms_per_call": 77.39
+      },
+      "swap": {
+       "total_s": 37.89,
+       "share_pct": 9.5,
+       "calls": 526,
+       "ms_per_call": 72.03
+      },
+      "stabilize": {
+       "total_s": 34.82,
+       "share_pct": 8.8,
+       "calls": 3912,
+       "ms_per_call": 8.9
+      },
+      "blend": {
+       "total_s": 29.25,
+       "share_pct": 7.4,
+       "calls": 652,
+       "ms_per_call": 44.86
+      },
+      "track_detect": {
+       "total_s": 24.35,
+       "share_pct": 6.1,
+       "calls": 600,
+       "ms_per_call": 40.58
+      },
+      "detection": {
+       "total_s": 24.34,
+       "share_pct": 6.1,
+       "calls": 600,
+       "ms_per_call": 40.57
+      },
+      "mask": {
+       "total_s": 19.41,
+       "share_pct": 4.9,
+       "calls": 1304,
+       "ms_per_call": 14.88
+      },
+      "track_wait": {
+       "total_s": 10.87,
+       "share_pct": 2.7,
+       "calls": 597,
+       "ms_per_call": 18.2
+      },
+      "verify": {
+       "total_s": 6.27,
+       "share_pct": 1.6,
+       "calls": 492,
+       "ms_per_call": 12.75
+      },
+      "lighting": {
+       "total_s": 5.75,
+       "share_pct": 1.4,
+       "calls": 1178,
+       "ms_per_call": 4.89
+      },
+      "enhance_recombine": {
+       "total_s": 1.36,
+       "share_pct": 0.3,
+       "calls": 526,
+       "ms_per_call": 2.59
+      },
+      "decode": {
+       "total_s": 1.28,
+       "share_pct": 0.3,
+       "calls": 600,
+       "ms_per_call": 2.14
+      },
+      "alignment": {
+       "total_s": 1.15,
+       "share_pct": 0.3,
+       "calls": 652,
+       "ms_per_call": 1.76
+      },
+      "encode": {
+       "total_s": 0.92,
+       "share_pct": 0.2,
+       "calls": 600,
+       "ms_per_call": 1.53
+      },
+      "track_decode": {
+       "total_s": 0.17,
+       "share_pct": 0.0,
+       "calls": 600,
+       "ms_per_call": 0.28
+      },
+      "encode_finalize": {
+       "total_s": 0.13,
+       "share_pct": 0.0,
+       "calls": 1,
+       "ms_per_call": 131.86
+      },
+      "track_consume": {
+       "total_s": 0.1,
+       "share_pct": 0.0,
+       "calls": 597,
+       "ms_per_call": 0.17
+      },
+      "faceset_lookup": {
+       "total_s": 0.0,
+       "share_pct": 0.0,
+       "calls": 652,
+       "ms_per_call": 0.0
+      }
+     },
+     "output": {
+      "file": "G:\\pinokio\\api\\roop-ultimate\\app\\output\\ab_swap_batch_realswap_2026-10-11\\s7_1A\\work\\clip_22-13-54.mp4",
+      "sha256": "6ce90e0a54d04562452802b565ad225e472129426f4b628904a5c9ef6320ed85",
+      "decoded_video_md5": "47d88cfbc37e5f45b65ab534ffc61645",
+      "bytes": 20311897,
+      "rows_csv_sha256": "56372098a1cb612842b718e9f6cc1185f1cf04abf178482d22a591523d01ab49"
+     }
+    },
+    {
+     "label": "s7_2B",
+     "arm": "B",
+     "returncode": 0,
+     "frame_loop_fps": 19.46,
+     "faces_per_s": 17.1,
+     "faces_per_frame": 0.88,
+     "stabilizer_path": "parallel-blocks",
+     "proof": {
+      "on_line": false,
+      "max_batch": null,
+      "off_line": true,
+      "report": [],
+      "pair_mix_line": [
+       "[Session] swapper:realswap: active=TensorrtExecutionProvider | requested=TensorrtExecutionProvider > CUDAExecutionProvider | NVIDIA GeForce RTX 4070 (cc 8.9, 12281 MiB) | trt_workspace=2.00 GiB, trt_f",
+       "[Runtime] phase=init provider_active=tensorrt requested=tensorrt>cuda>cpu precision=mixed swap_model=realswap batch_mode=sequential target_selection=selected/multi_person selected_person=[0] selected_"
+      ],
+      "batch_unsupported": false
+     },
+     "ran_as_labelled": true,
+     "failed_frames": 0,
+     "swapped_lines": [
+      "  faces seen                                                       652  100.0%",
+      "  swapped (identity lock)                                          652  100.0%"
+     ],
+     "wall_seconds": 150.2,
+     "stages": {
+      "frame_total": {
+       "total_s": 151.64,
+       "share_pct": 39.8,
+       "calls": 600,
+       "ms_per_call": 252.74
+      },
+      "enhance": {
+       "total_s": 39.85,
+       "share_pct": 10.5,
+       "calls": 526,
+       "ms_per_call": 75.76
+      },
+      "stabilize": {
+       "total_s": 36.95,
+       "share_pct": 9.7,
+       "calls": 3912,
+       "ms_per_call": 9.45
+      },
+      "blend": {
+       "total_s": 30.62,
+       "share_pct": 8.0,
+       "calls": 652,
+       "ms_per_call": 46.96
+      },
+      "track_detect": {
+       "total_s": 25.06,
+       "share_pct": 6.6,
+       "calls": 600,
+       "ms_per_call": 41.76
+      },
+      "detection": {
+       "total_s": 25.05,
+       "share_pct": 6.6,
+       "calls": 600,
+       "ms_per_call": 41.75
+      },
+      "mask": {
+       "total_s": 20.61,
+       "share_pct": 5.4,
+       "calls": 1304,
+       "ms_per_call": 15.8
+      },
+      "swap": {
+       "total_s": 19.13,
+       "share_pct": 5.0,
+       "calls": 526,
+       "ms_per_call": 36.37
+      },
+      "track_wait": {
+       "total_s": 11.15,
+       "share_pct": 2.9,
+       "calls": 597,
+       "ms_per_call": 18.68
+      },
+      "verify": {
+       "total_s": 7.38,
+       "share_pct": 1.9,
+       "calls": 492,
+       "ms_per_call": 14.99
+      },
+      "lighting": {
+       "total_s": 6.34,
+       "share_pct": 1.7,
+       "calls": 1178,
+       "ms_per_call": 5.38
+      },
+      "decode": {
+       "total_s": 3.02,
+       "share_pct": 0.8,
+       "calls": 600,
+       "ms_per_call": 5.03
+      },
+      "enhance_recombine": {
+       "total_s": 1.5,
+       "share_pct": 0.4,
+       "calls": 526,
+       "ms_per_call": 2.85
+      },
+      "alignment": {
+       "total_s": 1.23,
+       "share_pct": 0.3,
+       "calls": 652,
+       "ms_per_call": 1.89
+      },
+      "encode": {
+       "total_s": 1.03,
+       "share_pct": 0.3,
+       "calls": 600,
+       "ms_per_call": 1.71
+      },
+      "track_decode": {
+       "total_s": 0.2,
+       "share_pct": 0.1,
+       "calls": 600,
+       "ms_per_call": 0.34
+      },
+      "encode_finalize": {
+       "total_s": 0.13,
+       "share_pct": 0.0,
+       "calls": 1,
+       "ms_per_call": 128.87
+      },
+      "track_consume": {
+       "total_s": 0.11,
+       "share_pct": 0.0,
+       "calls": 597,
+       "ms_per_call": 0.18
+      },
+      "faceset_lookup": {
+       "total_s": 0.0,
+       "share_pct": 0.0,
+       "calls": 652,
+       "ms_per_call": 0.0
+      }
+     },
+     "output": {
+      "file": "G:\\pinokio\\api\\roop-ultimate\\app\\output\\ab_swap_batch_realswap_2026-10-11\\s7_2B\\work\\clip_22-16-55.mp4",
+      "sha256": "6ce90e0a54d04562452802b565ad225e472129426f4b628904a5c9ef6320ed85",
+      "decoded_video_md5": "47d88cfbc37e5f45b65ab534ffc61645",
+      "bytes": 20311897,
+      "rows_csv_sha256": "56372098a1cb612842b718e9f6cc1185f1cf04abf178482d22a591523d01ab49"
+     }
+    },
+    {
+     "label": "s7_3B",
+     "arm": "B",
+     "returncode": 0,
+     "frame_loop_fps": 18.86,
+     "faces_per_s": 16.5,
+     "faces_per_frame": 0.88,
+     "stabilizer_path": "parallel-blocks",
+     "proof": {
+      "on_line": false,
+      "max_batch": null,
+      "off_line": true,
+      "report": [],
+      "pair_mix_line": [
+       "[Session] swapper:realswap: active=TensorrtExecutionProvider | requested=TensorrtExecutionProvider > CUDAExecutionProvider | NVIDIA GeForce RTX 4070 (cc 8.9, 12281 MiB) | trt_workspace=2.00 GiB, trt_f",
+       "[Runtime] phase=init provider_active=tensorrt requested=tensorrt>cuda>cpu precision=mixed swap_model=realswap batch_mode=sequential target_selection=selected/multi_person selected_person=[0] selected_"
+      ],
+      "batch_unsupported": false
+     },
+     "ran_as_labelled": true,
+     "failed_frames": 0,
+     "swapped_lines": [
+      "  faces seen                                                       652  100.0%",
+      "  swapped (identity lock)                                          652  100.0%"
+     ],
+     "wall_seconds": 151.4,
+     "stages": {
+      "frame_total": {
+       "total_s": 156.72,
+       "share_pct": 39.8,
+       "calls": 600,
+       "ms_per_call": 261.2
+      },
+      "enhance": {
+       "total_s": 40.11,
+       "share_pct": 10.2,
+       "calls": 526,
+       "ms_per_call": 76.26
+      },
+      "stabilize": {
+       "total_s": 39.88,
+       "share_pct": 10.1,
+       "calls": 3912,
+       "ms_per_call": 10.19
+      },
+      "blend": {
+       "total_s": 31.63,
+       "share_pct": 8.0,
+       "calls": 652,
+       "ms_per_call": 48.51
+      },
+      "track_detect": {
+       "total_s": 25.31,
+       "share_pct": 6.4,
+       "calls": 600,
+       "ms_per_call": 42.18
+      },
+      "detection": {
+       "total_s": 25.3,
+       "share_pct": 6.4,
+       "calls": 600,
+       "ms_per_call": 42.17
+      },
+      "mask": {
+       "total_s": 21.65,
+       "share_pct": 5.5,
+       "calls": 1304,
+       "ms_per_call": 16.61
+      },
+      "swap": {
+       "total_s": 19.85,
+       "share_pct": 5.0,
+       "calls": 526,
+       "ms_per_call": 37.75
+      },
+      "track_wait": {
+       "total_s": 11.31,
+       "share_pct": 2.9,
+       "calls": 597,
+       "ms_per_call": 18.94
+      },
+      "verify": {
+       "total_s": 7.31,
+       "share_pct": 1.9,
+       "calls": 492,
+       "ms_per_call": 14.85
+      },
+      "lighting": {
+       "total_s": 6.7,
+       "share_pct": 1.7,
+       "calls": 1178,
+       "ms_per_call": 5.69
+      },
+      "decode": {
+       "total_s": 3.49,
+       "share_pct": 0.9,
+       "calls": 600,
+       "ms_per_call": 5.82
+      },
+      "enhance_recombine": {
+       "total_s": 1.57,
+       "share_pct": 0.4,
+       "calls": 526,
+       "ms_per_call": 2.99
+      },
+      "alignment": {
+       "total_s": 1.31,
+       "share_pct": 0.3,
+       "calls": 652,
+       "ms_per_call": 2.0
+      },
+      "encode": {
+       "total_s": 0.96,
+       "share_pct": 0.2,
+       "calls": 600,
+       "ms_per_call": 1.61
+      },
+      "track_decode": {
+       "total_s": 0.17,
+       "share_pct": 0.0,
+       "calls": 600,
+       "ms_per_call": 0.28
+      },
+      "encode_finalize": {
+       "total_s": 0.13,
+       "share_pct": 0.0,
+       "calls": 1,
+       "ms_per_call": 128.13
+      },
+      "track_consume": {
+       "total_s": 0.11,
+       "share_pct": 0.0,
+       "calls": 597,
+       "ms_per_call": 0.18
+      },
+      "faceset_lookup": {
+       "total_s": 0.0,
+       "share_pct": 0.0,
+       "calls": 652,
+       "ms_per_call": 0.0
+      }
+     },
+     "output": {
+      "file": "G:\\pinokio\\api\\roop-ultimate\\app\\output\\ab_swap_batch_realswap_2026-10-11\\s7_3B\\work\\clip_22-19-28.mp4",
+      "sha256": "6ce90e0a54d04562452802b565ad225e472129426f4b628904a5c9ef6320ed85",
+      "decoded_video_md5": "47d88cfbc37e5f45b65ab534ffc61645",
+      "bytes": 20311897,
+      "rows_csv_sha256": "56372098a1cb612842b718e9f6cc1185f1cf04abf178482d22a591523d01ab49"
+     }
+    },
+    {
+     "label": "s7_4A",
+     "arm": "A",
+     "returncode": 0,
+     "frame_loop_fps": 19.16,
+     "faces_per_s": 16.8,
+     "faces_per_frame": 0.88,
+     "stabilizer_path": "parallel-blocks",
+     "proof": {
+      "on_line": true,
+      "max_batch": 8,
+      "off_line": false,
+      "report": [
+       "batches: 359   items: 526   avg batch: 1.47   max: 7",
+       "swap inference: 13.13s  (36.58 ms/batch, 24.97 ms/item)"
+      ],
+      "pair_mix_line": [
+       "[Session] swapper:realswap: active=TensorrtExecutionProvider | requested=TensorrtExecutionProvider > CUDAExecutionProvider | NVIDIA GeForce RTX 4070 (cc 8.9, 12281 MiB) | trt_workspace=2.00 GiB, trt_f",
+       "[Runtime] phase=init provider_active=tensorrt requested=tensorrt>cuda>cpu precision=mixed swap_model=realswap batch_mode=sequential target_selection=selected/multi_person selected_person=[0] selected_"
+      ],
+      "batch_unsupported": false
+     },
+     "ran_as_labelled": true,
+     "failed_frames": 0,
+     "swapped_lines": [
+      "  faces seen                                                       652  100.0%",
+      "  swapped (identity lock)                                          652  100.0%"
+     ],
+     "wall_seconds": 150.9,
+     "stages": {
+      "frame_total": {
+       "total_s": 152.3,
+       "share_pct": 39.3,
+       "calls": 600,
+       "ms_per_call": 253.83
+      },
+      "enhance": {
+       "total_s": 40.02,
+       "share_pct": 10.3,
+       "calls": 526,
+       "ms_per_call": 76.09
+      },
+      "swap": {
+       "total_s": 37.83,
+       "share_pct": 9.8,
+       "calls": 526,
+       "ms_per_call": 71.92
+      },
+      "stabilize": {
+       "total_s": 31.21,
+       "share_pct": 8.1,
+       "calls": 3912,
+       "ms_per_call": 7.98
+      },
+      "blend": {
+       "total_s": 28.07,
+       "share_pct": 7.2,
+       "calls": 652,
+       "ms_per_call": 43.06
+      },
+      "track_detect": {
+       "total_s": 25.17,
+       "share_pct": 6.5,
+       "calls": 600,
+       "ms_per_call": 41.96
+      },
+      "detection": {
+       "total_s": 25.17,
+       "share_pct": 6.5,
+       "calls": 600,
+       "ms_per_call": 41.95
+      },
+      "mask": {
+       "total_s": 19.68,
+       "share_pct": 5.1,
+       "calls": 1304,
+       "ms_per_call": 15.09
+      },
+      "track_wait": {
+       "total_s": 11.23,
+       "share_pct": 2.9,
+       "calls": 597,
+       "ms_per_call": 18.81
+      },
+      "verify": {
+       "total_s": 6.33,
+       "share_pct": 1.6,
+       "calls": 492,
+       "ms_per_call": 12.87
+      },
+      "lighting": {
+       "total_s": 5.54,
+       "share_pct": 1.4,
+       "calls": 1178,
+       "ms_per_call": 4.7
+      },
+      "enhance_recombine": {
+       "total_s": 1.3,
+       "share_pct": 0.3,
+       "calls": 526,
+       "ms_per_call": 2.47
+      },
+      "decode": {
+       "total_s": 1.25,
+       "share_pct": 0.3,
+       "calls": 600,
+       "ms_per_call": 2.08
+      },
+      "alignment": {
+       "total_s": 1.12,
+       "share_pct": 0.3,
+       "calls": 652,
+       "ms_per_call": 1.72
+      },
+      "encode": {
+       "total_s": 0.86,
+       "share_pct": 0.2,
+       "calls": 600,
+       "ms_per_call": 1.44
+      },
+      "track_decode": {
+       "total_s": 0.16,
+       "share_pct": 0.0,
+       "calls": 600,
+       "ms_per_call": 0.27
+      },
+      "encode_finalize": {
+       "total_s": 0.13,
+       "share_pct": 0.0,
+       "calls": 1,
+       "ms_per_call": 133.21
+      },
+      "track_consume": {
+       "total_s": 0.1,
+       "share_pct": 0.0,
+       "calls": 597,
+       "ms_per_call": 0.17
+      },
+      "faceset_lookup": {
+       "total_s": 0.0,
+       "share_pct": 0.0,
+       "calls": 652,
+       "ms_per_call": 0.0
+      }
+     },
+     "output": {
+      "file": "G:\\pinokio\\api\\roop-ultimate\\app\\output\\ab_swap_batch_realswap_2026-10-11\\s7_4A\\work\\clip_22-22-00.mp4",
+      "sha256": "6ce90e0a54d04562452802b565ad225e472129426f4b628904a5c9ef6320ed85",
+      "decoded_video_md5": "47d88cfbc37e5f45b65ab534ffc61645",
+      "bytes": 20311897,
+      "rows_csv_sha256": "56372098a1cb612842b718e9f6cc1185f1cf04abf178482d22a591523d01ab49"
+     }
+    }
+   ]
+  }
+ }
+}
