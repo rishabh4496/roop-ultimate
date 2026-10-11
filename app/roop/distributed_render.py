@@ -2,6 +2,23 @@
 
 The temporary MP4s are the timing authority.  Elementary streams are exported
 as deliverables, but cannot be used as concat inputs: Annex B has no PTS/DTS.
+
+WHAT THIS MODULE IS NOT.  It runs no model and decodes no frame.  It plans GOP
+boundaries from packets, STREAM-COPIES each slice (``-c:v copy``: no decode, no
+re-encode, so nothing for NVDEC/NVENC to do and a re-encode here would add a
+generation of loss and break the IDR checks), launches one ``run.py --project
+--render`` child per chunk, and joins the results with ``-f concat -c copy``.
+Everything the render pipeline does - NVDEC decode, the configured NVENC encoder,
+``create_strictly_accelerated_session``, cross-frame swap batching (sized per
+card by ``perf_batch_swap='auto'``) - happens inside that child, which is the
+ordinary pipeline, so it cannot bypass those stages.  Per-GPU isolation is the
+process boundary: ``CUDA_VISIBLE_DEVICES=<uuid>`` plus ``--cuda_device_id 0`` gives
+each worker its own CUDA context and ORT arenas, and the TensorRT engine cache
+namespace (``backend_manager.cache_namespace``) already carries the GPU name,
+SM version and driver.  A session factory or a batch loop added HERE would have
+nothing to run.  Not exercised: a host with two GPUs (both development machines
+have one), and two identical GPUs building the same missing engine into the one
+shared cache directory at once on a cold cache.
 """
 
 from __future__ import annotations
