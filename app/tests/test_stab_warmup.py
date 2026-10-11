@@ -253,7 +253,8 @@ class SchedulerPrefersParallel(unittest.TestCase):
         blocks; splitting it `threads` ways instead would produce blocks shorter
         than their own warm-up."""
         self.assertIn('stab_width', PM_CODE)
-        self.assertRegex(PM_CODE, r'n\s*=\s*max\(1,\s*min\(stab_width')
+        # The persistent worker pool is sized by stab_width (not `threads`).
+        self.assertRegex(PM_CODE, r'for i in range\(max\(1,\s*int\(stab_width\)\)\)')
 
 
 if __name__ == '__main__':

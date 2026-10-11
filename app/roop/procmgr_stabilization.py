@@ -103,6 +103,32 @@ class StabilizationSchedulingMixin:
         # reader + processing + results, plus both bounded queues.
         return 3 + 2 * capacity
 
+    def _stab_overlap_depth(self, chunk_frames):
+        """How many chunks `_run_stab_parallel` may have in flight: 2, or 1 (the old barrier).
+
+        With one chunk at a time every chunk ends with a tail where the workers that got the cheap blocks sit idle
+        until the unluckiest block finishes, and the next chunk cannot start until all of them have joined. Measured
+        on a live 720p render (py-spy dump, 8 workers): all 8 alive for ~16 of every 17 samples, then 1-4 of them for
+        2-3 samples, then 0 at the join -- GPU util fell to 13-17% in that gap every ~10 s while the CPU sat at 24%.
+        Depth 2 lets the pool take the next chunk's blocks as soon as this chunk's queue is empty.
+
+        The price is one more RAW chunk alive at the moment of overlap (the next chunk's results are empty then, so the
+        results side does not grow). Stay at 1 when that would not fit inside 92% of the RAM free right now, so the
+        16 GB laptop keeps exactly today's footprint. ROOP_STAB_OVERLAP=0 forces the old behaviour.
+        """
+        if (os.environ.get('ROOP_STAB_OVERLAP', '1') or '1').strip().lower() in ('0', 'false', 'no', 'off'):
+            return 1
+        try:
+            frame_mb = float((getattr(self, '_stab_geometry_info', None) or {}).get('frame_mb', 0.0) or 0.0)
+            if frame_mb > 0.0 and chunk_frames > 0:
+                avail_mb = psutil.virtual_memory().available / (1024.0 ** 2)
+                if (self._stab_live_chunks() + 1) * chunk_frames * frame_mb > 0.92 * avail_mb:
+                    return 1
+        except Exception as _degrade_error:
+            _swallowed("roop/procmgr_stabilization.py:overlap", _degrade_error, "fallback continued")
+            return 1
+        return 2
+
     def _default_stab_chunk_mb(self, hard_cap=None):
         """Per-chunk budget that keeps every live copy inside a share of the
         RAM this machine actually has free.

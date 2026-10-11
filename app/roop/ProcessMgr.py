@@ -2626,17 +2626,298 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     pause_controller.pending_output(1)
                 return True, result
 
-        try:
+        # ── Persistent worker pool, chunks overlapped ─────────────────────────
+        # This used to spawn `stab_width` threads per chunk and join them all
+        # before the next chunk could start. Every chunk therefore ended in a
+        # tail where the workers that drew cheap blocks idled until the
+        # unluckiest block finished (py-spy dump of a live 720p render: all 8
+        # workers alive for ~16 of every 17 samples, then 1-4 of them, then 0 at
+        # the join; GPU util dropped to 13-17% in that gap every ~10 s while the
+        # CPU sat at 24%), and every per-thread buffer (restorer IO bindings,
+        # CLAHE/LCT scratch, CUDA-graph state) was rebuilt for the new threads
+        # every ~10 s.
+        #
+        # Now `stab_width` threads live for the whole render and drain ONE FIFO
+        # queue of (chunk, block) items. The dispatcher below queues chunk N+1's
+        # blocks as soon as its frames are decoded, so a worker that finishes
+        # the last block of chunk N takes a block of chunk N+1 instead of
+        # idling. Block grid, warm-up and per-block filter state are untouched:
+        # each block still primes itself from raw frames carried in `combined`,
+        # and the FIFO order guarantees every block of chunk N has STARTED
+        # before any of chunk N+1 (so a dedup wait can never form a cycle).
+        #
+        # Output order is unchanged: chunks are retired strictly oldest-first
+        # into `_write_q`. A pause/interrupt retires every in-flight chunk
+        # together (see `_settle_oldest`).
+        _stab_depth = self._stab_overlap_depth(CHUNK)
+        print(f"[Stabilize] chunk overlap {'ON' if _stab_depth > 1 else 'off'}: persistent pool of "
+              f"{max(1, int(stab_width))} workers, up to {_stab_depth} chunk(s) in flight "
+              f"(ROOP_STAB_OVERLAP=0 restores one chunk at a time).", flush=True)
+        work_q = Queue()
+        inflight = []                  # _StabChunk, oldest first; touched only by this (coordinator) thread
+        _inflight_lock = Lock()        # guards ctx.remaining / ctx.busy, written by workers
+        _requeued_any = [False]
+
+        class _StabChunk:
+            __slots__ = ('chunk', 'combined', 'results', 'start', 'carry_in', 'no', 'fn', 'remaining',
+                         'done', 'interrupted', 't0', 't_done', 'busy', 'read_wait')
+
+            def __init__(self, chunk, combined, results, start, carry_in, no, interrupted, read_wait):
+                self.chunk, self.combined, self.results = chunk, combined, results
+                self.start, self.carry_in, self.no = start, carry_in, no
+                self.fn = None
+                self.remaining = 0
+                self.done = Event()
+                self.interrupted = interrupted
+                self.t0 = time.perf_counter()
+                self.t_done = None
+                self.busy = {}
+                self.read_wait = read_wait
+
+        def _stab_worker(_wi):
+            if gc.isenabled():
+                gc.disable()
             while True:
+                item = work_q.get()
+                if item is None:
+                    return
+                ctx, a, b = item
+                _w0 = time.perf_counter()
+                try:
+                    if roop.globals.processing:
+                        ctx.fn(a, b)
+                except Exception as exc:
+                    # A processing worker used to die silently here. The
+                    # coordinator then joined a partial worker set, marked
+                    # the run stopped, and the API reported no traceback or
+                    # actionable error. Preserve the first failure, wake
+                    # the reader/writer, and let the caller's normal
+                    # exception path mark the project FAILED.
+                    if _worker_exc[0] is None:
+                        _worker_exc[0] = exc
+                        bar_write(f'[Stabilize] processing worker failed: '
+                                  f'{type(exc).__name__}: {exc}')
+                    roop.globals.processing = False
+                finally:
+                    _now = time.perf_counter()
+                    with _inflight_lock:
+                        ctx.busy[_wi] = ctx.busy.get(_wi, 0.0) + (_now - _w0)
+                        ctx.remaining -= 1
+                        if ctx.remaining <= 0:
+                            ctx.t_done = _now
+                            ctx.done.set()
+
+        pool = [Thread(target=_stab_worker, args=(i,), name=f'stab_proc{i}', daemon=True)
+                for i in range(max(1, int(stab_width)))]
+
+        def _wait_done(ctx):
+            while not ctx.done.wait(0.25):
+                if not any(w.is_alive() for w in pool):
+                    break
+
+        def _enqueue(ctx):
+            """Hand a finished chunk to the writer. (queued, seconds stalled on back-pressure)."""
+            # Queue the chunk for the background write thread.
+            # Blocks only when FFMPEG is slower than frame processing
+            # (correct back-pressure; prevents unbounded memory growth).
+            # Bounded, and aware of whether anyone is still draining.
+            #
+            # A bounded _write_q can fill when a writer has stopped consuming
+            # blocks this put forever — and the `_wt.is_alive()` guard in the
+            # finally below is then unreachable, because reaching a finally
+            # requires leaving the try. A writer that raised recorded its
+            # exception and RETURNED, so that is exactly what happened: this
+            # thread parked in put(), the reader parked behind it, memory
+            # climbed, and the render stopped with no error. Observed at 58%
+            # of a 2400-frame clip.
+            _t_put0 = time.perf_counter()
+            queued = False
+            while True:
+                try:
+                    _write_q.put((ctx.start, ctx.results, len(ctx.chunk)), timeout=0.5)
+                    queued = True
+                    break
+                except _QueueFull:
+                    if (_writer_exc[0] is not None or not _wt.is_alive()
+                            or not roop.globals.processing):
+                        break
+            if not queued:
+                _release_pending_results(ctx.results)
+            # Ownership moved to _write_q. The writer or queue drain now
+            # owns all reservations in this dictionary.
+            return queued, time.perf_counter() - _t_put0
+
+        def _after_chunk(ctx, stall):
+            if _PROFILE:
+                _bts = list(ctx.busy.values())
+                _imbal = (max(_bts) - min(_bts)) if _bts else 0.0
+                _t_proc = (ctx.t_done or time.perf_counter()) - ctx.t0
+                _fps = len(ctx.chunk) / _t_proc if _t_proc > 0 else 0.0
+
+                reset = "\033[0m"
+                bold = "\033[1m"
+                cyan = "\033[96m"
+                green = "\033[92m"
+                yellow = "\033[93m"
+                magenta = "\033[95m"
+
+                fps_color = green if _fps >= 30 else (yellow if _fps >= 15 else "\033[91m")
+                stall_color = yellow if (stall * 1000) > 100 else cyan
+                wait_color = yellow if (ctx.read_wait * 1000) > 100 else cyan
+
+                print(f"{magenta}{bold}[STAB CHUNK {ctx.no:3d}]{reset} "
+                      f"frames={bold}{green}{len(ctx.chunk):4d}{reset} | "
+                      f"read_wait={wait_color}{ctx.read_wait*1000:6.0f}ms{reset} | "
+                      f"in-flight={bold}{fps_color}{_t_proc:6.2f}s ({_fps:5.1f} FPS){reset} | "
+                      f"write_stall={stall_color}{stall*1000:6.0f}ms{reset} | "
+                      f"imbalance={yellow}{_imbal:5.2f}s{reset} "
+                      f"(slow={max(_bts) if _bts else 0:.2f}s / fast={min(_bts) if _bts else 0:.2f}s)",
+                      flush=True)
+            if self._stab_raw is not None:
+                # Everything older than the carried tail has had both of its visits (or never will).
+                self._stab_raw.drop_before(ctx.start + len(ctx.chunk) - WU)
+            ctx.chunk = ctx.combined = ctx.results = ctx.fn = None
+
+        def _pause_boundary():
+            # A parallel worker returns as soon as a pause is requested,
+            # leaving the writer as the only owner of the current chunk's
+            # output reservations. Wait here for that writer to drain them
+            # and acknowledge the pause before trying to consume another
+            # input chunk. Without this boundary the coordinator spins on
+            # an input reader that is correctly waiting for resume.
+            pause_controller.checkpoint(
+                lambda: bool(roop.globals.processing), wait_for_ack=True)
+            if pause_controller.snapshot()["acknowledged"]:
+                pause_controller.wait_until_resumed(
+                    lambda: bool(roop.globals.processing))
+
+        def _settle_oldest():
+            """Retire the oldest in-flight chunk. 'ok' | 'requeued' | 'stop'."""
+            nonlocal carry, chunk_start
+            ctx = inflight[0]
+            _wait_done(ctx)
+            if _worker_exc[0] is not None:
+                raise RuntimeError(
+                    f'stabilization worker failed: {type(_worker_exc[0]).__name__}: '
+                    f'{_worker_exc[0]}') from _worker_exc[0]
+            if not (pause_controller.snapshot()["requested"] or ctx.interrupted.is_set()):
+                inflight.pop(0)
+                queued, stall = _enqueue(ctx)
+                if not queued:
+                    return 'stop'
+                _after_chunk(ctx, stall)
+                if _writer_exc[0] is not None or not _wt.is_alive():
+                    return 'stop'   # leave the chunk loop; finally drains and re-raises
+                if not inflight:
+                    # Nothing else of ours holds an output reservation, so the
+                    # blocking boundary cannot strand one.
+                    _pause_boundary()
+                return 'ok'
+
+            # A pause was requested (or a worker stopped on one). Workers return
+            # their partial results rather than parking, and an acknowledgement
+            # needs EVERY output reservation drained -- including those of the
+            # chunks queued behind this one. Retire them all together, in order:
+            # chunks up to and including the first interrupted one are written
+            # (the interrupted one partially, exactly as before); anything after
+            # it is released and re-queued whole, because writing it now would
+            # put later frames ahead of the first chunk's unfinished ones.
+            retry = []
+            bad = False
+            while inflight:
+                c = inflight[0]
+                _wait_done(c)
+                if _worker_exc[0] is not None:
+                    raise RuntimeError(
+                        f'stabilization worker failed: {type(_worker_exc[0]).__name__}: '
+                        f'{_worker_exc[0]}') from _worker_exc[0]
+                inflight.pop(0)
+                if bad:
+                    _release_pending_results(c.results)
+                    retry.append(c)
+                    continue
+                if c.interrupted.is_set() and roop.globals.processing:
+                    # Every worker stopped at ITS next frame, so the results hold a prefix of
+                    # each block. Writing those now and the rest after the retry would emit
+                    # an earlier block's remainder AFTER a later block's prefix -- frames out
+                    # of order in the video. Keep only the run that is contiguous from the
+                    # chunk start; the retry recomputes the rest and the writer skips what it
+                    # has already written.
+                    _k = c.start
+                    while _k in c.results:
+                        _k += 1
+                    _stray = [g for g in c.results if g >= _k]
+                    for g in _stray:
+                        if c.results.pop(g, None) is not None:
+                            pause_controller.pending_output(-1)
+                queued, stall = _enqueue(c)
+                if not queued:
+                    return 'stop'
+                if c.interrupted.is_set() and roop.globals.processing:
+                    bad = True
+                    retry.append(c)
+                else:
+                    _after_chunk(c, stall)
+            if _writer_exc[0] is not None or not _wt.is_alive():
+                return 'stop'
+            _pause_boundary()
+            # A nonblocking worker stops admitting new frames as soon as
+            # the request arrives. The part it already produced is now
+            # durable, but the rest of this input chunk is still pending.
+            # Put the chunk back ahead of the reader sentinel and retry it
+            # after resume. The writer de-duplicates indices already
+            # emitted from the first partial attempt.
+            if retry and roop.globals.processing:
+                carry = retry[0].carry_in
+                chunk_start = retry[0].start
+                with prefetch_q.mutex:
+                    for c in reversed(retry):
+                        prefetch_q.queue.appendleft(c.chunk)
+                _requeued_any[0] = True
+                return 'requeued'
+            return 'ok'
+
+        try:
+            for _w in pool:
+                _w.start()
+            while True:
+                # Retire whatever has already finished, oldest first, without waiting.
+                _leave = False
+                while inflight and inflight[0].done.is_set():
+                    if _settle_oldest() == 'stop':
+                        _leave = True
+                        break
+                if _leave:
+                    break
+                # Pool full: the next chunk has to wait for the oldest one.
+                if len(inflight) >= _stab_depth:
+                    if _settle_oldest() == 'stop':
+                        break
+                    continue
                 _t_get0 = time.perf_counter()
                 try:
-                    chunk = prefetch_q.get(timeout=0.25)
+                    # Short poll while chunks are in flight so a finished one is written promptly.
+                    chunk = prefetch_q.get(timeout=0.05 if inflight else 0.25)
                 except _QueueEmpty:
-                    if not roop.globals.processing or _reader_done.is_set():
+                    if not inflight and (not roop.globals.processing or _reader_done.is_set()):
                         break
                     continue
                 _t_get = time.perf_counter() - _t_get0   # read-starvation wait
                 if chunk is None:
+                    # End of stream. Finish what is in flight FIRST: a pause can send
+                    # chunks back, and they must be ahead of this sentinel.
+                    _requeued_any[0] = False
+                    _leave = False
+                    while inflight:
+                        if _settle_oldest() == 'stop':
+                            _leave = True
+                            break
+                    if _leave:
+                        break
+                    if _requeued_any[0]:
+                        with prefetch_q.mutex:
+                            prefetch_q.queue.append(None)
+                        continue
                     break
                 if not roop.globals.processing:
                     break
@@ -2648,9 +2929,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 # this many warm-up-amortising blocks. Splitting it `threads` ways
                 # instead would hand back blocks shorter than the warm-up they
                 # each have to pay for.
-                n = max(1, min(stab_width, len(chunk)))
                 results = {}
-                _block_times = {}   # per WORKER wall time → imbalance (see dispatch note below)
                 pause_interrupted = Event()
 
                 # ── Closure-capture fix ──────────────────────────────────────
@@ -2662,8 +2941,12 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 def _process_block(a, b,
                                     _combined=combined, _base=base,
                                     _base_global=base_global, _results=results,
-                                    _progress_cb=progress_cb):
+                                    _progress_cb=progress_cb,
+                                    _pause_interrupted=pause_interrupted):
                     _dedup = self._stab_raw
+                    # The pool's threads outlive a block; this block was written for a thread that
+                    # started empty. Clearing only this thread's dict reproduces that exactly.
+                    self._tls.__dict__.clear()
                     self._tls.kps = self._kps_stab_factory() if self._kps_stab_factory else None
                     self._tls.enh = self._enh_stab_factory() if self._enh_stab_factory else None
                     self._tls.mask = self._mask_stab_factory() if self._mask_stab_factory else None
@@ -2719,7 +3002,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                                 allowed, _ = _process_stab_frame(
                                     _combined[ci], frame_idx=_base_global + ci)
                                 if not allowed:
-                                    pause_interrupted.set()
+                                    _pause_interrupted.set()
                                     return
                             except Exception as _degrade_error:
                                 _swallowed("roop/ProcessMgr.py:3521", _degrade_error, "fallback continued")
@@ -2750,7 +3033,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                                 allowed, out = _process_stab_frame(
                                     _combined[ci], frame_idx=gi, output_pending=True)
                             if not allowed:
-                                pause_interrupted.set()
+                                _pause_interrupted.set()
                                 return
                         except Exception as _degrade_error:
                             audit_frame_failed(_degrade_error)
@@ -2782,167 +3065,65 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                             'process', time.perf_counter() - _process_started,
                             calls=b - a)
 
-                # ── Work-stealing block dispatch ──────────────────────────────
+                # ── Block dispatch ────────────────────────────────────────────
                 # Per-frame cost varies a lot (face count/size, masking, close-up
                 # rescue paths) and isn't temporally uniform, so statically handing
-                # each of the n threads one fixed contiguous range let one "unlucky"
-                # thread's range dominate the chunk's wall time while the other
-                # threads sat idle after finishing early (visible as the printed
-                # "imbalance" stat, sometimes >50% of the chunk's proc time). Splitting
-                # queue to a fixed pool of n workers lets idle workers pick up
-                # the next block instead of idling. That only helps when a chunk
-                # holds MORE blocks than workers, which is what
-                # `blocks_per_chunk` in _stab_parallel_geometry now arranges —
-                # see the long note there. Block size is deliberately NOT reduced
-                # to create that slack: a block is 4x the warm-up it discards, so
-                # smaller blocks cost more in redundant priming than the
-                # imbalance they recover.
+                # each thread one fixed contiguous range let one "unlucky" thread's
+                # range dominate the chunk's wall time while the others sat idle.
+                # Blocks therefore go through one shared FIFO queue that a
+                # persistent pool drains, so an idle worker takes the next block --
+                # of THIS chunk, or, once this chunk's queue is empty, of the next.
+                # That last part is what removes the end-of-chunk tail that more
+                # blocks per chunk could only amortise. Block size is deliberately
+                # NOT reduced to create slack: a block is 4x the warm-up it discards.
                 # Blocks are laid out at their FIXED size from the chunk start,
-                # not by dividing the chunk into `n` equal parts. That is what
+                # not by dividing the chunk into equal parts. That is what
                 # keeps the block grid over the video identical no matter how
                 # many blocks a chunk happens to hold, so enlarging the chunk
                 # changes scheduling only and never the frames a block is primed
                 # from. A short final chunk simply yields a short last block.
-                n_blocks = max(1, min(-(-len(chunk) // block), len(chunk)))
-                block_q = Queue()
-                for bi in range(n_blocks):
+                _bounds = []
+                for bi in range(max(1, min(-(-len(chunk) // block), len(chunk)))):
                     a = bi * block
                     b = min(len(chunk), a + block)
                     if b > a:
-                        block_q.put((a, b))
-
-                def _runner(_wi, _bt=_block_times, _q=block_q, _pb=_process_block):
-                    if gc.isenabled():
-                        gc.disable()
-                    _w0 = time.perf_counter()
-                    try:
-                        while roop.globals.processing:
-                            try:
-                                a, b = _q.get_nowait()
-                            except _QueueEmpty:
-                                break
-                            _pb(a, b)
-                    except Exception as exc:
-                        # A processing worker used to die silently here. The
-                        # coordinator then joined a partial worker set, marked
-                        # the run stopped, and the API reported no traceback or
-                        # actionable error. Preserve the first failure, wake
-                        # the reader/writer, and let the caller's normal
-                        # exception path mark the project FAILED.
-                        if _worker_exc[0] is None:
-                            _worker_exc[0] = exc
-                            bar_write(f'[Stabilize] processing worker failed: '
-                                      f'{type(exc).__name__}: {exc}')
-                        roop.globals.processing = False
-                    _bt[_wi] = time.perf_counter() - _w0
-
-                workers = [Thread(target=_runner, args=(i,), name=f'stab_proc{i}') for i in range(min(n, n_blocks))]
-                _t_proc0 = time.perf_counter()
-                for w in workers:
-                    w.start()
-                for w in workers:
-                    w.join()
-                _t_proc = time.perf_counter() - _t_proc0   # compute time (slowest worker gates this)
-
-                if _worker_exc[0] is not None:
-                    raise RuntimeError(
-                        f'stabilization worker failed: {type(_worker_exc[0]).__name__}: '
-                        f'{_worker_exc[0]}') from _worker_exc[0]
-
-                # Queue the chunk for the background write thread.
-                # Blocks only when FFMPEG is slower than frame processing
-                # (correct back-pressure; prevents unbounded memory growth).
-                # Bounded, and aware of whether anyone is still draining.
-                #
-                # A bounded _write_q can fill when a writer has stopped consuming
-                # blocks this put forever — and the `_wt.is_alive()` guard in the
-                # finally below is then unreachable, because reaching a finally
-                # requires leaving the try. A writer that raised recorded its
-                # exception and RETURNED, so that is exactly what happened: this
-                # thread parked in put(), the reader parked behind it, memory
-                # climbed, and the render stopped with no error. Observed at 58%
-                # of a 2400-frame clip.
-                _t_put0 = time.perf_counter()
-                queued = False
-                while True:
-                    try:
-                        _write_q.put((chunk_start, results, len(chunk)), timeout=0.5)
-                        queued = True
-                        break
-                    except _QueueFull:
-                        if (_writer_exc[0] is not None or not _wt.is_alive()
-                                or not roop.globals.processing):
-                            break
-                _t_put = time.perf_counter() - _t_put0     # write back-pressure stall
-                if not queued:
-                    _release_pending_results(results)
-                    current_results = None
-                    break
-                # Ownership moved to _write_q. The writer or queue drain now
-                # owns all reservations in this dictionary.
-                current_results = None
-                if _writer_exc[0] is not None or not _wt.is_alive():
-                    break   # leave the chunk loop; finally drains and re-raises
-
-                # A parallel worker returns as soon as a pause is requested,
-                # leaving the writer as the only owner of the current chunk's
-                # output reservations. Wait here for that writer to drain them
-                # and acknowledge the pause before trying to consume another
-                # input chunk. Without this boundary the coordinator spins on
-                # an input reader that is correctly waiting for resume.
-                pause_controller.checkpoint(
-                    lambda: bool(roop.globals.processing), wait_for_ack=True)
-                if pause_controller.snapshot()["acknowledged"]:
-                    pause_controller.wait_until_resumed(
-                        lambda: bool(roop.globals.processing))
-
-                # A nonblocking worker stops admitting new frames as soon as
-                # the request arrives. The part it already produced is now
-                # durable, but the rest of this input chunk is still pending.
-                # Put the chunk back ahead of the reader sentinel and retry it
-                # after resume. The writer de-duplicates indices already
-                # emitted from the first partial attempt.
-                if pause_interrupted.is_set() and roop.globals.processing:
-                    pause_interrupted.clear()
-                    with prefetch_q.mutex:
-                        prefetch_q.queue.appendleft(chunk)
-                    continue
-
-                if _PROFILE:
-                    _bts = list(_block_times.values())
-                    _imbal = (max(_bts) - min(_bts)) if _bts else 0.0
-                    _fps = len(chunk) / _t_proc if _t_proc > 0 else 0.0
-                    
-                    reset = "\033[0m"
-                    bold = "\033[1m"
-                    cyan = "\033[96m"
-                    green = "\033[92m"
-                    yellow = "\033[93m"
-                    magenta = "\033[95m"
-                    
-                    fps_color = green if _fps >= 30 else (yellow if _fps >= 15 else "\033[91m")
-                    stall_color = yellow if (_t_put * 1000) > 100 else cyan
-                    wait_color = yellow if (_t_get * 1000) > 100 else cyan
-                    
-                    print(f"{magenta}{bold}[STAB CHUNK {_chunk_no:3d}]{reset} "
-                          f"frames={bold}{green}{len(chunk):4d}{reset} | "
-                          f"read_wait={wait_color}{_t_get*1000:6.0f}ms{reset} | "
-                          f"proc={bold}{fps_color}{_t_proc:6.2f}s ({_fps:5.1f} FPS){reset} | "
-                          f"write_stall={stall_color}{_t_put*1000:6.0f}ms{reset} | "
-                          f"imbalance={yellow}{_imbal:5.2f}s{reset} "
-                          f"(slow={max(_bts) if _bts else 0:.2f}s / fast={min(_bts) if _bts else 0:.2f}s)",
-                          flush=True)
+                        _bounds.append((a, b))
+                ctx = _StabChunk(chunk, combined, results, chunk_start, carry,
+                                 _chunk_no, pause_interrupted, _t_get)
+                ctx.fn = _process_block
+                ctx.remaining = len(_bounds)
+                inflight.append(ctx)
+                for a, b in _bounds:
+                    work_q.put((ctx, a, b))
+                _chunk_no += 1
+                # Input bookkeeping happens at dispatch: the carried tail is RAW frames,
+                # so the next chunk can be primed before this one has finished.
                 carry = combined[-WU:] if WU > 0 else []
                 chunk_start += len(chunk)
-                if self._stab_raw is not None:
-                    # Everything older than the carried tail has had both of its visits (or never will).
-                    self._stab_raw.drop_before(chunk_start - WU)
-                del combined, chunk, results, workers
+                # Drop this iteration's references so `ctx` is the only owner of the chunk
+                # (the closure's default arguments would otherwise pin it until the next
+                # iteration rebinds `_process_block`).
+                chunk = combined = results = _process_block = ctx = None
         finally:
             # Tell the reader's sentinel loop that the consumer is leaving.
             # Set this before draining so shutdown cannot race back into a
             # blocked sentinel put.
             _consumer_done.set()
+            # Stop the worker pool: discard blocks nobody started, wake every worker, wait for
+            # the ones mid-block (they stop at the next frame once `processing` is false).
+            try:
+                while True:
+                    work_q.get_nowait()
+            except _QueueEmpty:
+                pass
+            for _w in pool:
+                work_q.put(None)
+            for _w in pool:
+                if _w.is_alive():
+                    _w.join(timeout=60)
+            for _c in inflight:
+                _release_pending_results(_c.results)
+            del inflight[:]
             # Drain _write_q before sending the sentinel when:
             #  - cancel: discard queued frames so the writer exits promptly.
             #  - writer died (IOError / broken pipe): the queue may still hold an
