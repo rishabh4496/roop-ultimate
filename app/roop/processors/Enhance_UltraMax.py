@@ -60,31 +60,45 @@ reported as "too sharp, blurry on the eyes". Both halves of that are fixed here.
    leaves nothing for a restore to restore. `tests/sweep_detail_transfer.py`
    carries the same finding for the merger's detail-transfer stage.
 
-   The implementation below is kept, unused, because it is correct code for a
-   job this pipeline does not have — and because the three mask definitions that
-   disagreed by 34% / 155% / 500% on the same footage are the actual lesson.
+   REMOVED 2026-10-13 (`_restore_texture`, its GPU twin, `ROOP_ULTRAMAX_TEXTURE`
+   and `ROOP_ULTRAMAX_TEXTURE_SIGMA`; last present in commit d995920). The three
+   mask definitions that disagreed by 34% / 155% / 500% on the same footage are
+   the lesson worth keeping, which is why this section stays.
 
-3. WHAT THE FILTER DOES, if it is ever switched back on.
-   CodeFormer's failure mode is waxy skin: the codebook prior draws clean
-   structure and flattens dermal micro-texture. The OLD answer here was a
-   multi-scale unsharp (0.45 of the fine detail plus 0.20 of a sigma 1.0-2.5
-   BAND) followed by CLAHE. Two things were wrong with that. It ADDS edge energy
-   rather than RESTORING skin, so it reads as sharpened rather than
-   photographed — and the medium band is exactly the operator that turns an
-   infraorbital crease into a second lower eyelid, which is the "blurry eyes"
-   report.
+   What it did: re-injected the high-frequency luminance the restorer erased,
+   taken from the restorer's OWN input, only where the restorer drew flat skin
+   (a structure gate left iris rims, lash lines, lid creases and lip margins
+   exactly as the codebook drew them). It replaced an older multi-scale unsharp
+   + CLAHE whose medium band turned an infraorbital crease into a second lower
+   eyelid — the "blurry eyes" report.
 
-   `_restore_texture` instead re-injects the high-frequency luminance the
-   restorer just erased, taken from its OWN input, and only where the restorer
-   drew flat skin. Everything CodeFormer rendered as structure — iris rims, lash
-   lines, lid creases, lip margins, nostrils, hairline — is left exactly as the
-   codebook produced it, because that output is already the sharpest source in
-   the pipeline and every filter applied over it has made it worse.
+   NOTE FOR ANYONE REMEASURING: do not grade a texture operator with Laplacian
+   variance. That instrument counts added edge energy, and it has already
+   endorsed one build here (UltraMax v1, "4.39x GPEN-256") that the user
+   reported as plastic, and a second (the filter above) reported as over-sharp.
+   Grade it on the footage.
 
-   NOTE FOR ANYONE REMEASURING: do not grade this with Laplacian variance. That
-   instrument counts added edge energy, and it has already endorsed one build
-   here (UltraMax v1, "4.39x GPEN-256") that the user reported as plastic, and a
-   second (the filter above) reported as over-sharp. Grade it on the footage.
+3. DUAL-STREAM FREQUENCY SPLIT — MEASURED AND REMOVED (2026-10-13; last present
+   in commit d995920, `ROOP_ULTRAMAX_DUAL*`, `_init_detail_stream`).
+   The idea: CodeFormer's low band for geometry, GPEN-512's high band for pores
+   and lashes, split by a guided filter (`roop.processors.frequency_split`,
+   which other modules still use). Measured 2026-09-04, 40 aligned crops of
+   s1.mp4, RTX 4070 / TensorRT:
+
+       arm                        ms/face   edge/plate   chroma drift
+       Codeformer (fp16)             41.0        1.291           2.04
+       UltraMax single               40.1        1.315           0.54
+       GPEN Realistic                30.7        1.262           0.52
+       dual luma  gain 1.00         125.6        1.199           0.50
+       dual luma  gain 1.25         125.0        1.337           0.54
+       dual bgr   gain 1.00         150.0        1.213           1.63
+
+   3.1x the cost, SOFTER than CodeFormer at gain 1.00 and level with it at 1.25:
+   the premise (GPEN-512 carries ~25% more high frequency) was measured on a
+   swapper crop and did not reproduce on aligned plate crops. It also put a
+   second resident 512 graph beside realswap's two nets and RealityUX, the
+   residency that took a render from 10.50 to 6.60 fps by paging. It defaulted
+   OFF and nothing reached it, so it went.
 
 4. PALE SKIN — fixed 2026-08-24 by borrowing GPEN Realistic's colour path.
 
@@ -192,8 +206,6 @@ reported as "too sharp, blurry on the eyes". Both halves of that are fixed here.
 Knobs, for re-measuring rather than for shipping a different default:
     ROOP_ULTRAMAX_CHROMA          0 = the swapper's colour (default),
                                   1 = CodeFormer's own (the old pale output)
-    ROOP_ULTRAMAX_TEXTURE         texture-restore gain, default 0 (OFF)
-    ROOP_ULTRAMAX_TEXTURE_SIGMA   the band it is taken from, default 2.5 at 512
 """
 from roop.degrade import swallowed as _swallowed
 
@@ -210,9 +222,6 @@ from roop.processors.enhance_common import (looks_collapsed, sized, exclusive,
                                             luma_only_recolour,
                                             luma_only_recolour_tensor,
                                             ort_cuda_output_to_torch)
-from roop.processors.frequency_split import (frequency_split,
-                                             frequency_split_luma,
-                                             reinhard_lab)
 from roop.utilities import resolve_relative_path
 from roop import session_pool
 from roop.precision_policy import providers_for
@@ -233,9 +242,8 @@ def _env_float(name, default):
         return default
 
 
-# Cards below this hold ONE structural context. Same threshold the detail
-# stream applies, for the same reason -- this is a resident 512 graph sharing
-# the card with realswap's two nets, RealityUX and the detector/detmask pools.
+# Cards below this hold ONE context -- this is a resident 512 graph sharing the
+# card with realswap's two nets, RealityUX and the detector/detmask pools.
 _POOL_SINGLE_CONTEXT_BELOW_GB = 15.5
 
 
@@ -297,33 +305,6 @@ class Enhance_UltraMax:
 
     _SIZE = 512
 
-    # Mid-tone weight for the texture restore's exposure gate: full weight where
-    # skin lives, zero in a specular highlight or a crushed shadow, where an
-    # injected residual could only read as noise. A table because it is indexed
-    # by a uint8 luminance, and evaluating the sine per pixel instead measured
-    # as the single most expensive line in the filter.
-    _EXPOSURE_LUT = np.clip(
-        np.sin(np.pi * (np.arange(256, dtype=np.float32) / 255.0)), 0.0, 1.0)
-
-    _warned_texture = False
-
-    # THE SIGMA IS THE WHOLE BALLGAME, and getting it wrong is silent.
-    # This filter runs on the 512 template, but the face is pasted back into the
-    # frame at whatever size it really is -- ~300 px in s1.mp4. A residual
-    # extracted at sigma 1.1 therefore lands at sigma 0.65 after that downscale,
-    # below Nyquist, and is resampled straight back out: measured end to end,
-    # UltraMax at sigma 1.1 ran on all 2195 faces of s1 and moved rendered skin
-    # texture by 0.4%. `apply_detail_transfer` already had this right -- its
-    # sigma is `max(1.0, w/256)`, i.e. 2.0 at 512 -- and that is why IT works.
-    # `tests/calibrate_ultramax_texture.py` is the measurement.
-    _SIGMA = 2.5
-
-    # Texture-restore gain. DEFAULT 0 — OFF — because measured properly it does
-    # nothing. See the "MEASURED AND TURNED OFF" section of the module
-    # docstring; this is a negative result kept as code so the next person does
-    # not rebuild it.
-    _TEXTURE_GAIN = 0.0
-
     # How much of CODEFORMER'S OWN colour to keep. 0 = none of it: the network
     # supplies luminance and the swapper's crop supplies chrominance, which is
     # what both GPEN processors already do and what stops the skin reading pale.
@@ -368,83 +349,7 @@ class Enhance_UltraMax:
     _rebalance_mask_cpu_cache = {}
     _gaussian_1d_cache = {}
 
-    # ── DUAL-STREAM FREQUENCY-SPLIT ENGINE ───────────────────────────────────
-    # UltraMax's problem against CodeFormer was never a blend: it RUNS
-    # codeformer.fp16, so single-stream it cannot beat CodeFormer on detail by
-    # construction -- the network is the ceiling and everything here is host
-    # work around it. Measured, that is exactly what happened: identity moved
-    # not at all (paired t = 0.4 over 4703 frames) and the only difference was
-    # a filter, since moved out to `MergerMixin.apply_clarity`.
-    #
-    # The way past that ceiling is a SECOND NETWORK, chosen on this repo's own
-    # measurements. High-frequency std carried through to the paste:
-    #
-    #     swap input 2.67 | GPEN-256 2.82 | CodeFormer-512 4.11 | GPEN-512 5.14
-    #
-    # GPEN-512 synthesises ~25% more detail than CodeFormer; CodeFormer's
-    # discrete codebook is the better structure prior. So: low band from
-    # CodeFormer (geometry -- lids, iris rims, tooth boundaries), high band
-    # from GPEN-512 (pores, lashes, lip texture), split by a guided filter so
-    # the high band is bounded by its own edges and cannot carry a silhouette.
-    # See `roop.processors.frequency_split`.
-    #
-    # MEASURED ON 2026-09-04, 40 aligned crops of s1.mp4, RTX 4070 / TensorRT,
-    # via `tests/test_restorers.py`. READ THIS BEFORE ENABLING IT:
-    #
-    #   arm                        ms/face   edge/plate   chroma drift
-    #   Codeformer (fp16)             41.0        1.291           2.04
-    #   UltraMax single               40.1        1.315           0.54
-    #   GPEN Realistic                30.7        1.262           0.52
-    #   dual luma  gain 1.00         125.6        1.199           0.50
-    #   dual luma  gain 1.25         125.0        1.337           0.54
-    #   dual bgr   gain 1.00         150.0        1.213           1.63
-    #   dual bgr   gain 1.25         150.1        1.345           1.79
-    #
-    # WHAT IT DELIVERS: the best colour in the table (0.50, beating both this
-    # processor's own single-stream path and GPEN Realistic), and at gain 1.00
-    # the edge ratio closest to the reference of any 512-class restorer here.
-    #
-    # WHAT IT DOES NOT DELIVER, stated plainly: a demonstrated DETAIL win over
-    # CodeFormer. At gain 1.00 it is SOFTER than CodeFormer (1.199 vs 1.291),
-    # and at 1.25 it is level with the single stream rather than ahead. The
-    # premise -- GPEN-512 carrying ~25% more high-frequency than CodeFormer --
-    # was measured on a swapper crop, and this harness feeds ALIGNED PLATE
-    # crops, on which it did not reproduce. Nobody should quote this engine as
-    # "beats CodeFormer" until it has been graded on real swapper output.
-    #
-    # AND IT COSTS 3.1x (125 ms against 40). Two networks are only 70 ms of
-    # that; the rest is the guided filter. So it defaults OFF, and would need a
-    # counterbalanced end-to-end render before it could default on -- on a 12GB
-    # card it also puts a second resident 512 graph next to realswap's two nets
-    # and RealityUX, which is the residency that took a render from 10.50 to
-    # 6.60 fps the last time it was measured. `ROOP_ULTRAMAX_DUAL=1` enables.
-    _DUAL_STREAM = False
-    _DUAL_RADIUS = 8
-    _DUAL_EPS = 0.04
-    _DUAL_GAIN = 1.25
-    # High-band clamp in 0-255 levels, before the gain. Two different networks
-    # on one crop can place a lash line a pixel apart, and re-adding that
-    # disagreement at 1.25 reads as a double edge -- the same failure the old
-    # UltraMax unsharp produced and the same order of magnitude as
-    # `apply_clarity`'s +-18. Set to 0/None to disable and see it.
-    _DUAL_CLAMP = 24.0
-    # Luminance weight for the Reinhard transfer. Chrominance is matched in
-    # full (that is the colour cast this removes); L is matched at half, since
-    # full L matching drags contrast back toward the degraded crop and returns
-    # part of what the restorer just recovered.
-    _DUAL_L_WEIGHT = 0.5
-    # 'luma' splits the luminance plane and takes chrominance from the crop;
-    # 'bgr' is the original 3-channel split plus a Reinhard transfer, kept
-    # only because it is the arm the negative result was measured on.
-    _DUAL_MODE = 'luma'
-    _DUAL_MODELS = {
-        512: ('GPEN-BFR-512.onnx',
-              'https://huggingface.co/countfloyd/deepfake/resolve/main/'
-              'GPEN-BFR-512.onnx'),
-    }
-
     _warned_colour = False
-    _warned_dual = False
     _warned_lowband = False
 
     @classmethod
@@ -538,18 +443,7 @@ class Enhance_UltraMax:
         self.in_dtype = np.float32
         self._lut = None
         self._faces = 0
-        self._textured = 0
-        self._dual = 0
         self._lowband = 0
-        # Detail stream (GPEN-512). Built only when the dual-stream engine is
-        # on, so a user who never enables it pays neither the VRAM nor the
-        # engine build.
-        self._detail_session = None
-        self._detail_iob = None
-        self._detail_pool = None
-        self._detail_in = None
-        self._detail_lut = None
-        self._detail_lock = threading.Lock()
         # ``False`` means this ORT build/provider rejected binding its output
         # directly into a PyTorch CUDA allocation; avoid retrying per face.
         self._cuda_iob_available = None
@@ -630,156 +524,10 @@ class Enhance_UltraMax:
                 print(f"[UltraMax] multi-context pool unavailable ({e}); "
                       f"falling back to one session behind the GPU lock")
 
-        # Detail stream last, so a failure here cannot leave the structural
-        # session half-built. Reported rather than swallowed: an engine that
-        # silently runs as plain CodeFormer while the UI says UltraMax is the
-        # failure mode this project keeps having to hunt down.
-        if self.dual_enabled() and self._detail_session is None:
-            try:
-                self._init_detail_stream(plugin_options)
-            except Exception as e:
-                self._detail_session = None
-                print(f"[UltraMax] dual-stream detail network unavailable "
-                      f"({e}); running single-stream CodeFormer", flush=True)
-
-    # ── dual-stream detail network ───────────────────────────────────────────
-    @classmethod
-    def dual_enabled(cls):
-        """Whether the frequency-split engine is active for this run."""
-        v = os.environ.get('ROOP_ULTRAMAX_DUAL')
-        if v is None or v == '':
-            return bool(cls._DUAL_STREAM)
-        return v.strip().lower() in ('1', 'on', 'true', 'yes')
-
-    def _init_detail_stream(self, plugin_options):
-        """Build the GPEN-512 detail network.
-
-        Deliberately a SEPARATE session from `Enhance_GPENRealistic`'s rather
-        than a reference to it. That processor is instantiated by ProcessMgr
-        only when the user selects it; reaching across to it would mean either
-        depending on load order or constructing a second processor's whole
-        lifecycle (Initialize/Release/pool/cost_summary) from inside this one.
-        The weights are shared on disk and the TensorRT engine cache is keyed
-        by model path, so the second session reuses the same built engine --
-        the extra cost is the CONTEXT (measured ~1.5 GB for a GPEN-512 pool of
-        2, i.e. why the pool below is capped hard), not a second build.
-        """
-        fname, url = self._DUAL_MODELS[512]
-        model_dir = resolve_relative_path('../models')
-        from roop.utilities import conditional_download, get_onnx_session_options
-        conditional_download(model_dir, [url])
-        model_path = os.path.join(model_dir, fname)
-        opts = get_onnx_session_options()
-        # No FP32 forcing: 512 is the classic GPEN weight and is FP16-stable.
-        # `Enhance_GPEN` only forces FP32 at >=1024, where activations overflow
-        # and paint a black face.
-        providers, _precision = providers_for(
-            'gpen_realistic', roop.globals.execution_providers, model_path)
-
-        def _build_detail(_i=0):
-            from roop.strict_session import create_strictly_accelerated_session
-            sess = create_strictly_accelerated_session(
-                model_path, providers=providers, sess_options=opts,
-                tag='enhancer:ultramax:detail')
-            iob = sess.io_binding()
-            iob.bind_output(sess.get_outputs()[0].name, self.devicename)
-            return (sess, iob)
-
-        self._detail_session, self._detail_iob = _build_detail()
-        self._detail_in = self._detail_session.get_inputs()[0].name
-        self._detail_lut = (np.arange(256, dtype=np.float32) / 127.5) - 1.0
-
-        # Capped much harder than the CodeFormer pool. This is a SECOND
-        # resident 512 graph on top of realswap's two nets, RealityUX and the
-        # detector/detmask pools; `Enhance_GPENRealistic` already measured a
-        # GPEN-512 pool of 2 at 3123 MiB and watched an uncapped one take a
-        # 12GB card from 10.50 to 6.60 fps by paging. One context here unless
-        # the card is genuinely large.
-        if session_pool.pooling_enabled():
-            n = session_pool.pool_size(model_key='enhancer:ultramax_detail',
-                                       input_shape=(1, 3, 512, 512))
-            cap = plugin_options.get('pool_size')
-            if cap:
-                n = max(1, min(int(n), int(cap)))
-            try:
-                gb = session_pool._detect_vram_gb()
-            except Exception as _degrade_error:
-                _swallowed("roop/processors/Enhance_UltraMax.py:610", _degrade_error, "fallback continued")
-                gb = 0
-            if 0 < gb < 15.5:
-                n = 1
-            else:
-                n = min(n, 2)
-            try:
-                forced = int(os.environ.get('ROOP_ULTRAMAX_DUAL_POOL', '') or 0)
-            except ValueError:
-                forced = 0
-            if forced:
-                n = max(1, forced)
-            if n > 1:
-                extras = []
-                try:
-                    extras = [_build_detail(i + 1) for i in range(n - 1)]
-                    primary = (self._detail_session, self._detail_iob)
-                    self._detail_pool = session_pool.SessionPool(
-                        lambda i, _e=([primary] + extras): _e[i], n,
-                        model_key='enhancer:ultramax_detail',
-                        input_shape=(1, 3, 512, 512))
-                except Exception as e:
-                    extras.clear()
-                    self._detail_pool = None
-                    print(f"[UltraMax] detail-stream pool unavailable ({e}); "
-                          f"using one session behind the GPU lock")
-
-    def _detail_stream(self, src512):
-        """GPEN-512 restoration of the same crop, uint8 BGR 512, or None.
-
-        Returns None rather than raising on any failure, so a detail stream
-        that cannot run degrades this processor to its single-stream output
-        instead of taking the render down -- but it SAYS SO once. A silent
-        fallback here would leave UltraMax quietly running as plain CodeFormer
-        while reporting the dual-stream engine, which is the exact instrument
-        failure this project keeps getting caught by (four enhancers failing
-        on 60 of 60 frames while the swap audit read 100%).
-        """
-        try:
-            x = self._detail_lut[src512.transpose(2, 0, 1)[::-1]][None]
-            with exclusive(self._detail_pool, self._detail_lock,
-                           (self._detail_session, self._detail_iob)) as (s, iob):
-                iob.bind_cpu_input(self._detail_in, x)
-                s.run_with_iobinding(iob)
-                outs = iob.copy_outputs_to_cpu()
-            hwc = np.ascontiguousarray(outs[0][0][::-1].transpose(1, 2, 0),
-                                       dtype=np.float32)
-            del outs
-            # Same two guards the single stream carries, for the same reasons:
-            # np.clip keeps NaN and uint8(NaN) is 0, and a finite-but-flat
-            # output is how GFPGAN's FP16 engine failed.
-            if not np.isfinite(hwc.sum()):
-                raise ValueError("non-finite detail output")
-            np.maximum(hwc, -1.0, out=hwc)
-            detail = cv2.convertScaleAbs(hwc, alpha=127.5, beta=127.5)
-            if looks_collapsed(detail, src512):
-                raise ValueError("detail output collapsed (flat)")
-            return detail
-        except Exception as e:
-            if not Enhance_UltraMax._warned_dual:
-                Enhance_UltraMax._warned_dual = True
-                print(f"[UltraMax] detail stream unavailable ({e}); "
-                      f"falling back to single-stream CodeFormer", flush=True)
-            return None
-
     def Release(self):
         line = self.cost_summary()
         if line:
             print(line, flush=True)
-
-        if self._detail_pool is not None:
-            self._detail_pool.release()
-            self._detail_pool = None
-        self._detail_iob = None
-        self._detail_session = None
-        self._detail_lut = None
 
         # Pool first: it holds the extra sessions AND a reference to the primary
         # pair, so dropping the primary while the pool still owns it would leave
@@ -792,146 +540,6 @@ class Enhance_UltraMax:
         self.model_inputs = None
         self.model_outputs = None
         self._lut = None
-
-    # ── texture restore ──────────────────────────────────────────────────────
-    @classmethod
-    def _restore_texture(cls, restored, source, gain, sigma=_SIGMA):
-        """Put back the dermal micro-texture the restorer flattened.
-
-        `restored` = CodeFormer's 512 output, `source` = the crop it was handed,
-        at the same 512. Both uint8 BGR.
-
-        The residual is taken from the SOURCE, so what lands on the skin is
-        texture that was photographed rather than texture that was synthesised —
-        which is the whole difference between reading as skin and reading as a
-        sharpened render. It is gated two ways:
-
-          structure gate  1 where the RESTORED face is flat, falling to 0 on
-                          anything the codebook drew as an edge. Eyes, lashes,
-                          brows, lip margins, nostrils and the hairline
-                          therefore pass through completely untouched. This is
-                          the gate the old filter did not have, and its absence
-                          is what printed a second crease under the eye.
-
-          exposure gate   a mid-tone weight, so nothing is injected into a
-                          specular highlight or a crushed shadow, where it could
-                          only read as noise.
-
-        Self-limiting by construction: a source crop that carries no real
-        texture has a near-zero residual, so this adds nothing rather than
-        inventing something.
-
-        COST. The whole point of this processor is that it is not slower than
-        the net it wraps, so this has a budget: it must stay well under the
-        6.1 ms the lean host path saves. The straightforward numpy spelling
-        measured 6.0 ms at 512 and spent it entirely on temporaries — a
-        `np.sin` over 262k floats and a dozen intermediate arrays. Three
-        changes bring it to ~2 ms with no visible difference:
-
-          - the exposure gate is a 256-entry LUT gather off the uint8
-            luminance, not a transcendental evaluated per pixel;
-          - the structure gate is built at HALF resolution. It is a blurred
-            edge map, so it has no detail to lose, and it costs a quarter as
-            much;
-          - the residual is carried as int16 rather than float32 from the
-            multiply onward, which halves the bytes moved through the last
-            three passes — the ones that touch all three colour channels.
-        """
-        if gain <= 0.0:
-            return restored
-        if _TORCH_CUDA:
-            try:
-                return cls._restore_texture_gpu(restored, source, gain, sigma)
-            except Exception as e:
-                if not Enhance_UltraMax._warned_texture:
-                    Enhance_UltraMax._warned_texture = True
-                    print(f"[UltraMax] GPU texture restore fallback to CPU: {e}", flush=True)
-        return cls._restore_texture_cpu(restored, source, gain, sigma)
-
-    @classmethod
-    def _gaussian_kernel_2d_gpu(cls, sigma, device):
-        radius = int(round(3 * sigma))
-        x = torch.arange(-radius, radius + 1, dtype=torch.float32, device=device)
-        k1d = torch.exp(-0.5 * (x / sigma) ** 2)
-        k1d = k1d / k1d.sum()
-        k2d = k1d.view(-1, 1) @ k1d.view(1, -1)
-        return k2d.view(1, 1, k2d.shape[0], k2d.shape[1]), radius
-
-    @classmethod
-    def _restore_texture_gpu(cls, restored, source, gain, sigma):
-        device = torch.device('cuda')
-        r_t = torch.from_numpy(restored).to(device, dtype=torch.float32).permute(2, 0, 1).unsqueeze(0)
-        s_t = torch.from_numpy(source).to(device, dtype=torch.float32).permute(2, 0, 1).unsqueeze(0)
-
-        g_src = 0.114 * s_t[:, 0:1] + 0.587 * s_t[:, 1:2] + 0.299 * s_t[:, 2:3]
-        g_res = 0.114 * r_t[:, 0:1] + 0.587 * r_t[:, 1:2] + 0.299 * r_t[:, 2:3]
-
-        k_sig, r_sig = cls._gaussian_kernel_2d_gpu(max(0.6, float(sigma)), device)
-        padded_src = _F.pad(g_src, (r_sig, r_sig, r_sig, r_sig), mode='reflect')
-        src_blur = _F.conv2d(padded_src, k_sig)
-        hf = g_src - src_blur
-        lim = 11.0 * max(0.6, float(sigma))
-        hf = torch.clamp(hf, -lim, lim)
-
-        small = _F.interpolate(g_res, scale_factor=0.5, mode='area')
-        if not hasattr(cls, '_laplacian_k_gpu'):
-            cls._laplacian_k_gpu = torch.tensor([[0, 1, 0], [1, -4, 1], [0, 1, 0]], dtype=torch.float32, device=device).view(1, 1, 3, 3)
-            cls._exposure_lut_gpu = torch.tensor(Enhance_UltraMax._EXPOSURE_LUT, dtype=torch.float32, device=device)
-
-        padded_small = _F.pad(small, (1, 1, 1, 1), mode='reflect')
-        lap = torch.abs(_F.conv2d(padded_small, cls._laplacian_k_gpu))
-
-        k_1, r_1 = cls._gaussian_kernel_2d_gpu(1.0, device)
-        padded_lap = _F.pad(lap, (r_1, r_1, r_1, r_1), mode='reflect')
-        edge = _F.conv2d(padded_lap, k_1)
-        edge = torch.clamp((edge - 4.0) * (1.0 / 16.0), 0.0, 1.0)
-        edge = 1.0 - edge
-
-        small_idx = small.long().clamp(0, 255)
-        exp_gate = cls._exposure_lut_gpu[small_idx]
-        edge = edge * exp_gate
-
-        gate = _F.interpolate(edge, size=g_res.shape[2:], mode='bilinear', align_corners=False)
-        delta = hf * gate * float(gain)
-
-        out = torch.clamp(r_t + delta, 0, 255).to(torch.uint8)
-        return out[0].permute(1, 2, 0).cpu().numpy()
-
-    @classmethod
-    def _restore_texture_cpu(cls, restored, source, gain, sigma):
-        try:
-            g_src = cv2.cvtColor(source, cv2.COLOR_BGR2GRAY)
-            g_res = cv2.cvtColor(restored, cv2.COLOR_BGR2GRAY)
-            h, w_px = g_res.shape[:2]
-
-            sigma = max(0.6, float(sigma))
-            hf = cv2.subtract(g_src, cv2.GaussianBlur(g_src, (0, 0), sigmaX=sigma),
-                              dtype=cv2.CV_32F)
-            lim = 11.0 * sigma
-            np.clip(hf, -lim, lim, out=hf)
-
-            small = cv2.resize(g_res, (w_px // 2, h // 2),
-                               interpolation=cv2.INTER_AREA)
-
-            edge = cv2.GaussianBlur(
-                np.abs(cv2.Laplacian(small, cv2.CV_32F, ksize=3)), (0, 0),
-                sigmaX=1.0)
-            edge -= 4.0
-            edge *= (1.0 / 16.0)
-            np.clip(edge, 0.0, 1.0, out=edge)
-            np.subtract(1.0, edge, out=edge)
-
-            cv2.multiply(edge, Enhance_UltraMax._EXPOSURE_LUT[small], dst=edge)
-            gate = cv2.resize(edge, (w_px, h), interpolation=cv2.INTER_LINEAR)
-
-            delta = cv2.multiply(hf, gate, scale=float(gain), dtype=cv2.CV_16S)
-            return cv2.add(restored, cv2.merge((delta, delta, delta)),
-                           dtype=cv2.CV_8U)
-        except cv2.error as e:
-            if not Enhance_UltraMax._warned_texture:
-                Enhance_UltraMax._warned_texture = True
-                print(f"[UltraMax] texture restore skipped: {e}", flush=True)
-            return restored
 
     @classmethod
     def _blur_gpu(cls, image, sigma, radius=None):
@@ -1305,8 +913,8 @@ class Enhance_UltraMax:
         ORT 1.23 does not implement DLPack for CUDA OrtValues.  Instead, bind
         the model output to a pre-allocated Torch CUDA allocation: ORT writes
         the tensor directly and PyTorch owns it immediately afterwards.  This
-        keeps the model output, chroma transfer, eye protection, and optional
-        texture operation on one device with no ORT->NumPy round-trip.
+        keeps the model output, chroma transfer, low-band recombination and eye
+        protection on one device with no ORT->NumPy round-trip.
 
         Returns ``None`` only when the installed provider rejects that binding;
         the established host path then remains the compatibility fallback.
@@ -1430,16 +1038,6 @@ class Enhance_UltraMax:
                 # without it would have silently dropped a stage.
                 restored = self._protect_swapped_eyes_gpu(restored, source)
                 restored = self._rebalance_eye_detail_gpu(restored)
-            gain = _env_float('ROOP_ULTRAMAX_TEXTURE', self._TEXTURE_GAIN)
-            if gain > 0.0:
-                # The opt-in texture residual remains in VRAM as well.  The
-                # default is zero; this conservative high-pass is limited to
-                # the same source signal and cannot invent texture.
-                high = (source - self._blur_gpu(source, self._SIGMA)).clamp(
-                    -11.0 * self._SIGMA, 11.0 * self._SIGMA)
-                restored = (restored + high * gain).clamp(0, 255)
-                with self._lock:
-                    self._textured += 1
             scale = 1
             if restored.shape[1] < input_size:
                 restored = _F.interpolate(restored.permute(2, 0, 1).unsqueeze(0),
@@ -1449,7 +1047,7 @@ class Enhance_UltraMax:
                 scale = max(1, int(restored.shape[1] / input_size))
             # One intentional egress boundary remains because the surrounding
             # merger/writer API is NumPy today.  No intermediate CPU copy is
-            # made between ONNX output, chroma, eye protection, and texture.
+            # made between ONNX output, chroma, low band, and eye protection.
             with self._lock:
                 self._faces += 1
             self._cuda_iob_available = True
@@ -1469,22 +1067,15 @@ class Enhance_UltraMax:
         S = self._SIZE
 
         # The 512 source is needed twice — as the network's input and as the
-        # texture reference — so it is built once.
+        # colour / eye-protection / low-band reference — so it is built once.
         if temp_frame.shape[0] != S or temp_frame.shape[1] != S:
             src512 = cv2.resize(temp_frame, (S, S), interpolation=cv2.INTER_CUBIC)
         else:
             src512 = temp_frame
 
-        # The CUDA fast post-path implements the SINGLE-stream chain only, and
-        # returns a finished frame. Skipping it under dual-stream is not a
-        # throughput concession worth arguing about: its own docstring records
-        # it as +0.2% end to end, i.e. not resolvable, because the host work it
-        # removes was already parallel and never the wall-clock limiter.
-        dual = self.dual_enabled() and self._detail_session is not None
-        if not dual:
-            cuda_result = self._run_cuda_postprocess(src512, input_size, temp_frame)
-            if cuda_result is not None:
-                return cuda_result
+        cuda_result = self._run_cuda_postprocess(src512, input_size, temp_frame)
+        if cuda_result is not None:
+            return cuda_result
 
         # One gather: uint8 BGR HWC -> model dtype RGB CHW in [-1, 1]. Fancy
         # indexing returns a fresh C-contiguous array, so the [None] that follows
@@ -1557,55 +1148,10 @@ class Enhance_UltraMax:
         # It cannot cost detail — a luminance-only edit keeps every
         # high-frequency variation the network drew — and it is measured at
         # 0.27 ms against the 25.5 ms the network itself costs.
-        # ── DUAL-STREAM FREQUENCY SPLIT ─────────────────────────────────
-        # Step B: GPEN-512 on the same crop, for its high band only.
-        # Step C: guided-filter split -- CodeFormer's low band carries the
-        #         geometry, GPEN's high band carries pores/lashes/lip texture.
-        # Step D: Reinhard LAB transfer back toward the crop the restorers
-        #         were handed, which removes BOTH networks' casts at once
-        #         (CodeFormer drifts pale, GPEN drifts pink) in one operator.
-        # Steps run here, before the periocular protection, so that pass still
-        # gets the last word on the eye band it exists to defend.
-        did_dual = False
-        if dual:
-            detail = self._detail_stream(src512)
-            if detail is not None:
-                clamp = self._DUAL_CLAMP or None
-                kw = dict(
-                    radius=int(_env_float('ROOP_ULTRAMAX_DUAL_RADIUS',
-                                          self._DUAL_RADIUS)),
-                    eps=_env_float('ROOP_ULTRAMAX_DUAL_EPS', self._DUAL_EPS),
-                    gain=_env_float('ROOP_ULTRAMAX_DUAL_GAIN', self._DUAL_GAIN),
-                    clamp=_env_float('ROOP_ULTRAMAX_DUAL_CLAMP', clamp))
-                mode = (os.environ.get('ROOP_ULTRAMAX_DUAL_MODE', '')
-                        or self._DUAL_MODE).strip().lower()
-                if mode == 'bgr':
-                    # The measured-worse original: splits all three channels,
-                    # so GPEN's chroma cast rides in on the high band, and
-                    # Reinhard cannot remove it (global moments vs a per-pixel
-                    # cast). Kept reachable so the comparison can be re-run.
-                    restored = frequency_split(restored, detail, **kw)
-                    restored = reinhard_lab(
-                        restored, src512, strength=1.0,
-                        l_weight=_env_float('ROOP_ULTRAMAX_DUAL_LW',
-                                            self._DUAL_L_WEIGHT))
-                else:
-                    restored = frequency_split_luma(restored, detail, **kw)
-                    # Chrominance from the crop, as both GPEN processors do.
-                    # This is the 0.44-0.45 colour path; Reinhard measured 1.79.
-                    restored = luma_only_recolour(restored, src512, 0.0)
-                did_dual = True
-                with self._lock:
-                    self._dual += 1
-
-        # Single-stream colour path. Skipped after a split, which has already
-        # done its own colour transfer against the same reference -- running
-        # both would correct the same cast twice.
         try:
-            if not did_dual:
-                restored = luma_only_recolour(
-                    restored, src512,
-                    _env_float('ROOP_ULTRAMAX_CHROMA', self._CHROMA))
+            restored = luma_only_recolour(
+                restored, src512,
+                _env_float('ROOP_ULTRAMAX_CHROMA', self._CHROMA))
         except cv2.error as e:
             # Say so once. A colour fix that silently no-ops leaves a plausible
             # image carrying the exact pale cast it exists to remove.
@@ -1618,12 +1164,8 @@ class Enhance_UltraMax:
         # frame resize.  Recover a restrained structural edge response before
         # the periocular protection pass; this is an unsharp lift, not a second
         # generated face, and its low gain avoids recreating the old halo.
-        # Skipped after a split: the high band was just re-injected at gain
-        # 1.25 from a network measured sharper than this one, so a further
-        # global unsharp stacks two sharpeners and rebuilds the over-sharp look
-        # this engine exists to get away from.
         _ss = self._structure_sharpen()
-        if _ss > 0.0 and not did_dual:
+        if _ss > 0.0:
             base = restored.astype(np.float32)
             blur = cv2.GaussianBlur(base, (0, 0), 0.8)
             restored = np.clip(base + _ss * (base - blur),
@@ -1651,13 +1193,6 @@ class Enhance_UltraMax:
                         and self._eye_ops_enabled()):
                     res_t = self._protect_swapped_eyes_gpu(res_t, src_t)
                     res_t = self._rebalance_eye_detail_gpu(res_t)
-                gain = _env_float('ROOP_ULTRAMAX_TEXTURE', self._TEXTURE_GAIN)
-                if gain > 0.0:
-                    high = (src_t - self._blur_gpu(src_t, self._SIGMA)).clamp(
-                        -11.0 * self._SIGMA, 11.0 * self._SIGMA)
-                    res_t = (res_t + high * gain).clamp(0, 255)
-                    with self._lock:
-                        self._textured += 1
                 restored = res_t.clamp(0, 255).round().to(torch.uint8).cpu().numpy()
                 did_gpu_post = True
             except Exception as _gpu_err:
@@ -1681,14 +1216,6 @@ class Enhance_UltraMax:
                 restored = self._protect_swapped_eyes(restored, src512)
                 restored = self._rebalance_eye_detail(restored)
 
-            gain = _env_float('ROOP_ULTRAMAX_TEXTURE', self._TEXTURE_GAIN)
-            if gain > 0.0:
-                restored = self._restore_texture(
-                    restored, src512, gain,
-                    _env_float('ROOP_ULTRAMAX_TEXTURE_SIGMA', self._SIGMA))
-                with self._lock:
-                    self._textured += 1
-
         with self._lock:
             self._faces += 1
         return sized(restored, input_size)
@@ -1696,7 +1223,7 @@ class Enhance_UltraMax:
     # ── reporting ────────────────────────────────────────────────────────────
     def cost_summary(self):
         with self._lock:
-            f, t, d, lowband = self._faces, self._textured, self._dual, self._lowband
+            f, lowband = self._faces, self._lowband
         if not f:
             return None
         c = _env_float('ROOP_ULTRAMAX_CHROMA', self._CHROMA)
@@ -1704,18 +1231,8 @@ class Enhance_UltraMax:
                   else f"chrominance {c:g} toward CodeFormer's own")
         path = ('CUDA tensor post-process' if self._cuda_iob_available
                 else 'compatibility host path')
-        if d:
-            # Reported as a COUNT, not as "dual-stream: on". A flag says what
-            # was asked for; a count says what actually ran, and the two come
-            # apart exactly when something is broken -- four enhancers once
-            # failed on 60 of 60 faces here while the audit read 100%.
-            return (f"[UltraMax] {f} faces restored (dual-stream: "
-                    f"codeformer.fp16 structure + GPEN-512 detail on {d}, "
-                    f"guided split r={self._DUAL_RADIUS} "
-                    f"gain={self._DUAL_GAIN}, Reinhard LAB); "
-                    f"texture restored on {t}")
         _dw = self._detail_weight()
         gate = (f"; swap low band + {_dw:g} x restorer detail on {lowband}" if _dw is not None
                 else "; full restorer output (legacy, low band not anchored to the swap)")
         return (f"[UltraMax] {f} faces restored (codeformer.fp16, {path}, "
-                f"{colour}); texture restored on {t}{gate}")
+                f"{colour}){gate}")

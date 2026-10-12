@@ -283,7 +283,7 @@ class SilentFailuresMustSpeak(unittest.TestCase):
         """Per face would be thousands of lines and would break the progress bar."""
         for name, flags in (('Enhance_GPEN256Pro.py', ('_warned_texture', '_warned_colour')),
                             ('Enhance_GPENRealistic.py', ('_warned_colour',)),
-                            ('Enhance_UltraMax.py', ('_warned_texture',))):
+                            ('Enhance_UltraMax.py', ('_warned_colour', '_warned_lowband'))):
             body = code_of(name)
             for flag in flags:
                 self.assertTrue(re.search(rf'{flag}\s*=\s*True', body),

@@ -1,13 +1,9 @@
 """Unit tests for the UltraMax enhancer.
 
 UltraMax runs codeformer.fp16.onnx directly (same weights as
-`Codeformer (fp16)`) on a leaner host path. Its texture restore is present but
-DEFAULTS OFF: measured on rendered frames against the footage's own skin it
-moved texture by an amount indistinguishable from zero (paired t = -0.7 over
-102 frames) while costing 2.49 ms/face. The tests below still cover it, because
-the env knob can turn it back on and because its structure gate is the property
-that separates it from the unsharp filter it replaced — that filter is what
-printed a second eyelid crease.
+`Codeformer (fp16)`) on a leaner host path. Its texture restore and dual-stream
+engine were measured to do nothing / cost 3.1x and were deleted 2026-10-13; the
+numbers live in the module docstring of Enhance_UltraMax.
 """
 
 import os
@@ -41,82 +37,6 @@ def _fake_session(out_chw):
     return sess, iob
 
 
-class TestUltraMaxTextureRestore(unittest.TestCase):
-    """`_restore_texture` is a pure function — no session, no GPU."""
-
-    def _noisy(self, base=128, amp=9, size=512, seed=0):
-        rng = np.random.default_rng(seed)
-        n = rng.normal(0.0, amp, (size, size)).astype(np.float32)
-        img = np.clip(base + n, 0, 255).astype(np.uint8)
-        return np.repeat(img[:, :, None], 3, axis=2)
-
-    def test_shape_dtype_and_finiteness_preserved(self):
-        src = self._noisy()
-        restored = np.full((512, 512, 3), 128, np.uint8)
-        out = UM.Enhance_UltraMax._restore_texture(restored, src, 0.55)
-        self.assertEqual(out.shape, (512, 512, 3))
-        self.assertEqual(out.dtype, np.uint8)
-        self.assertTrue(np.isfinite(out).all())
-
-    def test_zero_gain_is_a_bit_identical_no_op(self):
-        src = self._noisy()
-        restored = np.full((512, 512, 3), 128, np.uint8)
-        out = UM.Enhance_UltraMax._restore_texture(restored, src, 0.0)
-        self.assertTrue(np.array_equal(out, restored))
-
-    def test_flat_skin_gets_the_source_texture_back(self):
-        """A flat restored face + a textured source = texture on the output."""
-        src = self._noisy(amp=9)
-        restored = np.full((512, 512, 3), 128, np.uint8)
-        out = UM.Enhance_UltraMax._restore_texture(restored, src, 0.55)
-        # The restored input has zero variance; the output must not.
-        self.assertGreater(float(out.std()), 1.0)
-
-    def test_structure_in_the_restored_face_is_protected(self):
-        """Where the codebook drew an edge, nothing is injected.
-
-        This is the property that separates this from the unsharp filter it
-        replaced: the eye/lash/lip detail CodeFormer produced is the sharpest
-        source in the pipeline, and every filter applied over it made it worse.
-        """
-        src = self._noisy(amp=9)
-        restored = np.full((512, 512, 3), 128, np.uint8)
-        # A hard edge, of the kind a lid crease or lip margin is.
-        restored[:, 256:] = 200
-
-        out = UM.Enhance_UltraMax._restore_texture(restored, src, 0.55)
-        delta = out.astype(np.int16) - restored.astype(np.int16)
-
-        # A band straddling the edge must be essentially untouched, while flat
-        # skin well away from it must have received texture.
-        on_edge = np.abs(delta[:, 248:264]).mean()
-        off_edge = np.abs(delta[:, 40:180]).mean()
-        self.assertLess(on_edge, off_edge * 0.5)
-
-    def test_a_textureless_source_adds_nothing(self):
-        """Self-limiting: no real texture in means nothing invented out."""
-        src = np.full((512, 512, 3), 128, np.uint8)
-        restored = np.full((512, 512, 3), 140, np.uint8)
-        out = UM.Enhance_UltraMax._restore_texture(restored, src, 0.55)
-        self.assertLessEqual(int(np.abs(out.astype(np.int16)
-                                        - restored.astype(np.int16)).max()), 1)
-
-    def test_does_not_sharpen_the_restored_face(self):
-        """The old filter was an unsharp mask; this one must not be.
-
-        With no texture in the source, a structured restored face must come back
-        with its edge contrast unchanged — a sharpener would raise it.
-        """
-        src = np.full((512, 512, 3), 128, np.uint8)
-        restored = np.full((512, 512, 3), 120, np.uint8)
-        restored[:, 256:] = 190
-        out = UM.Enhance_UltraMax._restore_texture(restored, src, 0.55)
-        import cv2
-        lap = lambda im: float(cv2.Laplacian(
-            cv2.cvtColor(im, cv2.COLOR_BGR2GRAY), cv2.CV_32F).var())
-        self.assertAlmostEqual(lap(out), lap(restored), delta=lap(restored) * 0.02)
-
-
 @unittest.skipUnless(UM._TORCH_CUDA, 'requires CUDA for tensor-path parity')
 class TestUltraMaxCudaColourTransfer(unittest.TestCase):
     def test_cuda_luminance_transfer_is_byte_close_to_opencv(self):
@@ -139,7 +59,6 @@ class TestUltraMaxCudaColourTransfer(unittest.TestCase):
 class TestUltraMaxRun(unittest.TestCase):
     def setUp(self):
         self._saved_pool_env = os.environ.get('ROOP_TRT_POOL')
-        self._saved_gain = os.environ.get('ROOP_ULTRAMAX_TEXTURE')
         self._saved_detail_env = os.environ.pop('ROOP_ULTRAMAX_DETAIL_WEIGHT', None)
         self._saved_lowband = (getattr(roop.globals, 'ultramax_swap_lowband', True),
                                getattr(roop.globals, 'ultramax_detail_weight', 0.75))
@@ -150,7 +69,6 @@ class TestUltraMaxRun(unittest.TestCase):
     def tearDown(self):
         roop.globals.ultramax_swap_lowband, roop.globals.ultramax_detail_weight = self._saved_lowband
         for var, saved in (('ROOP_TRT_POOL', self._saved_pool_env),
-                           ('ROOP_ULTRAMAX_TEXTURE', self._saved_gain),
                            ('ROOP_ULTRAMAX_DETAIL_WEIGHT', self._saved_detail_env)):
             if saved is None:
                 os.environ.pop(var, None)
@@ -388,25 +306,6 @@ class TestUltraMaxRun(unittest.TestCase):
         line = p.cost_summary()
         self.assertIn("1 faces", line)
         self.assertIn("codeformer.fp16", line)
-
-    def test_texture_restore_is_off_by_default(self):
-        """Measured on rendered frames it moved skin texture by an amount
-        indistinguishable from zero (paired t = -0.7 over 102 frames) while
-        costing 2.49 ms/face and raising flicker. Off is the shipped default,
-        and this is what fails if someone turns it back on without a new
-        measurement."""
-        p = self._make()
-        p.Run(None, None, np.full((512, 512, 3), 128, np.uint8))
-        self.assertEqual(p._textured, 0)
-        self.assertEqual(p._faces, 1)
-        self.assertEqual(UM.Enhance_UltraMax._TEXTURE_GAIN, 0.0)
-
-    def test_texture_gain_env_re_enables_the_restore(self):
-        os.environ['ROOP_ULTRAMAX_TEXTURE'] = '0.55'
-        p = self._make()
-        p.Run(None, None, np.full((512, 512, 3), 128, np.uint8))
-        self.assertEqual(p._textured, 1)
-
 
     # ── swap low band + a weighted share of the restorer's detail (default since 2026-10-12) ──
     # The restorer's low band used to replace the swap's, and a codebook prior re-draws it every

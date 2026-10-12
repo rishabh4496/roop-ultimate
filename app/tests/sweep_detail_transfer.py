@@ -7,7 +7,8 @@
 WHY A FULL RENDER PER ARM. Detail transfer runs in face-template space and the
 face is pasted back at ~300 px, so a crop-level sweep cannot see what survives —
 that is exactly the trap that made UltraMax's texture restore measure as a total
-no-op at sigma 1.1 (see tests/calibrate_ultramax_texture.py). Every number here
+no-op at sigma 1.1 (tests/calibrate_ultramax_texture.py, deleted with that filter
+2026-10-13; recoverable from commit d995920). Every number here
 is read off rendered frames.
 
 WHAT IS GRADED, and why each one is here rather than just the texture number.

@@ -23,8 +23,7 @@ class Enhance_CodeFormer():
     in_dtype = np.float32
     pool = None        # SessionPool of independent sessions for TRT multi-context
     # Guards the SINGLE shared session used when there is no pool. This
-    # class keeps its session on the CLASS, not the instance (the fidelity
-    # weight is bound per call on a fresh io_binding), so the lock lives
+    # class keeps its session on the CLASS, not the instance, so the lock lives
     # there too.
     _session_lock = threading.Lock()
 
@@ -109,10 +108,10 @@ class Enhance_CodeFormer():
             # pipeline saturates at ~4 threads and then simply stops scaling.
             #
             # Only SESSIONS are pooled here, not (session, io_binding) pairs as
-            # in Enhance_RestoreFormerPPlus. This Run() already builds a fresh
-            # io_binding per call — it has to, because the fidelity weight `w`
-            # is a second input that must be bound per call — so binding state
-            # was never shared and only the TensorRT context needs isolating.
+            # in Enhance_RestoreFormerPPlus. The binding is cached on each
+            # SESSION (see `_infer` in Run), so it travels with the session and
+            # the lease already makes it single-threaded; only the TensorRT
+            # context needs isolating.
             #
             # Sized from VRAM by session_pool, so a card that cannot afford the
             # extra engines gets 0 and the original single-session + global-lock
@@ -211,10 +210,14 @@ class Enhance_CodeFormer():
         # One gather: uint8 BGR HWC -> model dtype RGB CHW in [-1, 1].
         x = self._lut[src.transpose(2, 0, 1)[::-1]][None]
 
-        # Fresh io_binding per call: a shared binding is not thread-safe, and
-        # this graph needs one anyway because the fidelity weight `w` is a
-        # second input bound per call (float64 for this ONNX export). Each
-        # input is bound exactly once per binding, with a consistent dtype.
+        # One io_binding PER SESSION, built on first use and cached on the
+        # session (`_infer`). A binding is not thread-safe, but `exclusive()`
+        # hands each session to one thread at a time, so the lease is the
+        # guard. Only the two INPUTS are re-bound per call: the image, and the
+        # fidelity weight `w` (a 1-element float64 array for this ONNX export).
+        # `w` being per-call costs a tiny array, not a binding rebuild, so
+        # there is nothing to gain from a session per fidelity value -- that
+        # would multiply the ~530 MB per-context engine cost for no speed.
         cf_fidelity = getattr(roop.globals, 'codeformer_fidelity', 0.5)
 
         def _infer(sess):

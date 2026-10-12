@@ -12,9 +12,21 @@ tests/test_enhancer_gpen256_pro.py, the split in enhance_common.exclusive):
     GPU  gpen_bfr_256.onnx         3.90 ms      <- the only GPU work
     post cast / collapse guard     0.45 ms
     post photoreal chrominance     0.19 ms
-    post texture + sharpen @512   19.03 ms      <- the filter
+    post texture + sharpen @512   19.03 ms      <- the filter (CPU path)
     -----------------------------------------
     Run()                         24.53 ms      GPU is 16% of it
+
+THAT TABLE IS THE CPU FILTER (the host-path method). The GPU filter
+(`_gpu_filter_core`) is already the DEFAULT whenever torch sees CUDA --
+`ROOP_GPEN256PRO_FILTER=cpu` is the only way to the host path -- and measured
+1.67 ms on the same card (CUDA_EXECUTION_POLICY.md). A figure near 19 ms for this
+processor therefore means the host path ran: check the "GPU texture fix fallback
+to CPU" line, `_cpu_only`, or the env var before concluding the filter is slow.
+Not worth chasing end to end either way: 2026-09-28, 600 frames of s7.mp4,
+counterbalanced, GPU filter 7.19 / 7.01 fps vs CPU filter 7.24 / 7.13.
+`ROOP_CUDA_GRAPH_FILTER=1` (a captured graph of the GPU filter) measured 2.06 ms
+against 1.67 -- 23% SLOWER, since the host<->device copies dominate -- and stays
+opt-in.
 
 Nothing here is going to drive a card to 90% utilisation, and chasing that
 number is a mistake — see session_pool._advisory_pool_size, where the

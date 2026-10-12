@@ -457,42 +457,6 @@ class TestSharpenHaloClamp(unittest.TestCase):
                              f"mask engine; put it in the merger chain")
 
 
-class TestUltraMaxDualStreamWiring(unittest.TestCase):
-    """No GPU: the parts of the engine that are decidable without a model."""
-
-    def test_dual_defaults_off_and_the_env_flag_turns_it_on(self):
-        from roop.processors.Enhance_UltraMax import Enhance_UltraMax as U
-        os.environ.pop('ROOP_ULTRAMAX_DUAL', None)
-        self.assertFalse(U.dual_enabled())
-        os.environ['ROOP_ULTRAMAX_DUAL'] = '1'
-        try:
-            self.assertTrue(U.dual_enabled())
-        finally:
-            os.environ.pop('ROOP_ULTRAMAX_DUAL', None)
-
-    def test_detail_stream_failure_degrades_and_warns_once(self):
-        """A broken detail net must not take the render down — and must SAY so.
-
-        The silent version of this is the failure mode this repo keeps
-        rediscovering: an enhancer that stops working while every counter
-        still reports success.
-        """
-        from roop.processors.Enhance_UltraMax import Enhance_UltraMax as U
-        u = U()
-        u._detail_session = object()      # not a session; the call will raise
-        U._warned_dual = False
-        self.assertIsNone(u._detail_stream(np.zeros((512, 512, 3), np.uint8)))
-        self.assertTrue(U._warned_dual)
-
-    def test_cost_summary_reports_a_count_not_a_flag(self):
-        from roop.processors.Enhance_UltraMax import Enhance_UltraMax as U
-        u = U()
-        u._faces, u._dual = 10, 7
-        line = u.cost_summary()
-        self.assertIn('dual-stream', line)
-        self.assertIn('on 7', line)
-
-
 # ── measurement mode ─────────────────────────────────────────────────────────
 def _grade(name, restored, src, mask, plate_edge):
     return {
@@ -540,7 +504,7 @@ def degrade_like_swapper(crop512):
     return cv2.resize(small, (512, 512), interpolation=cv2.INTER_CUBIC)
 
 
-def _measure(video, limit, enhancers, dual_variants, degrade=False):
+def _measure(video, limit, enhancers, degrade=False):
     """Grade each restorer on real aligned crops from `video`."""
     import time
     from tests import angle_bench
@@ -605,7 +569,7 @@ def _measure(video, limit, enhancers, dual_variants, degrade=False):
 
     from roop.ProcessMgr import ProcessMgr
     rows = []
-    for name, key, opts, env in _plan(enhancers, dual_variants):
+    for name, key, opts, env in _plan(enhancers):
         for k, v in env.items():
             os.environ[k] = v
         try:
@@ -649,7 +613,7 @@ def _measure(video, limit, enhancers, dual_variants, degrade=False):
           "skin texture) and chroma as drift from it.")
 
 
-def _plan(enhancers, dual_variants):
+def _plan(enhancers):
     table = {
         'codeformer': ('Codeformer (fp16)', 'codeformer', {'fp16': True}, {}),
         'ultramax': ('UltraMax (single)', 'ultramax', {}, {}),
@@ -660,12 +624,6 @@ def _plan(enhancers, dual_variants):
     for name in enhancers:
         if name in table:
             yield table[name]
-    for gain in dual_variants:
-        for mode in ('luma', 'bgr'):
-            yield (f'UltraMax dual {mode} g={gain}', 'ultramax', {},
-                   {'ROOP_ULTRAMAX_DUAL': '1',
-                    'ROOP_ULTRAMAX_DUAL_MODE': mode,
-                    'ROOP_ULTRAMAX_DUAL_GAIN': str(gain)})
 
 
 def _direct_load(key, opts):
@@ -692,8 +650,6 @@ if __name__ == '__main__':
     ap.add_argument('--frames', type=int, default=40)
     ap.add_argument('--enhancers', default='codeformer,ultramax,gpen_256,'
                                            'gpen_256_pro,gpen_realistic')
-    ap.add_argument('--dual-gains', default='1.25',
-                    help='comma-separated dual-stream gains to grade')
     ap.add_argument('--degrade', action='store_true',
                     help='feed a 256-bottlenecked crop (the production '
                          'population) and grade against the clean original')
@@ -701,7 +657,6 @@ if __name__ == '__main__':
     if args.video:
         _measure(args.video, args.frames,
                  [e for e in args.enhancers.split(',') if e],
-                 [float(x) for x in args.dual_gains.split(',') if x],
                  degrade=args.degrade)
     else:
         unittest.main(argv=[sys.argv[0]] + rest)
