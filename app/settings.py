@@ -1131,6 +1131,10 @@ class Settings:
         self.restore_ultra_profile = self.default_get(data, 'restore_ultra_profile', 'QUALITY')
         self.restore_ultra_adaptive_strength = self.default_get(data, 'restore_ultra_adaptive_strength', True)
         self.restore_ultra_identity_guard = self.default_get(data, 'restore_ultra_identity_guard', True)
+        # UltraMax: low band from the swap + `ultramax_detail_weight` of the restorer's fine detail. False = the
+        # old full-restorer paste. Measured in Enhance_UltraMax (-54% temporal shimmer at 0.75).
+        self.ultramax_swap_lowband = bool(self.default_get(data, 'ultramax_swap_lowband', True))
+        self.ultramax_detail_weight = float(self.default_get(data, 'ultramax_detail_weight', 0.75))
         # Dense-landmark smoothing. Rides on stabilize_face: the kps filter above
         # left `landmark_2d_106` raw, and that array is what the paste matte's
         # outline is drawn from, so the crop was stabilised while its own edge
@@ -1509,6 +1513,8 @@ class Settings:
             'restore_ultra_profile': self.restore_ultra_profile,
             'restore_ultra_adaptive_strength': self.restore_ultra_adaptive_strength,
             'restore_ultra_identity_guard': self.restore_ultra_identity_guard,
+            'ultramax_swap_lowband': self.ultramax_swap_lowband,
+            'ultramax_detail_weight': self.ultramax_detail_weight,
             'stabilize_landmarks': self.stabilize_landmarks,
             'stabilize_hf_texture': self.stabilize_hf_texture,
             'stabilize_hf_texture_weight': self.stabilize_hf_texture_weight,

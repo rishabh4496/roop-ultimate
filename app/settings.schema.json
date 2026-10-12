@@ -706,6 +706,14 @@
       "default": true,
       "type": "bool"
     },
+    "ultramax_swap_lowband": {
+      "default": true,
+      "type": "bool"
+    },
+    "ultramax_detail_weight": {
+      "default": 0.75,
+      "type": "float"
+    },
     "stabilize_landmarks": {
       "default": true,
       "type": "bool"

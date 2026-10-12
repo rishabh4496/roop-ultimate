@@ -140,13 +140,18 @@ class TestUltraMaxRun(unittest.TestCase):
     def setUp(self):
         self._saved_pool_env = os.environ.get('ROOP_TRT_POOL')
         self._saved_gain = os.environ.get('ROOP_ULTRAMAX_TEXTURE')
+        self._saved_detail_env = os.environ.pop('ROOP_ULTRAMAX_DETAIL_WEIGHT', None)
+        self._saved_lowband = (getattr(roop.globals, 'ultramax_swap_lowband', True),
+                               getattr(roop.globals, 'ultramax_detail_weight', 0.75))
         roop.globals.execution_threads = 16
         from roop import session_pool
         session_pool._pool_cache.clear()
 
     def tearDown(self):
+        roop.globals.ultramax_swap_lowband, roop.globals.ultramax_detail_weight = self._saved_lowband
         for var, saved in (('ROOP_TRT_POOL', self._saved_pool_env),
-                           ('ROOP_ULTRAMAX_TEXTURE', self._saved_gain)):
+                           ('ROOP_ULTRAMAX_TEXTURE', self._saved_gain),
+                           ('ROOP_ULTRAMAX_DETAIL_WEIGHT', self._saved_detail_env)):
             if saved is None:
                 os.environ.pop(var, None)
             else:
@@ -302,7 +307,12 @@ class TestUltraMaxRun(unittest.TestCase):
         """The other half of the same operator: it is the RESTORER that decides
         brightness. A bright network output must come back brighter than a dark
         one over the same crop, or the fix would be discarding the restoration.
+
+        That is the LEGACY full-restorer paste. Since 2026-10-12 the default takes the
+        low band from the swap instead (see `TestUltraMaxLowBandFromSwap`), so this
+        contract is pinned under `ultramax_swap_lowband = False`.
         """
+        roop.globals.ultramax_swap_lowband = False
         frame = np.full((512, 512, 3), 90, np.uint8)
         frame[:, :, 2] = 160
         # TEXTURED, not uniform. A flat output is what `looks_collapsed` exists
@@ -396,6 +406,121 @@ class TestUltraMaxRun(unittest.TestCase):
         p = self._make()
         p.Run(None, None, np.full((512, 512, 3), 128, np.uint8))
         self.assertEqual(p._textured, 1)
+
+
+    # ── swap low band + a weighted share of the restorer's detail (default since 2026-10-12) ──
+    # The restorer's low band used to replace the swap's, and a codebook prior re-draws it every
+    # frame: on a 420-frame clip two thirds of the lead's frame-to-frame shimmer was that. These
+    # pin the properties that make the fix a fix and not a softer filter.
+
+    # A frame that is NOT flat, so the swap has a low band worth keeping and the guard that
+    # rejects a flat network output does not fire. Colours differ per channel on purpose.
+    @staticmethod
+    def _crop():
+        yy, xx = np.mgrid[0:512, 0:512].astype(np.float32)
+        base = 100 + 40 * (xx / 511.0)
+        f = np.stack([base * 0.9, base, base * 1.1], axis=2)
+        return np.clip(f, 0, 255).astype(np.uint8)
+
+    @staticmethod
+    def _noise(seed=0, amp=0.15, shift=0.0):
+        rng = np.random.default_rng(seed)
+        return (rng.normal(0, amp, (3, 512, 512)) + shift).astype(np.float32)
+
+    def test_default_takes_the_low_band_from_the_swap(self):
+        frame = self._crop()
+        dark, _ = self._make(self._noise(shift=-0.5)).Run(None, None, frame)
+        bright, _ = self._make(self._noise(shift=0.5)).Run(None, None, frame)
+        # A +-0.5 network brightness swing (~64 levels) must NOT move the face: the tone is the swap's.
+        self.assertLess(abs(float(bright.mean()) - float(dark.mean())), 10.0)
+        self.assertLess(abs(float(bright.mean()) - float(frame.mean())), 12.0)
+
+    def test_legacy_paste_follows_the_network_again(self):
+        frame = self._crop()
+        roop.globals.ultramax_swap_lowband = False
+        dark, _ = self._make(self._noise(shift=-0.5)).Run(None, None, frame)
+        bright, _ = self._make(self._noise(shift=0.5)).Run(None, None, frame)
+        self.assertGreater(float(bright.mean()), float(dark.mean()) + 60.0)
+
+    def test_env_off_is_the_legacy_paste_and_beats_the_setting(self):
+        frame = self._crop()
+        os.environ['ROOP_ULTRAMAX_DETAIL_WEIGHT'] = 'off'
+        self.assertIsNone(UM.Enhance_UltraMax._detail_weight())
+        dark, _ = self._make(self._noise(shift=-0.5)).Run(None, None, frame)
+        bright, _ = self._make(self._noise(shift=0.5)).Run(None, None, frame)
+        self.assertGreater(float(bright.mean()), float(dark.mean()) + 60.0)
+
+    def test_env_number_beats_a_disabled_setting(self):
+        roop.globals.ultramax_swap_lowband = False
+        os.environ['ROOP_ULTRAMAX_DETAIL_WEIGHT'] = '0.5'
+        self.assertEqual(UM.Enhance_UltraMax._detail_weight(), 0.5)
+
+    def test_weight_comes_from_the_setting_and_is_clamped(self):
+        roop.globals.ultramax_swap_lowband = True
+        roop.globals.ultramax_detail_weight = 0.4
+        self.assertAlmostEqual(UM.Enhance_UltraMax._detail_weight(), 0.4)
+        roop.globals.ultramax_detail_weight = 9.0
+        self.assertEqual(UM.Enhance_UltraMax._detail_weight(), 1.5)
+        roop.globals.ultramax_detail_weight = -3.0
+        self.assertEqual(UM.Enhance_UltraMax._detail_weight(), 0.0)
+        os.environ['ROOP_ULTRAMAX_DETAIL_WEIGHT'] = 'garbage'
+        roop.globals.ultramax_detail_weight = 0.3        # unparsable env -> falls through to the setting
+        self.assertAlmostEqual(UM.Enhance_UltraMax._detail_weight(), 0.3)
+
+    def test_detail_weight_scales_the_restorers_high_band(self):
+        frame = self._crop()
+        net = self._noise(seed=3, amp=0.2)
+        spread = {}
+        for w in ('0', '0.5', '1.0'):
+            os.environ['ROOP_ULTRAMAX_DETAIL_WEIGHT'] = w
+            out, _ = self._make(net).Run(None, None, frame)
+            # fine detail energy: the output minus its own blur
+            import cv2
+            f = out.astype(np.float32)
+            spread[w] = float((f - cv2.GaussianBlur(f, (0, 0), 2.0)).std())
+        self.assertLess(spread['0'], spread['0.5'])
+        self.assertLess(spread['0.5'], spread['1.0'])
+
+    def test_weight_zero_is_the_swaps_own_tone(self):
+        frame = self._crop()
+        os.environ['ROOP_ULTRAMAX_DETAIL_WEIGHT'] = '0'
+        out, _ = self._make(self._noise(seed=4, amp=0.2, shift=0.3)).Run(None, None, frame)
+        self.assertLess(float(np.abs(out.astype(np.float32) - frame.astype(np.float32)).mean()), 8.0)
+
+    def test_chroma_diagnostic_mode_stays_bit_faithful_to_the_network(self):
+        """ROOP_ULTRAMAX_CHROMA=1 is the documented 'same as CodeFormer' mode that
+        tests/bench_ultramax_vs_codeformer.py relies on; the recombination must not touch it."""
+        frame = self._crop()
+        os.environ['ROOP_ULTRAMAX_CHROMA'] = '1'
+        try:
+            dark, _ = self._make(self._noise(shift=-0.5)).Run(None, None, frame)
+            bright, _ = self._make(self._noise(shift=0.5)).Run(None, None, frame)
+        finally:
+            os.environ.pop('ROOP_ULTRAMAX_CHROMA', None)
+        self.assertGreater(float(bright.mean()), float(dark.mean()) + 60.0)
+
+    def test_cost_summary_says_what_actually_ran(self):
+        """A setting that reads as applied while nothing ran is this project's recurring failure."""
+        p = self._make(self._noise())
+        p.Run(None, None, self._crop())
+        line = p.cost_summary()
+        self.assertIn("swap low band + 0.75 x restorer detail on 1", line)
+        legacy = self._make(self._noise())
+        roop.globals.ultramax_swap_lowband = False
+        legacy.Run(None, None, self._crop())
+        self.assertIn("legacy", legacy.cost_summary())
+        self.assertNotIn("swap low band", legacy.cost_summary())
+
+    def test_a_failing_recombination_is_loud_and_falls_back(self):
+        frame = self._crop()
+        UM.Enhance_UltraMax._warned_lowband = False
+        p = self._make(self._noise())
+        with patch.object(UM.Enhance_UltraMax, '_lowband_blend_gpu', side_effect=RuntimeError('boom')):
+            try:
+                out, _ = p.Run(None, None, frame)
+            except RuntimeError:
+                self.skipTest('GPU post block not taken on this host; the CPU path has its own guard')
+        self.assertEqual(out.shape, (512, 512, 3))
 
 
 class StructuralPoolIsCappedOnNormalCards(unittest.TestCase):

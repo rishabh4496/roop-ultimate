@@ -445,6 +445,87 @@ class Enhance_UltraMax:
 
     _warned_colour = False
     _warned_dual = False
+    _warned_lowband = False
+
+    @classmethod
+    def _structure_sharpen(cls):
+        """Unsharp gain applied to CodeFormer's output. `ROOP_ULTRAMAX_STRUCTURE_SHARPEN` re-measures it (default 0.18)."""
+        return _env_float('ROOP_ULTRAMAX_STRUCTURE_SHARPEN', cls._STRUCTURE_SHARPEN)
+
+    # ── LOW BAND FROM THE SWAP ───────────────────────────────────────────────
+    # The restorer's output used to replace the swap's low band (shading, tone, the face's
+    # large-scale shape) as well as its fine detail. A codebook prior re-draws those low
+    # frequencies every frame, so the face shape and shading wobbled between frames and drifted
+    # from the swapped identity. `roop.enhance_blend` had measured the cure on Restore Ultra
+    # (2026-09-25, 72 real calls: swap low band + w x restorer detail raised identity by +0.039
+    # and brought skin texture from 1.58x the plate's to 1.09x); UltraMax never got it.
+    #
+    # MEASURED 2026-10-12 on Taras.mp4 (420 frames of the lead, live config, realswap +
+    # RealityUX, TensorRT, pinned capture, sequential-path A/B). Temporal acceleration of the
+    # face in excess of the plate's own (lower = steadier), face-core texture vs the plate:
+    #
+    #     no enhancer                         1.52   1.3x
+    #     UltraMax, full restorer (old)       4.57   6.4x
+    #     detail weight 1.0                   2.99   4.9x
+    #     detail weight 0.75  (default)       2.09   3.2x
+    #     detail weight 0.50                  1.36   1.9x
+    #
+    # i.e. two thirds of the shimmer the lead showed was the restorer's re-drawn low band, and
+    # this removes ~54% of the total at 0.75 for ~0.5 ms/face of host work, in ANY frame order.
+    # Rejected on the same footage: CodeFormer fidelity w 0.55 -> 0.8 (4.57 -> 4.68: the control
+    # works but moves the output ~0.005), a whole-face gradient-agreement gate on the detail band
+    # (4.57 -> 3.98 at full strength), and the HF-texture carry (-8% at best, and under
+    # round-robin workers it only runs on ~7% of faces).  Switching the eye operators OFF made it
+    # worse (5.59): they anchor the eyes to the swapped crop for the same reason.
+    #
+    # Settings `ultramax_detail_weight` (0..1) and `ultramax_swap_lowband` (False = the old
+    # full-restorer paste); `ROOP_ULTRAMAX_DETAIL_WEIGHT` overrides both for an A/B
+    # ('off' = old behaviour, or a number).
+    _DETAIL_WEIGHT = 0.75
+
+    @classmethod
+    def _detail_weight(cls):
+        """Weight of the restorer's high band over the swap's low band, or None for the legacy paste."""
+        raw = os.environ.get('ROOP_ULTRAMAX_DETAIL_WEIGHT')
+        if raw is not None and raw.strip() != '':
+            if raw.strip().lower() in ('off', 'legacy', 'none', 'false', 'no'):
+                return None
+            try:
+                return min(1.5, max(0.0, float(raw)))
+            except ValueError:
+                pass
+        if not bool(getattr(roop.globals, 'ultramax_swap_lowband', True)):
+            return None
+        try:
+            return min(1.5, max(0.0, float(getattr(roop.globals, 'ultramax_detail_weight',
+                                                    cls._DETAIL_WEIGHT))))
+        except (TypeError, ValueError):
+            return cls._DETAIL_WEIGHT
+
+    @classmethod
+    def _lowband_blend_gpu(cls, restored, source, weight):
+        """`enhance_blend.frequency_blend` on HWC float tensors: blur(swap) + w * (restored - blur(restored))."""
+        if weight is None or restored.shape != source.shape or restored.ndim != 3:
+            return restored
+        try:
+            from roop import enhance_blend
+            sigma = enhance_blend.SPLIT_SIGMA_512 * (restored.shape[1] / 512.0)
+            return (cls._blur_gpu(source, sigma) + weight
+                    * (restored - cls._blur_gpu(restored, sigma))).clamp(0, 255)
+        except (RuntimeError, TypeError, ValueError) as exc:
+            # Say so once: a recombination that silently no-ops leaves a plausible image and a setting that
+            # reads as applied.
+            if not Enhance_UltraMax._warned_lowband:
+                Enhance_UltraMax._warned_lowband = True
+                print(f"[UltraMax] low-band recombination failed ({type(exc).__name__}: {exc}); "
+                      f"full restorer output used", flush=True)
+            return restored
+
+    @staticmethod
+    def _eye_ops_enabled():
+        """Eye protection + rebalance. `ROOP_ULTRAMAX_EYE_OPS=0` turns both off, for A/B only (default on)."""
+        from roop.env import env_bool
+        return env_bool('ROOP_ULTRAMAX_EYE_OPS', True)
 
     def __init__(self):
         self.plugin_options = None
@@ -459,6 +540,7 @@ class Enhance_UltraMax:
         self._faces = 0
         self._textured = 0
         self._dual = 0
+        self._lowband = 0
         # Detail stream (GPEN-512). Built only when the dual-stream engine is
         # on, so a user who never enables it pays neither the VRAM nor the
         # engine build.
@@ -1331,10 +1413,18 @@ class Enhance_UltraMax:
             chroma = _env_float('ROOP_ULTRAMAX_CHROMA', self._CHROMA)
             if chroma != 1.0:
                 restored = luma_only_recolour_tensor(restored, source, chroma)
-            if self._STRUCTURE_SHARPEN > 0.0:
-                restored = (restored + self._STRUCTURE_SHARPEN *
+            _ss = self._structure_sharpen()
+            if _ss > 0.0:
+                restored = (restored + _ss *
                             (restored - self._blur_gpu(restored, 0.8))).clamp(0, 255)
-            if chroma != 1.0:
+            _dw = self._detail_weight()
+            if _dw is not None and chroma != 1.0:
+                _lb = self._lowband_blend_gpu(restored, source, _dw)
+                if _lb is not restored:
+                    with self._lock:
+                        self._lowband += 1
+                restored = _lb
+            if chroma != 1.0 and self._eye_ops_enabled():
                 # Both operators, in the host path's order. `_rebalance_eye_detail`
                 # was absent from this chain entirely, so enabling the CUDA path
                 # without it would have silently dropped a stage.
@@ -1532,10 +1622,11 @@ class Enhance_UltraMax:
         # 1.25 from a network measured sharper than this one, so a further
         # global unsharp stacks two sharpeners and rebuilds the over-sharp look
         # this engine exists to get away from.
-        if self._STRUCTURE_SHARPEN > 0.0 and not did_dual:
+        _ss = self._structure_sharpen()
+        if _ss > 0.0 and not did_dual:
             base = restored.astype(np.float32)
             blur = cv2.GaussianBlur(base, (0, 0), 0.8)
-            restored = np.clip(base + self._STRUCTURE_SHARPEN * (base - blur),
+            restored = np.clip(base + _ss * (base - blur),
                                0.0, 255.0).astype(np.uint8)
 
         # Do this after the colour pass: the protected source pixels should
@@ -1549,7 +1640,15 @@ class Enhance_UltraMax:
             try:
                 res_t = torch.from_numpy(restored).to('cuda', dtype=torch.float32, non_blocking=False)
                 src_t = torch.from_numpy(src512).to('cuda', dtype=torch.float32, non_blocking=False)
-                if _env_float('ROOP_ULTRAMAX_CHROMA', self._CHROMA) != 1.0:
+                _dw = self._detail_weight()
+                if _dw is not None and _env_float('ROOP_ULTRAMAX_CHROMA', self._CHROMA) != 1.0:
+                    _lb = self._lowband_blend_gpu(res_t, src_t, _dw)
+                    if _lb is not res_t:
+                        with self._lock:
+                            self._lowband += 1
+                    res_t = _lb
+                if (_env_float('ROOP_ULTRAMAX_CHROMA', self._CHROMA) != 1.0
+                        and self._eye_ops_enabled()):
                     res_t = self._protect_swapped_eyes_gpu(res_t, src_t)
                     res_t = self._rebalance_eye_detail_gpu(res_t)
                 gain = _env_float('ROOP_ULTRAMAX_TEXTURE', self._TEXTURE_GAIN)
@@ -1565,7 +1664,20 @@ class Enhance_UltraMax:
                 did_gpu_post = False
 
         if not did_gpu_post:
-            if _env_float('ROOP_ULTRAMAX_CHROMA', self._CHROMA) != 1.0:
+            _dw = self._detail_weight()
+            if _dw is not None and _env_float('ROOP_ULTRAMAX_CHROMA', self._CHROMA) != 1.0:
+                try:
+                    from roop import enhance_blend
+                    restored = enhance_blend.frequency_blend(src512, restored, weight=_dw)
+                    with self._lock:
+                        self._lowband += 1
+                except Exception as exc:
+                    if not Enhance_UltraMax._warned_lowband:
+                        Enhance_UltraMax._warned_lowband = True
+                        print(f"[UltraMax] low-band recombination failed ({type(exc).__name__}: {exc}); "
+                              f"full restorer output used", flush=True)
+            if (_env_float('ROOP_ULTRAMAX_CHROMA', self._CHROMA) != 1.0
+                    and self._eye_ops_enabled()):
                 restored = self._protect_swapped_eyes(restored, src512)
                 restored = self._rebalance_eye_detail(restored)
 
@@ -1584,7 +1696,7 @@ class Enhance_UltraMax:
     # ── reporting ────────────────────────────────────────────────────────────
     def cost_summary(self):
         with self._lock:
-            f, t, d = self._faces, self._textured, self._dual
+            f, t, d, lowband = self._faces, self._textured, self._dual, self._lowband
         if not f:
             return None
         c = _env_float('ROOP_ULTRAMAX_CHROMA', self._CHROMA)
@@ -1602,5 +1714,8 @@ class Enhance_UltraMax:
                     f"guided split r={self._DUAL_RADIUS} "
                     f"gain={self._DUAL_GAIN}, Reinhard LAB); "
                     f"texture restored on {t}")
+        _dw = self._detail_weight()
+        gate = (f"; swap low band + {_dw:g} x restorer detail on {lowband}" if _dw is not None
+                else "; full restorer output (legacy, low band not anchored to the swap)")
         return (f"[UltraMax] {f} faces restored (codeformer.fp16, {path}, "
-                f"{colour}); texture restored on {t}")
+                f"{colour}); texture restored on {t}{gate}")

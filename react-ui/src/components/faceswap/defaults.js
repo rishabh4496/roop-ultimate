@@ -139,6 +139,8 @@ export const FACESWAP_DEFAULTS = {
   mask_guided_filter: false,
   restore_ultra_frequency_blend: true,
   restore_ultra_detail_weight: 0.75,
+  ultramax_swap_lowband: true,
+  ultramax_detail_weight: 0.75,
   restore_ultra_inner_only: false,
   // Dense-landmark smoothing rides on stabilize_face; it is what keeps the
   // paste matte's OUTLINE steady, which the 5-point kps filter never touched.

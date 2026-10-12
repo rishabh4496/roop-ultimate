@@ -25,6 +25,8 @@ export const LABELS = {
   color_transfer_mode: 'Color transfer',
   target_conditioned_appearance: 'Target-conditioned lighting',
   codeformer_fidelity: 'CodeFormer fidelity',
+  ultramax_swap_lowband: 'UltraMax keeps swap tone/shape',
+  ultramax_detail_weight: 'UltraMax detail',
   restoration_mode: 'Restoration mode',
   tile_diffusion_strength: 'Tile diffusion strength',
   tile_diffusion_steps: 'Tile diffusion steps',

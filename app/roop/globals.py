@@ -131,6 +131,9 @@ restore_ultra_inner_only = False
 restore_ultra_profile = 'QUALITY'
 restore_ultra_adaptive_strength = True
 restore_ultra_identity_guard = True
+# UltraMax recombination; see roop/processors/Enhance_UltraMax.py (LOW BAND FROM THE SWAP).
+ultramax_swap_lowband = True
+ultramax_detail_weight = 0.75
 # Signed radius in frame pixels applied to the landmark contour.  Positive
 # values dilate the contour, negative values erode it.  Zero preserves the
 # established hull path.

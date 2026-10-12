@@ -110,6 +110,9 @@ thing from a terminal and prints the tables without touching the config.
 | `ROOP_STAB_CHUNK` | auto | Frames per parallel stabilization chunk (auto = `stab_width * max(4*warmup, 24)`, so each block is long enough to amortise its own warm-up). |
 | `ROOP_STAB_CHUNK_MB` | 1536 | Memory budget for the decoded-frame chunk. If `4*warmup` blocks won't fit for every thread, the run stabilises narrower rather than shortening blocks below their warm-up. |
 | `ROOP_STAB_BLOCKS_PER_THREAD` | 1 | >1 enables work-stealing dispatch to fix idle-thread imbalance in parallel stabilization. |
+| `ROOP_ULTRAMAX_DETAIL_WEIGHT` | setting (0.75) | UltraMax: weight of the restorer's fine detail laid over the **swap's** low band. A number (0..1.5) overrides the `ultramax_detail_weight` setting; `off` restores the old full-restorer paste. Measured on a 420-frame dance clip: temporal shimmer in excess of the plate 4.57 (old) -> 2.09 at 0.75 -> 1.36 at 0.5 (no enhancer: 1.52). Ignored in the `ROOP_ULTRAMAX_CHROMA=1` diagnostic mode. |
+| `ROOP_ULTRAMAX_STRUCTURE_SHARPEN` | 0.18 | UltraMax unsharp gain on the restorer output. Re-measuring only: 0 lowers shimmer by ~9% and softens the face. |
+| `ROOP_ULTRAMAX_EYE_OPS` | 1 (on) | UltraMax eye protection + rebalance. `0` is for A/B only: switching them off made shimmer **worse** (4.57 -> 5.59) because they anchor the eyes to the swapped crop. |
 
 ## Encoding / decoding
 

@@ -1397,6 +1397,7 @@ _SETTINGS_FLOAT_RANGES = {
     "max_face_distance": (0.0, 2.0),
     "blend_ratio": (0.0, 1.0),
     "codeformer_fidelity": (0.0, 1.0),
+    "ultramax_detail_weight": (0.0, 1.0),
 }
 
 
@@ -4505,6 +4506,8 @@ def preview(payload: dict = Body(...)):
         roop_globals.mask_flow_warp = bool(payload.get("mask_flow_warp", getattr(roop_globals.CFG, "mask_flow_warp", False)))
         roop_globals.restore_ultra_frequency_blend = bool(payload.get("restore_ultra_frequency_blend", getattr(roop_globals.CFG, "restore_ultra_frequency_blend", True)))
         roop_globals.restore_ultra_detail_weight = float(payload.get("restore_ultra_detail_weight", getattr(roop_globals.CFG, "restore_ultra_detail_weight", 0.75)))
+        roop_globals.ultramax_swap_lowband = bool(payload.get("ultramax_swap_lowband", getattr(roop_globals.CFG, "ultramax_swap_lowband", True)))
+        roop_globals.ultramax_detail_weight = float(payload.get("ultramax_detail_weight", getattr(roop_globals.CFG, "ultramax_detail_weight", 0.75)))
         roop_globals.restore_ultra_inner_only = bool(payload.get("restore_ultra_inner_only", getattr(roop_globals.CFG, "restore_ultra_inner_only", False)))
         roop_globals.restore_ultra_profile = str(payload.get("restore_ultra_profile", getattr(roop_globals.CFG, "restore_ultra_profile", "QUALITY")))
         roop_globals.restore_ultra_adaptive_strength = bool(payload.get("restore_ultra_adaptive_strength", getattr(roop_globals.CFG, "restore_ultra_adaptive_strength", True)))
@@ -5026,6 +5029,8 @@ def _run_swap(payload):
         roop_globals.mask_flow_warp = bool(payload.get("mask_flow_warp", getattr(roop_globals.CFG, "mask_flow_warp", False)))
         roop_globals.restore_ultra_frequency_blend = bool(payload.get("restore_ultra_frequency_blend", getattr(roop_globals.CFG, "restore_ultra_frequency_blend", True)))
         roop_globals.restore_ultra_detail_weight = float(payload.get("restore_ultra_detail_weight", getattr(roop_globals.CFG, "restore_ultra_detail_weight", 0.75)))
+        roop_globals.ultramax_swap_lowband = bool(payload.get("ultramax_swap_lowband", getattr(roop_globals.CFG, "ultramax_swap_lowband", True)))
+        roop_globals.ultramax_detail_weight = float(payload.get("ultramax_detail_weight", getattr(roop_globals.CFG, "ultramax_detail_weight", 0.75)))
         roop_globals.restore_ultra_inner_only = bool(payload.get("restore_ultra_inner_only", getattr(roop_globals.CFG, "restore_ultra_inner_only", False)))
         roop_globals.restore_ultra_profile = str(payload.get("restore_ultra_profile", getattr(roop_globals.CFG, "restore_ultra_profile", "QUALITY")))
         roop_globals.restore_ultra_adaptive_strength = bool(payload.get("restore_ultra_adaptive_strength", getattr(roop_globals.CFG, "restore_ultra_adaptive_strength", True)))

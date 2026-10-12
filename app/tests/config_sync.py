@@ -64,6 +64,17 @@ def sync_globals_from_config(g, verbose=True, prefix="[config]"):
             changed.append((k, cur, v))
             setattr(g, k, v)
 
+    # Opt-in A/B lever: ROOP_BENCH_CFG_OVERRIDE='{"codeformer_fidelity": 0.8}' sets those keys on globals AND CFG
+    # after the sync (so a bench can vary one setting without rewriting the user's config.yaml). Unset = unchanged.
+    import os
+    _override = os.environ.get('ROOP_BENCH_CFG_OVERRIDE', '').strip()
+    if _override:
+        import json
+        for k, v in json.loads(_override).items():
+            changed.append((k, getattr(g, k, None), v))
+            setattr(g, k, v)
+            setattr(g.CFG, k, v)
+
     # The two translated keys, the way api.py and run.py do them.
     from api import index_of_no_face_action
     g.no_face_action = index_of_no_face_action(g.CFG.no_face_action)

@@ -1192,6 +1192,8 @@ export default function FaceSwap({
       mask_guided_filter: !!activeParams.mask_guided_filter,
       restore_ultra_frequency_blend: activeParams.restore_ultra_frequency_blend !== false,
       restore_ultra_detail_weight: num(activeParams.restore_ultra_detail_weight, 0.75),
+      ultramax_swap_lowband: activeParams.ultramax_swap_lowband !== false,
+      ultramax_detail_weight: num(activeParams.ultramax_detail_weight, 0.75),
       restore_ultra_inner_only: !!activeParams.restore_ultra_inner_only,
       mask_erode_dilate_radius: num(activeParams.mask_erode_dilate_radius, 0),
       boundary_illumination_strength: activeParams.boundary_illumination_strength,
@@ -3040,6 +3042,14 @@ export default function FaceSwap({
                   <Slider label="Restore Ultra detail fidelity" info="How much of the restorer's fine detail goes on top of the swap. 0 = the swap's own detail, 1 = all of the restorer's. Measured: 0.5 keeps the most identity but reads softer than real footage; 1.0 is as textured as the plain restorer." min={0} max={1} step={0.05} value={num(p.restore_ultra_detail_weight, 0.75)} onChange={(v) => set('restore_ultra_detail_weight', v)} />
                   <Toggle label="Restore only eyes, brows, nose and lips" info="Applies the restorer only to the facial features, feathered into the swap's own skin. Keeps the most identity (0.612) but the skin is the swap's, which is softer than real footage (0.84x)." checked={!!p.restore_ultra_inner_only} onChange={(v) => set('restore_ultra_inner_only', v)} />
                 </>
+              )}
+            </>
+          )}
+          {p.selected_enhancer === 'UltraMax' && (
+            <>
+              <Toggle label="UltraMax: keep the swap's tone and shape" info="Takes lighting, skin tone and the face's large-scale shape from the SWAP and only the fine detail from the restorer, instead of the restorer's whole output. UltraMax's restorer re-draws the face's shading and shape on every frame, which showed as shimmer: measured on a 420-frame dance clip this removes about half of the frame-to-frame flicker. Turn it off for the old full-restorer look." checked={p.ultramax_swap_lowband !== false} onChange={(v) => set('ultramax_swap_lowband', v)} />
+              {p.ultramax_swap_lowband !== false && (
+                <Slider label="UltraMax detail" info="How much of the restorer's fine detail goes on top of the swap. 0 = the swap's own detail, 1 = all of the restorer's. Measured flicker (lower is steadier): 0.5 = 1.4, 0.75 = 2.1 (default), 1.0 = 3.0, old full-restorer paste = 4.6; with no enhancer = 1.5. Higher is crisper and grainier, lower is smoother." min={0} max={1} step={0.05} value={num(p.ultramax_detail_weight, 0.75)} onChange={(v) => set('ultramax_detail_weight', v)} />
               )}
             </>
           )}
