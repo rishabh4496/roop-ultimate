@@ -113,6 +113,9 @@ thing from a terminal and prints the tables without touching the config.
 | `ROOP_ULTRAMAX_DETAIL_WEIGHT` | setting (0.75) | UltraMax: weight of the restorer's fine detail laid over the **swap's** low band. A number (0..1.5) overrides the `ultramax_detail_weight` setting; `off` restores the old full-restorer paste. Measured on a 420-frame dance clip: temporal shimmer in excess of the plate 4.57 (old) -> 2.09 at 0.75 -> 1.36 at 0.5 (no enhancer: 1.52). Ignored in the `ROOP_ULTRAMAX_CHROMA=1` diagnostic mode. |
 | `ROOP_ULTRAMAX_STRUCTURE_SHARPEN` | 0.18 | UltraMax unsharp gain on the restorer output. Re-measuring only: 0 lowers shimmer by ~9% and softens the face. |
 | `ROOP_ULTRAMAX_EYE_OPS` | 1 (on) | UltraMax eye protection + rebalance. `0` is for A/B only: switching them off made shimmer **worse** (4.57 -> 5.59) because they anchor the eyes to the swapped crop. |
+| `ROOP_MERGER_SHARP_MATCH` | setting (on) | Plate-adaptive limit on the merger's sharpen + clarity: scales them by `headroom x footage detail / face detail`, never above 1. `0` = the old fixed strength. Measured on a soft 1500-frame clip: shimmer in excess of the plate 2.08 -> 1.46 (-30%), face detail 2.9x -> 2.1x the plate's. |
+| `ROOP_MERGER_SHARP_HEADROOM` | setting (0.7) | The multiplier above (0.25-3). 1.0 cuts sharpening only when the footage is softer than the face; 0.7 also trims it to 70% at equal detail; 1.5 almost never applies. |
+| `ROOP_STAB_TEXTURE_EPS` | 0.5 | Seed bound for the TEXTURE/MASK filters (enhancer, mask, HF carry) when sizing the ordered block warm-up. Geometric filters keep the 1% rule. `0.01` restores the old 7-frame replay (31% slower, same shimmer). |
 
 ## Encoding / decoding
 

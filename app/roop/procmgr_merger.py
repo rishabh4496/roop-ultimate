@@ -63,7 +63,7 @@ import cv2
 import numpy as np
 
 import roop.globals
-from roop.appearance_conditioning import sharpen_factor
+from roop.appearance_conditioning import sharpen_factor, _soft_mask
 
 
 # Grain is meant to be temporally independent — real sensor noise does not
@@ -83,6 +83,89 @@ _SHARPEN_CLAMP = 18.0
 
 # Precomputed 256-entry sin LUT for L-channel midtone weighting in apply_clarity
 _MIDTONE_LUT = np.sin(np.pi * np.arange(256, dtype=np.float32) / 255.0).astype(np.float32)
+
+
+# Plate-adaptive limit on the detail-adding ops (sharpen + clarity). They ran at the user's fixed strength whatever the
+# plate looked like, so on soft or compressed footage the face came out sharper than anything around it and the
+# swapper's per-frame detail was amplified with it. Measured on Taras.mp4 (420 frames, UltraMax low band from the
+# swap, live config): the whole merger chain took the face from 1.5x to 3.2x the plate's texture and multiplied the
+# frame-to-frame shimmer by 2.7x (0.76 with the chain off, 2.07 on).
+#
+# MEASURED 2026-10-12 (same clip, 420 frames, excess shimmer over the plate / face texture vs the plate, lower is
+# steadier): limit off 2.09 / 3.2x; headroom 1.5 2.05 / 3.1x; 1.0 1.89 / 2.9x; 0.7 (shipped) 1.54 / 2.3x; whole
+# merger off 0.76 / 1.5x. Settings `merger_match_sharpness` / `merger_sharpness_headroom`;
+# ROOP_MERGER_SHARP_MATCH=0 and ROOP_MERGER_SHARP_HEADROOM override for an A/B.
+#
+# The limit is stateless (one frame in, one factor out), so it works in any frame order: the face's fine-detail
+# energy is compared with the plate's in the same crop space, and the ops are scaled so the face is not pushed past
+# `headroom` x the plate. A plate that is at least as detailed as the face leaves them untouched.
+_SHARP_W_CACHE = {}
+_SHARP_FLOOR = 0.15
+
+
+def _sharp_weights(shape):
+    key = (int(shape[0]), int(shape[1]))
+    w = _SHARP_W_CACHE.get(key)
+    if w is None:
+        w = np.ascontiguousarray(_soft_mask(key), dtype=np.float32)
+        if len(_SHARP_W_CACHE) >= 8:
+            _SHARP_W_CACHE.clear()
+        _SHARP_W_CACHE[key] = w
+    return w
+
+
+def _hf_energy(img):
+    """RMS of the fine luminance band (sigma 1.2) over the aligned-face ellipse."""
+    g = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY).astype(np.float32)
+    hp = g - cv2.GaussianBlur(g, (0, 0), 1.2)
+    w = _sharp_weights(g.shape)
+    return float(np.sqrt(float((w * hp * hp).sum()) / max(float(w.sum()), 1e-6)))
+
+
+def plate_sharpness_gate(face_img, plate_crop, headroom=0.7, floor=_SHARP_FLOOR):
+    """Factor in [floor, 1] for the detail-adding ops; 1.0 whenever the plate is at least as detailed as the face.
+
+    Both crops are measured at the plate crop's size (the face is area-downsampled to it), so a 512 restorer
+    output is compared with a 256 plate in the same frequency band instead of against its own extra resolution.
+    """
+    try:
+        if face_img is None or plate_crop is None or face_img.size == 0 or plate_crop.size == 0:
+            return 1.0
+        ph, pw = plate_crop.shape[:2]
+        face = face_img
+        if face.shape[:2] != (ph, pw):
+            face = cv2.resize(face, (pw, ph), interpolation=cv2.INTER_AREA)
+        e_face, e_plate = _hf_energy(face), _hf_energy(plate_crop)
+        if e_face <= 0.5:                       # nothing to limit
+            return 1.0
+        return float(min(1.0, max(float(floor), float(headroom) * e_plate / e_face)))
+    except (cv2.error, ValueError, TypeError):
+        return 1.0
+
+
+def _sharp_match_enabled():
+    raw = os.environ.get('ROOP_MERGER_SHARP_MATCH', '').strip().lower()
+    if raw in ('0', 'off', 'false', 'no'):
+        return False
+    if raw in ('1', 'on', 'true', 'yes'):
+        return True
+    return bool(getattr(roop.globals, 'merger_match_sharpness', True))
+
+
+def _sharp_headroom():
+    raw = os.environ.get('ROOP_MERGER_SHARP_HEADROOM', '').strip()
+    value = None
+    if raw:
+        try:
+            value = float(raw)
+        except ValueError:
+            value = None                 # an unparsable override falls through to the saved setting, not to a constant
+    if value is None:
+        try:
+            value = float(getattr(roop.globals, 'merger_sharpness_headroom', 0.7))
+        except (TypeError, ValueError):
+            value = 0.7
+    return min(3.0, max(0.25, value))
 
 
 def _cfg(name, default=0.0):
@@ -125,6 +208,10 @@ class MergerMixin:
 
         out = face_img
         try:
+            if (abs(sharp) > _EPS or abs(clarity) > _EPS) and _sharp_match_enabled():
+                _gate = plate_sharpness_gate(face_img, orig_crop, _sharp_headroom())
+                sharp *= _gate
+                clarity *= _gate
             if abs(hist) > _EPS:
                 out = self.apply_hist_match(out, orig_crop, hist)
             if abs(degrade) > _EPS:

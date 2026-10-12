@@ -1384,6 +1384,14 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 print('[HFStabilize] stabilize_hf_texture is on but no enhancer '
                       'is in the chain; the filter has nothing to damp and '
                       'stays off.', flush=True)
+            elif not (getattr(self.options, 'stabilize_enhancer', False)
+                      or getattr(self.options, 'stabilize_mask', False)):
+                # Said up front, because `active=True` above reads as 'working'. The carry blends with the PREVIOUS
+                # frame of the same track, and without enhancer/mask smoothing the frames are dealt to workers
+                # round-robin, so a worker almost never holds two consecutive frames. Measured 7.5-15% of faces.
+                print('[HFStabilize] note: enhancer and mask smoothing are off, so frames are not processed in runs '
+                      'and this filter will only reach a small share of faces (the end-of-run line reports the '
+                      'real figure). Turn on enhancer smoothing for it to apply to ~85-90%.', flush=True)
 
         # ── Parse manual mask JSON (written by the canvas masking modal) ──────
         # New format: {"0": {"exclude": "data:...", "canonical": true}, "1": {...}}

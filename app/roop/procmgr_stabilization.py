@@ -15,6 +15,9 @@ import psutil
 from roop.degrade import swallowed as _swallowed
 from roop.one_euro import _MAX_WARMUP as _MAX_STAB_WARMUP
 
+# Residual weight of a wrong seed accepted at a block start for the texture/mask filters (see _stab_warmup_frames).
+_STAB_TEXTURE_EPS = 0.5
+
 
 class StabilizationSchedulingMixin:
     """Own warm-up, RAM budget, and block geometry decisions."""
@@ -59,12 +62,27 @@ class StabilizationSchedulingMixin:
                                            getattr(self, '_landmark_smoother', None),
                                            getattr(self, '_hf_stabilizer', None))
                      if engine is not None and getattr(engine, 'enabled', False)]
+        # TEXTURE and MASK filters (enhancer, mask, HF carry) are given a looser seed bound than the geometric ones.
+        # A wrong seed in a geometric filter (kps, landmarks, the temporal engines) is a POSITION OFFSET that survives
+        # into the paste, which is what the 1% bound protects. A wrong seed in a texture/mask filter is just a
+        # block-start frame that has not been smoothed yet: its output is the raw frame, i.e. exactly the level the
+        # un-stabilised path shows on every frame, with no systematic bias to leave a seam. Measured on Taras.mp4
+        # (1500 frames, live config, enhancer + mask smoothing on): warm-up 7f (the 1% rule) 15.5 fps / excess shimmer
+        # 1.56; 3f 17.7 / 1.56; 0f 19.8 / 1.60; no smoothing 22.5 / 2.07. The replay was most of the cost and bought
+        # nothing visible, and the block-start frames are no noisier than the rest (1.43 vs 1.62).
+        # ROOP_STAB_TEXTURE_EPS sets the bound (residual weight of the seed); 0.01 restores the old derivation.
+        try:
+            tex_eps = float(os.environ.get('ROOP_STAB_TEXTURE_EPS', '') or _STAB_TEXTURE_EPS)
+        except ValueError:
+            tex_eps = _STAB_TEXTURE_EPS
+        tex_eps = min(1.0, max(float(eps), tex_eps))
+        _texture_like = {id(self.enh_stabilizer), id(self.mask_stabilizer), id(getattr(self, '_hf_stabilizer', None))}
         for stab in (self.kps_stabilizer, self.enh_stabilizer,
                      self.mask_stabilizer, *_temporal):
             fn = getattr(stab, 'warmup_frames', None)
             if fn is not None:
                 try:
-                    need = max(need, int(fn(eps)))
+                    need = max(need, int(fn(tex_eps if id(stab) in _texture_like else eps)))
                 except Exception as _degrade_error:
                     _swallowed("roop/procmgr_stabilization.py:76", _degrade_error, "fallback continued")
                     need = max(need, _MAX_STAB_WARMUP)

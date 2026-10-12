@@ -325,6 +325,137 @@ class OutputFaceScale(unittest.TestCase):
             self.assertGreater(abs(np.linalg.det(out[:, :2])), 1e-6)
 
 
+class PlateSharpnessLimit(unittest.TestCase):
+    """The detail-adding ops (sharpen + clarity) never push the face past what the footage can carry.
+
+    factor = clamp(headroom * plate_detail / face_detail, 0.15, 1): at the shipped 0.7, a plate that is more than
+    1/0.7 = 1.43x as detailed as the face leaves the ops alone, equal detail gives 0.7, and a plate much softer
+    than the face drives the ops to the floor. Measured on a soft 420-frame clip: a fixed sharpen/clarity left the
+    face at 3.2x the plate's detail and multiplied the frame-to-frame shimmer by 2.7; the limit took shimmer down
+    26%. Stateless: one frame in, one factor out, so it holds in any worker order.
+    """
+
+    KEYS = MERGER_KEYS + ("merger_match_sharpness", "merger_sharpness_headroom")
+
+    def setUp(self):
+        self._saved = {k: getattr(roop.globals, k, None) for k in self.KEYS}
+        self._env = {k: os.environ.pop(k, None) for k in ("ROOP_MERGER_SHARP_MATCH", "ROOP_MERGER_SHARP_HEADROOM")}
+        for k in MERGER_KEYS:
+            setattr(roop.globals, k, 0.0)
+        roop.globals.merger_match_sharpness = True
+        roop.globals.merger_sharpness_headroom = 0.7
+
+    def tearDown(self):
+        for k, v in self._saved.items():
+            setattr(roop.globals, k, v)
+        for k, v in self._env.items():
+            os.environ.pop(k, None)
+            if v is not None:
+                os.environ[k] = v
+
+    @staticmethod
+    def _base(size=128, seed=3):
+        rng = np.random.default_rng(seed)
+        return np.clip(128 + rng.normal(0, 40, (size, size, 3)), 0, 255).astype(np.uint8)
+
+    @classmethod
+    def _blur(cls, sigma, size=128, seed=3):
+        img = cls._base(size, seed)
+        return cv2.GaussianBlur(img, (0, 0), sigma) if sigma else img
+
+    def _gate(self, face, plate, **kw):
+        from roop.procmgr_merger import plate_sharpness_gate
+        return plate_sharpness_gate(face, plate, **kw)
+
+    def test_a_plate_much_crisper_than_the_face_leaves_the_ops_alone(self):
+        face, crisp = self._blur(0.6), self._blur(0)
+        for headroom in (0.7, 1.0, 1.5):
+            self.assertEqual(self._gate(face, crisp, headroom=headroom), 1.0)
+
+    def test_equal_detail_gives_exactly_the_headroom(self):
+        face = self._blur(0.6)
+        self.assertAlmostEqual(self._gate(face, face, headroom=0.7), 0.7, places=6)
+        self.assertEqual(self._gate(face, face, headroom=1.0), 1.0)
+
+    def test_a_softer_plate_limits_the_face_and_the_factor_tracks_how_soft(self):
+        face = self._blur(0.6)
+        mild, soft, mush = (self._gate(face, self._blur(s)) for s in (1.0, 1.6, 2.5))
+        self.assertLess(mild, 0.5)
+        self.assertGreater(mild, soft)
+        self.assertEqual(soft, 0.15)                                   # the floor: never zero
+        self.assertEqual(mush, 0.15)
+
+    def test_headroom_scales_the_limit(self):
+        face, plate = self._blur(0.6), self._blur(1.0)
+        tight, mid, loose = (self._gate(face, plate, headroom=h) for h in (0.7, 1.0, 1.5))
+        self.assertLess(tight, mid)
+        self.assertLess(mid, loose)
+        self.assertLessEqual(loose, 1.0)
+
+    def test_a_larger_face_is_compared_with_the_plate_at_the_plates_size(self):
+        """A 512 restorer output against a 256 plate must be measured in the same band, not against its own extra
+        resolution: the same content upsampled 2x must read about the same as the original."""
+        small = self._blur(0.6, 128)
+        big = cv2.resize(small, (256, 256), interpolation=cv2.INTER_CUBIC)
+        self.assertAlmostEqual(self._gate(big, small), self._gate(small, small), delta=0.2)
+
+    def test_degenerate_inputs_are_a_no_op(self):
+        from roop.procmgr_merger import plate_sharpness_gate
+        flat = np.full((64, 64, 3), 120, np.uint8)
+        self.assertEqual(plate_sharpness_gate(flat, self._base(64)), 1.0)           # nothing to limit
+        self.assertEqual(plate_sharpness_gate(None, flat), 1.0)
+        self.assertEqual(plate_sharpness_gate(flat, np.zeros((0, 0, 3), np.uint8)), 1.0)
+
+    def test_the_chain_limits_sharpen_and_clarity_on_a_soft_plate(self):
+        roop.globals.merger_sharpen, roop.globals.merger_clarity = 0.65, 1.0
+        face, soft_plate = self._base(), self._blur(1.6)
+        m = _Merger()
+        limited = m.apply_merger_post(face, soft_plate)
+        os.environ["ROOP_MERGER_SHARP_MATCH"] = "0"
+        unlimited = m.apply_merger_post(face, soft_plate)
+        d_lim = float(np.abs(limited.astype(np.float32) - face).mean())
+        d_full = float(np.abs(unlimited.astype(np.float32) - face).mean())
+        self.assertGreater(d_full, 0.0)
+        self.assertLess(d_lim, d_full * 0.5)                           # the limit took most of the lift away
+
+    def test_a_crisp_plate_gives_exactly_the_old_output(self):
+        roop.globals.merger_sharpen, roop.globals.merger_clarity = 0.65, 1.0
+        face, crisp_plate = self._blur(0.6), self._blur(0)
+        m = _Merger()
+        on = m.apply_merger_post(face, crisp_plate)
+        os.environ["ROOP_MERGER_SHARP_MATCH"] = "0"
+        off = m.apply_merger_post(face, crisp_plate)
+        self.assertTrue(np.array_equal(on, off))
+
+    def test_the_setting_and_the_env_switch(self):
+        from roop.procmgr_merger import _sharp_match_enabled, _sharp_headroom
+        self.assertTrue(_sharp_match_enabled())
+        roop.globals.merger_match_sharpness = False
+        self.assertFalse(_sharp_match_enabled())
+        os.environ["ROOP_MERGER_SHARP_MATCH"] = "1"
+        self.assertTrue(_sharp_match_enabled())                                    # env beats the setting
+        roop.globals.merger_sharpness_headroom = 0.9
+        self.assertAlmostEqual(_sharp_headroom(), 0.9)
+        os.environ["ROOP_MERGER_SHARP_HEADROOM"] = "9"
+        self.assertEqual(_sharp_headroom(), 3.0)                                   # clamped
+        os.environ["ROOP_MERGER_SHARP_HEADROOM"] = "nonsense"
+        self.assertAlmostEqual(_sharp_headroom(), 0.9)                              # falls back to the setting
+
+    def test_off_means_the_old_fixed_strength(self):
+        roop.globals.merger_sharpen, roop.globals.merger_clarity = 0.65, 1.0
+        roop.globals.merger_match_sharpness = False
+        face, soft_plate = self._base(), self._blur(1.6)
+        m = _Merger()
+        off = m.apply_merger_post(face, soft_plate)
+        os.environ["ROOP_MERGER_SHARP_MATCH"] = "0"
+        self.assertTrue(np.array_equal(off, m.apply_merger_post(face, soft_plate)))
+
+    def test_neutral_knobs_still_return_the_same_object(self):
+        """The limit must not make the all-off chain allocate or copy."""
+        m, face, ref = _Merger(), self._base(), self._base(seed=4)
+        self.assertIs(m.apply_merger_post(face, ref), face)
+
+
 class GpenSizeContract(unittest.TestCase):
     """The scale_factor contract, which a sub-crop-size model nearly broke.
 

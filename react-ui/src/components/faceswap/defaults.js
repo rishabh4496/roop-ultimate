@@ -118,6 +118,8 @@ export const FACESWAP_DEFAULTS = {
   // LAB micro-clarity on L + a soft-knee bound on chrominance. Was baked into
   // Enhance_UltraMax; 1.0 is exactly what it applied. Works with ANY enhancer.
   merger_clarity: 1,
+  merger_match_sharpness: true,
+  merger_sharpness_headroom: 0.7,
   output_face_scale: 0,
   // Expression restore is an editable Face Swap control and a heavy GPU stage,
   // but was missing here — so "Reset defaults" left it at whatever it was.

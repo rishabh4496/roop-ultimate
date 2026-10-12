@@ -81,7 +81,23 @@ class _FakeAnalyser:
 
 class ShrinkAnalysisPools(unittest.TestCase):
 
+    # `shrink_analysis_pools` also shrinks every detector module's pool, and those are module-level singletons: a test
+    # that builds a real RetinaFace session (test_swap_batch_equivalence does) leaves one registered, and the first test
+    # here then reports `detectors: 1` it never created. Reproduced on the unmodified code with just those two files in
+    # that order. This class owns the detector state it asserts on, so it snapshots, clears and restores it.
+    _DETECTOR_POOL_VARS = (('roop.yoloface', '_pool'), ('roop.yunet', '_pool'),
+                           ('roop.retinaface_gpu_engine', '_pool'))
+
     def setUp(self):
+        import importlib
+        self._detector_state = []
+        for mod_name, var in self._DETECTOR_POOL_VARS:
+            mod = importlib.import_module(mod_name)
+            self._detector_state.append((mod, var, getattr(mod, var)))
+            setattr(mod, var, None)
+        from roop import retinaface
+        self._retina_pools = dict(retinaface._POOLS)
+        retinaface._POOLS.clear()
         self._saved = {k: getattr(face_util, k) for k in (
             'FACE_ANALYSER_POOL', 'FACE_ANALYSER', '_ANALYSER_Q', '_ANALYSER_DET_SIZE',
             '_ANALYSER_DET_THRESH', '_ANALYSER_ENGINE', '_ANALYSER_LM68_LAZY',
@@ -111,6 +127,11 @@ class ShrinkAnalysisPools(unittest.TestCase):
             setattr(face_util, k, v)
         (roop.globals.g_current_face_analysis, roop.globals.g_desired_face_analysis,
          roop.globals.is_preview) = self._globals
+        for mod, var, value in self._detector_state:
+            setattr(mod, var, value)
+        from roop import retinaface
+        retinaface._POOLS.clear()
+        retinaface._POOLS.update(self._retina_pools)
 
     def _build(self):
         fa = _FakeAnalyser()

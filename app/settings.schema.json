@@ -1024,6 +1024,14 @@
       "default": 1.0,
       "type": "float"
     },
+    "merger_match_sharpness": {
+      "default": true,
+      "type": "bool"
+    },
+    "merger_sharpness_headroom": {
+      "default": 0.7,
+      "type": "float"
+    },
     "output_face_scale": {
       "default": 0.0,
       "type": "float"

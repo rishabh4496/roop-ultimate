@@ -142,23 +142,30 @@ class OverlappedChunks(unittest.TestCase):
         os.environ["ROOP_STAB_OVERLAP"] = "1"
         visits = []
         lock = threading.Lock()
+        paused = threading.Event()
+        resumer = []
 
         def process_frame(frame, frame_idx=None, output_pending=False):
             with lock:
                 visits.append(frame_idx)
+            # The pause is requested FROM the frame callback at a fixed frame, so it always lands mid-chunk. It used
+            # to fire at a wall-clock 0.35 s, which sometimes fell between two chunks: nothing was in flight to
+            # interrupt, the "frames were recomputed" proof below failed, and the test flaked 2 runs in 5 on the
+            # unmodified code.
+            if frame_idx == 20 and not paused.is_set():
+                paused.set()
+                pause_controller.request()
+                r = threading.Timer(0.5, pause_controller.resume)
+                r.daemon = True
+                resumer.append(r)
+                r.start()
             time.sleep(0.03)
             return ("out", frame_idx)
 
         writer = _Writer()
         m = _manager(process_frame, writer)
 
-        def pause_then_resume():
-            time.sleep(0.35)
-            pause_controller.request()
-            time.sleep(0.5)
-            pause_controller.resume()
-
-        t = threading.Thread(target=pause_then_resume, daemon=True)
+        t = threading.Thread(target=lambda: paused.wait(30), daemon=True)
         t.start()
         done = threading.Event()
         err = []

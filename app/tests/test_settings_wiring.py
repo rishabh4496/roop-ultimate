@@ -187,7 +187,13 @@ class TestFrontendReachesBackend(unittest.TestCase):
         """Every merger op is a no-op at 0, so a fresh install must start there
         — a non-zero default would silently change everyone's output."""
         import roop.globals as g
-        for key in sorted(merger_helper_keys()):
+        # `merger_match_sharpness` / `merger_sharpness_headroom` are MODIFIERS of sharpen + clarity (a plate-adaptive
+        # limit, procmgr_merger.plate_sharpness_gate), not operations: they default on because they only ever turn
+        # those two ops DOWN, which is a no-op while both are 0. test_merger_postops.PlateSharpnessLimit pins that
+        # (`test_neutral_knobs_still_return_the_same_object`), so a fresh install still starts neutral.
+        modifiers = {"merger_match_sharpness", "merger_sharpness_headroom"}
+        self.assertLessEqual(modifiers, merger_helper_keys())
+        for key in sorted(merger_helper_keys() - modifiers):
             self.assertEqual(float(getattr(g, key)), 0.0,
                              f"roop.globals.{key} does not default to neutral")
 

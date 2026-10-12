@@ -50,6 +50,8 @@ export const LABELS = {
   detail_transfer_strength: 'Detail transfer',
   merger_hist_match: 'Histogram match',
   merger_sharpen: 'Sharpen / soften',
+  merger_match_sharpness: 'Match sharpness to the footage',
+  merger_sharpness_headroom: 'Sharpness headroom',
   merger_motion_blur: 'Motion blur',
   merger_grain_match: 'Grain match',
   merger_degrade: 'Degrade',

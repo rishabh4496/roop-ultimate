@@ -1243,6 +1243,10 @@ class Settings:
         # config already on UltraMax, and gives every other enhancer the same
         # look for one LAB round trip.
         self.merger_clarity = self.default_get(data, 'merger_clarity', 1.0)
+        # Plate-adaptive limit on sharpen + clarity (procmgr_merger.plate_sharpness_gate): they are scaled down only
+        # where the swapped face is more detailed than the plate (factor = headroom x plate/face detail, <= 1). Measured -30% shimmer on soft footage.
+        self.merger_match_sharpness = bool(self.default_get(data, 'merger_match_sharpness', True))
+        self.merger_sharpness_headroom = float(self.default_get(data, 'merger_sharpness_headroom', 0.7))
         # Grow/shrink the pasted face about its own centre (DFL output_face_scale)
         self.output_face_scale = self.default_get(data, 'output_face_scale', 0.0)
         # Expression restorer (LivePortrait) — see roop.globals
@@ -1579,6 +1583,8 @@ class Settings:
             'merger_grain_match': self.merger_grain_match,
             'merger_degrade': self.merger_degrade,
             'merger_clarity': self.merger_clarity,
+            'merger_match_sharpness': self.merger_match_sharpness,
+            'merger_sharpness_headroom': self.merger_sharpness_headroom,
             'output_face_scale': self.output_face_scale,
             'expression_restore_strength': self.expression_restore_strength,
             'expression_restore_region': self.expression_restore_region,

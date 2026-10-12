@@ -1398,6 +1398,7 @@ _SETTINGS_FLOAT_RANGES = {
     "blend_ratio": (0.0, 1.0),
     "codeformer_fidelity": (0.0, 1.0),
     "ultramax_detail_weight": (0.0, 1.0),
+    "merger_sharpness_headroom": (0.25, 3.0),
 }
 
 
@@ -4268,6 +4269,14 @@ def _apply_merger_settings(payload):
         except (TypeError, ValueError):
             value = default
         setattr(roop_globals, key, value)
+    # Plate-adaptive limit on sharpen + clarity (see procmgr_merger.plate_sharpness_gate).
+    roop_globals.merger_match_sharpness = bool(payload.get(
+        "merger_match_sharpness", getattr(roop_globals.CFG, "merger_match_sharpness", True)))
+    try:
+        roop_globals.merger_sharpness_headroom = float(payload.get(
+            "merger_sharpness_headroom", getattr(roop_globals.CFG, "merger_sharpness_headroom", 0.7)))
+    except (TypeError, ValueError):
+        roop_globals.merger_sharpness_headroom = 0.7
 
 
 def _apply_eye_restore_settings(payload):
