@@ -192,7 +192,8 @@ def _resolve(env_name, auto_value, gb) -> int:
             return auto_value
         if gb > 0 and gb < 7.0 and env_name in (
                 'ROOP_TRT_POOL', 'ROOP_DETMASK_POOL', 'ROOP_EXPR_POOL'):
-            if requested:
+            if requested and f'{env_name}:reject' not in _warned:
+                _warned.add(f'{env_name}:reject')
                 print(f"[SessionPool] {env_name}={requested} rejected by the "
                       f"sub-7GB single-context safety guard ({gb:.1f}GB VRAM); "
                       "using 0", flush=True)
@@ -874,9 +875,12 @@ def detector_pool_size(model_key=None, input_shape=None, batch_size=1) -> int:
             _warn_if_oversubscribed('ROOP_DETECTOR_POOL', requested,
                                     max(auto_detmask, 1), gb)
             if gb > 0 and gb < 7.0 and requested > 1:
-                print(f"[SessionPool] ROOP_DETECTOR_POOL={requested} "
-                      f"clamped to 1 by the sub-7GB safety guard "
-                      f"({gb:.1f}GB VRAM)", flush=True)
+                # Called once per detector build / frame batch: say it once.
+                if 'ROOP_DETECTOR_POOL:clamp' not in _warned:
+                    _warned.add('ROOP_DETECTOR_POOL:clamp')
+                    print(f"[SessionPool] ROOP_DETECTOR_POOL={requested} "
+                          f"clamped to 1 by the sub-7GB safety guard "
+                          f"({gb:.1f}GB VRAM)", flush=True)
                 requested = 1
             if not model_key:
                 return requested
