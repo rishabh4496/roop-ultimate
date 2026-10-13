@@ -397,10 +397,10 @@ class Enhance_GPEN256Pro:
         padded_rest = _F.pad(rest_f, (r_ksharp, r_ksharp, r_ksharp, r_ksharp), mode='reflect')
         rest_blur = _F.conv2d(padded_rest, k_sharp.repeat(3, 1, 1, 1), groups=3)
         hf_restored = rest_f - rest_blur
-        # Floor prevents sharpness collapsing to 0.12 on soft-input frames
+        # Floor prevents sharpness collapsing on soft-input frames
         # (e.g. periodic full-frame detection frames where skin_gate→1.0).
-        # Range is now [0.20..0.42] instead of [0.12..0.42].
-        sharpness_amount = torch.clamp(0.42 - skin_gate * 0.30, min=0.20)
+        # Range is [0.26..0.42] to preserve eye/lip clarity on softer frames.
+        sharpness_amount = torch.clamp(0.42 - skin_gate * 0.30, min=0.26)
         sharpened_features = hf_restored * sharpness_amount
         return torch.clamp(rest_f + injected_texture + sharpened_features, 0, 255).to(torch.uint8)
 
@@ -582,11 +582,11 @@ class Enhance_GPEN256Pro:
             sigma_sharp = 0.8 * (target_size / 256.0)
             rest_blur = cv2.GaussianBlur(rest_f, (0, 0), sigma_sharp)
             hf_restored = cv2.subtract(rest_f, rest_blur)
-            # Floor at 0.20 mirrors the GPU path: prevents sharpening
-            # collapsing to 0.12 on soft/smooth GPEN inputs.
+            # Floor at 0.26 mirrors the GPU path: preserves eye/lip
+            # definition on soft/smooth GPEN inputs.
             sharpness_amount = np.maximum(
                 cv2.subtract(0.42, cv2.multiply(skin_gate, 0.30)),
-                np.float32(0.20))
+                np.float32(0.26))
             sharpened_features = cv2.multiply(
                 hf_restored,
                 cv2.cvtColor(sharpness_amount, cv2.COLOR_GRAY2BGR))

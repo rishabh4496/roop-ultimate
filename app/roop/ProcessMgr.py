@@ -3542,7 +3542,19 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
     @staticmethod
     def _temporal_track_id(face):
         try:
-            return face.get('_track_id') if isinstance(face, dict) else None
+            if face is None:
+                return None
+            if isinstance(face, dict):
+                tid = face.get('_track_id')
+                if tid is None:
+                    tid = face.get('track_id')
+            else:
+                tid = getattr(face, '_track_id', None)
+                if tid is None:
+                    tid = getattr(face, 'track_id', None)
+                if tid is None and hasattr(face, 'get'):
+                    tid = face.get('_track_id', face.get('track_id'))
+            return int(tid) if tid is not None else None
         except Exception as _degrade_error:
             _swallowed("roop/ProcessMgr.py:3946", _degrade_error, "fallback continued")
             return None
@@ -4759,6 +4771,34 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     del face
                 faces.clear()
                 return 0, frame
+
+            if len(pending) > 1:
+                from roop.face_overlap import _claim_polygon, _same_face
+                _claim_tuples = []
+                for _, f in pending:
+                    pts = _claim_polygon(f)
+                    if pts is None or len(pts) < 3:
+                        _claim_tuples.append(None)
+                    else:
+                        x, y, w, h = cv2.boundingRect(pts)
+                        r = float(np.sqrt(max(1.0, float(w) * float(h))))
+                        pad = int(max(2.0, r * 0.15))
+                        _claim_tuples.append((pts, (x - pad, y - pad, x + w + pad, y + h + pad), r))
+                _suppressed = set()
+                for i in range(len(pending)):
+                    if i in _suppressed or _claim_tuples[i] is None:
+                        continue
+                    for j in range(i + 1, len(pending)):
+                        if j in _suppressed or _claim_tuples[j] is None:
+                            continue
+                        if _same_face(_claim_tuples[i], _claim_tuples[j]):
+                            if _claim_tuples[i][2] >= _claim_tuples[j][2]:
+                                _suppressed.add(j)
+                            else:
+                                _suppressed.add(i)
+                                break
+                if _suppressed:
+                    pending = [p for idx, p in enumerate(pending) if idx not in _suppressed]
 
             # Apply precomputed or stabilized kps ONLY to faces actually being swapped
             if precomp:
@@ -6039,7 +6079,9 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                         and rotation_action is None):
                     with _prof('stabilize'):
                         _img_mask = _ms.apply(
-                            _img_mask, target_face.kps, self._cur_stab_t())
+                            _img_mask, target_face.kps, self._cur_stab_t(),
+                            guide=aligned_img,
+                            track_id=self._temporal_track_id(target_face))
                 # The mask calls above deliberately returned the raw targets.
                 # Composite exactly once per target, after optional temporal
                 # filtering, so no quality path observes the pre-filter mask.
@@ -6229,7 +6271,9 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         if (self._stab_active and _es is not None
                 and enhanced_frame is not None and rotation_action is None):
             with _prof('stabilize'):
-                enhanced_frame = _es.apply(enhanced_frame, target_face.kps, self._cur_stab_t())
+                enhanced_frame = _es.apply(
+                    enhanced_frame, target_face.kps, self._cur_stab_t(),
+                    track_id=self._temporal_track_id(target_face))
 
         # ── Anti-flicker, high-frequency band only ────────────────────────────
         # `_es` above blends WHOLE crops with a scalar alpha and therefore has

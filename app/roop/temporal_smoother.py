@@ -1046,7 +1046,7 @@ class HighFrequencyFlowStabilizer:
 
                 self._states[key] = {
                     'gray': small,
-                    'hf': np.array(out_hf, dtype=np.float32, copy=True),
+                    'hf': np.array(hf, dtype=np.float32, copy=True),
                     # `history_hf` is the previous frame's band already
                     # expressed in this frame's coordinates.  Keeping that
                     # representation makes the next call a true sliding

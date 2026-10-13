@@ -75,9 +75,8 @@ def _reference_filter(cls, restored, source, input_size):
     sigma_sharp = 0.8 * (target_size / 256.0)
     hf_restored = rest_f - cv2.GaussianBlur(rest_f, (0, 0), sigma_sharp)
     # 0.42*feature_gate + 0.12*skin_gate == 0.42 - 0.30*skin_gate.
-    # Floor at 0.20: matches the 2026-10-01 CPU/GPU fix that prevents
-    # sharpening collapsing on soft/smooth GPEN inputs.
-    sharpness_coeff = np.maximum(0.42 * feature_gate + 0.12 * skin_gate, 0.20)
+    # Floor at 0.26: prevents sharpening collapsing on soft/smooth GPEN inputs.
+    sharpness_coeff = np.maximum(0.42 * feature_gate + 0.12 * skin_gate, 0.26)
     sharpened = hf_restored * sharpness_coeff
     return np.clip(rest_f + injected + sharpened, 0.0, 255.0).astype(np.uint8)
 

@@ -313,6 +313,20 @@ def build_regions(faces, frame_shape, order=None, feather=None, depth_bias=None)
     # boxes ends up holding the source is arbitrary — see _same_face.
     if order is not None:
         painted_idx = set(order)
+        # A single face detected twice among painted faces must not compete
+        # against itself and carve its own head in half.
+        for i in sorted(painted_idx):
+            if claims[i] is None:
+                continue
+            for j in sorted(painted_idx):
+                if j <= i or claims[j] is None:
+                    continue
+                if _same_face(claims[i], claims[j]):
+                    if claims[i][2] >= claims[j][2]:
+                        claims[j] = None
+                    else:
+                        claims[i] = None
+                        break
         for i in range(len(claims)):
             if claims[i] is None or i in painted_idx:
                 continue
@@ -322,6 +336,19 @@ def build_regions(faces, frame_shape, order=None, feather=None, depth_bias=None)
                 if _same_face(claims[i], claims[j]):
                     claims[i] = None
                     break
+    else:
+        for i in range(len(claims)):
+            if claims[i] is None:
+                continue
+            for j in range(i + 1, len(claims)):
+                if claims[j] is None:
+                    continue
+                if _same_face(claims[i], claims[j]):
+                    if claims[i][2] >= claims[j][2]:
+                        claims[j] = None
+                    else:
+                        claims[i] = None
+                        break
 
     hot = set()
     for i in range(len(claims)):

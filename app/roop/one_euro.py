@@ -561,7 +561,7 @@ class EnhancerStabilizer:
     def reset(self):
         self.tracks = []
 
-    def apply(self, crop, kps, t):
+    def apply(self, crop, kps, t, track_id=None):
         if crop is None:
             return crop
         kps = np.asarray(kps, dtype=np.float32)
@@ -571,12 +571,24 @@ class EnhancerStabilizer:
         size = max(float(np.ptp(kps[:, 0])), float(np.ptp(kps[:, 1])), 1.0)
 
         best, best_d = None, float('inf')
-        for tr in self.tracks:
-            d = float(np.linalg.norm(tr['centroid'] - centroid))
-            if d < best_d:
-                best_d, best = d, tr
+        if track_id is not None:
+            for tr in self.tracks:
+                if (tr.get('track_id') == track_id
+                        and (t - tr['last_t']) <= self.max_missing
+                        and tr['prev'].shape == crop.shape):
+                    best = tr
+                    best_d = float(np.linalg.norm(tr['centroid'] - centroid))
+                    break
+        else:
+            for tr in self.tracks:
+                if tr.get('track_id') is not None:
+                    continue
+                d = float(np.linalg.norm(tr['centroid'] - centroid))
+                if d < best_d:
+                    best_d, best = d, tr
 
-        matched = (best is not None and best_d <= self.match_scale * size
+        matched = (best is not None
+                   and (track_id is not None or best_d <= self.match_scale * size)
                    and (t - best['last_t']) <= self.max_missing
                    and best['prev'].shape == crop.shape)
         if matched:
@@ -584,7 +596,14 @@ class EnhancerStabilizer:
             t_e = max(t - tr['last_t'], 1)
             motion = (best_d / t_e) / size            # head motion as a fraction of face size
             cutoff = self.base_cutoff + self.motion_beta * motion
-            a = _alpha(t_e, cutoff)                   # → 1 (current) when fast, small when still
+            a = max(0.15, _alpha(t_e, cutoff))       # floor ensures fine textures don't blur out
+
+            # Long-run quality protection: periodic keyframe refresh prevents progressive blur
+            tr['age'] = tr.get('age', 0) + 1
+            if tr['age'] >= 30:
+                a = max(a, 0.5)
+                tr['age'] = 0
+
             out = a * crop.astype(np.float32) + (1.0 - a) * tr['prev']
             tr['prev'] = out
             tr['centroid'] = centroid
@@ -592,7 +611,8 @@ class EnhancerStabilizer:
             self.tracks = [x for x in self.tracks if (t - x['last_t']) <= self.max_missing]
             return np.clip(out, 0, 255).astype(np.uint8)
         # new / unmatched track — pass through and seed.
-        self.tracks.append({'prev': crop.astype(np.float32), 'centroid': centroid, 'last_t': t})
+        self.tracks.append({'prev': crop.astype(np.float32), 'centroid': centroid, 'last_t': t,
+                            'track_id': track_id, 'age': 0})
         return crop
 
 
@@ -688,7 +708,7 @@ class MaskStabilizer(EnhancerStabilizer):
                       "flow warp declined for this face")
             return None
 
-    def apply(self, mask, kps, t, guide=None):
+    def apply(self, mask, kps, t, guide=None, track_id=None):
         """`guide` is the aligned crop the mask was computed from (BGR, any
         size). Only read when `flow_warp` is on."""
         if mask is None:
@@ -700,12 +720,24 @@ class MaskStabilizer(EnhancerStabilizer):
         size = max(float(np.ptp(kps[:, 0])), float(np.ptp(kps[:, 1])), 1.0)
 
         best, best_d = None, float('inf')
-        for tr in self.tracks:
-            d = float(np.linalg.norm(tr['centroid'] - centroid))
-            if d < best_d:
-                best_d, best = d, tr
+        if track_id is not None:
+            for tr in self.tracks:
+                if (tr.get('track_id') == track_id
+                        and (t - tr['last_t']) <= self.max_missing
+                        and tr['prev'].shape == mask.shape):
+                    best = tr
+                    best_d = float(np.linalg.norm(tr['centroid'] - centroid))
+                    break
+        else:
+            for tr in self.tracks:
+                if tr.get('track_id') is not None:
+                    continue
+                d = float(np.linalg.norm(tr['centroid'] - centroid))
+                if d < best_d:
+                    best_d, best = d, tr
 
-        matched = (best is not None and best_d <= self.match_scale * size
+        matched = (best is not None
+                   and (track_id is not None or best_d <= self.match_scale * size)
                    and (t - best['last_t']) <= self.max_missing
                    and best['prev'].shape == mask.shape)
         if matched:
@@ -766,5 +798,6 @@ class MaskStabilizer(EnhancerStabilizer):
             self.tracks = [x for x in self.tracks if (t - x['last_t']) <= self.max_missing]
             return np.clip(out, 0.0, 1.0).astype(np.float32)
         self.tracks.append({'prev': mask.astype(np.float32), 'centroid': centroid,
-                            'last_t': t, 'gray': self._flow_gray(guide)})
+                            'last_t': t, 'gray': self._flow_gray(guide),
+                            'track_id': track_id})
         return mask
