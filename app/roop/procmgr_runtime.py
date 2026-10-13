@@ -924,6 +924,52 @@ except ValueError:
     VERIFY_MIN_OFFAXIS = 30.0
 
 
+# A head the pose solver reads as turned PAST profile shows ear and neck, no face
+# (`swap_moved_the_face`), and the swapper still paints a frontal one onto it. The
+# shipped tolerances (displacement 1.0 AND shape 0.75) were calibrated on
+# profiles that are still profiles, and they pass that failure: measured on
+# D:\out.mp4 (2026-10-14, harjot + ashna, two women, one head-down and turned
+# away), 73 faces with the solver reading 90.3-92.5 deg of yaw sat at
+# displacement 0.65-0.88 / shape 0.40-0.54 -- all under both tolerances -- and the
+# render showed a doubled eyebrow, a nose past the head's outline and a smeared
+# mouth, while the other woman in the same frames swapped cleanly. Every other
+# face of that clip reads <= 85.4 deg and scores <= 0.30 / 0.19, so past
+# VERIFY_AWAY_YAW the guard judges the result at VERIFY_AWAY_MOVED_TOL /
+# VERIFY_AWAY_SHAPE_TOL instead: 71 of those 73 are discarded (the other two
+# read 70.8 deg and were clean swaps) and nothing else in the clip is touched.
+# The jaw-free yaw is the reading used (it does not move with the mouth).
+#
+# Measured on ONE clip. The tolerances below are the midpoints of the gap that
+# clip leaves; ROOP_VERIFY_AWAY_YAW=0 puts the old tolerances back everywhere.
+def _env_float(name, default):
+    try:
+        return float(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return float(default)
+
+
+VERIFY_AWAY_YAW = _env_float('ROOP_VERIFY_AWAY_YAW', 88.0)
+VERIFY_AWAY_MOVED_TOL = _env_float('ROOP_VERIFY_AWAY_MOVED_TOL', 0.5)
+VERIFY_AWAY_SHAPE_TOL = _env_float('ROOP_VERIFY_AWAY_SHAPE_TOL', 0.3)
+
+
+# Floor on the DETECTOR'S confidence for a face that is swapped only because its
+# track is locked to a person. Identity locking exists to carry a recognisable
+# face through blur and pose, so it deliberately waives the distance veto while
+# the assigned person is still the nearest one -- which also lets it carry a
+# detection that is not a face at all. D:\out.mp4 frames 448-479: the woman on
+# the right turns away and becomes an out-of-focus back of the head; the
+# detector keeps reporting a "face" on the ear at 0.64-0.82 (every other swapped
+# face of that clip scores >= 0.84 except three transition flashes), her
+# embedding sits 0.89-0.96 from her own identity against the 0.75 match gate, and
+# the lock swaps her anyway: a whole ghost face (eye, nose, mouth) on the ear.
+# The outcome guard cannot see it (displacement 0.3-0.4 on half of those frames).
+# So a locked face under this confidence must ALSO be inside the normal match
+# threshold on this frame's own embedding, or it is left alone. Faces that pass
+# both are untouched. 0 turns the floor off.
+LOCK_MIN_DET = _env_float('ROOP_LOCK_MIN_DET', 0.85)
+
+
 def _audit_swapped_gapfill(face):
     """Count a swapped face whose landmarks nobody detected.
 

@@ -3512,7 +3512,8 @@ def _bbox_iou_1d(a, b):
     return iou - 1e-3 * (d / scale)
 
 
-def swap_moved_the_face(result, plate_kps, bbox, tol=None, rotation_action=None):
+def swap_moved_the_face(result, plate_kps, bbox, tol=None, rotation_action=None,
+                        shape_tol=None):
     """True when the swapped result no longer has the face where the plate did.
 
     Past roughly 90 degrees of yaw a head shows cheek and ear and no face at
@@ -3547,6 +3548,10 @@ def swap_moved_the_face(result, plate_kps, bbox, tol=None, rotation_action=None)
     """
     if tol is None:
         tol = SWAP_MOVED_TOL
+    # `shape_tol` is the second condition's per-call override (the guard is
+    # stricter on a head turned past profile -- see VERIFY_AWAY_YAW). None keeps
+    # the module default, which is every caller's behaviour before it existed.
+    _shape_tol = SWAP_SHAPE_TOL if shape_tol is None else float(shape_tol)
     try:
         if plate_kps is None or bbox is None:
             return False
@@ -3596,8 +3601,8 @@ def swap_moved_the_face(result, plate_kps, bbox, tol=None, rotation_action=None)
         # ...and the constellation must actually have changed shape, not just
         # sat further from where it was than a tiny interocular distance makes
         # it look. See SWAP_SHAPE_TOL for the two measured distributions.
-        if SWAP_SHAPE_TOL > 0:
-            return keypoint_shape_change(kps, k2) > SWAP_SHAPE_TOL
+        if _shape_tol > 0:
+            return keypoint_shape_change(kps, k2) > _shape_tol
         return True
     except Exception as _degrade_error:
         # A check that throws must never cost a swap that would otherwise stand.

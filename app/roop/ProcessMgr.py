@@ -17,7 +17,7 @@ from roop.ProcessOptions import ProcessOptions
 
 from roop.face_util import get_first_face, get_all_faces, rotate_anticlockwise, rotate_clockwise, rotate_image_180, analysis_pooled
 from roop.face_util import face_rotation_action, rotation_improves_upright
-from roop.face_util import swap_moved_the_face
+from roop.face_util import swap_moved_the_face, SWAP_MOVED_TOL
 from roop import face_util
 from roop.processors.FaceSwapInsightFace import (verify_tol_for as _swap_verify_tol_for,
                                                   batch_swap_enabled as _batch_swap_enabled)
@@ -59,7 +59,7 @@ from roop import recognizer_adaface as _ada
 from roop.target_selection import (normalize_target_selection, resolve_processing_selection,
                                    selection_group_ids)
 from roop import live_preview as _live_preview
-from roop.procmgr_runtime import AUDIT_BOUND_CHILD as _BOUND_CHILD, AUDIT_UNBOUND_CHILD as _UNBOUND_CHILD, _PROFILE, _SELECTED_HOLD_DIST, _UNBOUND_SAME_PERSON, _TRACK_VETO_DIST, _TRACK_VETO_MARGIN, _TRACK_VETO_SINGLE, _TRACK_EMB_MAX, _DEBUG_MATCH, COLOR_RESET, COLOR_CYAN, COLOR_YELLOW, COLOR_PURPLE, _prof, _prof_report, _prof_reset, _gpu_guard, PROGRESS_BAR_FORMAT, wait_while_paused, pause_controller, pause_scope, pause_aware, ChunkedProgress, bar_write, publish_eta as _publish_eta, _audit_hit, audit_over_threshold as _audit_over_threshold, audit_frame_seen, audit_detect_frame_begin, audit_detect_miss, audit_face_begin, _audit_swapped_gapfill, _audit_reset, _audit_report, audit_frame_failed, VETO_SOURCE_REUSED, VETO_SINGLE_ABS, VETO_OTHER_FITS, VETO_FAR_FROM_OWN, AUDIT_SWAP_MOVED, VERIFY_MIN_OFFAXIS, VERIFY_SWAP, set_runtime_monitor, set_detailed_profiler
+from roop.procmgr_runtime import AUDIT_BOUND_CHILD as _BOUND_CHILD, AUDIT_UNBOUND_CHILD as _UNBOUND_CHILD, _PROFILE, _SELECTED_HOLD_DIST, _UNBOUND_SAME_PERSON, _TRACK_VETO_DIST, _TRACK_VETO_MARGIN, _TRACK_VETO_SINGLE, _TRACK_EMB_MAX, _DEBUG_MATCH, COLOR_RESET, COLOR_CYAN, COLOR_YELLOW, COLOR_PURPLE, _prof, _prof_report, _prof_reset, _gpu_guard, PROGRESS_BAR_FORMAT, wait_while_paused, pause_controller, pause_scope, pause_aware, ChunkedProgress, bar_write, publish_eta as _publish_eta, _audit_hit, audit_over_threshold as _audit_over_threshold, audit_frame_seen, audit_detect_frame_begin, audit_detect_miss, audit_face_begin, _audit_swapped_gapfill, _audit_reset, _audit_report, audit_frame_failed, VETO_SOURCE_REUSED, VETO_SINGLE_ABS, VETO_OTHER_FITS, VETO_FAR_FROM_OWN, AUDIT_SWAP_MOVED, VERIFY_MIN_OFFAXIS, VERIFY_SWAP, VERIFY_AWAY_YAW, VERIFY_AWAY_MOVED_TOL, VERIFY_AWAY_SHAPE_TOL, LOCK_MIN_DET, set_runtime_monitor, set_detailed_profiler
 from roop.stage_profiler import StageProfiler
 from roop.runtime_optimizer import RuntimeOptimizer, RuntimeMonitor, SafeAdaptiveController
 from roop.runtime_scheduler import UnifiedRuntimeScheduler
@@ -4299,6 +4299,21 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                                 _audit_hit('skipped (below identity confidence threshold)')
                                 src_index = None
 
+                    # The lock carries a RECOGNISABLE face through blur and pose,
+                    # so it waives the distance veto -- which also lets it carry
+                    # a detection that is not a face (the out-of-focus back of a
+                    # head, the detector at 0.64-0.82 on an ear). See LOCK_MIN_DET.
+                    # Under the floor the lock is not trusted: the face goes to
+                    # per-frame matching below, which swaps it only if THIS
+                    # frame's embedding is inside the match threshold.
+                    low_conf_lock = False
+                    if src_index is not None and LOCK_MIN_DET > 0:
+                        _lock_det = getattr(face, 'det_score', None)
+                        if _lock_det is not None and float(_lock_det) < LOCK_MIN_DET:
+                            low_conf_lock = True
+                            src_index = None
+                            _audit_hit('skipped (low-confidence detection on a locked track)')
+
                     if src_index is not None:
                         _audit_hit('swapped (identity lock)')
                         _audit_swapped_gapfill(face)
@@ -4313,7 +4328,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                         # no track on this frame. A match (exact or spatial) that
                         # carries no usable source never passed the assignment gate —
                         # a different problem with a different knob.
-                        if veto is None:
+                        if veto is None and not low_conf_lock:
                             _audit_hit('no track entry matched' if exact is None and best_j < 0
                                        else 'track matched but has no source')
                         # Fall back to per-frame multi-angle matching — the same
@@ -5020,7 +5035,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             return True     # unreadable pose — check, as before
 
     @staticmethod
-    def _verify_after(result, snap, tol=None, rotation_action=None):
+    def _verify_after(result, snap, tol=None, rotation_action=None, shape_tol=None):
         """Undo this face's swap if it moved the face off where the plate's was.
 
         `tol` is the loaded swap model's own tolerance when it publishes one
@@ -5036,7 +5051,8 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         try:
             kps, bbox, (rx0, ry0, rx1, ry1), patch = snap
             if not swap_moved_the_face(result, kps, bbox, tol=tol,
-                                       rotation_action=rotation_action):
+                                       rotation_action=rotation_action,
+                                       shape_tol=shape_tol):
                 return result
             _audit_hit(AUDIT_SWAP_MOVED)
             result[ry0:ry1, rx0:rx1] = patch
@@ -6996,10 +7012,25 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             # thread, so on a card small enough for the analyser pool to be
             # disabled it would otherwise put N threads through one shared ORT
             # session with no lock — the freeze d63982d fixed everywhere else.
+            _verify_tol = _swap_verify_tol_for(swap_p)
+            _verify_shape_tol = None
+            # A head turned past profile has no face to swap onto, and the
+            # shipped tolerances pass what the swapper paints there -- see
+            # VERIFY_AWAY_YAW. Judge it at the stricter pair. The jaw-free yaw
+            # (`_head_angles`) is used so an open mouth cannot move the reading.
+            if VERIFY_AWAY_YAW > 0:
+                try:
+                    if abs(float(_head_angles()[0])) >= VERIFY_AWAY_YAW:
+                        _verify_tol = min(float(_verify_tol if _verify_tol is not None
+                                                else SWAP_MOVED_TOL),
+                                          VERIFY_AWAY_MOVED_TOL)
+                        _verify_shape_tol = VERIFY_AWAY_SHAPE_TOL
+                except Exception as _degrade_error:
+                    _swallowed("roop/ProcessMgr.py:verify-away", _degrade_error, "fallback continued")
             with _prof('verify'), _gpu_guard(pooled=analysis_pooled(), owner='analysis'):
                 result = self._verify_after(
-                    result, _vs, tol=_swap_verify_tol_for(swap_p),
-                    rotation_action=verify_rotation)
+                    result, _vs, tol=_verify_tol,
+                    rotation_action=verify_rotation, shape_tol=_verify_shape_tol)
 
         return result
 

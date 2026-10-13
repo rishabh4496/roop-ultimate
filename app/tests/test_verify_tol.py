@@ -115,9 +115,10 @@ class TestWiring(unittest.TestCase):
 
         seen = {}
 
-        def fake(result, kps, bbox, tol=None, rotation_action=None):
+        def fake(result, kps, bbox, tol=None, rotation_action=None, shape_tol=None):
             seen['tol'] = tol
             seen['rotation_action'] = rotation_action
+            seen['shape_tol'] = shape_tol
             return False        # "did not move" -> swap stands, result returned
 
         orig = PM.swap_moved_the_face
@@ -139,6 +140,13 @@ class TestWiring(unittest.TestCase):
             self.assertIsNone(seen.get('tol'),
                               'the default must stay None so face_util picks '
                               'the shared constant')
+            self.assertIsNone(seen.get('shape_tol'),
+                              'the shape tolerance must default to None too, '
+                              'or every face is judged at the away-tier value')
+            seen.clear()
+            PM.ProcessMgr._verify_after(frame, snap, tol=0.5, shape_tol=0.3)
+            self.assertEqual(seen.get('shape_tol'), 0.3,
+                             'the stricter shape tolerance must reach the guard')
         finally:
             PM.swap_moved_the_face = orig
 
@@ -156,8 +164,16 @@ class TestWiring(unittest.TestCase):
         kw = {k.arg: k.value for k in call.keywords}
         self.assertIn('tol', kw, '_verify_after called without a tolerance; '
                                  'the per-model value would be inert')
-        self.assertIsInstance(kw['tol'], ast.Call,
-                              'tol should come from the reader, not a literal')
+        # The tolerance is read off the processor into a local first (the
+        # away-tier may tighten it), so the keyword is a Name -- but that name
+        # must be assigned FROM the reader, never from a literal.
+        self.assertNotIsInstance(kw['tol'], ast.Constant,
+                                 'tol should come from the reader, not a literal')
+        readers = [n for n in ast.walk(_fn('process_face'))
+                   if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+                   and n.func.id == '_swap_verify_tol_for']
+        self.assertTrue(readers, 'process_face no longer reads the loaded '
+                                 "model's tolerance via _swap_verify_tol_for")
 
 
 if __name__ == '__main__':
