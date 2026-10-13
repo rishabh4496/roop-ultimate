@@ -88,13 +88,16 @@ def load_manifest(path: Optional[str] = None) -> List[ModelEntry]:
 def lookup(filename: str, manifest: Optional[List[ModelEntry]] = None) -> Optional[ModelEntry]:
     """The manifest entry for a file name, or None if the manifest does not list it."""
     name = os.path.basename(filename)
+    path = str(filename).replace("\\", "/")
     try:
         entries = manifest if manifest is not None else load_manifest()
     except (OSError, ValueError, KeyError) as exc:
         _swallowed("roop/model_integrity.py:lookup", exc, "treating file as unlisted")
         return None
     for entry in entries:
-        if entry.file == name:
+        # An entry may sit in a sub-folder of models/ ("CodeFormer/codeformer.fp16.onnx"): match the whole relative path as a
+        # path suffix, not just the base name, so a download into that folder is held to the entry's size and SHA256.
+        if entry.file == name or ("/" in entry.file and (path == entry.file or path.endswith("/" + entry.file))):
             return entry
     return None
 

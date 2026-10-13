@@ -448,6 +448,8 @@ class Enhance_UltraMax:
         # directly into a PyTorch CUDA allocation; avoid retrying per face.
         self._cuda_iob_available = None
         self._lock = threading.Lock()
+        # Serialises Initialize / Release (engine compilation + context creation).
+        self._init_lock = threading.RLock()
         # Guards the SINGLE shared (session, io_binding) used when there is no
         # pool -- binding state is not thread-safe. Distinct from _lock, which
         # only counts faces.
@@ -455,6 +457,13 @@ class Enhance_UltraMax:
 
     # ── lifecycle ────────────────────────────────────────────────────────────
     def Initialize(self, plugin_options: dict):
+        # TensorRT compiles the engine inside the first session build and the canary's first inference, which takes minutes on a
+        # cold cache: two threads must not both build it, so initialise and release serialise on one re-entrant lock (Release is
+        # called from here on a device change).
+        with self._init_lock:
+            self._initialize(plugin_options)
+
+    def _initialize(self, plugin_options: dict):
         if self.plugin_options is not None:
             if self.plugin_options.get("devicename") != plugin_options.get("devicename"):
                 self.Release()
@@ -475,11 +484,13 @@ class Enhance_UltraMax:
         session_providers, _precision = providers_for(
             'ultramax', roop.globals.execution_providers, model_path)
 
-        def _build(_i=0):
+        def _session(chain):
             from roop.strict_session import create_strictly_accelerated_session
-            sess = create_strictly_accelerated_session(
-                model_path, providers=session_providers, sess_options=opts,
+            return create_strictly_accelerated_session(
+                model_path, providers=chain, sess_options=opts,
                 tag='enhancer:ultramax')
+
+        def _bind(sess):
             # One io_binding per slot, held for the life of the run. A binding is
             # not shareable across threads, and rebuilding it per call measured
             # 1.5 ms of the 25 ms budget. The OUTPUT binding never changes, so it
@@ -488,7 +499,22 @@ class Enhance_UltraMax:
             iob.bind_output(sess.get_outputs()[0].name, self.devicename)
             return (sess, iob)
 
+        def _build(_i=0):
+            # Reads `session_providers` at call time: the canary below may rebind it,
+            # and the pool extras must be built on whatever the primary now runs on.
+            return _bind(_session(session_providers))
+
         self.session, self.io_binding = _build()
+        # Startup canary (roop/aux_canary.py): two fixed noisy-skin inputs through the live engine and a one-off reference
+        # (the same graph on the CPU EP), SSIM floor from docs/perf/aux_canary_enhancer_calibration.json, verdict cached by
+        # engine hash. Non-finite output fails it outright. On failure the enhancer is rebuilt on TensorRT FP32, then CUDA/CPU.
+        # Skipped (verdict None) off TensorRT, i.e. on the 3060. Nothing here is a speed change: a passing verdict is one
+        # dict lookup after the first start.
+        from roop import aux_canary
+        _guarded, session_providers, _verdict = aux_canary.guard(
+            'codeformer.fp16', self.session, model_path, session_providers, _session)
+        if _guarded is not self.session:
+            self.session, self.io_binding = _bind(_guarded)
         self.model_inputs = self.session.get_inputs()
         self.model_outputs = self.session.get_outputs()
         self.in_dtype = (np.float16 if 'float16' in self.model_inputs[0].type
@@ -525,6 +551,10 @@ class Enhance_UltraMax:
                       f"falling back to one session behind the GPU lock")
 
     def Release(self):
+        with self._init_lock:
+            self._release()
+
+    def _release(self):
         line = self.cost_summary()
         if line:
             print(line, flush=True)

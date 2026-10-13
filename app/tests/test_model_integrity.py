@@ -183,7 +183,16 @@ class ManifestTests(unittest.TestCase):
             self.assertRegex(e.sha256, r"^[0-9a-f]{64}$", e.file)
             self.assertGreater(e.size, 0)
             self.assertTrue(e.urls and all(u.startswith("https://") for u in e.urls))
-            self.assertTrue(all(u.endswith("/" + e.file) for u in e.urls), e.file)
+            self.assertTrue(all(u.endswith("/" + os.path.basename(e.file)) for u in e.urls), e.file)
+
+    def test_a_subfolder_entry_is_found_by_its_full_path(self):
+        entries = mi.load_manifest()
+        entry = mi.lookup("/x/models/CodeFormer/codeformer.fp16.onnx", entries)
+        self.assertIsNotNone(entry)
+        self.assertEqual(entry.file, "CodeFormer/codeformer.fp16.onnx")
+        self.assertEqual(mi.lookup("C:\\x\\models\\CodeFormer\\codeformer.fp16.onnx", entries), entry)
+        self.assertIsNone(mi.lookup("/x/models/codeformer.fp16.onnx", entries))     # a different folder is a different file
+        self.assertEqual(mi.lookup("/x/models/xseg.onnx", entries).family, "xseg")
 
     def test_manifest_names_the_files_the_loaders_open(self):
         # A manifest entry whose name drifted from the loader's constant would
@@ -195,7 +204,7 @@ class ManifestTests(unittest.TestCase):
             APP / "roop" / "core.py",
         ])
         for e in mi.load_manifest():
-            self.assertIn(e.file, sources)
+            self.assertIn(os.path.basename(e.file), sources)
 
     def test_startup_runs_the_integrity_check(self):
         source = (APP / "roop" / "core.py").read_text(encoding="utf-8")

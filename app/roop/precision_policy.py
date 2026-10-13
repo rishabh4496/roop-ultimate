@@ -422,7 +422,11 @@ def _global_precision() -> str:
 # docs/perf/aux_fp16_onnx_2026-10-11.md. Do not re-propose an FP16 default for these three.
 # Swappers are refused (they have their own canary and ROOP_SWAP_FP32). Take an entry out of the table to hand a model back
 # to the global setting; nothing else changes - the engine caches are per precision, so both engines stay on disk.
-PRECISION_OVERRIDES: dict = {"xseg": "fp32", "2d106det": "fp32", "1k3d68": "fp32"}
+#
+# 2026-10-13: 'resnet18' (the BiSeNet face parser) joins them on the owner's instruction, NOT on a measurement: it is a
+# per-pixel 19-class mask whose boundaries feed the same compositor as XSeg, and FP32 costs a network this small about a
+# millisecond. Its mixed-vs-FP32 IoU has not been captured; take the entry out if that ever shows the cost is not worth it.
+PRECISION_OVERRIDES: dict = {"xseg": "fp32", "2d106det": "fp32", "1k3d68": "fp32", "resnet18": "fp32"}
 PRECISION_OVERRIDE_ENV = "ROOP_TRT_MODEL_PRECISION"
 precision_log: list = []        # every per-model precision applied or refused in this process, for harnesses and tests
 _precision_announced: set = set()

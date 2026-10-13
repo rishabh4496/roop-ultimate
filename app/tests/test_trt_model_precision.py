@@ -69,7 +69,7 @@ class Base(unittest.TestCase):
 
 class ShippedTable(Base):
     def test_table_is_the_measured_one(self):
-        self.assertEqual(pp.PRECISION_OVERRIDES, {'xseg': 'fp32', '2d106det': 'fp32', '1k3d68': 'fp32'})
+        self.assertEqual(pp.PRECISION_OVERRIDES, {'xseg': 'fp32', '2d106det': 'fp32', '1k3d68': 'fp32', 'resnet18': 'fp32'})
 
     def test_w600k_r50_keeps_the_global_mixed(self):
         chain, decision = self.chain('models/buffalo_l/w600k_r50.onnx', 'recognition:buffalo_l')

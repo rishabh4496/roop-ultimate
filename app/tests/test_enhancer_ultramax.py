@@ -56,6 +56,73 @@ class TestUltraMaxCudaColourTransfer(unittest.TestCase):
                 int(np.abs(cpu.astype(np.int16) - gpu.astype(np.int16)).max()), 1)
 
 
+class TestUltraMaxStartupCanary(unittest.TestCase):
+    """`Initialize` must RUN the aux canary on the live engine (a guard that is defined but never called reads as success)."""
+
+    @staticmethod
+    def _fake_trt_session(label):
+        from types import SimpleNamespace
+        sess = MagicMock(name=label)
+        sess.get_inputs.return_value = [SimpleNamespace(name='x', type='tensor(float16)'),
+                                        SimpleNamespace(name='w', type='tensor(double)')]
+        sess.get_outputs.return_value = [SimpleNamespace(name='y', type='tensor(float16)')]
+        sess.io_binding.side_effect = lambda: MagicMock(name=label + '.iob')
+        return sess
+
+    def _initialise(self, guard, primary, threads=1):
+        import threading
+        import time
+        p = UM.Enhance_UltraMax()
+        built = []
+
+        def build(*args, **kwargs):
+            time.sleep(0.05)                    # a cold engine build is minutes; make the race window wide
+            built.append(kwargs.get('providers'))
+            return primary
+        with patch('roop.strict_session.create_strictly_accelerated_session', side_effect=build), \
+                patch.object(UM, 'providers_for', return_value=(['TensorrtExecutionProvider', 'CUDAExecutionProvider'], 'mixed')), \
+                patch('roop.aux_canary.guard', side_effect=guard) as g, \
+                patch('roop.session_pool.pooling_enabled', return_value=False):
+            workers = [threading.Thread(target=p.Initialize, args=({'devicename': 'cuda'},)) for _ in range(threads)]
+            for w in workers:
+                w.start()
+            for w in workers:
+                w.join(30)
+        return p, g, built
+
+    def test_initialize_runs_the_canary_on_the_primary_session(self):
+        primary = self._fake_trt_session('primary')
+        seen = {}
+
+        def guard(stem, session, model_file, providers, build):
+            seen.update(stem=stem, session=session, model=os.path.basename(model_file), providers=list(providers))
+            return session, list(providers), MagicMock(passed=True)
+        p, g, built = self._initialise(guard, primary)
+        self.assertEqual(g.call_count, 1)
+        self.assertEqual(seen['stem'], 'codeformer.fp16')
+        self.assertIs(seen['session'], primary)
+        self.assertEqual(seen['model'], 'codeformer.fp16.onnx')
+        self.assertIs(p.session, primary)
+        self.assertEqual(len(built), 1)
+
+    def test_a_failed_verdict_replaces_the_session_and_its_binding(self):
+        primary, rebuilt = self._fake_trt_session('primary'), self._fake_trt_session('rebuilt')
+
+        def guard(stem, session, model_file, providers, build):
+            return rebuilt, ['CPUExecutionProvider'], MagicMock(passed=False)
+        p, _g, _built = self._initialise(guard, primary)
+        self.assertIs(p.session, rebuilt)
+        rebuilt.io_binding.assert_called_once()     # the live binding belongs to the session that is actually running
+        primary.io_binding.assert_called_once()     # ... and the discarded one got only its original bind
+
+    def test_concurrent_initialize_builds_the_engine_once(self):
+        primary = self._fake_trt_session('primary')
+        p, g, built = self._initialise(lambda stem, s, f, pr, b: (s, list(pr), MagicMock(passed=True)), primary, threads=6)
+        self.assertEqual(len(built), 1, 'two threads compiled the engine')
+        self.assertEqual(g.call_count, 1)
+        self.assertIs(p.session, primary)
+
+
 class TestUltraMaxRun(unittest.TestCase):
     def setUp(self):
         self._saved_pool_env = os.environ.get('ROOP_TRT_POOL')
@@ -479,7 +546,7 @@ class StructuralPoolIsCappedOnNormalCards(unittest.TestCase):
         by making the helper the only thing that can decide the pool width.
         """
         import inspect
-        src = inspect.getsource(UM.Enhance_UltraMax.Initialize)
+        src = inspect.getsource(UM.Enhance_UltraMax._initialize)   # Initialize is the locking wrapper around it
         self.assertIn('_structural_pool_size(', src)
         # ...and that the raw pool_size result is not what reaches SessionPool.
         structural = src.split("model_key='enhancer:ultramax'", 1)[1]

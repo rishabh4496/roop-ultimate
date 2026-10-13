@@ -80,6 +80,8 @@ class Spec:
     in_hi: float = 1.0              # ... (restorers take [-1, 1])
     ref_cpu: bool = False           # build the reference on the CPU EP: the CUDA EP cannot run this graph (RF++)
     cases: Tuple[Tuple[str, int], ...] = ()     # canary inputs; () = the two defaults below
+    aux_inputs: Tuple[float, ...] = ()          # values of the model's extra scalar inputs 1..n (CodeFormer's fidelity `w`)
+    ref_extended: bool = False                  # build the reference at ORT_ENABLE_EXTENDED (the fp16 CodeFormer export trips a fusion at ALL)
 
 
 #: Floors calibrated 2026-10-10 on 500 real faces plus a wrong-face control: docs/perf/aux_canary_calibration.md.
@@ -100,6 +102,15 @@ SPECS: Dict[str, Spec] = {
     # (the 3060 runs them FP32 and is tuned separately), so a 0.98 floor would "fail" every good engine and rebuild it FP32.
     "restoreformer_plus_plus": Spec("image", (("ssim", 0.96),), in_lo=-1.0, in_hi=1.0, ref_cpu=True,
                                     cases=(("skin+n0.04", 1), ("skin+n0.08", 2))),
+    # UltraMax = codeformer.fp16.onnx (also Enhance_CodeFormer's fp16 tier): x is fp16 NCHW in [-1, 1], `w` the fidelity scalar
+    # (float64, what Run() binds; 0.5 is the shipped default). Reference = the same graph on the CPU EP at ORT_ENABLE_EXTENDED
+    # (ALL trips SimplifiedLayerNormFusion on the CPU; the CUDA EP's HEURISTIC conv algo cannot run it at all - cudnn_algo.py).
+    # Floor 0.96, measured 2026-10-13 on the 4070 (docs/perf/aux_canary_enhancer_calibration.json): the shipped TensorRT mixed
+    # engine vs that reference scores min 0.9798 / mean 0.9938 on 32 real crops and 0.9847 / 0.9880 on the two canary inputs;
+    # on THOSE inputs a smeared output (sigma 5) scores 0.918, another case's output 0.910, a grey output 0.005 (0.089 worst on
+    # real crops), non-finite fails outright. The synthetic side leaves 0.025 below the good engine and 0.042 above smear.
+    "codeformer.fp16": Spec("image", (("ssim", 0.96),), in_lo=-1.0, in_hi=1.0, ref_cpu=True, ref_extended=True,
+                            aux_inputs=(0.5,), cases=(("skin+n0.04", 1), ("skin+n0.08", 2))),
 }
 _LOWER_BOUNDS = frozenset(("cosine", "iou", "ssim"))
 
@@ -126,6 +137,14 @@ def _synth(kind: str, seed: int, h: int, w: int) -> np.ndarray:
     return _image(kind, seed, h, w)
 
 
+_ONNX_DTYPES = {"tensor(float16)": np.float16, "tensor(float)": np.float32, "tensor(double)": np.float64}
+
+
+def _input_dtype(meta) -> type:
+    """The numpy dtype an input declares (CodeFormer's fp16 graph takes fp16 pixels and a float64 `w`); float32 if unstated."""
+    return _ONNX_DTYPES.get(str(getattr(meta, "type", "tensor(float)")), np.float32)
+
+
 def _shape_hw(session) -> Tuple[int, int]:
     shape = session.get_inputs()[0].shape
     dims = [d if isinstance(d, int) and d > 0 else None for d in shape]
@@ -137,9 +156,10 @@ def _shape_hw(session) -> Tuple[int, int]:
 def build_feeds(stem: str, session) -> Optional[List[Dict[str, np.ndarray]]]:
     """The canary feeds for *session*, scaled the way the model's own pre-processing scales a crop."""
     spec = SPECS.get(stem)
-    if spec is None or len(session.get_inputs()) != 1:
+    inputs = session.get_inputs() if spec is not None else []
+    if spec is None or len(inputs) != 1 + len(spec.aux_inputs):
         return None
-    name = session.get_inputs()[0].name
+    name = inputs[0].name
     h, w = _shape_hw(session)
     feeds = []
     for kind, seed in _cases(stem):
@@ -152,7 +172,10 @@ def build_feeds(stem: str, session) -> Optional[List[Dict[str, np.ndarray]]]:
             x = ((chw * 255.0 - 127.5) / 127.5)[None]
         else:                                                   # Landmark: mean 0, std 1 on 0..255, NCHW
             x = (chw * 255.0)[None]
-        feeds.append({name: np.ascontiguousarray(x, dtype=np.float32)})
+        feed = {name: np.ascontiguousarray(x, dtype=_input_dtype(inputs[0]))}
+        for meta, value in zip(inputs[1:], spec.aux_inputs):    # shape (1,), the dtype the graph declares: what Run() binds
+            feed[meta.name] = np.array([value], dtype=_input_dtype(meta))
+        feeds.append(feed)
     return feeds
 
 
@@ -284,6 +307,7 @@ def verdict_key(stem: str, session, model_file: str, store: dict) -> Optional[Tu
     identity = {"v": VERSION, "stem": stem, "spec": [spec.kind, [list(f) for f in spec.floors], spec.points, spec.dim,
                                                        spec.in_lo, spec.in_hi, [list(c) for c in spec.cases]],
                 "model": _model_digest(model_file),
+                **({"aux": [list(spec.aux_inputs), spec.ref_extended]} if spec.aux_inputs or spec.ref_extended else {}),
                 "engines": engines, "cache": os.path.basename(str(cache_dir)),
                 "options": {k: str(opts.get(k)) for k in _KEY_OPTIONS}}
     raw = json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()
@@ -291,11 +315,13 @@ def verdict_key(stem: str, session, model_file: str, store: dict) -> Optional[Tu
 
 
 # ── the check ───────────────────────────────────────────────────────────────────────────────────────────────────────
-def _reference_session(model_file: str, cpu: bool = False):
+def _reference_session(model_file: str, cpu: bool = False, extended: bool = False):
     import onnxruntime
     from roop.utilities import get_onnx_session_options
     if cpu:         # the CUDA EP cannot create this graph's session (it silently lands on the CPU anyway): go there directly
-        return onnxruntime.InferenceSession(model_file, get_onnx_session_options(), providers=["CPUExecutionProvider"])
+        level = onnxruntime.GraphOptimizationLevel.ORT_ENABLE_EXTENDED if extended else None
+        return onnxruntime.InferenceSession(model_file, get_onnx_session_options(optimization_level=level),
+                                            providers=["CPUExecutionProvider"])
     if "CUDAExecutionProvider" not in onnxruntime.get_available_providers():
         return None
     device = 0
@@ -307,6 +333,13 @@ def _reference_session(model_file: str, cpu: bool = False):
     return onnxruntime.InferenceSession(
         model_file, get_onnx_session_options(),
         providers=[("CUDAExecutionProvider", {"use_tf32": "0", "device_id": str(device)}), "CPUExecutionProvider"])
+
+
+def _make_reference(stem: str, model_file: str):
+    spec = SPECS[stem]
+    if spec.ref_extended:       # the keyword only when set, so a patched two-argument `_reference_session` keeps working
+        return _reference_session(model_file, spec.ref_cpu, extended=True)
+    return _reference_session(model_file, spec.ref_cpu)
 
 
 def _first_output(session):
@@ -366,7 +399,7 @@ def check_session(stem: str, session, model_file: str,
             if feeds is None:
                 return CanaryResult(tag, None, "inputs are not the single image this canary understands")
             crop = _shape_hw(session)[0]
-            ref = (reference_factory or (lambda: _reference_session(model_file, SPECS[stem].ref_cpu)))()
+            ref = (reference_factory or (lambda: _make_reference(stem, model_file)))()
             if ref is None:
                 return CanaryResult(tag, None, "no CUDA reference available")
             try:

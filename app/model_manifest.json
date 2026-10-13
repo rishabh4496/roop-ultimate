@@ -56,6 +56,28 @@
       "urls": [
         "https://github.com/yakhyo/face-parsing/releases/download/weights/resnet18.onnx"
       ]
+    },
+    {
+      "file": "CodeFormer/codeformer.fp16.onnx",
+      "family": "codeformer",
+      "description": "CodeFormer half-precision export (UltraMax, CodeFormer fp16 tier)",
+      "size": 188576500,
+      "sha256": "5414b2c989eb93feb7b5bccd22a1a9f3842a127411932663d03884af140a48b6",
+      "required": false,
+      "urls": [
+        "https://huggingface.co/netrunner-exe/Face-Upscalers-onnx/resolve/main/codeformer.fp16.onnx"
+      ]
+    },
+    {
+      "file": "xseg.onnx",
+      "family": "xseg",
+      "description": "XSeg occlusion mask network (Mask_XSeg)",
+      "size": 70327737,
+      "sha256": "0b57328efcb839d85973164b617ceee9dfe6cfcb2c82e8a033bba9f4f09b27e5",
+      "required": false,
+      "urls": [
+        "https://huggingface.co/countfloyd/deepfake/resolve/main/xseg.onnx"
+      ]
     }
   ]
 }

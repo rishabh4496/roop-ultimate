@@ -29,8 +29,8 @@ GRAPH = 'main_graph'
 
 
 class _Meta:
-    def __init__(self, name, shape):
-        self.name, self.shape = name, shape
+    def __init__(self, name, shape, type_='tensor(float)'):
+        self.name, self.shape, self.type = name, shape, type_
 
 
 class _ModelMeta:
@@ -40,8 +40,9 @@ class _ModelMeta:
 SHAPES = {'xseg': ('xseg_input:0', ['unk__1', 256, 256, 3]), 'w600k_r50': ('input.1', ['None', 3, 112, 112]),
           '2d106det': ('data', ['None', 3, 192, 192]), '1k3d68': ('data', ['None', 3, 192, 192]),
           'restoreformer_plus_plus': ('input', [1, 3, 512, 512]), 'gpen-bfr-512': ('input', [1, 3, 512, 512]),
-          'gpen_bfr_256': ('input', [1, 3, 256, 256])}
-RESTORERS = ('restoreformer_plus_plus', 'gpen-bfr-512', 'gpen_bfr_256')       # the last two exist only to prove they are NOT covered
+          'gpen_bfr_256': ('input', [1, 3, 256, 256]), 'codeformer.fp16': ('x', ['batch', 3, 512, 512])}
+RESTORERS = ('restoreformer_plus_plus', 'gpen-bfr-512', 'gpen_bfr_256',       # the GPENs exist only to prove they are NOT covered
+             'codeformer.fp16')
 
 
 def _fn(stem):
@@ -70,6 +71,8 @@ class FakeSession:
         self.calls = 0
 
     def get_inputs(self):
+        if self.stem == 'codeformer.fp16':      # the real graph: fp16 pixels `x` and a float64 fidelity scalar `w`
+            return [_Meta(*SHAPES[self.stem], 'tensor(float16)'), _Meta('w', [], 'tensor(double)')]
         return [_Meta(*SHAPES[self.stem])]
 
     def get_modelmeta(self):
@@ -200,10 +203,81 @@ class RestorerCanary(Base):
 
     def test_rf_pp_uses_the_cpu_reference(self):
         asked = []
-        with mock.patch.object(ac, '_reference_session', lambda f, cpu=False: asked.append(cpu) or FakeSession('restoreformer_plus_plus', cache_dir=self.cache)):
+        with mock.patch.object(ac, '_reference_session', lambda f, cpu=False, extended=False: asked.append(cpu) or FakeSession('restoreformer_plus_plus', cache_dir=self.cache)):
             with redirect_stdout(StringIO()):
                 ac.check_session('restoreformer_plus_plus', FakeSession('restoreformer_plus_plus', cache_dir=self.cache), self.model)
         self.assertEqual(asked, [True])
+
+class CodeFormerCanary(Base):
+    """UltraMax / the CodeFormer fp16 tier: a two-input graph (fp16 pixels + a float64 `w`), reference on the CPU at EXTENDED."""
+    STEM = 'codeformer.fp16'
+
+    def test_feeds_match_what_run_binds(self):
+        feeds = ac.build_feeds(self.STEM, FakeSession(self.STEM))
+        self.assertEqual(len(feeds), 2)
+        for feed in feeds:
+            self.assertEqual(set(feed), {'x', 'w'})
+            self.assertEqual(feed['x'].shape, (1, 3, 512, 512))
+            self.assertEqual(feed['x'].dtype, np.float16)
+            self.assertLess(float(feed['x'].min()), -0.3)           # spans [-1, 1], not [0, 1]
+            self.assertEqual(feed['w'].dtype, np.float64)
+            self.assertEqual(feed['w'].shape, (1,))
+            self.assertEqual(float(feed['w'][0]), 0.5)
+
+    def test_a_session_with_the_wrong_number_of_inputs_is_not_fed(self):
+        self.assertIsNone(ac.build_feeds(self.STEM, FakeSession('restoreformer_plus_plus')))
+        self.assertIsNone(ac.build_feeds('restoreformer_plus_plus', FakeSession(self.STEM)))
+
+    def test_single_input_models_keep_float32_feeds(self):
+        for stem in ('xseg', 'w600k_r50', '2d106det', '1k3d68', 'restoreformer_plus_plus'):
+            for feed in ac.build_feeds(stem, FakeSession(stem)):
+                self.assertEqual(len(feed), 1, stem)
+                self.assertEqual(next(iter(feed.values())).dtype, np.float32, stem)
+
+    def test_matching_engine_passes_with_half_precision_noise(self):
+        noisy = FakeSession(self.STEM, fn=lambda x: _fn(self.STEM)(x) + 4e-4, cache_dir=self.cache)
+        self.assertTrue(self.check(self.STEM, noisy).passed)
+
+    def test_grey_smeared_and_non_finite_outputs_fail(self):
+        import cv2
+        grey = FakeSession(self.STEM, fn=lambda x: np.zeros_like(x), cache_dir=self.cache)
+        self.assertTrue(self.check(self.STEM, grey).failed)
+        smear = FakeSession(self.STEM, cache_dir=self.cache,
+                            fn=lambda x: cv2.GaussianBlur(_fn(self.STEM)(x)[0].transpose(1, 2, 0).astype(np.float32), (0, 0), 6)
+                            .transpose(2, 0, 1)[None])
+        self.assertTrue(self.check(self.STEM, smear).failed)
+        for bad_value in (np.nan, np.inf):
+            bad = FakeSession(self.STEM, fn=lambda x, v=bad_value: np.full(x.shape, v, np.float16), cache_dir=self.cache)
+            self.assertTrue(self.check(self.STEM, bad).failed, bad_value)
+
+    def test_reference_is_the_cpu_session_at_extended(self):
+        asked = []
+        with mock.patch.object(ac, '_reference_session',
+                               lambda f, cpu=False, extended=False: asked.append((cpu, extended)) or FakeSession(self.STEM, cache_dir=self.cache)):
+            with redirect_stdout(StringIO()):
+                ac.check_session(self.STEM, FakeSession(self.STEM, cache_dir=self.cache), self.model)
+        self.assertEqual(asked, [(True, True)])
+
+    def test_identity_carries_the_new_fields_only_where_they_apply(self):
+        store = ac._load_store()
+        _key, cf = ac.verdict_key(self.STEM, FakeSession(self.STEM, cache_dir=self.cache), self.model, store)
+        self.assertEqual(cf['aux'], [[0.5], True])
+        _key, rf = ac.verdict_key('xseg', FakeSession('xseg', cache_dir=self.cache), self.model, store)
+        self.assertNotIn('aux', rf)         # an existing model's cached verdicts must not be invalidated by this change
+
+    def test_a_failed_verdict_rebuilds_on_trt_fp32_then_falls_back(self):
+        bad = FakeSession(self.STEM, fn=lambda x: np.zeros_like(x), cache_dir=self.cache)
+        chain = [('TensorrtExecutionProvider', {'trt_fp16_enable': True, 'trt_engine_cache_path': self.cache}), 'CUDAExecutionProvider']
+        built = []
+
+        def build(c):
+            built.append(c)
+            return FakeSession(self.STEM, cache_dir=self.cache, fp16=False) if len(built) == 1 else FakeSession(self.STEM, trt=False)
+        with mock.patch.object(ac, '_make_reference', lambda s, f: FakeSession(self.STEM, cache_dir=self.cache)):
+            with redirect_stdout(StringIO()):
+                session, used, verdict = ac.guard(self.STEM, bad, self.model, chain, build)
+        self.assertTrue(session.get_providers()[0] == 'TensorrtExecutionProvider')   # the TensorRT FP32 rebuild passed
+        self.assertIs(built[0][0][1]['trt_fp16_enable'], False)
 
     def test_gpen_is_deliberately_not_covered(self):
         """GPEN's shipped TensorRT mixed engines sit at SSIM ~0.84 from FP32 by design (the 4070's tuned look): a floor would rebuild them."""

@@ -212,26 +212,37 @@ def enhancers():
     sys.path.insert(0, os.path.join(REPO, "tools"))
     import bench_restorer_batch as brb
     crops = brb.collect_crops(32, cache=os.path.join(APP, "output", "restorer_fp16", "crops.npz"))
-    out = {"date": time.strftime("%Y-%m-%d %H:%M"), "models": {}}
-    for stem, key, size in (("restoreformer_plus_plus", "restoreformer_pp", 512),):
-        path = os.path.join(APP, "models", {"restoreformer_plus_plus": "restoreformer_plus_plus.onnx",
-                                            "gpen-bfr-512": "GPEN-BFR-512.onnx", "gpen_bfr_256": "gpen_bfr_256.onnx"}[stem])
+    path_json = os.path.join(REPO, "docs", "perf", "aux_canary_enhancer_calibration.json")
+    try:                                    # merge: a run of one model must not erase the record of another
+        out = json.load(open(path_json, encoding="utf-8"))
+        out["date"] = time.strftime("%Y-%m-%d %H:%M")
+    except (OSError, ValueError):
+        out = {"date": time.strftime("%Y-%m-%d %H:%M"), "models": {}}
+    only = set(sys.argv[2:])
+    for stem, key, size, rel in (("restoreformer_plus_plus", "restoreformer_pp", 512, "restoreformer_plus_plus.onnx"),
+                                 ("codeformer.fp16", "ultramax", 512, os.path.join("CodeFormer", "codeformer.fp16.onnx"))):
+        if only and stem not in only:
+            continue
+        path = os.path.join(APP, "models", rel)
         spec = ac.SPECS[stem]
         prov = pp.providers_for(key, g.execution_providers, path)[0]
-        live = onnxruntime.InferenceSession(path, get_onnx_session_options(), providers=prov)
+        level = onnxruntime.GraphOptimizationLevel.ORT_ENABLE_EXTENDED if spec.ref_extended else None
+        live = onnxruntime.InferenceSession(path, get_onnx_session_options(optimization_level=level), providers=prov)
         if live.get_providers()[0] != "TensorrtExecutionProvider":
             raise SystemExit("%s is not on TensorRT (%s)" % (stem, live.get_providers()))
-        ref = ac._reference_session(path, spec.ref_cpu)
+        ref = ac._make_reference(stem, path)
         name = live.get_inputs()[0].name
         first = lambda s_: [s_.get_outputs()[0].name]
+        feeds = ac.build_feeds(stem, live)
+        aux = {k: v for k, v in feeds[0].items() if k != name}      # the extra scalar inputs (CodeFormer's w), as Run() binds them
+        dt = ac._input_dtype(live.get_inputs()[0])
         xs = np.stack([((cv2.resize(c, (size, size), interpolation=cv2.INTER_AREA)[..., ::-1].astype(np.float32) / 127.5) - 1.0)
                        .transpose(2, 0, 1) for c in crops]).astype(np.float32)
-        lo = [live.run(first(live), {name: xs[i:i + 1]})[0] for i in range(len(xs))]
-        ro = [ref.run(first(ref), {name: xs[i:i + 1]})[0] for i in range(len(xs))]
+        lo = [live.run(first(live), {name: xs[i:i + 1].astype(dt), **aux})[0].astype(np.float32) for i in range(len(xs))]
+        ro = [ref.run(first(ref), {name: xs[i:i + 1].astype(dt), **aux})[0].astype(np.float32) for i in range(len(xs))]      # fp16 graph: cv2 below needs f32
         rec = {"size": size, "providers": live.get_providers()[0], "fp16": (live.get_provider_options().get("TensorrtExecutionProvider") or {}).get("trt_fp16_enable"),
                "floor": dict(spec.floors)}
         rec["good_real"] = _stats([ac.compare(stem, a, b)["ssim"] for a, b in zip(lo, ro)])
-        feeds = ac.build_feeds(stem, live)
         rec["canary_synth"] = {"%s#%d" % k: ac.compare(stem, live.run(first(live), f)[0], ref.run(first(ref), f)[0])["ssim"]
                                for k, f in zip(ac._cases(stem), feeds)}
         n = len(ro)
@@ -240,7 +251,7 @@ def enhancers():
         rec["wrong_smear"] = _stats([ac.compare(stem, cv2.GaussianBlur(ro[i][0].transpose(1, 2, 0), (0, 0), 5).transpose(2, 0, 1)[None], ro[i])["ssim"]
                                      for i in range(n)])
         # the synthetic inputs are what the canary really runs: the same wrong-picture controls on THEM
-        sy_ref = [ref.run(first(ref), f)[0] for f in feeds]
+        sy_ref = [ref.run(first(ref), f)[0].astype(np.float32) for f in feeds]
         rec["wrong_on_synth"] = {
             "grey": [ac.compare(stem, np.zeros_like(r), r)["ssim"] for r in sy_ref],
             "smear": [ac.compare(stem, cv2.GaussianBlur(r[0].transpose(1, 2, 0), (0, 0), 5).transpose(2, 0, 1)[None], r)["ssim"] for r in sy_ref],
@@ -250,9 +261,8 @@ def enhancers():
             stem, rec["good_real"]["min"], rec["good_real"]["mean"], {k: round(v, 5) for k, v in rec["canary_synth"].items()},
             rec["wrong_other_face"]["p95"], rec["wrong_grey"]["max"], rec["wrong_smear"]["p95"]), flush=True)
         del live, ref
-    path = os.path.join(REPO, "docs", "perf", "aux_canary_enhancer_calibration.json")
-    json.dump(out, open(path, "w"), indent=1)
-    print("wrote", path)
+    json.dump(out, open(path_json, "w"), indent=1)
+    print("wrote", path_json)
     return 0
 
 
