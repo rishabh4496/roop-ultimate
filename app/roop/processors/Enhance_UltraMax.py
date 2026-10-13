@@ -1107,7 +1107,7 @@ class Enhance_UltraMax:
         if cuda_result is not None:
             res_frame, scale = cuda_result
             try:
-                from roop.core.pipeline_manager import PipelineManager
+                from roop.pipeline_manager import PipelineManager
                 orig_crop = getattr(target_face, 'aligned_img', None)
                 if orig_crop is None:
                     orig_crop = src512
@@ -1262,7 +1262,7 @@ class Enhance_UltraMax:
         with self._lock:
             self._faces += 1
         try:
-            from roop.core.pipeline_manager import PipelineManager
+            from roop.pipeline_manager import PipelineManager
             orig_crop = getattr(target_face, 'aligned_img', None)
             if orig_crop is None:
                 orig_crop = src512

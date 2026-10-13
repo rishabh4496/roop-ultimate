@@ -611,7 +611,7 @@ class MaskingMixin:
         try:
             _frame_faces = getattr(self._tls, 'frame_faces', None)
             if _frame_faces and len(_frame_faces) > 1 and target_face is not None:
-                from roop.core.pipeline_manager import PipelineManager
+                from roop.pipeline_manager import PipelineManager
                 img_matte, _ = PipelineManager.get_instance().protect_frame_non_targets(
                     frame_shape=target_img.shape,
                     detected_faces=_frame_faces,

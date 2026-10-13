@@ -24,7 +24,7 @@ from roop.enhancers.occlusion_governor import (
     compute_iou,
 )
 from roop.enhancers.anatomical_engine import AnatomicalEngine
-from roop.core.pipeline_manager import PipelineManager
+from roop.pipeline_manager import PipelineManager
 from roop.api.enhancer_routes import (
     UltraMaxParameters,
     UltraMaxUpdateParameters,
