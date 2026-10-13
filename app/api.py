@@ -5765,6 +5765,7 @@ import routes_models as _routes_models
 import routes_model_catalog as _routes_model_catalog
 import routes_angle_scan as _routes_angle_scan
 import routes_identity as _routes_identity
+import roop.api.enhancer_routes as _enhancer_routes
 app.include_router(_routes_diagnostics.router)
 app.include_router(_routes_livecam.router)
 app.include_router(_routes_quality.router)
@@ -5783,6 +5784,7 @@ app.include_router(_routes_frames.router)
 app.include_router(_routes_models.router)
 app.include_router(_routes_model_catalog.router)
 app.include_router(_routes_angle_scan.router)
+app.include_router(_enhancer_routes.router)
 
 
 def _ws_frame_source(index: int, frame: int, width: int, quality: int):

@@ -12,6 +12,7 @@ import StorageManager from './StorageManager';
 import EnvironmentHealth from './EnvironmentHealth';
 import BenchmarkPanel from './BenchmarkPanel';
 import TrtCachePanel from './TrtCachePanel';
+import EnhancerSettings from './EnhancerSettings';
 import AutoTunePanel from './AutoTunePanel';
 import RecognitionPanel from './RecognitionPanel';
 import { mergeSelection } from './recognitionSync';
@@ -572,6 +573,10 @@ export default function Settings({ meta, settings, setSettings, notify }) {
               <TrtCachePanel notify={notify} />
             </div>
           )}
+
+          <div className="mt-3 mb-2">
+            <EnhancerSettings />
+          </div>
 
           {showTrtSettings && (
             <Select

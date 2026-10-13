@@ -379,6 +379,9 @@ Benchmark, auto-tune, TensorRT cache and hardware/telemetry.
 | GET | `/api/benchmark/result` | BenchmarkPanel |
 | POST | `/api/benchmark/revert` | BenchmarkPanel |
 | POST | `/api/benchmark/start` | BenchmarkPanel |
+| POST | `/api/enhancer/ultramax/compile` | EnhancerSettings |
+| GET, POST | `/api/enhancer/ultramax/settings` | EnhancerSettings |
+| GET | `/api/enhancer/ultramax/telemetry` | EnhancerSettings |
 | GET | `/api/runtime/state` | EnvironmentHealth |
 | GET | `/api/system/hardware` | EnvironmentHealth |
 | GET | `/api/system/profile` | DiagnosticsPanel |
@@ -393,5 +396,6 @@ Telemetry, frame streaming and angle-scan progress.
 | Method | Path | Called from |
 | --- | --- | --- |
 | WS | `/ws/angle-scan` | useAutoAngleCapture |
+| WS | `/ws/enhancer/telemetry` | EnhancerSettings |
 | WS | `/ws/frames` | frameSocket |
 | WS | `/ws/telemetry` | useTelemetrySocket |

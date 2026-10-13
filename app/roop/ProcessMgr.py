@@ -6218,8 +6218,8 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     if target_face is not None:
                         try:
                             target_face.aligned_img = _ctx if (_realign and '_ctx' in locals() and _ctx is not None) else aligned_img
-                        except Exception:
-                            pass
+                        except Exception as _aligned_err:
+                            _swallowed("roop/ProcessMgr.py:aligned_img", _aligned_err)
                     enhanced_frame, scale_factor = p.Run(_fs, target_face, enh_input)
                     if target_face is not None and hasattr(target_face, 'aligned_img'):
                         target_face.aligned_img = None
