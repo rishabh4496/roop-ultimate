@@ -6215,7 +6215,14 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     _enh_excl = getattr(p, 'pool', None) is not None
                 with _prof('enhance'), _gpu_guard(pooled=_enh_excl, owner='enhance'):
                     _fs = self.input_face_datas[face_index] if (0 <= face_index < len(self.input_face_datas)) else (self.input_face_datas[0] if self.input_face_datas else None)
+                    if target_face is not None:
+                        try:
+                            target_face.aligned_img = _ctx if (_realign and '_ctx' in locals() and _ctx is not None) else aligned_img
+                        except Exception:
+                            pass
                     enhanced_frame, scale_factor = p.Run(_fs, target_face, enh_input)
+                    if target_face is not None and hasattr(target_face, 'aligned_img'):
+                        target_face.aligned_img = None
 
                 if _A is not None and enhanced_frame is not None:
                     # Back to swap-crop space. The enhancer may have returned a

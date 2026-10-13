@@ -297,5 +297,71 @@ class TestSystemWiring(unittest.TestCase):
         self.assertEqual(CLS.processorname, self.KEY)
 
 
+class TestPlateDermalAndFrequencySplit(unittest.TestCase):
+    def test_frequency_split_detail_weight_logic(self):
+        self.assertEqual(CLS._detail_weight(), 0.80)
+        os.environ['ROOP_GPEN256PRO_DETAIL_WEIGHT'] = '0.65'
+        try:
+            self.assertEqual(CLS._detail_weight(), 0.65)
+        finally:
+            os.environ.pop('ROOP_GPEN256PRO_DETAIL_WEIGHT', None)
+
+        os.environ['ROOP_GPEN256PRO_DETAIL_WEIGHT'] = 'off'
+        try:
+            self.assertIsNone(CLS._detail_weight())
+        finally:
+            os.environ.pop('ROOP_GPEN256PRO_DETAIL_WEIGHT', None)
+
+    def test_plate_dermal_toggle(self):
+        self.assertTrue(CLS._plate_dermal_enabled())
+        os.environ['ROOP_GPEN256PRO_PLATE_DERMAL'] = '0'
+        try:
+            self.assertFalse(CLS._plate_dermal_enabled())
+        finally:
+            os.environ.pop('ROOP_GPEN256PRO_PLATE_DERMAL', None)
+
+    def test_plate_dermal_texture_stealing_injects_real_pores(self):
+        """When an aligned plate crop has authentic dermal texture, it gets injected onto skin."""
+        smooth_swap = cv2.GaussianBlur(_face_like(0, detail=8.0), (0, 0), 2.5)
+        restored = cv2.GaussianBlur(_face_like(0, detail=8.0), (0, 0), 2.0)
+        plate_textured = _face_like(42, detail=12.0)
+
+        out_no_plate = CLS._enhance_textures_and_sharpness_cpu(restored, smooth_swap, 256, plate=None)
+        out_with_plate = CLS._enhance_textures_and_sharpness_cpu(restored, smooth_swap, 256, plate=plate_textured)
+
+        # Output with plate must carry significantly more dermal detail than without plate
+        self.assertGreater(_detail(out_with_plate), _detail(out_no_plate) * 1.3)
+
+    def test_plate_dermal_texture_stealing_gpu_matches_cpu_intent(self):
+        """GPU path also injects plate dermal texture when CUDA is available."""
+        if not GPro._TORCH_CUDA:
+            self.skipTest("CUDA not available")
+        smooth_swap = cv2.GaussianBlur(_face_like(0, detail=8.0), (0, 0), 2.5)
+        restored = cv2.GaussianBlur(_face_like(0, detail=8.0), (0, 0), 2.0)
+        plate_textured = _face_like(42, detail=12.0)
+
+        out_no_plate = CLS._enhance_textures_and_sharpness_gpu(restored, smooth_swap, 256, plate=None)
+        out_with_plate = CLS._enhance_textures_and_sharpness_gpu(restored, smooth_swap, 256, plate=plate_textured)
+
+        self.assertGreater(_detail(out_with_plate), _detail(out_no_plate) * 1.3)
+
+    def test_run_receives_target_face_aligned_img(self):
+        """p.Run correctly utilizes target_face.aligned_img when present."""
+        p = TestRunPath()._make()
+        frame = _face_like(0, size=256, detail=5.0)
+        plate = _face_like(99, size=256, detail=14.0)
+
+        class DummyTargetFace:
+            def __init__(self, img):
+                self.aligned_img = img
+
+        target_face = DummyTargetFace(plate)
+        out, scale = p.Run(None, target_face, frame)
+        self.assertEqual(out.shape, (512, 512, 3))
+        self.assertEqual(scale, 2)
+        # Should carry high detail transferred from plate
+        self.assertGreater(_detail(out), 4.0)
+
+
 if __name__ == '__main__':
     unittest.main()

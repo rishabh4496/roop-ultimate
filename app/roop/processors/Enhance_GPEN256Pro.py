@@ -342,13 +342,37 @@ class Enhance_GPEN256Pro:
         return res
 
     @classmethod
-    def _gpu_filter_core(cls, r_t, s_t, target_size, graph_safe=False):
+    def _detail_weight(cls):
+        """Detail weight for the frequency split: low band from swap, high band from restorer.
+        1.0 = full restorer detail. 0.80 = shipped default (suppresses waxy GAN lighting).
+        'off' or 0 = disabled.
+        """
+        val = os.environ.get('ROOP_GPEN256PRO_DETAIL_WEIGHT', '0.80').strip().lower()
+        if val in ('off', 'none', 'false'):
+            return None
+        try:
+            w = float(val)
+            return None if w <= 0.0 else min(1.5, max(0.1, w))
+        except ValueError:
+            return 0.80
+
+    @classmethod
+    def _plate_dermal_enabled(cls):
+        """Plate dermal texture injection toggle: steal authentic micro-pores from the plate.
+        '0' or 'off' = disabled. Defaults to True.
+        """
+        val = os.environ.get('ROOP_GPEN256PRO_PLATE_DERMAL', '1').strip().lower()
+        return val not in ('0', 'off', 'false', 'none')
+
+    @classmethod
+    def _gpu_filter_core(cls, r_t, s_t, target_size, graph_safe=False, p_t=None):
         """Run the filter from already-created NCHW CUDA tensors.
 
         ``graph_safe`` removes the only host-side branch (the low-texture grain
         threshold) by expressing it as tensor arithmetic. That keeps the graph
         path's execution shape and control flow fixed while preserving the
         normal path's established FP32 implementation.
+        ``p_t`` is the optional target plate tensor for authentic dermal micro-texture stealing.
         """
         device = r_t.device
         if r_t.shape[2:] != (target_size, target_size):
@@ -360,6 +384,14 @@ class Enhance_GPEN256Pro:
             src_f = _F.interpolate(s_t, size=(target_size, target_size), mode='bicubic', align_corners=False)
         else:
             src_f = s_t
+
+        if p_t is not None:
+            if p_t.shape[2:] != (target_size, target_size):
+                tex_source = _F.interpolate(p_t, size=(target_size, target_size), mode='bicubic', align_corners=False)
+            else:
+                tex_source = p_t
+        else:
+            tex_source = src_f
 
         gray = (0.114 * rest_f[:, 0:1] + 0.587 * rest_f[:, 1:2] + 0.299 * rest_f[:, 2:3])
 
@@ -377,9 +409,9 @@ class Enhance_GPEN256Pro:
         exp_gate = cls._tex_lut_gpu[gray_idx]
         w_tex = skin_gate * exp_gate
         k_tex, r_ktex = cls._gaussian_kernel_2d_gpu(max(1.0, target_size / 256.0), device)
-        padded_src = _F.pad(src_f, (r_ktex, r_ktex, r_ktex, r_ktex), mode='reflect')
-        src_blur = _F.conv2d(padded_src, k_tex.repeat(3, 1, 1, 1), groups=3)
-        hf_texture = src_f - src_blur
+        padded_tex = _F.pad(tex_source, (r_ktex, r_ktex, r_ktex, r_ktex), mode='reflect')
+        tex_blur = _F.conv2d(padded_tex, k_tex.repeat(3, 1, 1, 1), groups=3)
+        hf_texture = tex_source - tex_blur
         core = torch.exp(hf_texture * hf_texture * (-1.0 / 256.0))
         injected_texture = hf_texture * core * w_tex
 
@@ -441,7 +473,7 @@ class Enhance_GPEN256Pro:
         return np.ascontiguousarray(out[0].permute(1, 2, 0).contiguous().cpu().numpy())
 
     @classmethod
-    def _enhance_textures_and_sharpness_gpu(cls, restored, source, input_size):
+    def _enhance_textures_and_sharpness_gpu(cls, restored, source, input_size, plate=None):
         device = torch.device('cuda')
         try:
             want = int(os.environ.get('ROOP_GPEN256PRO_SIZE', '') or 0)
@@ -449,17 +481,20 @@ class Enhance_GPEN256Pro:
             want = 0
         target_size = want if want in (256, 512, 1024) else (512 if input_size <= 256 else input_size)
 
-        if cls._graph_filter_enabled():
+        if plate is None and cls._graph_filter_enabled():
             return cls._enhance_textures_and_sharpness_graph(
                 restored, source, input_size, target_size, device)
 
         r_t = torch.from_numpy(np.ascontiguousarray(restored)).to(device, dtype=torch.float32).permute(2, 0, 1).unsqueeze(0).contiguous()
         s_t = torch.from_numpy(np.ascontiguousarray(source)).to(device, dtype=torch.float32).permute(2, 0, 1).unsqueeze(0).contiguous()
-        out = cls._gpu_filter_core(r_t, s_t, target_size, graph_safe=False)
+        p_t = None
+        if plate is not None:
+            p_t = torch.from_numpy(np.ascontiguousarray(plate)).to(device, dtype=torch.float32).permute(2, 0, 1).unsqueeze(0).contiguous()
+        out = cls._gpu_filter_core(r_t, s_t, target_size, graph_safe=False, p_t=p_t)
         return np.ascontiguousarray(out[0].permute(1, 2, 0).contiguous().cpu().numpy())
 
     @classmethod
-    def _enhance_textures_and_sharpness(cls, restored, source, input_size):
+    def _enhance_textures_and_sharpness(cls, restored, source, input_size, plate=None):
         """Applies structure-gated micro-texture injection and edge-targeted sharpening."""
         # Measurement lever (A/B the two filter paths in a render):
         # ROOP_GPEN256PRO_FILTER=cpu forces the host path, anything else = auto.
@@ -470,15 +505,15 @@ class Enhance_GPEN256Pro:
         force_cpu = os.environ.get('ROOP_GPEN256PRO_FILTER', 'auto').strip().lower() == 'cpu'
         if _TORCH_CUDA and not force_cpu:
             try:
-                return cls._enhance_textures_and_sharpness_gpu(restored, source, input_size)
+                return cls._enhance_textures_and_sharpness_gpu(restored, source, input_size, plate=plate)
             except Exception as e:
                 if not cls._warned_texture:
                     cls._warned_texture = True
                     print(f"[GPEN 256 Pro] GPU texture fix fallback to CPU: {e}", flush=True)
-        return cls._enhance_textures_and_sharpness_cpu(restored, source, input_size)
+        return cls._enhance_textures_and_sharpness_cpu(restored, source, input_size, plate=plate)
 
     @classmethod
-    def _enhance_textures_and_sharpness_cpu(cls, restored, source, input_size):
+    def _enhance_textures_and_sharpness_cpu(cls, restored, source, input_size, plate=None):
         try:
             try:
                 want = int(os.environ.get('ROOP_GPEN256PRO_SIZE', '') or 0)
@@ -504,6 +539,16 @@ class Enhance_GPEN256Pro:
 
             rest_f = rest_scaled.astype(np.float32)
             src_f = src_scaled.astype(np.float32)
+
+            if plate is not None:
+                if plate.shape[:2] != (target_size, target_size):
+                    plate_scaled = cv2.resize(plate, (target_size, target_size),
+                                              interpolation=cv2.INTER_CUBIC)
+                else:
+                    plate_scaled = plate
+                tex_f = plate_scaled.astype(np.float32)
+            else:
+                tex_f = src_f
 
             # THE SHAPE OF WHAT FOLLOWS IS THE COST, NOT THE OPERATORS.
             # Everything here is a pass over a 512x512x3 float32 buffer (3 MB),
@@ -548,10 +593,10 @@ class Enhance_GPEN256Pro:
             #    array carrying 0.85 * skin_gate * exposure_gate.
             w_tex = cv2.multiply(skin_gate, cls._EXPOSURE_LUT_TEX[gray_u8])
 
-            # 3. High-frequency dermal micro-texture from the pre-restoration crop.
+            # 3. High-frequency dermal micro-texture from the plate crop (or pre-restoration crop).
             sigma_texture = max(1.0, target_size / 256.0)
-            src_blur = cv2.GaussianBlur(src_f, (0, 0), sigma_texture)
-            hf_texture = cv2.subtract(src_f, src_blur)
+            tex_blur = cv2.GaussianBlur(tex_f, (0, 0), sigma_texture)
+            hf_texture = cv2.subtract(tex_f, tex_blur)
             # exp(-(hf/16)^2), as one scaled square and one exp.
             core = cv2.exp(cv2.multiply(hf_texture, hf_texture, scale=-1.0 / 256.0))
 
@@ -666,10 +711,35 @@ class Enhance_GPEN256Pro:
         # 1. Color correction: GPEN luminance with source chrominance
         color_fixed_256 = self._keep_source_colour(restored_256, src_256)
 
-        # 2. Multi-band texture injection, edge-gated sharpening & photo-realism
-        enhanced = (self._enhance_textures_and_sharpness_cpu(color_fixed_256, temp_frame, input_size)
+        # 2. Frequency-split recombination (low band from swap, high band from restorer)
+        # Suppresses StyleGAN2's airbrushed porcelain shading, keeping natural photographic tones.
+        dw = self._detail_weight()
+        if dw is not None:
+            try:
+                from roop import enhance_blend
+                color_fixed_256 = enhance_blend.frequency_blend(
+                    src_256, color_fixed_256, weight=dw, sigma=1.0)
+            except Exception as _fb_err:
+                pass
+
+        # 3. Resolve untouched target plate crop for authentic dermal texture stealing
+        plate_crop = None
+        if self._plate_dermal_enabled() and target_face is not None:
+            if hasattr(target_face, 'aligned_img') and target_face.aligned_img is not None:
+                plate_crop = target_face.aligned_img
+            elif isinstance(target_face, dict) and target_face.get('aligned_img') is not None:
+                plate_crop = target_face['aligned_img']
+            elif hasattr(target_face, 'plate_ctx') and target_face.plate_ctx is not None:
+                try:
+                    _pl, _m = target_face.plate_ctx
+                    plate_crop = cv2.warpAffine(_pl, _m, (input_size, input_size), flags=cv2.INTER_CUBIC)
+                except (cv2.error, ValueError, TypeError, AttributeError) as _ctx_err:
+                    plate_crop = None
+
+        # 4. Multi-band texture injection, edge-gated sharpening & photo-realism
+        enhanced = (self._enhance_textures_and_sharpness_cpu(color_fixed_256, temp_frame, input_size, plate=plate_crop)
                     if self._cpu_only else
-                    self._enhance_textures_and_sharpness(color_fixed_256, temp_frame, input_size))
+                    self._enhance_textures_and_sharpness(color_fixed_256, temp_frame, input_size, plate=plate_crop))
 
         with self._lock:
             self._faces += 1
@@ -683,5 +753,5 @@ class Enhance_GPEN256Pro:
         if not f:
             return None
         return (f"[GPEN 256 Pro] {f} faces at {self.size} "
-                f"(GPEN-256 neural base, structure-gated micro-textures, photoreal chrominance"
+                f"(GPEN-256 neural base, plate dermal micro-textures, frequency split, photoreal chrominance"
                 f"{', pooled' if self.pool is not None else ''})")
