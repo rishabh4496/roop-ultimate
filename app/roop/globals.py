@@ -300,3 +300,9 @@ BATCH_IMAGE_CHAIN_PROCESSOR = None
 CFG: Settings = None
 
 use_3d_recon = False
+
+# Stage 7 Surgical Mouth Dynamics and Occlusion Governance
+restore_original_mouth = False
+mouth_open_threshold = 0.18
+enable_xseg_occlusion = False
+occlusion_erosion = 3

@@ -15,6 +15,10 @@ import time as _time
 if any(arg.startswith('--execution-provider') for arg in sys.argv):
     os.environ['OMP_NUM_THREADS'] = '1'
 
+# Allow submodules under roop/core/ (e.g. roop.core.pipeline_manager) to be imported cleanly
+__path__ = [os.path.join(os.path.dirname(__file__), 'core')]
+
+
 import warnings
 from typing import List, Dict, Any, Optional, Union, Tuple
 from dataclasses import dataclass, asdict

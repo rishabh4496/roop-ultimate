@@ -1105,7 +1105,20 @@ class Enhance_UltraMax:
 
         cuda_result = self._run_cuda_postprocess(src512, input_size, temp_frame)
         if cuda_result is not None:
-            return cuda_result
+            res_frame, scale = cuda_result
+            try:
+                from roop.core.pipeline_manager import PipelineManager
+                orig_crop = getattr(target_face, 'aligned_img', None)
+                if orig_crop is None:
+                    orig_crop = src512
+                res_frame, _ = PipelineManager.get_instance().process_enhancer_crop(
+                    enhanced_crop=res_frame,
+                    original_crop=orig_crop,
+                    target_face=target_face,
+                )
+            except Exception as _st7_err:
+                _swallowed("roop/processors/Enhance_UltraMax.py:stage7_cuda", _st7_err, "stage7 fallback")
+            return res_frame, scale
 
         # One gather: uint8 BGR HWC -> model dtype RGB CHW in [-1, 1]. Fancy
         # indexing returns a fresh C-contiguous array, so the [None] that follows
@@ -1248,6 +1261,18 @@ class Enhance_UltraMax:
 
         with self._lock:
             self._faces += 1
+        try:
+            from roop.core.pipeline_manager import PipelineManager
+            orig_crop = getattr(target_face, 'aligned_img', None)
+            if orig_crop is None:
+                orig_crop = src512
+            restored, _ = PipelineManager.get_instance().process_enhancer_crop(
+                enhanced_crop=restored,
+                original_crop=orig_crop,
+                target_face=target_face,
+            )
+        except Exception as _st7_err:
+            _swallowed("roop/processors/Enhance_UltraMax.py:stage7_cpu", _st7_err, "stage7 fallback")
         return sized(restored, input_size)
 
     # ── reporting ────────────────────────────────────────────────────────────

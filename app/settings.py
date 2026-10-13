@@ -103,6 +103,11 @@ UI_SETTINGS = (
     ('light_harmonizer_ambient_bias', 'Ambient light bias', 'Lighting & Harmonization'),
     ('light_harmonizer_eye_specular', 'Eye specular catchlight restoration', 'Lighting & Harmonization'),
     ('light_harmonizer_shadow_occlusion', 'Dynamic shadow casting', 'Lighting & Harmonization'),
+    # Surgical mouth & occlusion
+    ('restore_original_mouth', 'Restore dynamic original mouth', 'Surgical mouth & occlusion'),
+    ('mouth_open_threshold', 'Mouth open MAR threshold', 'Surgical mouth & occlusion'),
+    ('enable_xseg_occlusion', 'DFL XSeg occlusion governance', 'Surgical mouth & occlusion'),
+    ('occlusion_erosion', 'Occlusion erosion kernel size', 'Surgical mouth & occlusion'),
 )
 
 # kinds:
@@ -172,6 +177,10 @@ ENV_SETTINGS = (
     ('hdr_output_codec', 'ROOP_HDR_CODEC', 'value'),
     ('identity_confidence_threshold', 'ROOP_IDENTITY_CONFIDENCE_THRESHOLD', 'value'),
     ('process_priority', 'ROOP_PRIORITY', 'priority'),
+    ('restore_original_mouth', 'ROOP_RESTORE_ORIGINAL_MOUTH', 'bool'),
+    ('mouth_open_threshold', 'ROOP_MOUTH_OPEN_THRESHOLD', 'value'),
+    ('enable_xseg_occlusion', 'ROOP_ENABLE_XSEG_OCCLUSION', 'bool'),
+    ('occlusion_erosion', 'ROOP_OCCLUSION_EROSION', 'value'),
 )
 
 # ENV_SETTINGS whose variable is read each time it is used (per render, per
@@ -183,7 +192,9 @@ LIVE_ENV_SETTINGS = ('perf_batch_max', 'perf_nvenc_preset', 'perf_gpu_affine',
                      'perf_pinned_buffers', 'temporal_step', 'enhance_min_face_px',
                      'identity_confidence_threshold',
                      'hdr_pipeline', 'hdr_source_transfer', 'hdr_source_primaries',
-                     'hdr_output_codec')
+                     'hdr_output_codec',
+                     'restore_original_mouth', 'mouth_open_threshold',
+                     'enable_xseg_occlusion', 'occlusion_erosion')
 
 # Variables apply_env/apply_live_env set from config in this process -- as
 # opposed to ones the launcher or a benchmark put in the environment, which
@@ -1091,6 +1102,9 @@ class Settings:
         # nothing. Both now live in the detection block only.
         self.show_mask_offsets = self.default_get(data, 'show_mask_offsets', False)
         self.restore_original_mouth = self.default_get(data, 'restore_original_mouth', False)
+        self.mouth_open_threshold = float(self.default_get(data, 'mouth_open_threshold', 0.18))
+        self.enable_xseg_occlusion = bool(self.default_get(data, 'enable_xseg_occlusion', False))
+        self.occlusion_erosion = int(self.default_get(data, 'occlusion_erosion', 3))
         self.mask_top = self.default_get(data, 'mask_top', 0.0)
         self.mask_bottom = self.default_get(data, 'mask_bottom', 0.0)
         self.mask_left = self.default_get(data, 'mask_left', 0.0)
@@ -1478,6 +1492,9 @@ class Settings:
             'track_identities': self.track_identities,
             'show_mask_offsets': self.show_mask_offsets,
             'restore_original_mouth': self.restore_original_mouth,
+            'mouth_open_threshold': self.mouth_open_threshold,
+            'enable_xseg_occlusion': self.enable_xseg_occlusion,
+            'occlusion_erosion': self.occlusion_erosion,
             'mask_top': self.mask_top,
             'mask_bottom': self.mask_bottom,
             'mask_left': self.mask_left,

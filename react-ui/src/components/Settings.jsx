@@ -700,6 +700,13 @@ export default function Settings({ meta, settings, setSettings, notify }) {
           <Select label="Process priority" info="ROOP_PRIORITY — Windows scheduling priority class while rendering. 'high' is the default and finishes soonest; drop to 'normal' to keep the rest of the machine more responsive. EcoQoS power throttling is always opted out of regardless of this — being backgrounded by Windows used to cost real throughput, and that is not a setting." {...bind('process_priority', 'auto')} options={m.priorities || ['auto', 'high', 'above_normal', 'normal']} />
         </FilterSection>
 
+        <FilterSection title="Surgical mouth &amp; occlusion (Stage 7)" icon={Icon.faces ?? Icon.meter} query={query} onlyModified={onlyModified} onResetKeys={resetKeys}>
+          <Toggle label="Restore dynamic original mouth" info="When speech or mouth opening (MAR) is detected, composite the original target mouth aperture with adaptive dental and tongue isolation." {...bindToggle('restore_original_mouth')} />
+          <Slider label="Mouth open MAR threshold" info="Mouth Aspect Ratio (MAR) threshold (default 0.18) calculated from inner lip landmarks. When exceeded, activates mouth restoration sub-pass." min={0.05} max={0.5} step={0.01} {...bind('mouth_open_threshold', 0.18)} />
+          <Toggle label="DFL XSeg occlusion governance" info="Run GPU XSeg occlusion inference to detect foreign objects (hands, microphones, glassware) and composite them cleanly in foreground." {...bindToggle('enable_xseg_occlusion')} />
+          <Slider label="Occlusion erosion kernel size" info="Morphological erosion kernel size (1 - 5) for clean occlusion boundary trimming without border bleeding." min={1} max={5} step={1} {...bind('occlusion_erosion', 3)} />
+        </FilterSection>
+
         <Section title="Identity API: embedding backend" icon={Icon.faces} className="break-inside-avoid mb-4">
           <RecognitionPanel notify={notify} onApplied={(sel) => setSettings((s) => mergeSelection(s, sel))} />
         </Section>

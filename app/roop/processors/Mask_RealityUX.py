@@ -1,14 +1,18 @@
 from roop.degrade import swallowed as _swallowed
 import threading
+from typing import Any, List, Optional, Tuple, Union
 
 import cv2
 import numpy as np
 
+import roop.globals
 from roop.typing import Frame
 from roop.processors.Mask_XSeg import Mask_XSeg
 from roop.processors.Mask_FaceParser import (Mask_FaceParser,
                                              glasses_frame_mask)
 from roop import session_pool
+from roop.enhancers.mouth_dynamics import MouthDynamicsEngine, compute_mar
+from roop.enhancers.occlusion_governor import OcclusionGovernor
 
 
 def _small_card_parser_enabled():
@@ -147,6 +151,14 @@ class Mask_RealityUX():
         # two models, found by comparing this against XSeg-alone's own
         # Initialize (which sets self.pool = None unless pooling is enabled).
         self.pool = None
+        self._mouth_engine = MouthDynamicsEngine()
+        self._occlusion_governor = OcclusionGovernor()
+        self._last_telemetry = {
+            "mar": 0.0,
+            "mouth_restored": False,
+            "occlusion_applied": False,
+            "non_targets_protected": 0,
+        }
 
     def Initialize(self, plugin_options: dict):
         self.plugin_options = plugin_options
@@ -169,99 +181,248 @@ class Mask_RealityUX():
         if session_pool.detmask_pooling_enabled():
             self.pool = True
 
-    def Run(self, img1, keywords: str) -> Frame:
+    def Run(
+        self,
+        img1: Frame,
+        keywords: str = '',
+        target_face: Any = None,
+        frame_faces: Optional[List[Any]] = None,
+        M: Optional[np.ndarray] = None,
+        orig_frame: Optional[np.ndarray] = None,
+        restore_original_mouth: Optional[bool] = None,
+        mouth_open_threshold: Optional[float] = None,
+        enable_xseg_occlusion: Optional[bool] = None,
+        occlusion_erosion: Optional[int] = None,
+        **kwargs: Any,
+    ) -> Frame:
+        if img1 is None or img1.size == 0:
+            return np.zeros((1, 1), dtype=np.float32)
+
+        if restore_original_mouth is None:
+            restore_original_mouth = bool(getattr(roop.globals, 'restore_original_mouth', False))
+        if mouth_open_threshold is None:
+            mouth_open_threshold = float(getattr(roop.globals, 'mouth_open_threshold', 0.18))
+        if enable_xseg_occlusion is None:
+            enable_xseg_occlusion = bool(getattr(roop.globals, 'enable_xseg_occlusion', False))
+        if occlusion_erosion is None:
+            occlusion_erosion = int(getattr(roop.globals, 'occlusion_erosion', 3))
+
         if not self._parser_enabled:
-            return _to_2d(self._xseg.Run(img1, keywords)).astype(np.float32)
-        # XSeg and BiSeNet's raw label inference are independent, stateless
-        # calls into separate ONNX sessions (each with its own pool when
-        # pooling is on) -- run them concurrently instead of paying for both
-        # sequentially. ORT's actual inference releases the GIL, so this is
-        # real wall-clock overlap, not just Python-level interleaving.
-        if self._executor is not None:
-            future = self._executor.submit(self._parser.RunLabels, img1)
-            xseg_mask = _to_2d(self._xseg.Run(img1, keywords))
-            labels = future.result()
+            xseg_mask = _to_2d(self._xseg.Run(img1, keywords)).astype(np.float32)
+            combined = xseg_mask.copy()
+            labels = None
         else:
-            labels = self._parser.RunLabels(img1)
-            xseg_mask = _to_2d(self._xseg.Run(img1, keywords))
+            # XSeg and BiSeNet's raw label inference are independent, stateless
+            # calls into separate ONNX sessions (each with its own pool when
+            # pooling is on) -- run them concurrently instead of paying for both
+            # sequentially. ORT's actual inference releases the GIL, so this is
+            # real wall-clock overlap, not just Python-level interleaving.
+            if self._executor is not None:
+                future = self._executor.submit(self._parser.RunLabels, img1)
+                xseg_mask = _to_2d(self._xseg.Run(img1, keywords))
+                labels = future.result()
+            else:
+                labels = self._parser.RunLabels(img1)
+                xseg_mask = _to_2d(self._xseg.Run(img1, keywords))
 
-        # Classes BiSeNet is allowed to subtract from XSeg's swap region:
-        # non-face accessories/features -- ears(7,8,9), cloth(16), hair(17), hat(18).
-        # Background class (0) is NEVER subtracted from the XSeg face region because
-        # BiSeNet's frontal priors falsely mark angled/lying-down faces as background,
-        # which causes partial/half-unswapped faces.
-        is_accessory = np.isin(labels, _NONFACE_OPAQUE).astype(np.float32)
+            # Classes BiSeNet is allowed to subtract from XSeg's swap region:
+            # non-face accessories/features -- ears(7,8,9), cloth(16), hair(17), hat(18).
+            # Background class (0) is NEVER subtracted from the XSeg face region because
+            # BiSeNet's frontal priors falsely mark angled/lying-down faces as background,
+            # which causes partial/half-unswapped faces.
+            is_accessory = np.isin(labels, _NONFACE_OPAQUE).astype(np.float32)
 
-        # Smooth accessory mask
-        is_accessory = cv2.GaussianBlur(is_accessory, (0, 0), sigmaX=3)
+            # Smooth accessory mask
+            is_accessory = cv2.GaussianBlur(is_accessory, (0, 0), sigmaX=3)
 
-        h, w = labels.shape[:2]
-        if xseg_mask.shape[:2] != (h, w):
-            xseg_mask = cv2.resize(xseg_mask, (w, h), interpolation=cv2.INTER_LINEAR)
+            h, w = labels.shape[:2]
+            if xseg_mask.shape[:2] != (h, w):
+                xseg_mask = cv2.resize(xseg_mask, (w, h), interpolation=cv2.INTER_LINEAR)
 
-        # Accessories are only subtracted outside the core facial structure (xseg_mask > 0.05)
-        # to ensure full face swapping without half-face cutoffs.
-        #
-        # WHAT THIS COSTS, MEASURED (2026-08-25, RTX 4070, 62 real face crops
-        # off the roster). The parser half is the expensive half by a long way,
-        # and it moves very little:
-        #
-        #     XSeg alone                     3.11 ms
-        #     BiSeNet RunLabels             16.47 ms   <- 5.3x the engine it augments
-        #     RealityUX Run (both)          21.97 ms
-        #
-        #     pixels it changes by >0.02:   p50 0.61%   p90 1.29%   max 2.28%
-        #     mean |delta| over the crop:   p50 0.0010              max 0.0062
-        #
-        # End to end, counterbalanced, 401 faces enhanced in both arms:
-        # RealityUX 21.95 fps against DFL XSeg alone 24.70 -- the parser is
-        # +12.5% OF THE WHOLE RENDER. That is the largest single piece of
-        # removable GPU work found anywhere in this pipeline.
-        #
-        # AND NOTE WHAT THE GATE BELOW DOES TO IT. `accessory_allowed` rises
-        # with xseg_mask, so the parser can only add exclusion WHERE XSEG IS
-        # ALREADY EXCLUDING (zero below xseg 0.05, saturated by 0.25). Sampled
-        # on a real face: 533 pixels changed, all class 17 (hair), where XSeg
-        # already read 0.522 -- the parser took them to 0.707. ZERO pixels were
-        # removed. So it FIRMS UP a hairline XSeg has already half found, and by
-        # construction it cannot rescue one XSeg misses entirely, which is the
-        # disagreement case it was added for.
-        #
-        # Left as it is rather than changed: the gate is what stops the parser's
-        # frontal priors eating an angled face (see the class-0 note above), and
-        # loosening it is a mask-quality decision that needs footage, not a perf
-        # edit. But anyone looking for speed should read the trade honestly --
-        # 12.5% of the render for 0.6% of the mask's pixels -- and
-        # `mask_engine: DFL XSeg` is the switch.
-        accessory_allowed = np.clip((xseg_mask - 0.05) / 0.20, 0.0, 1.0)
-        non_face = np.clip(is_accessory * accessory_allowed, 0.0, 1.0)
+            # Accessories are only subtracted outside the core facial structure (xseg_mask > 0.05)
+            # to ensure full face swapping without half-face cutoffs.
+            #
+            # WHAT THIS COSTS, MEASURED (2026-08-25, RTX 4070, 62 real face crops
+            # off the roster). The parser half is the expensive half by a long way,
+            # and it moves very little:
+            #
+            #     XSeg alone                     3.11 ms
+            #     BiSeNet RunLabels             16.47 ms   <- 5.3x the engine it augments
+            #     RealityUX Run (both)          21.97 ms
+            #
+            #     pixels it changes by >0.02:   p50 0.61%   p90 1.29%   max 2.28%
+            #     mean |delta| over the crop:   p50 0.0010              max 0.0062
+            #
+            # End to end, counterbalanced, 401 faces enhanced in both arms:
+            # RealityUX 21.95 fps against DFL XSeg alone 24.70 -- the parser is
+            # +12.5% OF THE WHOLE RENDER. That is the largest single piece of
+            # removable GPU work found anywhere in this pipeline.
+            #
+            # AND NOTE WHAT THE GATE BELOW DOES TO IT. `accessory_allowed` rises
+            # with xseg_mask, so the parser can only add exclusion WHERE XSEG IS
+            # ALREADY EXCLUDING (zero below xseg 0.05, saturated by 0.25). Sampled
+            # on a real face: 533 pixels changed, all class 17 (hair), where XSeg
+            # already read 0.522 -- the parser took them to 0.707. ZERO pixels were
+            # removed. So it FIRMS UP a hairline XSeg has already half found, and by
+            # construction it cannot rescue one XSeg misses entirely, which is the
+            # disagreement case it was added for.
+            #
+            # Left as it is rather than changed: the gate is what stops the parser's
+            # frontal priors eating an angled face (see the class-0 note above), and
+            # loosening it is a mask-quality decision that needs footage, not a perf
+            # edit. But anyone looking for speed should read the trade honestly --
+            # 12.5% of the render for 0.6% of the mask's pixels -- and
+            # `mask_engine: DFL XSeg` is the switch.
+            accessory_allowed = np.clip((xseg_mask - 0.05) / 0.20, 0.0, 1.0)
+            non_face = np.clip(is_accessory * accessory_allowed, 0.0, 1.0)
 
-        combined = np.maximum(xseg_mask, non_face)
+            combined = np.maximum(xseg_mask, non_face)
 
-        # Eyeglass FRAMES, deliberately NOT routed through `accessory_allowed`.
-        #
-        # The gate above exists to stop BiSeNet's frontal priors eating an
-        # angled face, and it works by only letting the parser exclude where
-        # XSeg is ALREADY excluding. Class 6 cannot be helped by that: measured
-        # over ~800k glasses pixels on three subjects, xseg p50 is 0.002-0.004
-        # -- XSeg wants to swap essentially all of it -- so ~60% of the class
-        # sits below the gate's 0.05 floor where permission is exactly zero,
-        # and the fused mask paints over ~71% of the frame, bit for bit the
-        # same as XSeg alone.
-        #
-        # Being ungated is safe HERE, and only here, because the region is
-        # geometrically bounded: `glasses_frame_mask` removes the eye socket
-        # before returning, and refuses outright when class 6 covers an
-        # implausible share of the crop. It therefore cannot produce the
-        # half-unswapped face the gate was written to prevent, which is a
-        # property of the mask's shape rather than of a threshold.
-        glasses = glasses_frame_mask(labels, crop_size=img1.shape[0])
-        if glasses is not None:
-            if glasses.shape[:2] != combined.shape[:2]:
-                glasses = cv2.resize(glasses, (combined.shape[1],
-                                               combined.shape[0]),
-                                     interpolation=cv2.INTER_LINEAR)
-            combined = np.maximum(combined, glasses)
+            # Eyeglass FRAMES, deliberately NOT routed through `accessory_allowed`.
+            #
+            # The gate above exists to stop BiSeNet's frontal priors eating an
+            # angled face, and it works by only letting the parser exclude where
+            # XSeg is ALREADY excluding. Class 6 cannot be helped by that: measured
+            # over ~800k glasses pixels on three subjects, xseg p50 is 0.002-0.004
+            # -- XSeg wants to swap essentially all of it -- so ~60% of the class
+            # sits below the gate's 0.05 floor where permission is exactly zero,
+            # and the fused mask paints over ~71% of the frame, bit for bit the
+            # same as XSeg alone.
+            #
+            # Being ungated is safe HERE, and only here, because the region is
+            # geometrically bounded: `glasses_frame_mask` removes the eye socket
+            # before returning, and refuses outright when class 6 covers an
+            # implausible share of the crop. It therefore cannot produce the
+            # half-unswapped face the gate was written to prevent, which is a
+            # property of the mask's shape rather than of a threshold.
+            glasses = glasses_frame_mask(labels, crop_size=img1.shape[0])
+            if glasses is not None:
+                if glasses.shape[:2] != combined.shape[:2]:
+                    glasses = cv2.resize(glasses, (combined.shape[1],
+                                                   combined.shape[0]),
+                                         interpolation=cv2.INTER_LINEAR)
+                combined = np.maximum(combined, glasses)
+
+        # ── Stage 7: Foreign Object Occlusion Masking (DFL XSeg) ──────────────
+        occ_applied = False
+        if enable_xseg_occlusion and xseg_mask is not None:
+            try:
+                occ_raw = (xseg_mask > 0.40).astype(np.uint8) * 255
+                if np.any(occ_raw > 0):
+                    k_size = int(np.clip(occlusion_erosion, 1, 5))
+                    if k_size % 2 == 0:
+                        k_size += 1
+                    morph_k = cv2.getStructuringElement(cv2.MORPH_RECT, (k_size, k_size))
+                    eroded_occ = cv2.erode(occ_raw, morph_k, iterations=1)
+
+                    feather_k = 9
+                    eroded_f = eroded_occ.astype(np.float32) / 255.0
+                    feathered_occ = cv2.GaussianBlur(eroded_f, (feather_k, feather_k), sigmaX=2.0)
+                    feathered_occ = np.clip(feathered_occ, 0.0, 1.0)
+
+                    # In RealityUX mask convention, 1.0 = keep original, 0.0 = swap.
+                    # Overlaying occluding objects cleanly preserves them in foreground
+                    combined = np.maximum(combined, feathered_occ)
+                    occ_applied = True
+            except Exception as _e_occ:
+                _swallowed("Mask_RealityUX.occlusion_governance", _e_occ)
+
+        # ── Stage 7: Dynamic Mouth Aperture & Dental Restoration ──────────────
+        mouth_applied = False
+        mar_val = 0.0
+        if restore_original_mouth and target_face is not None:
+            try:
+                lm = getattr(target_face, "landmark_3d_68", None)
+                if lm is None:
+                    lm = getattr(target_face, "landmark_2d_106", None)
+                if lm is None:
+                    lm = getattr(target_face, "kps", None)
+
+                mar_val = compute_mar(lm)
+                if mar_val >= mouth_open_threshold:
+                    h, w = combined.shape[:2]
+                    bisenet_mouth = None
+                    if labels is not None:
+                        if labels.shape[:2] != (h, w):
+                            l_sized = cv2.resize(labels, (w, h), interpolation=cv2.INTER_NEAREST)
+                        else:
+                            l_sized = labels
+                        # BiSeNet class 11 = mouth opening (oral cavity)
+                        bisenet_mouth = (l_sized == 11).astype(np.float32)
+
+                    inner_pts = self._mouth_engine.get_inner_lip_points(target_face, (h, w))
+                    adaptive_mouth = self._mouth_engine.generate_inner_mouth_mask(
+                        img1, inner_pts, feather_radius=4
+                    )
+                    if adaptive_mouth.shape[:2] != (h, w):
+                        adaptive_mouth = cv2.resize(adaptive_mouth, (w, h), interpolation=cv2.INTER_LINEAR)
+
+                    if bisenet_mouth is not None and np.any(bisenet_mouth > 0):
+                        mouth_combined = np.maximum(bisenet_mouth, adaptive_mouth)
+                    else:
+                        mouth_combined = adaptive_mouth
+
+                    # Gaussian feathering (radius 3 to 5 pixels)
+                    mouth_feathered = cv2.GaussianBlur(mouth_combined, (9, 9), sigmaX=2.0)
+                    mouth_feathered = np.clip(mouth_feathered, 0.0, 1.0)
+
+                    # Preserve teeth, tongue, and oral cavity from original frame
+                    combined = np.maximum(combined, mouth_feathered)
+                    mouth_applied = True
+            except Exception as _e_mouth:
+                _swallowed("Mask_RealityUX.mouth_dynamics", _e_mouth)
+
+        # ── Stage 7: Non-Target Face Protection & Multi-Person Tracking ────────
+        non_targets_count = 0
+        if target_face is not None and frame_faces is not None and len(frame_faces) > 1 and M is not None:
+            try:
+                ref_emb = getattr(roop.globals, 'target_reference_embedding', None)
+                resolved_target, non_targets = self._occlusion_governor.arbitrate_multi_face_tracks(
+                    detected_faces=frame_faces,
+                    target_reference_embedding=ref_emb,
+                    target_face=target_face,
+                )
+                if non_targets:
+                    h, w = combined.shape[:2]
+                    prot_crop_mask = np.zeros((h, w), dtype=np.uint8)
+                    for ntf in non_targets:
+                        bbox = getattr(ntf, "bbox", None)
+                        if bbox is not None and len(bbox) >= 4:
+                            bx1, by1, bx2, by2 = [float(v) for v in bbox[:4]]
+                            bw = max(1.0, bx2 - bx1)
+                            bh = max(1.0, by2 - by1)
+                            pad_x = bw * 0.10
+                            pad_y = bh * 0.10
+                            bx1 = max(0.0, bx1 - pad_x)
+                            by1 = max(0.0, by1 - pad_y)
+                            bx2 = bx2 + pad_x
+                            by2 = by2 + pad_y
+
+                            box_pts = np.array([
+                                [bx1, by1], [bx2, by1], [bx2, by2], [bx1, by2]
+                            ], dtype=np.float32)
+
+                            # Transform from frame coordinates to crop coordinates using M
+                            crop_pts = cv2.transform(box_pts[None, ...], M)[0]
+                            poly_int = np.round(crop_pts).astype(np.int32)
+                            cv2.fillConvexPoly(prot_crop_mask, poly_int, 255)
+
+                    if np.any(prot_crop_mask > 0):
+                        prot_f = prot_crop_mask.astype(np.float32) / 255.0
+                        prot_feathered = cv2.GaussianBlur(prot_f, (11, 11), sigmaX=2.5)
+                        # Set protected non-target pixels to 1.0 (keep original, zero bleed)
+                        combined = np.maximum(combined, prot_feathered)
+                        non_targets_count = len(non_targets)
+            except Exception as _e_prot:
+                _swallowed("Mask_RealityUX.non_target_protection", _e_prot)
+
+        self._last_telemetry = {
+            "mar": mar_val,
+            "mouth_restored": mouth_applied,
+            "occlusion_applied": occ_applied,
+            "non_targets_protected": non_targets_count,
+        }
+
         return combined.astype(np.float32)
 
     def Release(self):

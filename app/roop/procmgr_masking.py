@@ -607,6 +607,21 @@ class MaskingMixin:
         if region is not None:
             region.trim_frame(img_matte)
 
+        # Stage 7 Non-target face isolation protection: weight = 0.0 for updates
+        try:
+            _frame_faces = getattr(self._tls, 'frame_faces', None)
+            if _frame_faces and len(_frame_faces) > 1 and target_face is not None:
+                from roop.core.pipeline_manager import PipelineManager
+                img_matte, _ = PipelineManager.get_instance().protect_frame_non_targets(
+                    frame_shape=target_img.shape,
+                    detected_faces=_frame_faces,
+                    target_face=target_face,
+                    target_matte=img_matte,
+                )
+        except Exception as _pnt_err:
+            _swallowed("roop/procmgr_masking.py:non_target_protect", _pnt_err, "protection fallback")
+
+
         # Same position, same reason, for the pose visibility trim: the feather is
         # what would spread the swap back over the hair this removes.
         #
@@ -1372,6 +1387,15 @@ class MaskingMixin:
                     frame_idx=getattr(self._tls, 'frame_idx', None),
                     track_id=_track_id,
                 )
+            elif p_name == 'mask_realityux':
+                mask_crop = processor.Run(
+                    cropped,
+                    self.options.masking_text,
+                    target_face=target_face,
+                    frame_faces=getattr(self._tls, 'frame_faces', None),
+                    M=M,
+                    orig_frame=orig_frame,
+                )
             else:
                 mask_crop = processor.Run(cropped, self.options.masking_text)
             
@@ -1417,6 +1441,15 @@ class MaskingMixin:
                     target_face=target_face,
                     frame_idx=getattr(self._tls, 'frame_idx', None),
                     track_id=_track_id,
+                )
+            elif p_name == 'mask_realityux':
+                img_mask = processor.Run(
+                    frame,
+                    self.options.masking_text,
+                    target_face=target_face,
+                    frame_faces=getattr(self._tls, 'frame_faces', None),
+                    M=M,
+                    orig_frame=orig_frame,
                 )
             else:
                 img_mask = processor.Run(frame, self.options.masking_text)

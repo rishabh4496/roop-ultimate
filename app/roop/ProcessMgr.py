@@ -3828,6 +3828,8 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 audit_detect_miss(getattr(roop.globals, 'face_detector_threshold', 0.5))
                 return num_faces_found, frame
             self._tls.last_found_bboxes = np.array([f.bbox for f in faces])   # cache for next frame
+            self._tls.frame_faces = list(faces)
+
             if os.environ.get('ROOP_DEBUG_FACELIST') == '1' and frame_idx is not None:
                 # One tuple per face: box, track id, and the three flags that
                 # decide its fate before identity is even read -- interpolated,
@@ -6805,14 +6807,24 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 _swallowed("roop/ProcessMgr.py:6567", _degrade_error, "fallback continued")
                 _expression_plan = None
 
-        if self.options.restore_original_mouth and not lipsync_wins:
-            mouth_cutout, mouth_bb, mouth_polygon = self.create_mouth_mask(target_face, plate, mask_offsets)
-            # _head_angles(), not the jaw-blind pair: this fade exists to stop a
-            # doubled lip on a head turned far enough that the plate's mouth no
-            # longer sits where the swap's does, and it is fed the head's angles
-            # for that reason. See _head_angles.
-            _hy, _hp = _head_angles()
-            result = self.apply_mouth_area(result, mouth_cutout, mouth_bb, mouth_polygon, mask_offsets[5], yaw=_hy, pitch=_hp, region=region)
+        _restore_mouth = bool(getattr(self.options, 'restore_original_mouth', False) or getattr(roop.globals, 'restore_original_mouth', False))
+        if _restore_mouth and not lipsync_wins:
+            _thresh = float(getattr(roop.globals, 'mouth_open_threshold', 0.18))
+            _lm = getattr(target_face, 'landmark_3d_68', None)
+            if _lm is None:
+                _lm = getattr(target_face, 'landmark_2d_106', None)
+            if _lm is None:
+                _lm = getattr(target_face, 'kps', None)
+            from roop.enhancers.mouth_dynamics import compute_mar
+            _mar = compute_mar(_lm)
+            if _mar >= _thresh:
+                mouth_cutout, mouth_bb, mouth_polygon = self.create_mouth_mask(target_face, plate, mask_offsets)
+                # _head_angles(), not the jaw-blind pair: this fade exists to stop a
+                # doubled lip on a head turned far enough that the plate's mouth no
+                # longer sits where the swap's does, and it is fed the head's angles
+                # for that reason. See _head_angles.
+                _hy, _hp = _head_angles()
+                result = self.apply_mouth_area(result, mouth_cutout, mouth_bb, mouth_polygon, mask_offsets[5], yaw=_hy, pitch=_hp, region=region)
 
         # Eye restore. Read off globals rather than threaded through
         # ProcessOptions like restore_original_mouth is: that parameter is

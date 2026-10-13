@@ -88,6 +88,12 @@ export const SETTINGS_CATALOG = [
   { key: 'light_harmonizer_ambient_bias', label: 'Ambient light bias', section: 'Lighting & Harmonization' },
   { key: 'light_harmonizer_eye_specular', label: 'Eye specular catchlight restoration', section: 'Lighting & Harmonization' },
   { key: 'light_harmonizer_shadow_occlusion', label: 'Dynamic shadow casting', section: 'Lighting & Harmonization' },
+
+  // Surgical mouth & occlusion
+  { key: 'restore_original_mouth', label: 'Restore dynamic original mouth', section: 'Surgical mouth & occlusion' },
+  { key: 'mouth_open_threshold', label: 'Mouth open MAR threshold', section: 'Surgical mouth & occlusion' },
+  { key: 'enable_xseg_occlusion', label: 'DFL XSeg occlusion governance', section: 'Surgical mouth & occlusion' },
+  { key: 'occlusion_erosion', label: 'Occlusion erosion kernel size', section: 'Surgical mouth & occlusion' },
 ];
 
 // The event the palette fires to send the Settings panel to one control. The

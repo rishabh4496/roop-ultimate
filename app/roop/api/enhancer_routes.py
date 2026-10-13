@@ -93,6 +93,26 @@ class UltraMaxParameters(BaseModel):
         default="tensorrt",
         description="Active execution provider: tensorrt, cuda, or cpu",
     )
+    restore_original_mouth: bool = Field(
+        default=False,
+        description="Dynamic mouth aperture and dental restoration when open",
+    )
+    mouth_open_threshold: float = Field(
+        default=0.18,
+        ge=0.05,
+        le=0.5,
+        description="Mouth Aspect Ratio (MAR) threshold to trigger mouth restoration (0.05 - 0.5)",
+    )
+    enable_xseg_occlusion: bool = Field(
+        default=False,
+        description="Enable DFL XSeg foreign object occlusion masking",
+    )
+    occlusion_erosion: int = Field(
+        default=3,
+        ge=1,
+        le=5,
+        description="Morphological erosion kernel size for occlusion mask (1 - 5)",
+    )
 
     @field_validator("skin_texture_strength", "eye_clarity")
     @classmethod
@@ -108,11 +128,25 @@ class UltraMaxParameters(BaseModel):
             raise ValueError("Value must be between 0.0 and 1.0")
         return round(float(v), 4)
 
+    @field_validator("mouth_open_threshold")
+    @classmethod
+    def validate_mar_threshold(cls, v: float) -> float:
+        if not (0.05 <= v <= 0.5):
+            raise ValueError("mouth_open_threshold must be between 0.05 and 0.5")
+        return round(float(v), 4)
+
     @field_validator("batch_size")
     @classmethod
     def validate_batch(cls, v: int) -> int:
         if not (1 <= v <= 8):
             raise ValueError("batch_size must be an integer between 1 and 8")
+        return int(v)
+
+    @field_validator("occlusion_erosion")
+    @classmethod
+    def validate_occlusion_erosion(cls, v: int) -> int:
+        if not (1 <= v <= 5):
+            raise ValueError("occlusion_erosion must be between 1 and 5")
         return int(v)
 
 
@@ -127,6 +161,10 @@ class UltraMaxUpdateParameters(BaseModel):
     batch_size: Optional[int] = Field(default=None, ge=1, le=8)
     precision_mode: Optional[PrecisionMode] = None
     provider: Optional[ExecutionProvider] = None
+    restore_original_mouth: Optional[bool] = None
+    mouth_open_threshold: Optional[float] = Field(default=None, ge=0.05, le=0.5)
+    enable_xseg_occlusion: Optional[bool] = None
+    occlusion_erosion: Optional[int] = Field(default=None, ge=1, le=5)
 
 
 class EngineCompilationStatus(BaseModel):
@@ -223,6 +261,14 @@ class UltraMaxRuntimeState:
                     roop_globals.ultramax_skin_strength = self.params.skin_texture_strength
                 if hasattr(roop_globals, "ultramax_blend_ratio"):
                     roop_globals.ultramax_blend_ratio = self.params.blend_ratio
+                if hasattr(roop_globals, "restore_original_mouth"):
+                    roop_globals.restore_original_mouth = self.params.restore_original_mouth
+                if hasattr(roop_globals, "mouth_open_threshold"):
+                    roop_globals.mouth_open_threshold = self.params.mouth_open_threshold
+                if hasattr(roop_globals, "enable_xseg_occlusion"):
+                    roop_globals.enable_xseg_occlusion = self.params.enable_xseg_occlusion
+                if hasattr(roop_globals, "occlusion_erosion"):
+                    roop_globals.occlusion_erosion = self.params.occlusion_erosion
             except Exception as exc:
                 swallowed("enhancer_routes.sync_globals", exc)
 

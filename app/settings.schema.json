@@ -67,7 +67,11 @@
     "light_harmonizer_key_intensity",
     "light_harmonizer_ambient_bias",
     "light_harmonizer_eye_specular",
-    "light_harmonizer_shadow_occlusion"
+    "light_harmonizer_shadow_occlusion",
+    "restore_original_mouth",
+    "mouth_open_threshold",
+    "enable_xseg_occlusion",
+    "occlusion_erosion"
   ],
   "settings": {
     "hardware": {
@@ -572,7 +576,51 @@
     },
     "restore_original_mouth": {
       "default": false,
-      "type": "bool"
+      "type": "bool",
+      "ui": {
+        "label": "Restore dynamic original mouth",
+        "section": "Surgical mouth & occlusion"
+      },
+      "env": {
+        "var": "ROOP_RESTORE_ORIGINAL_MOUTH",
+        "kind": "bool"
+      }
+    },
+    "mouth_open_threshold": {
+      "default": 0.18,
+      "type": "float",
+      "ui": {
+        "label": "Mouth open MAR threshold",
+        "section": "Surgical mouth & occlusion"
+      },
+      "env": {
+        "var": "ROOP_MOUTH_OPEN_THRESHOLD",
+        "kind": "value"
+      }
+    },
+    "enable_xseg_occlusion": {
+      "default": false,
+      "type": "bool",
+      "ui": {
+        "label": "DFL XSeg occlusion governance",
+        "section": "Surgical mouth & occlusion"
+      },
+      "env": {
+        "var": "ROOP_ENABLE_XSEG_OCCLUSION",
+        "kind": "bool"
+      }
+    },
+    "occlusion_erosion": {
+      "default": 3,
+      "type": "int",
+      "ui": {
+        "label": "Occlusion erosion kernel size",
+        "section": "Surgical mouth & occlusion"
+      },
+      "env": {
+        "var": "ROOP_OCCLUSION_EROSION",
+        "kind": "value"
+      }
     },
     "mask_top": {
       "default": 0.0,

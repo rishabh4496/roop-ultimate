@@ -3254,6 +3254,47 @@ export default function FaceSwap({
           {p.mask_engine === 'Segment Anything 2 (tracked)' && (
             <Select label="SAM2 checkpoint (speed ↔ quality)" value={p.sam2_model_size || 'tiny'} onChange={(v) => set('sam2_model_size', v)} options={meta.sam2_model_sizes || ['tiny', 'small', 'base_plus', 'large']} />
           )}
+          {p.mask_engine === 'RealityUX' && (
+            <div className="flex flex-col gap-2 p-3 my-2 rounded-xl bg-slate-900/60 border border-white/10">
+              <div className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
+                <span>🛡️</span> RealityUX Surgical Governance
+              </div>
+              <Toggle
+                label="Restore original mouth aperture (MAR gated)"
+                info="Dynamically restores inner mouth aperture, teeth, and tongue when MAR exceeds threshold during speech, smiles, or yawning."
+                checked={!!p.restore_original_mouth}
+                onChange={(v) => set('restore_original_mouth', v)}
+              />
+              {p.restore_original_mouth && (
+                <Slider
+                  label="Mouth open threshold (MAR)"
+                  info="Mouth Aspect Ratio trigger threshold (default 0.18)"
+                  min={0.05}
+                  max={0.5}
+                  step={0.01}
+                  value={num(p.mouth_open_threshold, 0.18)}
+                  onChange={(v) => set('mouth_open_threshold', v)}
+                />
+              )}
+              <Toggle
+                label="DFL XSeg foreign object occlusion"
+                info="Isolates hands, microphones, fingers, and foreign objects with morphological erosion and feathering."
+                checked={!!p.enable_xseg_occlusion}
+                onChange={(v) => set('enable_xseg_occlusion', v)}
+              />
+              {p.enable_xseg_occlusion && (
+                <Slider
+                  label="Occlusion erosion radius"
+                  info="Morphological erosion kernel size (1 - 5 px) to eliminate boundary halos."
+                  min={1}
+                  max={5}
+                  step={1}
+                  value={num(p.occlusion_erosion, 3)}
+                  onChange={(v) => set('occlusion_erosion', v)}
+                />
+              )}
+            </div>
+          )}
           <Toggle label="Protect eyeglass frames" info="Keeps the rim, bridge and temple arms of a pair of glasses from being painted over by the swap, while leaving the lens directly over each eye swappable so the eyes stay the faceset&apos;s own rather than the original person&apos;s. Needs a parser-backed masking engine (RealityUX or Face Parser) — the classes come from BiSeNet. Measured over ~800k parsed glasses pixels on three subjects: ~71% of the frame was being painted over, and the RealityUX fusion was contributing exactly nothing there, because XSeg reads ~0.003 on glasses and the accessory gate scales with XSeg. Costs no extra model call — it reuses the parse already being run." checked={p.glasses_frame_protect !== false} onChange={(v) => set('glasses_frame_protect', v)} />
           <Toggle label="Show mask overlay in preview" checked={!!p.show_mask_offsets} onChange={(v) => set('show_mask_offsets', v)} />
           <Slider label="Offset face top" min={0} max={2} step={0.01} value={num(p.mask_top, 0)} onChange={(v) => set('mask_top', v)} />

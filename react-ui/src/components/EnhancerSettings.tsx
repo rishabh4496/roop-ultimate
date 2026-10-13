@@ -16,6 +16,7 @@ import {
   HardDrive,
   Workflow,
   Radio,
+  Shield,
 } from 'lucide-react';
 
 export type PrecisionMode = 'hybrid_fp16_fp32' | 'strict_fp32';
@@ -31,6 +32,10 @@ export interface UltraMaxSettings {
   batch_size: number;            // 1 - 8
   precision_mode: PrecisionMode;
   provider: ExecutionProvider;
+  restore_original_mouth: boolean;
+  mouth_open_threshold: number;  // 0.05 - 0.5
+  enable_xseg_occlusion: boolean;
+  occlusion_erosion: number;     // 1 - 5
 }
 
 export interface EngineCompilationStatus {
@@ -91,6 +96,10 @@ const DEFAULT_SETTINGS: UltraMaxSettings = {
   batch_size: 1,
   precision_mode: 'hybrid_fp16_fp32',
   provider: 'tensorrt',
+  restore_original_mouth: false,
+  mouth_open_threshold: 0.18,
+  enable_xseg_occlusion: false,
+  occlusion_erosion: 3,
 };
 
 const DEFAULT_COMPILATION: EngineCompilationStatus = {
@@ -579,6 +588,91 @@ export default function EnhancerSettings({
               icon={<Layers className="w-3.5 h-3.5 text-blue-400" />}
               onChange={(v) => updateParam('batch_size', Math.round(v))}
             />
+          </div>
+
+          {/* Stage 7: Surgical Mouth & Occlusion Controls */}
+          <div className="p-3.5 rounded-xl bg-slate-900/40 border border-white/5 flex flex-col gap-3">
+            <h4 className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+              <Shield className="w-3.5 h-3.5 text-cyan-400" />
+              Surgical Mouth Dynamics & Occlusion Governance (Stage 7)
+            </h4>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {/* Toggle: Restore Original Mouth */}
+              <div className="flex items-center justify-between p-2.5 rounded-lg bg-slate-950/60 border border-white/5">
+                <div className="flex flex-col gap-0.5 pr-2">
+                  <span className="text-xs font-medium text-slate-200">Restore Original Mouth</span>
+                  <span className="text-mini text-slate-400">
+                    Dynamic mouth aperture and dental restoration when open
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  aria-label="Toggle restore original mouth"
+                  onClick={() => updateParam('restore_original_mouth', !settings.restore_original_mouth)}
+                  className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                    settings.restore_original_mouth ? 'bg-cyan-500' : 'bg-slate-700'
+                  }`}
+                >
+                  <span
+                    className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
+                      settings.restore_original_mouth ? 'translate-x-4' : 'translate-x-0'
+                    }`}
+                  />
+                </button>
+              </div>
+
+              {/* Mouth Open Threshold */}
+              <DebouncedSlider
+                label="Mouth Open Threshold (MAR)"
+                info="Aperture trigger threshold for mouth aspect ratio (default 0.18)"
+                value={settings.mouth_open_threshold}
+                defaultValue={0.18}
+                min={0.05}
+                max={0.5}
+                step={0.01}
+                icon={<Smile className="w-3.5 h-3.5 text-cyan-400" />}
+                onChange={(v) => updateParam('mouth_open_threshold', v)}
+              />
+
+              {/* Toggle: Enable XSeg Occlusion */}
+              <div className="flex items-center justify-between p-2.5 rounded-lg bg-slate-950/60 border border-white/5">
+                <div className="flex flex-col gap-0.5 pr-2">
+                  <span className="text-xs font-medium text-slate-200">DFL XSeg Occlusion</span>
+                  <span className="text-mini text-slate-400">
+                    Isolate hands, microphones, and foreign objects
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  aria-label="Toggle DFL XSeg occlusion"
+                  onClick={() => updateParam('enable_xseg_occlusion', !settings.enable_xseg_occlusion)}
+                  className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                    settings.enable_xseg_occlusion ? 'bg-cyan-500' : 'bg-slate-700'
+                  }`}
+                >
+                  <span
+                    className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
+                      settings.enable_xseg_occlusion ? 'translate-x-4' : 'translate-x-0'
+                    }`}
+                  />
+                </button>
+              </div>
+
+              {/* Occlusion Erosion */}
+              <DebouncedSlider
+                label="Occlusion Erosion Radius"
+                info="Morphological erosion kernel size (1 - 5 px) for occlusion edges"
+                value={settings.occlusion_erosion}
+                defaultValue={3}
+                min={1}
+                max={5}
+                step={1}
+                unit=" px"
+                icon={<Layers className="w-3.5 h-3.5 text-amber-400" />}
+                onChange={(v) => updateParam('occlusion_erosion', Math.round(v))}
+              />
+            </div>
           </div>
 
           {/* Engine Settings Box */}
