@@ -1387,16 +1387,12 @@ class MaskingMixin:
                     frame_idx=getattr(self._tls, 'frame_idx', None),
                     track_id=_track_id,
                 )
-            elif p_name == 'mask_realityux':
-                mask_crop = processor.Run(
-                    cropped,
-                    self.options.masking_text,
-                    target_face=target_face,
-                    frame_faces=getattr(self._tls, 'frame_faces', None),
-                    M=M,
-                    orig_frame=orig_frame,
-                )
             else:
+                # mask_realityux deliberately gets NO target_face/M here: its mouth
+                # and neighbour-protection work from frame landmarks through M,
+                # and M maps the ALIGNED crop, not this unwarped box. Ownership
+                # (_region_owner_in_crop) and the compositor's non-target
+                # protection still apply to the result below.
                 mask_crop = processor.Run(cropped, self.options.masking_text)
             
             # Resize mask to padded-crop dimensions

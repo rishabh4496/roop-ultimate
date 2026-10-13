@@ -4303,6 +4303,32 @@ def _apply_eye_restore_settings(payload):
         setattr(roop_globals, key, value)
 
 
+def _apply_surgical_settings(payload):
+    """Mouth-aperture restore + XSeg occlusion governance onto roop.globals.
+
+    Mask_RealityUX and ProcessMgr read these off roop.globals. Until this helper
+    existed only the /enhancer route ever wrote them, so the Settings-panel and
+    Face Swap controls were saved to config.yaml and never reached the engine
+    that reads them. Same shape as _apply_eye_restore_settings, for the same
+    reason: preview and render must apply them identically.
+    """
+    cfg = roop_globals.CFG
+    roop_globals.restore_original_mouth = bool(payload.get(
+        "restore_original_mouth", getattr(cfg, "restore_original_mouth", False)))
+    roop_globals.enable_xseg_occlusion = bool(payload.get(
+        "enable_xseg_occlusion", getattr(cfg, "enable_xseg_occlusion", False)))
+    try:
+        roop_globals.mouth_open_threshold = min(0.5, max(0.05, float(payload.get(
+            "mouth_open_threshold", getattr(cfg, "mouth_open_threshold", 0.18)))))
+    except (TypeError, ValueError):
+        roop_globals.mouth_open_threshold = 0.18
+    try:
+        roop_globals.occlusion_erosion = min(5, max(1, int(payload.get(
+            "occlusion_erosion", getattr(cfg, "occlusion_erosion", 3)))))
+    except (TypeError, ValueError):
+        roop_globals.occlusion_erosion = 3
+
+
 def _apply_enhancer_settings(payload):
     """Enhancer alignment + the second colour pass + tile diffusion, onto roop.globals.
 
@@ -4535,6 +4561,7 @@ def preview(payload: dict = Body(...)):
         roop_globals.detector_scale_pyramid = payload.get("detector_scale_pyramid", getattr(roop_globals.CFG, "detector_scale_pyramid", "auto"))
         _apply_merger_settings(payload)
         _apply_eye_restore_settings(payload)
+        _apply_surgical_settings(payload)
         _apply_parser_region_settings(payload)
         _apply_enhancer_settings(payload)
         _apply_target_appearance_settings(payload)
@@ -5059,6 +5086,7 @@ def _run_swap(payload):
         roop_globals.temporal_detection = bool(payload.get("temporal_detection", getattr(roop_globals.CFG, "temporal_detection", False)))
         _apply_merger_settings(payload)
         _apply_eye_restore_settings(payload)
+        _apply_surgical_settings(payload)
         _apply_parser_region_settings(payload)
         _apply_enhancer_settings(payload)
         _apply_lipsync_settings(payload)

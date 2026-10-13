@@ -177,10 +177,6 @@ ENV_SETTINGS = (
     ('hdr_output_codec', 'ROOP_HDR_CODEC', 'value'),
     ('identity_confidence_threshold', 'ROOP_IDENTITY_CONFIDENCE_THRESHOLD', 'value'),
     ('process_priority', 'ROOP_PRIORITY', 'priority'),
-    ('restore_original_mouth', 'ROOP_RESTORE_ORIGINAL_MOUTH', 'bool'),
-    ('mouth_open_threshold', 'ROOP_MOUTH_OPEN_THRESHOLD', 'value'),
-    ('enable_xseg_occlusion', 'ROOP_ENABLE_XSEG_OCCLUSION', 'bool'),
-    ('occlusion_erosion', 'ROOP_OCCLUSION_EROSION', 'value'),
 )
 
 # ENV_SETTINGS whose variable is read each time it is used (per render, per
@@ -192,9 +188,7 @@ LIVE_ENV_SETTINGS = ('perf_batch_max', 'perf_nvenc_preset', 'perf_gpu_affine',
                      'perf_pinned_buffers', 'temporal_step', 'enhance_min_face_px',
                      'identity_confidence_threshold',
                      'hdr_pipeline', 'hdr_source_transfer', 'hdr_source_primaries',
-                     'hdr_output_codec',
-                     'restore_original_mouth', 'mouth_open_threshold',
-                     'enable_xseg_occlusion', 'occlusion_erosion')
+                     'hdr_output_codec')
 
 # Variables apply_env/apply_live_env set from config in this process -- as
 # opposed to ones the launcher or a benchmark put in the environment, which

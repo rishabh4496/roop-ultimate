@@ -93,6 +93,89 @@ def _to_2d(mask):
     return mask
 
 
+#: The mask is 256 px when XSeg runs alone (small cards) and 512 px when BiSeNet's
+#: label map joins it, so a kernel written in mask pixels meant twice the
+#: crop-relative size on the 3060 as on the 4070. Every pixel constant below is
+#: stated at this reference size and multiplied by `mask_h / _REF_MASK_PX`.
+_REF_MASK_PX = 256.0
+
+#: Neighbour boxes are padded by this fraction before being protected, to cover
+#: the paste feather. Unchanged from the original Stage 7 value.
+_NON_TARGET_PAD = 0.10
+
+#: Two detections this much alike are one face seen twice, never a neighbour.
+_SAME_FACE_IOU = 0.50
+
+
+def _odd(n):
+    n = max(1, int(round(n)))
+    return n if n % 2 else n + 1
+
+
+def _scaled_blur(img, ksize, sigma, scale):
+    k = _odd(ksize * scale)
+    if k <= 1:
+        return img
+    return cv2.GaussianBlur(img, (k, k), sigmaX=float(sigma) * scale)
+
+
+def _frame_pts_to_crop(pts, M):
+    """Landmarks come off the detector in FRAME pixels; the mask works in the
+    aligned crop. `M` is the frame->crop similarity the crop was cut with.
+
+    With no `M` the points are taken to be in crop space already (the contract
+    the unit tests and any standalone caller use)."""
+    if pts is None or M is None:
+        return pts
+    try:
+        m = np.asarray(M, dtype=np.float32)[:2]
+        p = np.asarray(pts, dtype=np.float32).reshape(-1, 2)
+        if m.shape != (2, 3) or not np.all(np.isfinite(p)):
+            return None
+        return cv2.transform(p[None, :, :], m)[0]
+    except Exception as _degrade_error:
+        _swallowed("Mask_RealityUX._frame_pts_to_crop", _degrade_error)
+        return None
+
+
+def _non_target_keep_mask(mask_shape, crop_shape, M, non_targets):
+    """uint8 {0,255} map, in the MASK's own pixels, of where a neighbouring
+    face sits and so must keep the original.
+
+    The boxes are frame coordinates. `M` maps them into the crop (`crop_shape`),
+    which is not the mask's size when BiSeNet is on (crop 256, labels 512): the
+    first version drew the crop-space polygon straight into the 512 map, i.e. at
+    half scale and up-left of where the neighbour is, and so erased part of the
+    TARGET's own face. Measured on d4.mp4, 112 faces: 3.4% of the swap region
+    lost on average, 13 of 112 faces lost >10%, worst 54%, many with no
+    neighbour in the crop at all.
+    """
+    h, w = mask_shape[:2]
+    ch, cw = crop_shape[:2]
+    out = np.zeros((h, w), dtype=np.uint8)
+    if M is None or ch <= 0 or cw <= 0:
+        return out
+    m = np.asarray(M, dtype=np.float32)[:2]
+    if m.shape != (2, 3):
+        return out
+    sx, sy = w / float(cw), h / float(ch)
+    for ntf in non_targets:
+        bbox = getattr(ntf, "bbox", None)
+        if bbox is None or len(bbox) < 4:
+            continue
+        x1, y1, x2, y2 = [float(v) for v in bbox[:4]]
+        if not all(np.isfinite((x1, y1, x2, y2))):
+            continue
+        px, py = max(1.0, x2 - x1) * _NON_TARGET_PAD, max(1.0, y2 - y1) * _NON_TARGET_PAD
+        quad = np.array([[x1 - px, y1 - py], [x2 + px, y1 - py],
+                         [x2 + px, y2 + py], [x1 - px, y2 + py]], dtype=np.float32)
+        pts = cv2.transform(quad[None, :, :], m)[0] * np.array([sx, sy], np.float32)
+        # fillConvexPoly takes int32 and misbehaves on absurd magnitudes
+        pts = np.clip(pts, -4.0 * max(h, w), 5.0 * max(h, w))
+        cv2.fillConvexPoly(out, np.round(pts).astype(np.int32), 255)
+    return out
+
+
 class Mask_RealityUX():
     """DFL XSeg (mask_xseg) as the authoritative swap region, with BiSeNet
     Face Parser (mask_faceparser) allowed only to SUBTRACT pixels it is
@@ -153,12 +236,29 @@ class Mask_RealityUX():
         self.pool = None
         self._mouth_engine = MouthDynamicsEngine()
         self._occlusion_governor = OcclusionGovernor()
-        self._last_telemetry = {
+        self._telemetry_tls = threading.local()
+        self._last_telemetry = self._blank_telemetry()
+
+    @staticmethod
+    def _blank_telemetry():
+        return {
             "mar": 0.0,
             "mouth_restored": False,
             "occlusion_applied": False,
             "non_targets_protected": 0,
         }
+
+    @property
+    def _last_telemetry(self):
+        """What THIS thread's last Run() did. Worker threads share one engine,
+        so a plain attribute made every reader see whichever face finished
+        last -- another worker's face."""
+        t = getattr(self._telemetry_tls, "value", None)
+        return t if t is not None else self._blank_telemetry()
+
+    @_last_telemetry.setter
+    def _last_telemetry(self, value):
+        self._telemetry_tls.value = value
 
     def Initialize(self, plugin_options: dict):
         self.plugin_options = plugin_options
@@ -309,15 +409,13 @@ class Mask_RealityUX():
             try:
                 occ_raw = (xseg_mask > 0.40).astype(np.uint8) * 255
                 if np.any(occ_raw > 0):
-                    k_size = int(np.clip(occlusion_erosion, 1, 5))
-                    if k_size % 2 == 0:
-                        k_size += 1
+                    _s = combined.shape[0] / _REF_MASK_PX
+                    k_size = _odd(int(np.clip(occlusion_erosion, 1, 5)) * _s)
                     morph_k = cv2.getStructuringElement(cv2.MORPH_RECT, (k_size, k_size))
                     eroded_occ = cv2.erode(occ_raw, morph_k, iterations=1)
 
-                    feather_k = 9
                     eroded_f = eroded_occ.astype(np.float32) / 255.0
-                    feathered_occ = cv2.GaussianBlur(eroded_f, (feather_k, feather_k), sigmaX=2.0)
+                    feathered_occ = _scaled_blur(eroded_f, 9, 2.0, _s)
                     feathered_occ = np.clip(feathered_occ, 0.0, 1.0)
 
                     # In RealityUX mask convention, 1.0 = keep original, 0.0 = swap.
@@ -350,7 +448,13 @@ class Mask_RealityUX():
                         # BiSeNet class 11 = mouth opening (oral cavity)
                         bisenet_mouth = (l_sized == 11).astype(np.float32)
 
-                    inner_pts = self._mouth_engine.get_inner_lip_points(target_face, (h, w))
+                    # The landmarks are FRAME pixels; the engine draws into img1.
+                    # Without this the polygon was clipped to the crop's corner
+                    # and the adaptive mask was empty on every real face (only
+                    # BiSeNet's own mouth class ever restored anything, so the
+                    # sub-7GB profile, which has no parser, restored nothing).
+                    inner_pts = _frame_pts_to_crop(
+                        self._mouth_engine.get_inner_lip_points(target_face, (h, w)), M)
                     adaptive_mouth = self._mouth_engine.generate_inner_mouth_mask(
                         img1, inner_pts, feather_radius=4
                     )
@@ -363,7 +467,7 @@ class Mask_RealityUX():
                         mouth_combined = adaptive_mouth
 
                     # Gaussian feathering (radius 3 to 5 pixels)
-                    mouth_feathered = cv2.GaussianBlur(mouth_combined, (9, 9), sigmaX=2.0)
+                    mouth_feathered = _scaled_blur(mouth_combined, 9, 2.0, h / _REF_MASK_PX)
                     mouth_feathered = np.clip(mouth_feathered, 0.0, 1.0)
 
                     # Preserve teeth, tongue, and oral cavity from original frame
@@ -373,45 +477,26 @@ class Mask_RealityUX():
                 _swallowed("Mask_RealityUX.mouth_dynamics", _e_mouth)
 
         # ── Stage 7: Non-Target Face Protection & Multi-Person Tracking ────────
+        # Needs `M` (frame -> THIS crop). procmgr_masking no longer passes it on
+        # the unwarped-box path, whose crop is not in M's space.
         non_targets_count = 0
         if target_face is not None and frame_faces is not None and len(frame_faces) > 1 and M is not None:
             try:
                 ref_emb = getattr(roop.globals, 'target_reference_embedding', None)
-                resolved_target, non_targets = self._occlusion_governor.arbitrate_multi_face_tracks(
+                _resolved, non_targets = self._occlusion_governor.arbitrate_multi_face_tracks(
                     detected_faces=frame_faces,
                     target_reference_embedding=ref_emb,
                     target_face=target_face,
                 )
                 if non_targets:
-                    h, w = combined.shape[:2]
-                    prot_crop_mask = np.zeros((h, w), dtype=np.uint8)
-                    for ntf in non_targets:
-                        bbox = getattr(ntf, "bbox", None)
-                        if bbox is not None and len(bbox) >= 4:
-                            bx1, by1, bx2, by2 = [float(v) for v in bbox[:4]]
-                            bw = max(1.0, bx2 - bx1)
-                            bh = max(1.0, by2 - by1)
-                            pad_x = bw * 0.10
-                            pad_y = bh * 0.10
-                            bx1 = max(0.0, bx1 - pad_x)
-                            by1 = max(0.0, by1 - pad_y)
-                            bx2 = bx2 + pad_x
-                            by2 = by2 + pad_y
-
-                            box_pts = np.array([
-                                [bx1, by1], [bx2, by1], [bx2, by2], [bx1, by2]
-                            ], dtype=np.float32)
-
-                            # Transform from frame coordinates to crop coordinates using M
-                            crop_pts = cv2.transform(box_pts[None, ...], M)[0]
-                            poly_int = np.round(crop_pts).astype(np.int32)
-                            cv2.fillConvexPoly(prot_crop_mask, poly_int, 255)
-
+                    prot_crop_mask = _non_target_keep_mask(
+                        combined.shape, img1.shape, M, non_targets)
                     if np.any(prot_crop_mask > 0):
                         prot_f = prot_crop_mask.astype(np.float32) / 255.0
-                        prot_feathered = cv2.GaussianBlur(prot_f, (11, 11), sigmaX=2.5)
+                        prot_feathered = _scaled_blur(
+                            prot_f, 11, 2.5, combined.shape[0] / _REF_MASK_PX)
                         # Set protected non-target pixels to 1.0 (keep original, zero bleed)
-                        combined = np.maximum(combined, prot_feathered)
+                        combined = np.maximum(combined, np.clip(prot_feathered, 0.0, 1.0))
                         non_targets_count = len(non_targets)
             except Exception as _e_prot:
                 _swallowed("Mask_RealityUX.non_target_protection", _e_prot)

@@ -49,8 +49,11 @@ def compute_mar(landmarks: Any) -> float:
 
         num_pts = pts.shape[0]
 
-        # 68-point landmarks: standard inner lip indices 60 to 67
-        if num_pts >= 68:
+        # 68-point landmarks: standard inner lip indices 60 to 67. A 106-point
+        # array must NOT land here: indices 60..67 mean something else in that
+        # layout, and this test used to be `>= 68`, which made the 106 branch
+        # below unreachable.
+        if 68 <= num_pts < 106:
             p60 = pts[60]
             p61 = pts[61]
             p62 = pts[62]
@@ -70,20 +73,19 @@ def compute_mar(landmarks: Any) -> float:
             mar = (d_v1 + d_v2 + d_v3) / (2.0 * d_h)
             return float(np.clip(mar, 0.0, 2.0))
 
-        # 106-point landmarks (InsightFace 2d106det):
-        # Mouth region spans points 52 to 71.
-        # Inner mouth opening: points 64..70 (lower) vs 58..63 (upper)
+        # 106-point landmarks (InsightFace 2d106det): NO usable aperture signal.
+        # The old formula (vertical span of points 52..70 x 0.65 / width) measured
+        # on 298 real faces: median 0.41 against the 68-point reference's 0.18,
+        # 100% of mouths over the 0.18 threshold, correlation -0.05. The outer
+        # lip's own thickness alone clears the threshold, so it called every
+        # closed mouth open. The best contiguous block of the 106 mouth indices
+        # reaches r=0.49 against the 68-point MAR (held-out), which is not a
+        # gate. The branch was also unreachable (a `>= 68` test above caught
+        # every 106 array and read the wrong indices). Production always has
+        # landmark_3d_68 beside it (783 of 783 sampled faces), so "unknown" is
+        # reported as 0.0 -- no restore -- rather than a confident wrong number.
         if num_pts >= 106:
-            mouth_pts = pts[52:71]
-            min_xy = np.min(mouth_pts, axis=0)
-            max_xy = np.max(mouth_pts, axis=0)
-            span_h = float(max_xy[0] - min_xy[0])
-            span_v = float(max_xy[1] - min_xy[1])
-            if span_h < 1.0 or not np.isfinite(span_h):
-                return 0.0
-            # Scale vertical by 0.65 to approximate inner aperture from full lip box
-            mar = (span_v * 0.65) / span_h
-            return float(np.clip(mar, 0.0, 2.0))
+            return 0.0
 
         # 5-point landmarks fallback (points 3, 4 are mouth corners)
         if num_pts >= 5:

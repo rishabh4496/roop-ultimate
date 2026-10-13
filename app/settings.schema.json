@@ -580,10 +580,6 @@
       "ui": {
         "label": "Restore dynamic original mouth",
         "section": "Surgical mouth & occlusion"
-      },
-      "env": {
-        "var": "ROOP_RESTORE_ORIGINAL_MOUTH",
-        "kind": "bool"
       }
     },
     "mouth_open_threshold": {
@@ -592,10 +588,6 @@
       "ui": {
         "label": "Mouth open MAR threshold",
         "section": "Surgical mouth & occlusion"
-      },
-      "env": {
-        "var": "ROOP_MOUTH_OPEN_THRESHOLD",
-        "kind": "value"
       }
     },
     "enable_xseg_occlusion": {
@@ -604,10 +596,6 @@
       "ui": {
         "label": "DFL XSeg occlusion governance",
         "section": "Surgical mouth & occlusion"
-      },
-      "env": {
-        "var": "ROOP_ENABLE_XSEG_OCCLUSION",
-        "kind": "bool"
       }
     },
     "occlusion_erosion": {
@@ -616,10 +604,6 @@
       "ui": {
         "label": "Occlusion erosion kernel size",
         "section": "Surgical mouth & occlusion"
-      },
-      "env": {
-        "var": "ROOP_OCCLUSION_EROSION",
-        "kind": "value"
       }
     },
     "mask_top": {

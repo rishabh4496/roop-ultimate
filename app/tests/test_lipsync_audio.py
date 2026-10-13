@@ -283,7 +283,7 @@ class TestDefaultOffIsANoOp(unittest.TestCase):
         this originally did) meant enabling lip-sync did nothing at all for
         those users, with no error — so assert the direction, not merely that
         some exclusion exists."""
-        restore_block = self.src.split('if self.options.restore_original_mouth', 1)[1][:400]
+        restore_block = self.src.split('_restore_mouth = bool(', 1)[1][:600]
         self.assertIn('not lipsync_wins', restore_block)
 
         lipsync_block = self.src.split('# ── Lip-sync (post-composite)', 1)[1][:2600]

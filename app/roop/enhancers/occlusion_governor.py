@@ -20,9 +20,13 @@ import cv2
 import numpy as np
 
 import roop.globals
+from roop.degrade import swallowed as _swallowed
 from roop.utilities import resolve_relative_path
 
 LOGGER = logging.getLogger(__name__)
+
+#: Boxes overlapping at least this much are one face detected twice.
+SAME_FACE_IOU = 0.50
 
 
 def compute_iou(box_a: Sequence[float], box_b: Sequence[float]) -> float:
@@ -60,7 +64,9 @@ def compute_cosine_similarity(emb_a: Any, emb_b: Any) -> float:
         if norm_a < 1e-6 or norm_b < 1e-6:
             return 0.0
         return float(np.clip(np.dot(a, b) / (norm_a * norm_b), -1.0, 1.0))
-    except Exception:
+    except Exception as _degrade_error:
+        _swallowed("occlusion_governor.compute_cosine_similarity", _degrade_error,
+                   "similarity 0.0")
         return 0.0
 
 
@@ -104,16 +110,22 @@ class OcclusionGovernor:
             self._model_path = model_path
 
             try:
-                import onnxruntime
                 from roop.utilities import get_onnx_session_options, get_small_card_safe_providers
                 from roop.precision_policy import providers_for
+                from roop.strict_session import create_strictly_accelerated_session
 
                 sess_opts = get_onnx_session_options()
                 base_providers = getattr(roop.globals, "execution_providers", ["CUDAExecutionProvider", "CPUExecutionProvider"])
                 providers = get_small_card_safe_providers(base_providers, model_path=model_path, stage="mask:xseg")
                 providers, _ = providers_for("masking:xseg", providers, model_path)
 
-                self.session = onnxruntime.InferenceSession(model_path, sess_opts, providers=providers)
+                # On the GPU or not at all. The old fallback quietly rebuilt the
+                # session on CPU, which is exactly the "reports success while not
+                # running on the GPU" failure this project keeps having; a deliberate
+                # CPU chain is still honoured by the factory.
+                self.session = create_strictly_accelerated_session(
+                    model_path, providers=providers, sess_options=sess_opts,
+                    tag="mask:xseg:governor")
                 self._input_name = self.session.get_inputs()[0].name
                 self._output_name = self.session.get_outputs()[0].name
 
@@ -123,18 +135,11 @@ class OcclusionGovernor:
                 LOGGER.info("OcclusionGovernor initialized XSeg on %s (%s)", self.devicename, act_provider)
                 return True
             except Exception as exc:
-                LOGGER.warning("Failed to initialize XSeg session: %s; falling back to CPU or procedural occlusion.", exc)
-                try:
-                    import onnxruntime
-                    self.session = onnxruntime.InferenceSession(model_path, providers=["CPUExecutionProvider"])
-                    self._input_name = self.session.get_inputs()[0].name
-                    self._output_name = self.session.get_outputs()[0].name
-                    self.devicename = "cpu"
-                    self._initialized = True
-                    return True
-                except Exception as inner_exc:
-                    LOGGER.error("XSeg CPU fallback initialization also failed: %s", inner_exc)
-                    return False
+                self.session = None
+                _swallowed("occlusion_governor.initialize_xseg", exc,
+                           "no foreign-object occlusion mask")
+                LOGGER.error("OcclusionGovernor XSeg session unavailable: %s", exc)
+                return False
 
     def predict_xseg_occlusion_mask(
         self,
@@ -282,21 +287,45 @@ class OcclusionGovernor:
         non_targets = []
 
         if target_face is not None:
-            # If target_face is explicitly provided, identify it by object or bounding box match
+            # The caller says WHICH face is the target; find it among the
+            # detections: the same object, else the best-overlapping box.
             target_bbox = getattr(target_face, "bbox", None)
             for f in detected_faces:
                 if f is target_face:
                     resolved_target = f
-                elif target_bbox is not None and getattr(f, "bbox", None) is not None:
-                    if compute_iou(f.bbox, target_bbox) > 0.85:
-                        resolved_target = f
-                    else:
-                        non_targets.append(f)
-                else:
-                    non_targets.append(f)
+                    break
+            if resolved_target is None and target_bbox is not None:
+                best_iou = 0.0
+                for f in detected_faces:
+                    fb = getattr(f, "bbox", None)
+                    if fb is None:
+                        continue
+                    iou = compute_iou(fb, target_bbox)
+                    if iou > best_iou:
+                        best_iou, resolved_target = iou, f
+                if best_iou < SAME_FACE_IOU:
+                    resolved_target = None
 
-            if resolved_target is not None:
-                return resolved_target, non_targets
+            if resolved_target is None:
+                # The target is not among the detections (a rebound/rotated copy,
+                # a coasted track ...). The old code fell through to "the first
+                # face is the target", which filed the REAL target under
+                # non-targets, so its own face was protected and its swap erased.
+                # Not knowing who the target is means protecting nobody.
+                return None, []
+
+            res_bbox = getattr(resolved_target, "bbox", None)
+            for f in detected_faces:
+                if f is resolved_target:
+                    continue
+                fb = getattr(f, "bbox", None)
+                # A box this much like the target's is the same face detected
+                # twice, not a neighbour to shield from it.
+                if (fb is not None and res_bbox is not None
+                        and compute_iou(fb, res_bbox) >= SAME_FACE_IOU):
+                    continue
+                non_targets.append(f)
+            return resolved_target, non_targets
 
         # If target reference embedding is provided, arbitrate by highest cosine similarity
         if target_reference_embedding is not None:

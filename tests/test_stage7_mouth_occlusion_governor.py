@@ -115,16 +115,23 @@ class TestMouthAspectRatio:
         # Open mouth MAR should clearly exceed 0.18
         assert mar > 0.30
 
-    def test_mar_106_point_landmarks(self) -> None:
-        # 106-point landmarks with mouth points 52 to 71
+    def test_mar_106_point_landmarks_is_unknown_not_invented(self) -> None:
+        # The 106-point layout carries no usable aperture signal (measured on
+        # 298 real faces: the old formula called 100% of mouths open, r=-0.05
+        # against the 68-point MAR). It must say "unknown" (0.0 -> no restore),
+        # and must never be read through the 68-point indices.
         pts = np.zeros((106, 2), dtype=np.float32)
-        # Set mouth box: width = 60, height = 30
         pts[52:71, 0] = np.linspace(70, 130, 19)
         pts[52:61, 1] = 125.0
-        pts[61:71, 1] = 155.0
+        pts[61:71, 1] = 155.0   # a "wide open" looking box
+        assert compute_mar(pts) == 0.0
 
-        mar = compute_mar(pts)
-        assert mar > 0.18
+    def test_mar_68_branch_not_taken_by_larger_arrays(self) -> None:
+        open68 = make_synthetic_68_landmarks(mouth_open=True)
+        assert compute_mar(open68) > 0.30
+        padded = np.zeros((106, 2), dtype=np.float32)
+        padded[:68] = open68
+        assert compute_mar(padded) == 0.0
 
     def test_mar_5_point_landmarks(self) -> None:
         pts = np.array([
