@@ -4038,12 +4038,21 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 # So let the best claim first. Real detections outrank
                 # gap-filled ones (an interpolated face carries the TRACK MEAN
                 # as its embedding, so it would otherwise always score better
-                # than the real face it is competing with), then closest first.
-                # Ordering only — no face is added or dropped here.
+                # than the real face it is competing with), faces with confirmed
+                # locked tracks outrank untracked candidates to prevent source theft,
+                # then closest first. Ordering only — no face is added or dropped here.
+                def _claim_priority(f):
+                    is_interp = bool(f.get('_interpolated')) if isinstance(f, dict) else False
+                    tid = f.get('_track_id') if isinstance(f, dict) else None
+                    has_locked_track = (
+                        tid is not None
+                        and track_source_index(track_source_map.get(tid)) in allowed_source_indices
+                    )
+                    tier = (2 if is_interp else 0) + (0 if has_locked_track else 1)
+                    return (tier, _dist_to_any_person(f))
+
                 if len(faces) > 1:
-                    faces = sorted(faces, key=lambda f: (
-                        bool(f.get('_interpolated')) if isinstance(f, dict) else False,
-                        _dist_to_any_person(f)))
+                    faces = sorted(faces, key=_claim_priority)
 
                 for detected_index, face in enumerate(faces):
                     audit_face_begin(frame_idx, face)
@@ -4341,8 +4350,19 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                             or _occ_state == 'partial'
                             or _face_occluded_frac(face) > 0.05
                         )
+                        _facing_away = False
+                        try:
+                            from roop.face_analyser import face_yaw_pitch
+                            _y, _p = face_yaw_pitch(face)
+                            if abs(_y) > 75 or abs(_p) > 60:
+                                _facing_away = True
+                        except Exception:
+                            pass
+
                         if _is_occ_or_contact:
                             _eff_lock_floor = min(LOCK_MIN_DET, 0.55)
+                        elif not _facing_away:
+                            _eff_lock_floor = min(LOCK_MIN_DET, 0.60)
                         if _lock_det is not None and float(_lock_det) < _eff_lock_floor:
                             low_conf_lock = True
                             src_index = None

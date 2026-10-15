@@ -434,7 +434,10 @@ class TheMechanicsHold(unittest.TestCase):
         # identity-lock branch, the printed percentage is measured against a
         # total that includes the other modes, and in the DEFAULT mode it is
         # zero so the line never prints at all.
-        from tests.test_swap_audit import _swap_site_counts
+        try:
+            from tests.test_swap_audit import _swap_site_counts
+        except ImportError:
+            from app.tests.test_swap_audit import _swap_site_counts
         appends, gapfills, _successes = _swap_site_counts()
         self.assertEqual(appends, gapfills)
 
