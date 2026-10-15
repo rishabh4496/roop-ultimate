@@ -360,6 +360,7 @@ class OcclusionGovernor:
         frame_shape: Tuple[int, int],
         non_target_faces: List[Any],
         feather_radius: int = 5,
+        target_face: Optional[Any] = None,
     ) -> np.ndarray:
         """Generate a persistent full-frame protection mask for all non-target faces.
 
@@ -371,6 +372,7 @@ class OcclusionGovernor:
             frame_shape: Shape of full video frame (H, W).
             non_target_faces: List of non-target faces to isolate and protect.
             feather_radius: Feathering radius for smooth protection boundaries.
+            target_face: The face currently being swapped/enhanced.
 
         Returns:
             np.ndarray: Single-channel float32 mask (H, W) where 1.0 represents protected
@@ -418,6 +420,21 @@ class OcclusionGovernor:
                 ax = max(1, (px2 - px1) // 2)
                 ay = max(1, (py2 - py1) // 2)
                 cv2.ellipse(protection_mask, (cx, cy), (ax, ay), 0, 0, 360, 255, -1)
+
+        # Non-target protection must never invade or carve out the target face's inner facial hull
+        if target_face is not None:
+            tlm = getattr(target_face, "landmark_2d_106", None)
+            if tlm is None:
+                tlm = getattr(target_face, "landmark_3d_68", None)
+            if tlm is None:
+                tlm = getattr(target_face, "kps", None)
+            if tlm is not None:
+                tpts = np.asarray(tlm, dtype=np.float32)[:, :2]
+                if len(tpts) >= 5 and np.all(np.isfinite(tpts)):
+                    thull = cv2.convexHull(np.round(tpts).astype(np.int32))
+                    t_poly_mask = np.zeros((h, w), dtype=np.uint8)
+                    cv2.fillConvexPoly(t_poly_mask, thull, 255)
+                    protection_mask = np.where(t_poly_mask > 0, 0, protection_mask)
 
         if feather_radius > 0:
             k = feather_radius * 2 + 1

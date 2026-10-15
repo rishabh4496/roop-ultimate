@@ -606,20 +606,23 @@ class MaskingMixin:
         # place, so trimming before it would just let the blur put it back.
         if region is not None:
             region.trim_frame(img_matte)
-
-        # Stage 7 Non-target face isolation protection: weight = 0.0 for updates
-        try:
-            _frame_faces = getattr(self._tls, 'frame_faces', None)
-            if _frame_faces and len(_frame_faces) > 1 and target_face is not None:
-                from roop.pipeline_manager import PipelineManager
-                img_matte, _ = PipelineManager.get_instance().protect_frame_non_targets(
-                    frame_shape=target_img.shape,
-                    detected_faces=_frame_faces,
-                    target_face=target_face,
-                    target_matte=img_matte,
-                )
-        except Exception as _pnt_err:
-            _swallowed("roop/procmgr_masking.py:non_target_protect", _pnt_err, "protection fallback")
+        else:
+            # Stage 7 Non-target face isolation protection: weight = 0.0 for updates.
+            # Only applied when faces do NOT overlap (region is None).
+            # When region is present, roop.face_overlap has already mathematically
+            # partitioned pixel demarcation without blunt hull dilation.
+            try:
+                _frame_faces = getattr(self._tls, 'frame_faces', None)
+                if _frame_faces and len(_frame_faces) > 1 and target_face is not None:
+                    from roop.pipeline_manager import PipelineManager
+                    img_matte, _ = PipelineManager.get_instance().protect_frame_non_targets(
+                        frame_shape=target_img.shape,
+                        detected_faces=_frame_faces,
+                        target_face=target_face,
+                        target_matte=img_matte,
+                    )
+            except Exception as _pnt_err:
+                _swallowed("roop/procmgr_masking.py:non_target_protect", _pnt_err, "protection fallback")
 
 
         # Same position, same reason, for the pose visibility trim: the feather is

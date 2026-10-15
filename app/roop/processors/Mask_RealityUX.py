@@ -138,7 +138,7 @@ def _frame_pts_to_crop(pts, M):
         return None
 
 
-def _non_target_keep_mask(mask_shape, crop_shape, M, non_targets):
+def _non_target_keep_mask(mask_shape, crop_shape, M, non_targets, target_face=None):
     """uint8 {0,255} map, in the MASK's own pixels, of where a neighbouring
     face sits and so must keep the original.
 
@@ -173,6 +173,22 @@ def _non_target_keep_mask(mask_shape, crop_shape, M, non_targets):
         # fillConvexPoly takes int32 and misbehaves on absurd magnitudes
         pts = np.clip(pts, -4.0 * max(h, w), 5.0 * max(h, w))
         cv2.fillConvexPoly(out, np.round(pts).astype(np.int32), 255)
+
+    if target_face is not None:
+        tlm = getattr(target_face, "landmark_2d_106", None)
+        if tlm is None:
+            tlm = getattr(target_face, "landmark_3d_68", None)
+        if tlm is None:
+            tlm = getattr(target_face, "kps", None)
+        if tlm is not None:
+            t_pts = _frame_pts_to_crop(tlm, M)
+            if t_pts is not None and len(t_pts) >= 5:
+                t_scaled = t_pts * np.array([sx, sy], np.float32)
+                t_hull = cv2.convexHull(np.round(t_scaled).astype(np.int32))
+                t_mask = np.zeros((h, w), dtype=np.uint8)
+                cv2.fillConvexPoly(t_mask, t_hull, 255)
+                # Non-target keep mask must never invade the target face's inner landmark hull
+                out[t_mask > 0] = 0
     return out
 
 
@@ -482,22 +498,32 @@ class Mask_RealityUX():
         non_targets_count = 0
         if target_face is not None and frame_faces is not None and len(frame_faces) > 1 and M is not None:
             try:
-                ref_emb = getattr(roop.globals, 'target_reference_embedding', None)
-                _resolved, non_targets = self._occlusion_governor.arbitrate_multi_face_tracks(
-                    detected_faces=frame_faces,
-                    target_reference_embedding=ref_emb,
-                    target_face=target_face,
-                )
-                if non_targets:
-                    prot_crop_mask = _non_target_keep_mask(
-                        combined.shape, img1.shape, M, non_targets)
-                    if np.any(prot_crop_mask > 0):
-                        prot_f = prot_crop_mask.astype(np.float32) / 255.0
-                        prot_feathered = _scaled_blur(
-                            prot_f, 11, 2.5, combined.shape[0] / _REF_MASK_PX)
-                        # Set protected non-target pixels to 1.0 (keep original, zero bleed)
-                        combined = np.maximum(combined, np.clip(prot_feathered, 0.0, 1.0))
-                        non_targets_count = len(non_targets)
+                # If target_face is in close contact / interacting, whole-frame demarcation
+                # is handled by roop.face_overlap. Crude crop bounding box protection is
+                # stood down to prevent carving interacting faces in half.
+                _is_contact = False
+                try:
+                    from roop import face_contact
+                    _is_contact = face_contact.unreliable(target_face) or getattr(target_face, '_is_interacting', False)
+                except Exception as _fc_err:
+                    _swallowed("Mask_RealityUX.face_contact_check", _fc_err)
+                if not _is_contact:
+                    ref_emb = getattr(roop.globals, 'target_reference_embedding', None)
+                    _resolved, non_targets = self._occlusion_governor.arbitrate_multi_face_tracks(
+                        detected_faces=frame_faces,
+                        target_reference_embedding=ref_emb,
+                        target_face=target_face,
+                    )
+                    if non_targets:
+                        prot_crop_mask = _non_target_keep_mask(
+                            combined.shape, img1.shape, M, non_targets, target_face=target_face)
+                        if np.any(prot_crop_mask > 0):
+                            prot_f = prot_crop_mask.astype(np.float32) / 255.0
+                            prot_feathered = _scaled_blur(
+                                prot_f, 11, 2.5, combined.shape[0] / _REF_MASK_PX)
+                            # Set protected non-target pixels to 1.0 (keep original, zero bleed)
+                            combined = np.maximum(combined, np.clip(prot_feathered, 0.0, 1.0))
+                            non_targets_count = len(non_targets)
             except Exception as _e_prot:
                 _swallowed("Mask_RealityUX.non_target_protection", _e_prot)
 

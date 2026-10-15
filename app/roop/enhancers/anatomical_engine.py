@@ -145,6 +145,7 @@ class AnatomicalEngine:
             frame_shape=frame_shape,
             non_target_faces=non_targets,
             feather_radius=5,
+            target_face=target_face,
         )
 
         # Ensure the affine warp and color blending never bleed onto adjacent non-target subjects

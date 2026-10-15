@@ -4309,7 +4309,22 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     low_conf_lock = False
                     if src_index is not None and LOCK_MIN_DET > 0:
                         _lock_det = getattr(face, 'det_score', None)
-                        if _lock_det is not None and float(_lock_det) < LOCK_MIN_DET:
+                        # When a face is partially occluded by an object/hand or in contact
+                        # with an interacting face, det_score naturally dips below 0.85.
+                        # Back-of-head detections are characterized by high off-axis pose
+                        # or non-face structures, whereas occluded/interacting faces have
+                        # known contact/occlusion flags or valid frontal landmarks.
+                        _eff_lock_floor = LOCK_MIN_DET
+                        _is_occ_or_contact = (
+                            dirty
+                            or getattr(face, 'occlusion_state', None) == 'partial'
+                            or (isinstance(face, dict) and face.get('occlusion_state') == 'partial')
+                            or getattr(face, '_occluded_landmark_frac', 0) > 0.05
+                            or (isinstance(face, dict) and face.get('_occluded_landmark_frac', 0) > 0.05)
+                        )
+                        if _is_occ_or_contact:
+                            _eff_lock_floor = min(LOCK_MIN_DET, 0.55)
+                        if _lock_det is not None and float(_lock_det) < _eff_lock_floor:
                             low_conf_lock = True
                             src_index = None
                             _audit_hit('skipped (low-confidence detection on a locked track)')
@@ -4826,7 +4841,12 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     self._apply_stab(f)
 
             _matched = {id(f) for _, f in pending}
-            _others = [f for f in faces if id(f) not in _matched]
+            _min_bystander_det = max(0.65, float(getattr(roop.globals, 'face_detector_threshold', 0.60)))
+            _others = [
+                f for f in faces
+                if id(f) not in _matched
+                and (getattr(f, 'det_score', None) is None or float(getattr(f, 'det_score', 1.0)) >= _min_bystander_det)
+            ]
             # WHICH source went onto WHICH face, recorded once for the whole
             # frame at the only point where that is finally settled. Off unless
             # asked for. Re-measuring it from the output is what a bench would
@@ -4997,7 +5017,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             return None
 
     @staticmethod
-    def _verify_worth_it(rotation_action, head_angles):
+    def _verify_worth_it(rotation_action, head_angles, target_face=None, region=None):
         """Is this face turned or rolled far enough for the outcome guard to
         have anything to find?
 
@@ -5027,6 +5047,23 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         try:
             if not VERIFY_SWAP:
                 return False
+            # Occluded and interacting faces shift detected keypoints due to foreground
+            # objects or touching faces. They are not heads pointing away; do not revert.
+            if region is not None:
+                return False
+            if target_face is not None:
+                _occ = (target_face.get('occlusion_state') if isinstance(target_face, dict)
+                        else getattr(target_face, 'occlusion_state', None))
+                if _occ == 'partial' or getattr(target_face, '_occluded_landmark_frac', 0) > 0.05:
+                    return False
+                if getattr(target_face, '_is_interacting', False):
+                    return False
+                try:
+                    from roop import face_contact
+                    if face_contact.unreliable(target_face):
+                        return False
+                except Exception as _fc_err:
+                    _swallowed("ProcessMgr._verify_worth_it:face_contact", _fc_err)
             if rotation_action is not None:
                 return True
             yaw, pitch = head_angles()
@@ -6999,11 +7036,22 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         _occlusion_state = (target_face.get('occlusion_state')
                             if isinstance(target_face, dict)
                             else getattr(target_face, 'occlusion_state', None))
-        if _occlusion_state == 'partial':
+        _is_partly_occluded = (
+            _occlusion_state == 'partial'
+            or getattr(target_face, '_occluded_landmark_frac', 0) > 0.05
+            or (isinstance(target_face, dict) and target_face.get('_occluded_landmark_frac', 0) > 0.05)
+        )
+        _is_interacting = (
+            region is not None
+            or getattr(target_face, '_is_interacting', False)
+            or (isinstance(target_face, dict) and target_face.get('_is_interacting', False))
+            or face_contact.unreliable(target_face)
+        )
+        if _is_partly_occluded:
             _audit_hit('  of those, partly behind an object (masked, still swapped)')
 
         verify_rotation = applied_rotation_action or rotation_action
-        if _vs is not None and self._verify_worth_it(verify_rotation, _head_angles):
+        if _vs is not None and self._verify_worth_it(verify_rotation, _head_angles, target_face=target_face, region=region):
             # Profiled, because it is a detection and it used to be invisible:
             # every other model stage in this function reports into STAGE TIMING,
             # and an unprofiled one that runs once per swapped face is exactly

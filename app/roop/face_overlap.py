@@ -248,11 +248,19 @@ def _same_face(claim_a, claim_b):
     in line. See _DUP_CONTAIN and _DUP_CONCENTRIC for the measurements.
     """
     (_, ra, r_a), (_, rb, r_b) = claim_a, claim_b
-    if max(_containment(ra, rb), _containment(rb, ra)) <= _DUP_CONTAIN:
+    max_c = max(_containment(ra, rb), _containment(rb, ra))
+    if max_c <= _DUP_CONTAIN:
         return False
     sep = float(np.hypot((ra[0] + ra[2]) - (rb[0] + rb[2]),
                          (ra[1] + ra[3]) - (rb[1] + rb[3])) * 0.5)
-    return sep < _DUP_CONCENTRIC * min(r_a, r_b)
+    min_r = min(r_a, r_b)
+    if sep < _DUP_CONCENTRIC * min_r:
+        return True
+    # If one box is heavily contained inside the other (e.g. partial box of an occluded head),
+    # allow relaxed concentricity up to 0.45 * min_r.
+    if max_c >= 0.85 and sep < 0.45 * min_r:
+        return True
+    return False
 
 
 def build_regions(faces, frame_shape, order=None, feather=None, depth_bias=None):
