@@ -2679,8 +2679,10 @@ class TrackingMixin:
             temporal_enabled = (identity_enabled or occlusion_enabled
                                 or expression_enabled)
             pose_annotation_enabled = bool(
-                getattr(self.options, 'use_source_bank', False) or temporal_enabled)
+                getattr(self.options, 'use_source_bank', False) or temporal_enabled
+                or any(len(getattr(fs, 'faces', [])) > 1 for fs in self.input_face_datas))
             pose_source_fs = None
+            candidate_multi_fs = None
             if pose_annotation_enabled:
                 try:
                     source_info = (getattr(self, '_track_source_map', {})
@@ -2692,11 +2694,18 @@ class TrackingMixin:
                         if (getattr(candidate, 'format_version', 1) >= 2
                                 and getattr(candidate, 'faceset_metadata', None)):
                             pose_source_fs = candidate
+                        elif hasattr(candidate, 'faces') and len(candidate.faces) > 1:
+                            candidate_multi_fs = candidate
+                            if hasattr(candidate_multi_fs, 'ensure_face_poses'):
+                                candidate_multi_fs.ensure_face_poses()
                 except Exception as _degrade_error:
                     _swallowed("roop/procmgr_tracking.py:2054", _degrade_error, "fallback continued")
                     pose_source_fs = None
+                    candidate_multi_fs = None
             previous_source_index = getattr(
                 self, '_track_pose_source_map', {}).get(t['id'])
+            v1_candidate_source_index = None
+            v1_source_hold_count = 0
             if pose_annotation_enabled:
                 from roop.pose_source_selector import annotate_face_pose
 
@@ -2819,6 +2828,43 @@ class TrackingMixin:
                                 f['_pose_v5_source_reason'] = str(selection.reason)
                                 f['_pose_v5_needs_3d'] = bool(selection.needs_3d)
                                 previous_source_index = int(selected_index)
+                        elif candidate_multi_fs is not None:
+                            target_p = (temporal_state.pose if temporal_state is not None
+                                        and temporal_state.pose is not None else pose)
+                            t_yaw = getattr(target_p, 'yaw', 0.0) if target_p else 0.0
+                            t_pitch = getattr(target_p, 'pitch', 0.0) if target_p else 0.0
+                            proposed_index = candidate_multi_fs.select_reference_index(
+                                pose=(t_yaw, t_pitch),
+                                previous_index=previous_source_index
+                            )
+                            if previous_source_index is None:
+                                selected_index = proposed_index
+                                previous_source_index = proposed_index
+                                v1_candidate_source_index = None
+                                v1_source_hold_count = 0
+                            elif proposed_index != previous_source_index:
+                                if proposed_index == v1_candidate_source_index:
+                                    v1_source_hold_count += 1
+                                    if v1_source_hold_count >= 5:
+                                        selected_index = proposed_index
+                                        previous_source_index = proposed_index
+                                        v1_candidate_source_index = None
+                                        v1_source_hold_count = 0
+                                    else:
+                                        selected_index = previous_source_index
+                                else:
+                                    v1_candidate_source_index = proposed_index
+                                    v1_source_hold_count = 1
+                                    selected_index = previous_source_index
+                            else:
+                                selected_index = previous_source_index
+                                v1_candidate_source_index = None
+                                v1_source_hold_count = 0
+
+                            f['_pose_v5_source_index'] = int(selected_index)
+                            f['_temporal_source_index'] = int(selected_index)
+                            f['_temporal_source_transition_alpha'] = 1.0
+                            f['_pose_v5_source_reason'] = 'v1_hysteresis'
                     except Exception as _degrade_error:
                         # A pose annotation is an optimization/quality hint;
                         # never make the established temporal replay fail if a

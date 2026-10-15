@@ -191,8 +191,65 @@ class FaceSet:
         except (TypeError, ValueError, IndexError):
             return None
 
-    def select_reference_index(self, pose=None, appearance=None, embedding=None):
-        """Fast V2 lookup with legacy pose-bank fallback."""
+    def ensure_face_poses(self):
+        """Precompute face poses if missing on multi-face facesets."""
+        if self.face_poses is not None or len(self.faces) < 2:
+            return self.face_poses
+        try:
+            import math as _math
+            import numpy as _np
+            from roop.face_3d_recon import estimate_pose, decompose_yaw_pitch
+            poses = []
+            for idx, face in enumerate(self.faces):
+                yaw_d = pitch_d = None
+                curr_face = face
+                if not hasattr(curr_face, 'landmark_3d_68') or curr_face.landmark_3d_68 is None:
+                    if idx < len(self.ref_images) and self.ref_images[idx] is not None:
+                        from roop.face_util import get_first_face
+                        redetected = get_first_face(self.ref_images[idx])
+                        if redetected is not None:
+                            curr_face = redetected
+                            if hasattr(redetected, 'landmark_3d_68'):
+                                face.landmark_3d_68 = redetected.landmark_3d_68
+                                face['landmark_3d_68'] = redetected.landmark_3d_68
+                            if hasattr(redetected, 'embedding'):
+                                face.embedding = redetected.embedding
+                                face['embedding'] = redetected.embedding
+
+                if hasattr(curr_face, 'landmark_3d_68') and curr_face.landmark_3d_68 is not None:
+                    try:
+                        lm = curr_face.landmark_3d_68[:, :2].astype(_np.float32)
+                        rvec, _ = estimate_pose(lm, 512)
+                        y, p = decompose_yaw_pitch(rvec)
+                        yaw_d = _math.degrees(y)
+                        pitch_d = _math.degrees(p)
+                    except Exception as _degrade_error:
+                        _swallowed("roop/FaceSet.py:ensure_face_poses", _degrade_error, "fallback continued")
+                        pass
+                poses.append((yaw_d, pitch_d))
+            self.face_poses = poses
+        except Exception as _degrade_error:
+            _swallowed("roop/FaceSet.py:ensure_face_poses_outer", _degrade_error, "fallback continued")
+            pass
+        return self.face_poses
+
+    def canonical_face_index(self):
+        """Return the index of the most frontal face in the faceset.
+
+        Falls back to 0 if poses are not available or all faces are invalid.
+        """
+        if not self.faces:
+            return 0
+        self.ensure_face_poses()
+        if self.face_poses:
+            valid = [(i, float(y or 0.0) ** 2 + float(p or 0.0) ** 2)
+                     for i, (y, p) in enumerate(self.face_poses) if y is not None]
+            if valid:
+                return min(valid, key=lambda item: item[1])[0]
+        return 0
+
+    def select_reference_index(self, pose=None, appearance=None, embedding=None, previous_index=None):
+        """Fast V2 lookup with legacy pose-bank fallback and hysteresis."""
         if self.format_version >= 2 and self.faceset_metadata:
             index = select_reference_index(self.faceset_metadata, pose=pose,
                                            appearance=appearance, embedding=embedding)
@@ -202,8 +259,17 @@ class FaceSet:
             valid = [(i, (yaw - float(y or 0.0)) ** 2 + (pitch - float(p or 0.0)) ** 2)
                      for i, (y, p) in enumerate(self.face_poses) if y is not None]
             if valid:
-                return min(valid, key=lambda item: item[1])[0]
-        return 0
+                best_i, best_cost = min(valid, key=lambda item: item[1])
+                if previous_index is not None and 0 <= int(previous_index) < len(self.faces):
+                    prev_i = int(previous_index)
+                    prev_match = next((cost for (i, cost) in valid if i == prev_i), None)
+                    if prev_match is not None:
+                        # Switch only if candidate is substantially better (margin ~15° -> 225 deg^2)
+                        if best_cost < prev_match - 225.0:
+                            return best_i
+                        return prev_i
+                return best_i
+        return self.canonical_face_index()
 
     def select_pose_aware_reference(self, target_pose, appearance=None,
                                     expression=None, previous_index=None):

@@ -4951,12 +4951,14 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
     def rotation_action(self, original_face:Face, frame:Frame):
         """Which quarter turn stands this face up.
 
-        Prefers the roll the tracking pre-pass resolved along this face's own
-        track (`roll_deg`); see roop.orientation for why the per-frame estimate
-        under it cannot be trusted on a rolled profile. The single-frame call
-        stays the fallback for stills and tracking-off runs, which have no
-        sequence to be continuous along.
+        Prefers the track-stabilized rotation action stamped by resolve_track_rolls
+        (`rotation_action`). Falls back to track roll (`roll_deg`), then per-frame
+        detector action.
         """
+        track_action = (original_face.get('rotation_action') if isinstance(original_face, dict)
+                        else getattr(original_face, 'rotation_action', None))
+        if track_action is not None or (isinstance(original_face, dict) and 'rotation_action' in original_face):
+            return track_action
         roll = self._resolved_roll(original_face)
         if roll is not None:
             return orientation.action_for_roll(roll)
@@ -5567,7 +5569,8 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             source_faceset = fs
             if len(fs.faces) > 0:
                 with _prof('faceset_lookup'):
-                    inputface = fs.faces[0]   # default
+                    canonical_idx = fs.canonical_face_index() if hasattr(fs, 'canonical_face_index') else 0
+                    inputface = fs.faces[canonical_idx]   # default canonical face
             if (getattr(self.options, 'use_source_bank', False)
                     and len(fs.faces) > 1
                     and fs.face_poses is not None):
@@ -5606,17 +5609,16 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                                 pose=(bank_yaw_deg, bank_pitch_deg),
                                 appearance=target_lighting)
                 else:
-                    best_idx  = 0
-                    best_dist = float('inf')
-                    for i, (yaw_d, pitch_d) in enumerate(fs.face_poses):
-                        if yaw_d is None:
-                            continue
-                        # bank_*, not tgt_* — see the pose block above for why these
-                        # two comparands have to stay in the same convention.
-                        dist = (bank_yaw_deg - yaw_d) ** 2 + (bank_pitch_deg - pitch_d) ** 2
-                        if dist < best_dist:
-                            best_dist = dist
-                            best_idx  = i
+                    previous_src_idx = None
+                    try:
+                        previous_src_idx = target_face.get('_pose_v5_source_index')
+                    except Exception:
+                        pass
+                    with _prof('faceset_lookup'):
+                        best_idx = fs.select_reference_index(
+                            pose=(bank_yaw_deg, bank_pitch_deg),
+                            previous_index=previous_src_idx
+                        )
                 # Phase 6 has already committed the source-bank transition in
                 # the ordered replay. Reuse that decision in the swap worker;
                 # never let this second selector call undo temporal hysteresis.

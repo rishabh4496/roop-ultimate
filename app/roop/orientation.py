@@ -153,19 +153,59 @@ def roll_from_kps(kps):
     return float(np.degrees(np.arctan2(axis[0], axis[1])))
 
 
-def action_for_roll(roll):
+def action_for_roll(roll, prev_action=None):
     """The quarter turn that stands a face at this roll up, or None.
 
     Mirrors face_util._action_for_down_axis, against a roll that has already
     been resolved. np.rot90 sends a direction (dx, dy) to (dy, -dx), so a chin
     pointing image-left is stood up by an anticlockwise turn.
+
+    When `prev_action` is supplied, stateful hysteresis bands prevent
+    oscillation and chattering around the boundary thresholds (45° and 135°).
     """
     if roll is None:
         return None
     r = wrap180(roll)
-    if abs(r) < ROLL_LOWER:
+    abs_r = abs(r)
+
+    if prev_action is None:
+        if abs_r < ROLL_LOWER:
+            return None
+        if abs_r > ROLL_UPPER:
+            return "rotate_180"
+        return "rotate_anticlockwise" if r < 0 else "rotate_clockwise"
+
+    # Stateful hysteresis:
+    # Deadbands around ROLL_LOWER (45°: 36°..54°) and ROLL_UPPER (135°: 126°..144°)
+    if prev_action == "rotate_180":
+        # Only leave rotate_180 if tilt drops clearly below 126°
+        if abs_r < 126.0:
+            if abs_r < 36.0:
+                return None
+            return "rotate_anticlockwise" if r < 0 else "rotate_clockwise"
+        return "rotate_180"
+
+    if prev_action == "rotate_anticlockwise":
+        # Tilted left (negative roll). Return to upright only if r > -36°
+        if r > -36.0:
+            return None
+        # Transition to upside-down (rotate_180) only if r < -144°
+        if r < -144.0:
+            return "rotate_180"
+        return "rotate_anticlockwise"
+
+    if prev_action == "rotate_clockwise":
+        # Tilted right (positive roll). Return to upright only if r < 36°
+        if r < 36.0:
+            return None
+        # Transition to upside-down (rotate_180) only if r > 144°
+        if r > 144.0:
+            return "rotate_180"
+        return "rotate_clockwise"
+
+    if abs_r < ROLL_LOWER:
         return None
-    if abs(r) > ROLL_UPPER:
+    if abs_r > ROLL_UPPER:
         return "rotate_180"
     return "rotate_anticlockwise" if r < 0 else "rotate_clockwise"
 
@@ -266,7 +306,7 @@ DEBUG = os.environ.get("ROOP_DEBUG_ROLL", "0") != "0"
 
 
 def resolve_track_rolls(faces_in_order):
-    """Stamp `roll_deg` on each face of one track, in frame order.
+    """Stamp `roll_deg` and `rotation_action` on each face of one track, in frame order.
 
     `faces_in_order` is the track's faces sorted by frame index. Returns
     `coasts` for the diagnostic line — a run that coasted nowhere did nothing,
@@ -281,20 +321,55 @@ def resolve_track_rolls(faces_in_order):
     if not ENABLED:
         return 0
     tr = RollTrack()
+    current_action = None
+    candidate_action = None
+    hold_count = 0
     for n, face in enumerate(faces_in_order):
         kps = face.get("kps") if isinstance(face, dict) else getattr(face, "kps", None)
         est = roll_from_face(face)
         roll, trusted = tr.update(kps, est=est)
+        action = None
+        if roll is not None:
+            proposed = action_for_roll(roll, prev_action=current_action)
+            if current_action is None:
+                current_action = proposed
+                candidate_action = proposed
+                hold_count = 0
+            elif proposed != current_action:
+                if proposed == candidate_action:
+                    hold_count += 1
+                    r_wrap = abs(wrap180(roll))
+                    clear_margin = (
+                        (proposed == "rotate_180" and r_wrap > 155.0) or
+                        (proposed is None and r_wrap < 25.0) or
+                        (proposed in ("rotate_clockwise", "rotate_anticlockwise") and 65.0 < r_wrap < 115.0)
+                    )
+                    if hold_count >= 4 or clear_margin:
+                        current_action = proposed
+                        hold_count = 0
+                else:
+                    candidate_action = proposed
+                    hold_count = 1
+            else:
+                candidate_action = proposed
+                hold_count = 0
+            action = current_action
+
         if DEBUG:
             print(f"[roll] n={n:>4} est={'None' if est is None else f'{est:7.1f}'} "
                   f"resolved={'None' if roll is None else f'{roll:7.1f}'} "
                   f"{'trusted' if trusted else 'COAST'} "
-                  f"action={action_for_roll(roll)}", flush=True)
+                  f"action={action}", flush=True)
         if roll is None:
             continue
         try:
             face["roll_deg"] = float(roll)
             face["roll_trusted"] = bool(trusted)
+            face["rotation_action"] = action
+            if not isinstance(face, dict):
+                setattr(face, "roll_deg", float(roll))
+                setattr(face, "roll_trusted", bool(trusted))
+                setattr(face, "rotation_action", action)
         except Exception as _degrade_error:
             _swallowed("roop/orientation.py:296", _degrade_error, "fallback continued")
             pass
