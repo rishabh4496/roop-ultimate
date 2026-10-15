@@ -167,7 +167,7 @@ class FFMPEG_VideoWriter:
     def __init__(self, filename, size, fps, codec="libx265", crf=14, audiofile=None,
                  preset="faster", bitrate=None,
                  logfile=None, threads=None, ffmpeg_params=None,
-                 colorspace=None):
+                 colorspace=None, sar=None, dar=None):
 
         if logfile is None:
             logfile = sp.PIPE
@@ -175,6 +175,8 @@ class FFMPEG_VideoWriter:
         self.filename = filename
         self.codec = codec
         self.ext = self.filename.split(".")[-1]
+        self._sar = sar
+        self._dar = dar
         # Held so _build_cmd can be re-run for a different codec: the fallback
         # cannot just swap the codec name in the finished argv, because the
         # rate-control flags differ (-rc/-cq/-tune for NVENC vs -crf/-preset).
@@ -308,10 +310,14 @@ class FFMPEG_VideoWriter:
         filters = []
         if w != size[0] or h != size[1]:
             filters.append(f'scale={w}:{h}')
+        if self._sar and str(self._sar).strip() not in ('', '1:1', '1/1'):
+            filters.append(f'setsar={self._sar}')
         if convert:
             filters.append('colorspace=bt709:iall=bt601-6-625:fast=1')
         if filters:
             cmd.extend(['-vf', ','.join(filters)])
+        if self._dar and str(self._dar).strip():
+            cmd.extend(['-aspect', str(self._dar)])
         if convert:
             # State the tags rather than relying on the filter to propagate
             # frame metadata into the muxer. Measured free: with the filter

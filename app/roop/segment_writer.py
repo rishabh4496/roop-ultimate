@@ -156,12 +156,24 @@ class SegmentedVideoWriter:
                 self.chunk = self._default_chunk()
         else:
             self.chunk = self._default_chunk()
+        sar = None
+        dar = None
+        if source_video:
+            try:
+                from roop.capturer import _probe_video
+                info = _probe_video(source_video) or {}
+                sar = info.get("sar")
+                dar = info.get("dar")
+            except (OSError, ValueError, KeyError, AttributeError):
+                pass
         self._writer_options = {
             "preset": preset,
             "bitrate": bitrate,
             "threads": threads,
             "ffmpeg_params": ffmpeg_params,
             "colorspace": colorspace,
+            "sar": sar,
+            "dar": dar,
         }
         self._checkpoint_callback = checkpoint_callback
         self._write_lock = threading.RLock()

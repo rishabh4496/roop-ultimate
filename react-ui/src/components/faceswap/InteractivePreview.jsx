@@ -58,6 +58,8 @@ export default function InteractivePreview({
   // still holds the last good picture, which is not the frame asked for.
   frameUnavailable = false,
   onRetryFrame,
+  sarVal = 1.0,
+  darVal = 0.0,
 }) {
   const [sliderPosition, setSliderPosition] = useState(50);
   // The live value during a drag. `sliderPosition` only ever holds the value
@@ -610,7 +612,22 @@ export default function InteractivePreview({
     ...transformFor(zoom, pan),
     willChange: zoom > 1 || interacting ? 'transform' : 'auto',
   };
-  const aspectStyle = { aspectRatio: imgDim ? `${imgDim.w}/${imgDim.h}` : '1', maxHeight: '100%', maxWidth: '100%', display: 'flex' };
+  const displayRatio = useMemo(() => {
+    if (!imgDim) return null;
+    if (darVal && Number(darVal) > 0) return Number(darVal);
+    const s = Number(sarVal) || 1.0;
+    if (Math.abs(s - 1.0) > 0.005) {
+      return (imgDim.w * s) / imgDim.h;
+    }
+    return imgDim.w / imgDim.h;
+  }, [imgDim, sarVal, darVal]);
+
+  const aspectStyle = {
+    aspectRatio: displayRatio ? `${displayRatio}` : (imgDim ? `${imgDim.w}/${imgDim.h}` : '1'),
+    maxHeight: '100%',
+    maxWidth: '100%',
+    display: 'flex',
+  };
 
   const triggerFullscreen = () => {
     if (!containerRef.current) return;
@@ -902,18 +919,26 @@ export default function InteractivePreview({
 
   // Split View comparison (50/50 dual pane)
   if (compare && splitView) {
+    const splitRatio = displayRatio ? displayRatio * 2 : null;
     return (
       <div
         ref={containerRef}
-        className={`relative w-full aspect-video max-h-[54vh] min-h-[260px] rounded-2xl overflow-hidden preview-stage group border border-white/10 shadow-2xl ${
+        className={`relative w-full max-h-[65vh] min-h-[260px] rounded-2xl overflow-hidden preview-stage group border border-white/10 shadow-2xl ${
           isFullscreen ? 'h-screen w-screen max-h-none' : ''
-        }`}
+        } ${displayRatio ? '' : 'aspect-video'}`}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={endDrag}
         onPointerCancel={endDrag}
         onDoubleClick={handleDoubleClick}
-        style={{ touchAction: 'none' }}
+        style={{
+          touchAction: 'none',
+          ...(splitRatio && !isFullscreen ? {
+            aspectRatio: `${splitRatio}`,
+            maxWidth: `min(100%, calc(65vh * ${splitRatio}))`,
+            margin: '0 auto',
+          } : {})
+        }}
       >
         {stageInfo()}
         <div className={`flex w-full h-full ${interacting ? '' : 'transition-transform duration-75'}`} style={transformStyle}>
@@ -984,16 +1009,23 @@ export default function InteractivePreview({
 
   return (
     <div
-      className={`relative w-full aspect-video max-h-[54vh] min-h-[260px] rounded-2xl overflow-hidden preview-stage select-none group border border-white/10 shadow-2xl ${
+      className={`relative w-full max-h-[65vh] min-h-[260px] rounded-2xl overflow-hidden preview-stage select-none group border border-white/10 shadow-2xl ${
         isFullscreen ? 'h-screen w-screen max-h-none' : ''
-      }`}
+      } ${displayRatio ? '' : 'aspect-video'}`}
       ref={containerRef}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={endDrag}
       onPointerCancel={endDrag}
       onDoubleClick={handleDoubleClick}
-      style={{ touchAction: 'none' }}
+      style={{
+        touchAction: 'none',
+        ...(displayRatio && !isFullscreen ? {
+          aspectRatio: `${displayRatio}`,
+          maxWidth: displayRatio < 1.0 ? `min(100%, calc(65vh * ${displayRatio}))` : '100%',
+          margin: '0 auto',
+        } : {})
+      }}
     >
       {/* Render indicator */}
       {previewing && (

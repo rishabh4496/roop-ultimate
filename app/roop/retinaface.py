@@ -178,9 +178,14 @@ class RetinaFace3Output:
         # Letterboxing it (the correct SCRFD/10g geometry) suppresses r50 face
         # scores under TensorRT, especially on 16:9 footage. Keep independent
         # axis scales so decoded boxes map back to the source correctly.
-        direct_square = self.model_file and os.path.basename(self.model_file).lower() in {
+        #
+        # For vertical / portrait frames (height > width), direct square resize
+        # squashes faces by up to 1.78x into a pancake and shifts facial keypoints.
+        # Only use direct_square when width >= height (landscape / square).
+        is_r50 = bool(self.model_file and os.path.basename(self.model_file).lower() in {
             'retinaface_r50.onnx', 'retinaface-resnet50.onnx',
-            'retinaface_resnet50.onnx'}
+            'retinaface_resnet50.onnx'})
+        direct_square = is_r50 and (img.shape[1] >= img.shape[0])
         if direct_square:
             det_img = cv2.resize(img, (input_size[0], input_size[1]))
             scale_x = float(input_size[0]) / img.shape[1]

@@ -45,15 +45,35 @@ export default function LiveProcessingPeek({
   const httpLive = !socketOpen && !!liveSrc && liveSrc !== failedSeq;
   const isLive = socketLive || httpLive;
   const stillImage = (httpLive && liveSrc) || previewSrc || rawUrl;
+  const [aspectRatio, setAspectRatio] = useState(null);
+
+  useEffect(() => {
+    return frameSocket.subscribeLive((f) => {
+      if (f && f.width && f.height) {
+        setAspectRatio(`${f.width} / ${f.height}`);
+      }
+    });
+  }, []);
+
+  const handleImgLoad = (e) => {
+    const { naturalWidth, naturalHeight } = e.target;
+    if (naturalWidth && naturalHeight) {
+      setAspectRatio(`${naturalWidth} / ${naturalHeight}`);
+    }
+  };
 
   return (
     <div className="relative group overflow-hidden rounded-2xl border border-white/15 bg-black/60 shadow-xl backdrop-blur-md transition-all duration-300">
       {/* Media Frame Container */}
-      <div className="relative aspect-video w-full flex items-center justify-center overflow-hidden bg-neutral-950">
+      <div
+        className={`relative w-full flex items-center justify-center overflow-hidden bg-neutral-950 transition-all duration-300 ${aspectRatio ? '' : 'aspect-video'}`}
+        style={aspectRatio ? { aspectRatio, maxHeight: '60vh' } : { maxHeight: '60vh' }}
+      >
         {!socketLive && (stillImage ? (
           <img
             src={stillImage}
             alt={httpLive ? 'Latest processed frame' : 'Preview still'}
+            onLoad={handleImgLoad}
             onError={() => { if (httpLive) setFailedSeq(liveSrc); }}
             className="h-full w-full object-contain transition-all duration-300 transform-gpu"
           />

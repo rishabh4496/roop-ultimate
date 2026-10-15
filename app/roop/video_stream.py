@@ -525,6 +525,8 @@ class NVHardwareVideoWriter:
         threads: Optional[int] = None,
         ffmpeg_params: Optional[list[str]] = None,
         colorspace: Optional[str] = None,
+        sar: Optional[str] = None,
+        dar: Optional[str] = None,
     ):
         self.output_path = os.path.abspath(output_path)
         self.width = int(width)
@@ -539,6 +541,8 @@ class NVHardwareVideoWriter:
         self.threads = threads
         self.ffmpeg_params = list(ffmpeg_params or [])
         self.colorspace = colorspace
+        self.sar = sar
+        self.dar = dar
         self.proc: Optional[subprocess.Popen] = None
         self._stderr_drainer: Optional[StderrDrainer] = None
         self.frames_written = 0
@@ -638,11 +642,15 @@ class NVHardwareVideoWriter:
         filters = []
         if width != self.width or height != self.height:
             filters.append(f"scale={width}:{height}")
+        if self.sar and str(self.sar).strip() not in {"", "1:1", "1/1"}:
+            filters.append(f"setsar={self.sar}")
         color = str(self.colorspace or os.environ.get("ROOP_FFMPEG_COLORSPACE", "bt709")).strip().lower()
         if color not in {"", "off", "none", "passthrough", "0", "false"}:
             filters.append("colorspace=bt709:iall=bt601-6-625:fast=1")
         if filters:
             cmd.extend(["-vf", ",".join(filters)])
+        if self.dar and str(self.dar).strip():
+            cmd.extend(["-aspect", str(self.dar)])
         if color not in {"", "off", "none", "passthrough", "0", "false"}:
             cmd.extend([
                 "-colorspace", "bt709",

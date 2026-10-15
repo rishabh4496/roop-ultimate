@@ -5612,7 +5612,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     previous_src_idx = None
                     try:
                         previous_src_idx = target_face.get('_pose_v5_source_index')
-                    except Exception:
+                    except (AttributeError, KeyError, TypeError):
                         pass
                     with _prof('faceset_lookup'):
                         best_idx = fs.select_reference_index(

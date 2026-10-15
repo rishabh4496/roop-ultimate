@@ -456,7 +456,7 @@ class BatchProcessingMixin:
             if _target_groups and (not _target_datas or len(_target_groups) == len(_target_datas)):
                 try:
                     _unique_identities = len(set(_target_groups))
-                except Exception:
+                except TypeError:
                     _unique_identities = len(_target_groups)
             else:
                 _unique_identities = len(_target_datas)
@@ -654,6 +654,17 @@ class BatchProcessingMixin:
         # pre-passes and the 2-pass stabilizer must then only scan the frames
         # that still need encoding.
         if self.output_to_file:
+            _src_sar, _src_dar = None, None
+            if source_video:
+                try:
+                    from roop.capturer import _probe_video
+                    _src_info = _probe_video(source_video) or {}
+                    _src_sar = _src_info.get('sar')
+                    _src_dar = _src_info.get('dar')
+                    if 'sar_val' in _src_info:
+                        roop.globals.video_sar = float(_src_info['sar_val'])
+                except (OSError, ValueError, KeyError, AttributeError, TypeError):
+                    pass
             use_resume = (not is_awebp) and os.environ.get('ROOP_RESUME', '1') == '1'
             if use_resume:
                 from roop.segment_writer import SegmentedVideoWriter
@@ -701,6 +712,8 @@ class BatchProcessingMixin:
                         audio_source=None,
                         codec=codec,
                         crf=roop.globals.video_quality,
+                        sar=_src_sar,
+                        dar=_src_dar,
                     )
                 else:
                     self.videowriter = FFMPEG_VideoWriter(
@@ -710,6 +723,8 @@ class BatchProcessingMixin:
                         codec=codec,
                         crf=roop.globals.video_quality,
                         audiofile=None,
+                        sar=_src_sar,
+                        dar=_src_dar,
                     )
         if self.output_to_cam:
             self.streamwriter = StreamWriter((width, height), int(fps))

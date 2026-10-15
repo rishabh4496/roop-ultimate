@@ -3288,7 +3288,7 @@ def swap_template_points(image_size, mode="arcface"):
     return dst
 
 
-def estimate_norm(lmk, image_size=112, mode="arcface"):
+def estimate_norm(lmk, image_size=112, mode="arcface", sar=None):
     assert lmk.shape == (5, 2)
 
     # Force SimilarityTransform (use_affine = False) for all faces.
@@ -3298,10 +3298,32 @@ def estimate_norm(lmk, image_size=112, mode="arcface"):
     # natural aspect ratio and matches the training distribution of the models.
     use_affine = False
 
+    if sar is None:
+        sar = getattr(roop.globals, "video_sar", 1.0)
+    try:
+        sar_val = float(sar)
+    except (TypeError, ValueError):
+        sar_val = 1.0
+
     dst = swap_template_points(image_size, mode)
     tform = trans.AffineTransform() if use_affine else trans.SimilarityTransform()
-    tform.estimate(lmk, dst)
-    return tform.params[0:2, :]
+
+    if abs(sar_val - 1.0) > 0.005:
+        # Non-square pixel video (e.g. 720x576 PAL SAR 16:15 or 64:45, NTSC):
+        # Physical display space has x_display = x_pixel * sar_val.
+        # Fit similarity transform in display space to match the square ArcFace template:
+        lmk_display = lmk.copy()
+        lmk_display[:, 0] *= sar_val
+        tform.estimate(lmk_display, dst)
+        M_display = tform.params[0:2, :]
+        # Map back to pixel raster space so warpAffine can sample directly from the raster:
+        # [x_dst, y_dst]^T = M_display * [x_pixel * sar_val, y_pixel, 1]^T
+        M_pixel = M_display.copy()
+        M_pixel[:, 0] *= sar_val
+        return M_pixel
+    else:
+        tform.estimate(lmk, dst)
+        return tform.params[0:2, :]
 
 
 

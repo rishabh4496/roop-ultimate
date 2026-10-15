@@ -153,6 +153,8 @@ export default function FaceSwap({
   // preview endpoint for why it is not re-derived here.
   const [previewPose, setPreviewPose] = useState([]);
   const [previewDiagnostic, setPreviewDiagnostic] = useState(null);
+  const [previewSar, setPreviewSar] = useState(1.0);
+  const [previewDar, setPreviewDar] = useState(0.0);
   // Manual mask painted in the preview box (PNG data URL) + the face keypoints
   // it was painted against. maskVersion is a cheap token for the preview cache
   // key so the multi-KB data URL never has to be stringified per render.
@@ -1405,6 +1407,8 @@ export default function FaceSwap({
         setPreviewKps(cached.kps || []);
         setPreviewPose(cached.pose || []);
         setPreviewDiagnostic(cached.diagnostic || null);
+        if (cached.sar !== undefined) setPreviewSar(cached.sar);
+        if (cached.dar !== undefined) setPreviewDar(cached.dar);
         // No revoke of the outgoing url here: it is a cache entry, and the
         // cache is what owns it. Freeing it would blank a frame the user can
         // still step back onto.
@@ -1480,6 +1484,7 @@ export default function FaceSwap({
             pose: res.pose || [], image: own,
             diagnostic: res.selection_diagnostic || (res.target_required ? 'target_required' : null),
             signature: res.preview_signature || null, requestId: res.request_id || null,
+            sar: res.sar_val ?? 1.0, dar: res.dar_val ?? 0.0,
           });
         }
         if (import.meta.env?.DEV) {
@@ -1498,6 +1503,8 @@ export default function FaceSwap({
       setPreviewPersonIds(res.person_ids || []);
       setPreviewKps(res.kps || []);
       setPreviewPose(res.pose || []);
+      if (res.sar_val !== undefined) setPreviewSar(res.sar_val);
+      if (res.dar_val !== undefined) setPreviewDar(res.dar_val);
       const diagnostic = res.selection_diagnostic
         || (res.target_required ? 'target_required' : null);
       setPreviewDiagnostic(diagnostic);
@@ -1518,6 +1525,7 @@ export default function FaceSwap({
           faces: res.faces || [], personIds: res.person_ids || [], kps: res.kps || [],
           pose: res.pose || [], image: blobSrc, diagnostic,
           signature: res.preview_signature || null, requestId: res.request_id || null,
+          sar: res.sar_val ?? 1.0, dar: res.dar_val ?? 0.0,
         });
       }
     } catch (e) {
@@ -3994,6 +4002,8 @@ export default function FaceSwap({
                     setIsPlaying={setIsPlaying}
                     frameUnavailable={frameUnavailable}
                     onRetryFrame={retryRawFrame}
+                    sarVal={previewSar}
+                    darVal={previewDar}
                   />
                 </div>
               )

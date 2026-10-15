@@ -236,7 +236,8 @@ def estimate_head_pose_pnp(
 def weighted_umeyama_alignment(
     src: np.ndarray,
     dst: np.ndarray,
-    weights: Optional[np.ndarray] = None
+    weights: Optional[np.ndarray] = None,
+    sar: Optional[float] = None
 ) -> np.ndarray:
     """Closed-form Weighted Umeyama similarity transform estimation.
 
@@ -246,11 +247,26 @@ def weighted_umeyama_alignment(
     src: (N, 2) source points (observed landmarks)
     dst: (N, 2) destination points (canonical template)
     weights: (N,) positive weights for each landmark
+    sar: optional sample aspect ratio (defaults to roop.globals.video_sar)
 
     Returns:
         (2, 3) float32 affine similarity matrix.
     """
+    if sar is None:
+        try:
+            from roop import globals as roop_globals
+            sar = getattr(roop_globals, "video_sar", 1.0)
+        except (ImportError, AttributeError):
+            sar = 1.0
+    try:
+        sar_val = float(sar)
+    except (TypeError, ValueError):
+        sar_val = 1.0
+
     X = np.asarray(src, dtype=np.float64).reshape(-1, 2)
+    if abs(sar_val - 1.0) > 0.005:
+        X = X.copy()
+        X[:, 0] *= sar_val
     Y = np.asarray(dst, dtype=np.float64).reshape(-1, 2)
     n = X.shape[0]
     if n < 2:
@@ -279,7 +295,10 @@ def weighted_umeyama_alignment(
     var_X = float(np.sum(w * np.sum(X_c ** 2, axis=1)))
     if var_X < 1e-9:
         t = mu_Y - mu_X
-        return np.array([[1.0, 0.0, float(t[0])], [0.0, 1.0, float(t[1])]], dtype=np.float32)
+        M = np.array([[1.0, 0.0, float(t[0])], [0.0, 1.0, float(t[1])]], dtype=np.float32)
+        if abs(sar_val - 1.0) > 0.005:
+            M[:, 0] *= sar_val
+        return M
 
     # 4. Weighted cross-covariance matrix: Sigma_{YX} = Y_c^T W X_c
     cov_YX = (Y_c * w[:, None]).T @ X_c
@@ -306,6 +325,8 @@ def weighted_umeyama_alignment(
     M = np.zeros((2, 3), dtype=np.float32)
     M[:, :2] = (scale * R).astype(np.float32)
     M[:, 2] = t.astype(np.float32)
+    if abs(sar_val - 1.0) > 0.005:
+        M[:, 0] *= sar_val
     return M
 
 

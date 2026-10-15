@@ -676,6 +676,7 @@ class HdrVideoWriter:
         self.width, self.height = int(width), int(height)
         self.fps = float(fps)
         self.spec = spec
+        self.source_path = source_path
         self.transform = transform_for(spec)
         self._start_frame = max(0, int(start_frame))
         self.codec = output_codec(codec)
@@ -739,12 +740,26 @@ class HdrVideoWriter:
         # encoder. setparams sets those; the options are kept as a belt.
         vf.append("setparams=" + ":".join(f"{k}={v}" for k, v in tags.items()))
         vf.append(f"format={self._pix_fmt(codec)}")
+        sar, dar = None, None
+        if getattr(self, "source_path", None):
+            try:
+                from roop.capturer import _probe_video
+                info = _probe_video(self.source_path) or {}
+                sar = info.get("sar")
+                dar = info.get("dar")
+            except (OSError, ValueError, KeyError, AttributeError):
+                pass
+        if sar and str(sar).strip() not in ("", "1:1", "1/1"):
+            vf.append(f"setsar={sar}")
         cmd = [ffmpeg_binary(), "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
                "-f", "rawvideo", "-pix_fmt", "yuv444p16le",
                "-s", f"{self.width}x{self.height}", "-r", frame_rate_arg(self.fps),
-               "-i", "-", "-map", "0:v:0", "-an",
+               "-i", "-", "-map", "0:v:0", "-an"]
+        if dar and str(dar).strip():
+            cmd.extend(["-aspect", str(dar)])
+        cmd.extend([
                "-vf", ",".join(vf), "-sws_flags", "accurate_rnd+full_chroma_int",
-               "-c:v", codec]
+               "-c:v", codec])
         from roop.util_ffmpeg import clamp_quality
         q = clamp_quality(codec, 19 if self.quality is None else self.quality)
         if codec in _HW:

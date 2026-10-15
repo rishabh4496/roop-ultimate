@@ -218,6 +218,25 @@ def _parse_rate(text) -> float:
         return 0.0
 
 
+def _parse_aspect(text) -> tuple:
+    """Parse aspect ratios like '16:15' or '4:3' into (num, den)."""
+    try:
+        s = str(text or "").strip()
+        if ":" in s:
+            num, den = s.split(":", 1)
+            n, d = int(num), int(den)
+            if n > 0 and d > 0:
+                return (n, d)
+        elif "/" in s:
+            num, den = s.split("/", 1)
+            n, d = int(num), int(den)
+            if n > 0 and d > 0:
+                return (n, d)
+    except (TypeError, ValueError):
+        pass
+    return (0, 0)
+
+
 def _probe_video(video_path: str):
     """Real width/height/fps/frame-count from ffprobe, cached per path.
 
@@ -231,7 +250,7 @@ def _probe_video(video_path: str):
     try:
         cmd = [_ffprobe_binary(), "-v", "error", "-select_streams", "v:0",
                "-show_entries",
-               "stream=width,height,avg_frame_rate,nb_frames,duration,codec_name,pix_fmt"
+               "stream=width,height,avg_frame_rate,nb_frames,duration,codec_name,pix_fmt,sample_aspect_ratio,display_aspect_ratio"
                ":format=duration",
                "-of", "json", video_path]
         proc = subprocess.run(cmd, capture_output=True, timeout=30, **_popen_kwargs())
@@ -254,9 +273,33 @@ def _probe_video(video_path: str):
                     break
             if dur > 0 and fps > 0:
                 frames = int(round(dur * fps))
+
+        sar_raw = st.get("sample_aspect_ratio")
+        sar_num, sar_den = _parse_aspect(sar_raw)
+        if sar_num > 0 and sar_den > 0:
+            sar_val = float(sar_num) / float(sar_den)
+            sar = f"{sar_num}:{sar_den}"
+        else:
+            sar_val = 1.0
+            sar = "1:1"
+
+        dar_raw = st.get("display_aspect_ratio")
+        dar_num, dar_den = _parse_aspect(dar_raw)
+        if dar_num > 0 and dar_den > 0:
+            dar_val = float(dar_num) / float(dar_den)
+            dar = f"{dar_num}:{dar_den}"
+        elif w > 0 and h > 0:
+            dar_val = (float(w) * sar_val) / float(h)
+            dar = f"{dar_val:.4f}"
+        else:
+            dar_val = 0.0
+            dar = ""
+
         if w > 0 and h > 0:
             info = {"w": w, "h": h, "fps": fps or 25.0, "frames": max(0, frames),
-                    "codec": codec, "pix_fmt": pix_fmt}
+                    "codec": codec, "pix_fmt": pix_fmt,
+                    "sar": sar, "sar_val": sar_val,
+                    "dar": dar, "dar_val": dar_val}
     except Exception as _degrade_error:
         _swallowed("roop/capturer.py:258", _degrade_error, "fallback continued")
         info = None
@@ -280,6 +323,21 @@ def probe_media_dimensions(path: str):
         return None
     h, w = img.shape[:2]
     return (w, h)
+
+
+def get_video_aspect(path: str) -> dict:
+    """Return dict with sar, sar_val, dar, dar_val for a video, or 1.0 defaults."""
+    import roop.utilities as util
+    if util.is_video(path):
+        info = _probe_video(path)
+        if info:
+            return {
+                "sar": info.get("sar", "1:1"),
+                "sar_val": info.get("sar_val", 1.0),
+                "dar": info.get("dar", ""),
+                "dar_val": info.get("dar_val", 0.0),
+            }
+    return {"sar": "1:1", "sar_val": 1.0, "dar": "", "dar_val": 0.0}
 
 
 # cv2's HEVC seek was measured against self-labelling clips (each frame a known
@@ -517,13 +575,24 @@ def get_video_frame(video_path: str, frame_number: int = 0) -> Optional[Frame]:
         if video_path != current_video_path or current_capture is None:
             release_video()
             current_capture = cv2.VideoCapture(video_path)
+            if hasattr(cv2, 'CAP_PROP_ORIENTATION_AUTO'):
+                try:
+                    current_capture.set(cv2.CAP_PROP_ORIENTATION_AUTO, 0)
+                except (cv2.error, AttributeError) as _e:
+                    _swallowed("roop/capturer.py:orient_auto", _e, "cv2 orientation auto fallback")
             current_video_path = video_path
             current_frame_total = current_capture.get(cv2.CAP_PROP_FRAME_COUNT)
+            info = _probe_video(video_path)
+            if info and "sar_val" in info:
+                try:
+                    import roop.globals
+                    roop.globals.video_sar = float(info["sar_val"])
+                except (TypeError, ValueError, AttributeError):
+                    pass
             # A frame count of 0 (cv2 could not index the file) would clamp every
             # request to frame 0 and show the same still for the whole clip. Ask
             # ffprobe instead so the timeline gets a real length.
             if int(current_frame_total or 0) <= 0:
-                info = _probe_video(video_path)
                 if info and info["frames"] > 0:
                     current_frame_total = info["frames"]
                     print(f"[Capturer] OpenCV reported no frame count for "
@@ -627,6 +696,11 @@ def release_video():
         # path whose capture is gone (and re-reads the frame count, which was stale).
         current_video_path = None
         current_frame_total = 0
+        try:
+            import roop.globals
+            roop.globals.video_sar = 1.0
+        except (AttributeError, ImportError):
+            pass
     # NOT clear_frame_cache(): this runs on every target switch, and the cache is
     # keyed by path, so cached frames of the file being switched away from are
     # still valid — and switching back is the common move. The byte budget, not

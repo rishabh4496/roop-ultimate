@@ -2649,6 +2649,12 @@ def target_preview(request: Request, index: int = 0, frame: int = 1, width: int 
     _, data, media = _still(filename, frame, width, fmt, quality)
     if data is None:
         return JSONResponse(status_code=404, content={"message": "no frame"})
+    if util.is_video(filename):
+        from roop.capturer import _probe_video
+        vinfo = _probe_video(filename)
+        if vinfo:
+            headers["X-Video-Sar"] = str(vinfo.get("sar_val", 1.0))
+            headers["X-Video-Dar"] = str(vinfo.get("dar_val", 0.0))
     return Response(content=data, media_type=media, headers=headers)
 
 
@@ -4513,12 +4519,25 @@ def preview(payload: dict = Body(...)):
             return JSONResponse(status_code=404, content={"message": "no target", **echo})
 
         filename = list_files_process[idx].filename
+        target_info = None
         if util.is_video(filename) or filename.lower().endswith("gif") or util.is_animated_webp(filename):
+            from roop.capturer import _probe_video
+            target_info = _probe_video(filename)
+            if target_info and "sar_val" in target_info:
+                roop_globals.video_sar = float(target_info["sar_val"])
             current_frame = get_video_frame(filename, frame)
         else:
+            roop_globals.video_sar = 1.0
             current_frame = get_image_frame(filename)
         if current_frame is None:
             return JSONResponse(status_code=404, content={"message": "no frame", **echo})
+
+        sar_fields = {
+            "sar": target_info.get("sar", "1:1") if target_info else "1:1",
+            "sar_val": float(target_info.get("sar_val", 1.0)) if target_info else 1.0,
+            "dar": target_info.get("dar", "") if target_info else "",
+            "dar_val": float(target_info.get("dar_val", 0.0)) if target_info else 0.0,
+        }
 
         # Apply detection resolution before any detection so the face-box overlay and
         # the swap both use the chosen det_size (640 accurate / 320 fast).
@@ -4642,6 +4661,7 @@ def preview(payload: dict = Body(...)):
                 "pose": pose_list,
                 "face_index_order": _TARGET_FACE_INDEX_ORDER,
                 **echo,
+                **sar_fields,
                 "target_index": idx,
                 "target_media_id": media_id,
                 "selection_state": selection_state,
@@ -4653,7 +4673,7 @@ def preview(payload: dict = Body(...)):
             }
 
         if not fake or len(roop_globals.INPUT_FACESETS) < 1:
-            return {"image": _bgr_to_preview_dataurl(current_frame), "faces": faces_list, "person_ids": person_ids, "kps": kps_list, "pose": pose_list, "face_index_order": _TARGET_FACE_INDEX_ORDER, **echo, "target_index": idx, "target_media_id": media_id}
+            return {"image": _bgr_to_preview_dataurl(current_frame), "faces": faces_list, "person_ids": person_ids, "kps": kps_list, "pose": pose_list, "face_index_order": _TARGET_FACE_INDEX_ORDER, **echo, **sar_fields, "target_index": idx, "target_media_id": media_id}
 
         try:
             from roop.core import live_swap, get_processing_plugins
@@ -4701,8 +4721,8 @@ def preview(payload: dict = Body(...)):
                           if audit_after[key] - audit_before.get(key, 0)}
             print(f"[Preview] request={processing_request['request_id']} swap_audit={swap_audit}", flush=True)
             if swapped is None:
-                return {"image": _bgr_to_preview_dataurl(current_frame), "faces": faces_list, "person_ids": person_ids, "kps": kps_list, "pose": pose_list, "face_index_order": _TARGET_FACE_INDEX_ORDER, **echo, "swap_audit": swap_audit, "target_index": idx, "target_media_id": media_id}
-            return {"image": _bgr_to_preview_dataurl(swapped), "faces": faces_list, "person_ids": person_ids, "kps": kps_list, "pose": pose_list, "face_index_order": _TARGET_FACE_INDEX_ORDER, **echo, "swap_audit": swap_audit, "target_index": idx, "target_media_id": media_id}
+                return {"image": _bgr_to_preview_dataurl(current_frame), "faces": faces_list, "person_ids": person_ids, "kps": kps_list, "pose": pose_list, "face_index_order": _TARGET_FACE_INDEX_ORDER, **echo, **sar_fields, "swap_audit": swap_audit, "target_index": idx, "target_media_id": media_id}
+            return {"image": _bgr_to_preview_dataurl(swapped), "faces": faces_list, "person_ids": person_ids, "kps": kps_list, "pose": pose_list, "face_index_order": _TARGET_FACE_INDEX_ORDER, **echo, **sar_fields, "swap_audit": swap_audit, "target_index": idx, "target_media_id": media_id}
         except Exception:
             traceback.print_exc()
             return JSONResponse(status_code=500, content={
@@ -4713,6 +4733,7 @@ def preview(payload: dict = Body(...)):
                 "kps": kps_list,
                 "pose": pose_list,
                 "face_index_order": _TARGET_FACE_INDEX_ORDER,
+                **sar_fields,
                 **echo,
                 "target_index": idx,
                 "target_media_id": media_id,

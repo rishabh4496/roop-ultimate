@@ -18,6 +18,7 @@ keep_fps = None
 keep_frames = None
 autorotate_faces = None
 vr_mode = None
+video_sar: float = 1.0
 skip_audio = None
 wait_after_extraction = None
 many_faces = None

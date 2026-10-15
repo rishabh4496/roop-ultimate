@@ -146,8 +146,9 @@ const PreviewCanvas = forwardRef(function PreviewCanvas({
     // Normally the identity rectangle — the canvas IS the frame's shape. It
     // stops mattering only when the two layers disagree (the swapped frame
     // arriving at a different resolution from the raw one), and then it
-    // letterboxes rather than stretching.
-    const box = fitBox(cw, ch, iw, ih);
+    const baseW = base.img ? (base.img.width || base.img.naturalWidth) : iw;
+    const baseH = base.img ? (base.img.height || base.img.naturalHeight) : ih;
+    const baseBox = fitBox(cw, ch, baseW, baseH);
     const dim = `${iw}x${ih}`;
     if (dim !== reportedDimRef.current) {
       reportedDimRef.current = dim;
@@ -157,7 +158,7 @@ const PreviewCanvas = forwardRef(function PreviewCanvas({
       if (cb) queueMicrotask(() => cb({ w: iw, h: ih }));
     }
 
-    if (base.img) ctx.drawImage(base.img, box.x, box.y, box.w, box.h);
+    if (base.img) ctx.drawImage(base.img, baseBox.x, baseBox.y, baseBox.w, baseBox.h);
 
     // The top layer's own cross-fade: the OUTGOING frame stays up underneath at
     // full alpha while the incoming one comes in over it, so stepping between
@@ -177,14 +178,24 @@ const PreviewCanvas = forwardRef(function PreviewCanvas({
       top.prev = null;
     }
 
+    const getTopBox = (img) => {
+      if (!img) return baseBox;
+      const tw = img.width || img.naturalWidth;
+      const th = img.height || img.naturalHeight;
+      if (!tw || !th || (tw === baseW && th === baseH)) return baseBox;
+      return fitBox(cw, ch, tw, th);
+    };
+
     const drawTop = () => {
       if (top.prev && alpha < 1) {
+        const pbox = getTopBox(top.prev);
         ctx.globalAlpha = 1;
-        ctx.drawImage(top.prev, box.x, box.y, box.w, box.h);
+        ctx.drawImage(top.prev, pbox.x, pbox.y, pbox.w, pbox.h);
       }
       if (top.img) {
+        const tbox = getTopBox(top.img);
         ctx.globalAlpha = top.prev ? alpha : 1;
-        ctx.drawImage(top.img, box.x, box.y, box.w, box.h);
+        ctx.drawImage(top.img, tbox.x, tbox.y, tbox.w, tbox.h);
         ctx.globalAlpha = 1;
       }
     };
