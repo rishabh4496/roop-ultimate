@@ -59,11 +59,6 @@ export const LONG_RUNNING = {
   'POST /api/faceset/library/load': 'reads an archive and re-detects its faces',
   'POST /api/faceset/library/rebuild_thumbs': 'regenerates thumbnails for the whole library',
 
-  // ── angle capture
-  'POST /api/angle-scan/override': 'detects and embeds a replacement frame',
-  'POST /api/angle-scan/apply': 'adds the portfolio\'s frames to the person\'s angle bank',
-  'POST /api/angle-scan/source-portfolio': 'fuses a source\'s faces into an angle portfolio',
-
   // ── encodes, devices and bulk deletes
   'POST /api/queue/join': 'ffmpeg concatenation of finished outputs',
   'POST /api/export/apply': 'ffmpeg re-encode to an export preset',

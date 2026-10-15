@@ -117,7 +117,7 @@ class UiApiSurface(unittest.TestCase):
         # A regex that drifted from the source would make every other test vacuous.
         self.assertGreater(len(self.routes), 100, 'found almost no backend routes')
         self.assertGreater(len(self.ui), 100, 'found almost no UI endpoint paths')
-        self.assertTrue({'/ws/telemetry', '/ws/frames', '/ws/angle-scan'} <= set(self.ui),
+        self.assertTrue({'/ws/telemetry', '/ws/frames'} <= set(self.ui),
                         'the WebSocket endpoints are built from template strings; the scan lost them')
 
     def test_every_endpoint_the_ui_calls_is_a_backend_route(self):

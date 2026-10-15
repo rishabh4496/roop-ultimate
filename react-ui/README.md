@@ -59,7 +59,6 @@ src/
     <Tab>.jsx         one file per tab (lazy chunks), plus ui.jsx primitives, HeaderNav, ErrorBoundary, lazyPanel
     faceswap/         the Face Swap workspace: preview, timeline, slider tracker, queue, hooks
     player/           WebGL / worker-backed playback
-    BiometricAngleHUD/  angle capture HUD (TypeScript)
 ```
 
 **There is no unreachable code.** `npm run lint:unreachable` walks the import graph from `main.jsx`
@@ -283,20 +282,6 @@ Faceset library and builder, identity blending, recognition backbone.
 | GET | `/api/recognition/models` | RecognitionPanel |
 | POST | `/api/recognition/set` | RecognitionPanel |
 
-### Angle capture
-
-Biometric angle scan and source routing (REST side of `/ws/angle-scan`).
-
-| Method | Path | Called from |
-| --- | --- | --- |
-| POST | `/api/angle-scan/apply` | useAutoAngleCapture |
-| POST | `/api/angle-scan/override` | useAutoAngleCapture |
-| POST | `/api/angle-scan/override/clear` | useAutoAngleCapture |
-| GET | `/api/angle-scan/session` | useAutoAngleCapture |
-| GET, POST | `/api/angle-scan/source-portfolio` | SourceRoutingPanel |
-| POST | `/api/angle-scan/source-portfolio/clear` | SourceRoutingPanel |
-| POST | `/api/angle-scan/thresholds` | useAutoAngleCapture |
-
 ### Queue
 
 The batch queue.
@@ -391,11 +376,10 @@ Benchmark, auto-tune, TensorRT cache and hardware/telemetry.
 
 ### WebSockets
 
-Telemetry, frame streaming and angle-scan progress.
+Telemetry and frame streaming.
 
 | Method | Path | Called from |
 | --- | --- | --- |
-| WS | `/ws/angle-scan` | useAutoAngleCapture |
 | WS | `/ws/enhancer/telemetry` | EnhancerSettings |
 | WS | `/ws/frames` | frameSocket |
 | WS | `/ws/telemetry` | useTelemetrySocket |

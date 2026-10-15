@@ -158,7 +158,7 @@ console.log('── the registry ───────────────�
 {
   ok('timeoutFor: a long-running endpoint opts out', timeoutFor('POST', '/api/swap') === 0);
   ok('timeoutFor: an ordinary one takes the default', timeoutFor('GET', '/api/state') === undefined && timeoutFor('POST', '/api/settings') === undefined);
-  ok('timeoutFor: the verb matters', timeoutFor('GET', '/api/angle-scan/source-portfolio') === undefined && timeoutFor('POST', '/api/angle-scan/source-portfolio') === 0);
+  ok('timeoutFor: the verb matters', timeoutFor('GET', '/api/target/auto_angles') === undefined && timeoutFor('POST', '/api/target/auto_angles') === 0);
   ok('timeoutFor: a query string and a trailing slash are ignored', timeoutFor('POST', '/api/swap?x=1') === 0 && timeoutFor('POST', '/api/swap/') === 0);
   ok('timeoutFor: `{}` matches one segment (project verbs)',
     timeoutFor('POST', '/api/projects/abc123/load') === 0 && timeoutFor('POST', '/api/projects/abc123/resume') === 0
