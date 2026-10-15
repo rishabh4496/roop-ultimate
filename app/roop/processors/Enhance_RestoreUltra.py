@@ -88,7 +88,7 @@ class Enhance_RestoreUltra(Enhance_RestoreFormerPPlus):
         reference = temp_frame
         result, scale_factor = super().Run(source_faceset, target_face,
                                           temp_frame)
-        if result is None or reference is None:
+        if result is None or reference is None or getattr(result, 'size', 0) == 0 or getattr(reference, 'size', 0) == 0:
             return result, scale_factor
         # `sized()` can return a buffer larger than the input crop, so bring the
         # reference to the result's geometry before any per-pixel operation.

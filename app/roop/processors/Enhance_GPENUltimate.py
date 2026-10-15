@@ -76,7 +76,7 @@ class Enhance_GPENUltimate(Enhance_GPEN):
         reference = temp_frame
         result, scale_factor = super().Run(source_faceset, target_face,
                                           temp_frame)
-        if result is None or reference is None:
+        if result is None or reference is None or getattr(result, 'size', 0) == 0 or getattr(reference, 'size', 0) == 0:
             return result, scale_factor
         # `sized()` may have returned a buffer LARGER than the input crop (the
         # 1024/2048 tiers report scale_factor 2/4), so the reference has to be

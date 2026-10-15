@@ -62,6 +62,8 @@ class Enhance_DMDNet():
 
     # temp_frame already cropped+aligned, bbox not
     def Run(self, source_faceset: FaceSet, target_face: Face, temp_frame: Frame) -> Frame:
+        if temp_frame is None or getattr(temp_frame, 'size', 0) == 0:
+            return temp_frame, 1
         input_size = temp_frame.shape[1]
 
         _skipped_before = _LM_MISS['target']

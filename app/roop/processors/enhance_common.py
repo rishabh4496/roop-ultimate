@@ -360,7 +360,7 @@ def _inject_bilateral_detail(enhanced, ref, sigma_color, threshold, softness,
     the whole 511-value domain), and independent of how much of the crop sits
     over the knee.
     """
-    if strength <= 0.001 or enhanced is None or ref is None:
+    if strength <= 0.001 or enhanced is None or ref is None or getattr(enhanced, 'size', 0) == 0 or getattr(ref, 'size', 0) == 0:
         return enhanced
     base_ref = cv2.bilateralFilter(ref, d=5, sigmaColor=sigma_color,
                                    sigmaSpace=4.0)
@@ -446,7 +446,7 @@ def apply_anti_halo_sharpen(img, amount=0.35, sigma=1.0, limit=2.5):
     fringing. The local min/max envelope ensures that overshoots/halos around
     step edges (pupil vs sclera, face perimeter) cannot form.
     """
-    if amount <= 0 or img is None:
+    if amount <= 0 or img is None or getattr(img, 'size', 0) == 0:
         return img
     lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
     L = lab[:, :, 0].astype(np.float32)
@@ -519,7 +519,7 @@ def enhance_eyes_clarity(img, template='ffhq_512', kps=None, strength=0.55):
     `kps` is accepted and unused — the crop is template-aligned, so the eye
     positions are known from the template rather than from the face.
     """
-    if strength <= 0 or img is None or getattr(img, 'ndim', 0) != 3:
+    if strength <= 0 or img is None or getattr(img, 'ndim', 0) != 3 or getattr(img, 'size', 0) == 0:
         return img
     h, w = img.shape[:2]
     region = _eye_region(h, w, template, strength)
@@ -644,7 +644,7 @@ def enhance_gpen_ultimate(enhanced, reference, target_face=None,
     3. Full-face anti-halo bounded crispness for sharp eyelashes, lips and
        contours.
     """
-    if enhanced is None:
+    if enhanced is None or getattr(enhanced, 'size', 0) == 0:
         return enhanced
     if reference is None:
         reference = enhanced
@@ -684,7 +684,7 @@ def enhance_restore_ultra(enhanced, reference, target_face=None,
     3. Subtle anti-halo edge refinement for eyelashes, eyebrows and lip borders
        without over-sharpening noise or plastic artifacts.
     """
-    if enhanced is None:
+    if enhanced is None or getattr(enhanced, 'size', 0) == 0:
         return enhanced
     if reference is None:
         reference = enhanced
