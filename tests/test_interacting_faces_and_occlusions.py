@@ -121,6 +121,39 @@ class TestInteractingFacesAndOcclusion(unittest.TestCase):
             # If a region exists, target must own its center
             self.assertEqual(regions[0].own[regions[0].own.shape[0] // 2, regions[0].own.shape[1] // 2], 1.0)
 
+    def test_insightface_face_missing_attributes_never_raise_typeerror(self):
+        """InsightFace Face.__getattr__ returns None for missing keys instead of AttributeError.
+        Verify that _face_occluded_frac and _verify_worth_it never raise TypeError from None > float.
+        """
+        from insightface.app.common import Face
+        from roop.ProcessMgr import _face_occluded_frac, ProcessMgr
+
+        # Raw InsightFace face with no occlusion or score attributes set
+        face = Face()
+        # Verify that accessing missing attribute returns None
+        self.assertIsNone(getattr(face, '_occluded_landmark_frac', 0))
+
+        # _face_occluded_frac must safely return 0.0
+        self.assertEqual(_face_occluded_frac(face), 0.0)
+
+        # Explicitly None attribute
+        face['_occluded_landmark_frac'] = None
+        self.assertEqual(_face_occluded_frac(face), 0.0)
+
+        # Real fraction
+        face['_occluded_landmark_frac'] = 0.25
+        self.assertEqual(_face_occluded_frac(face), 0.25)
+
+        # _verify_worth_it must execute safely without raising TypeError
+        blank_face = Face()
+        worth_it = ProcessMgr._verify_worth_it(
+            rotation_action=None,
+            head_angles=lambda: (0.0, 0.0),
+            target_face=blank_face,
+            region=None
+        )
+        self.assertFalse(worth_it)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -83,6 +83,22 @@ def _owned_fallback_frame(frame):
         return frame
 
 
+def _face_occluded_frac(face):
+    """Safely extract _occluded_landmark_frac from an InsightFace Face or dict.
+    InsightFace's Face.__getattr__ returns None for missing attributes instead of
+    raising AttributeError, which causes getattr(face, 'key', 0) to yield None.
+    """
+    if face is None:
+        return 0.0
+    val = face.get('_occluded_landmark_frac') if isinstance(face, dict) else getattr(face, '_occluded_landmark_frac', None)
+    if val is None:
+        return 0.0
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def get_thread_tracker(shared=None, epoch=None, fresh=False):
     """Return the calling thread's own ``FaceTracker``, never another worker's.
 
@@ -4315,12 +4331,15 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                         # or non-face structures, whereas occluded/interacting faces have
                         # known contact/occlusion flags or valid frontal landmarks.
                         _eff_lock_floor = LOCK_MIN_DET
+                        _occ_state = (
+                            face.get('occlusion_state')
+                            if isinstance(face, dict)
+                            else getattr(face, 'occlusion_state', None)
+                        )
                         _is_occ_or_contact = (
                             dirty
-                            or getattr(face, 'occlusion_state', None) == 'partial'
-                            or (isinstance(face, dict) and face.get('occlusion_state') == 'partial')
-                            or getattr(face, '_occluded_landmark_frac', 0) > 0.05
-                            or (isinstance(face, dict) and face.get('_occluded_landmark_frac', 0) > 0.05)
+                            or _occ_state == 'partial'
+                            or _face_occluded_frac(face) > 0.05
                         )
                         if _is_occ_or_contact:
                             _eff_lock_floor = min(LOCK_MIN_DET, 0.55)
@@ -4842,11 +4861,18 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
 
             _matched = {id(f) for _, f in pending}
             _min_bystander_det = max(0.65, float(getattr(roop.globals, 'face_detector_threshold', 0.60)))
-            _others = [
-                f for f in faces
-                if id(f) not in _matched
-                and (getattr(f, 'det_score', None) is None or float(getattr(f, 'det_score', 1.0)) >= _min_bystander_det)
-            ]
+            def _valid_bystander(f):
+                if id(f) in _matched:
+                    return False
+                score = f.get('det_score') if isinstance(f, dict) else getattr(f, 'det_score', None)
+                if score is None:
+                    return True
+                try:
+                    return float(score) >= _min_bystander_det
+                except (TypeError, ValueError):
+                    return True
+
+            _others = [f for f in faces if _valid_bystander(f)]
             # WHICH source went onto WHICH face, recorded once for the whole
             # frame at the only point where that is finally settled. Off unless
             # asked for. Re-measuring it from the output is what a bench would
@@ -5054,9 +5080,9 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             if target_face is not None:
                 _occ = (target_face.get('occlusion_state') if isinstance(target_face, dict)
                         else getattr(target_face, 'occlusion_state', None))
-                if _occ == 'partial' or getattr(target_face, '_occluded_landmark_frac', 0) > 0.05:
+                if _occ == 'partial' or _face_occluded_frac(target_face) > 0.05:
                     return False
-                if getattr(target_face, '_is_interacting', False):
+                if getattr(target_face, '_is_interacting', False) or (isinstance(target_face, dict) and target_face.get('_is_interacting', False)):
                     return False
                 try:
                     from roop import face_contact
@@ -7038,8 +7064,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                             else getattr(target_face, 'occlusion_state', None))
         _is_partly_occluded = (
             _occlusion_state == 'partial'
-            or getattr(target_face, '_occluded_landmark_frac', 0) > 0.05
-            or (isinstance(target_face, dict) and target_face.get('_occluded_landmark_frac', 0) > 0.05)
+            or _face_occluded_frac(target_face) > 0.05
         )
         _is_interacting = (
             region is not None
