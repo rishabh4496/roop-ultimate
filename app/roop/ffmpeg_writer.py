@@ -310,14 +310,16 @@ class FFMPEG_VideoWriter:
         filters = []
         if w != size[0] or h != size[1]:
             filters.append(f'scale={w}:{h}')
-        if self._sar and str(self._sar).strip() not in ('', '1:1', '1/1'):
-            filters.append(f'setsar={self._sar}')
+        sar = getattr(self, '_sar', None)
+        if sar and str(sar).strip() not in ('', '1:1', '1/1'):
+            filters.append(f'setsar={sar}')
         if convert:
             filters.append('colorspace=bt709:iall=bt601-6-625:fast=1')
         if filters:
             cmd.extend(['-vf', ','.join(filters)])
-        if self._dar and str(self._dar).strip():
-            cmd.extend(['-aspect', str(self._dar)])
+        dar = getattr(self, '_dar', None)
+        if dar and str(dar).strip():
+            cmd.extend(['-aspect', str(dar)])
         if convert:
             # State the tags rather than relying on the filter to propagate
             # frame metadata into the muxer. Measured free: with the filter

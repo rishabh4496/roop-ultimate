@@ -214,21 +214,20 @@ def probe(model_key, model_path, providers, session_options=None, device_id=0):
     try:
         import numpy as np
         import onnxruntime
+        from roop.utilities import get_onnx_session_options
+
+        if session_options is None:
+            session_options = get_onnx_session_options(
+                optimization_level=onnxruntime.GraphOptimizationLevel.ORT_ENABLE_EXTENDED)
 
         sess = onnxruntime.InferenceSession(
             model_path, session_options,
             providers=apply_algo(providers, "HEURISTIC"))
-        # Without this, a failing CUDA EP silently re-initialises on the CPU EP
-        # and the exception that surfaces is whatever the CPU path then hits --
-        # for codeformer.fp16 a SimplifiedLayerNormFusion graph error -- so the
-        # cuDNN signature never reaches is_cudnn_frontend_error() and the probe
-        # records nothing. Keep the original EP error.
-        try:
-            sess.disable_fallback()
-        except Exception as _degrade_error:
-            _swallowed("roop/cudnn_algo.py:218", _degrade_error, "fallback continued")
-            pass
-        feed = {}
+        # Without iobinding, a failing CUDA EP kernel silently falls back to CPU EP
+        # inside sess.run(), so the cuDNN signature never reaches is_cudnn_frontend_error()
+        # and the probe falsely records HEURISTIC. With iobinding, EP errors propagate
+        # directly without fallback.
+        iob = sess.io_binding()
         for spec in sess.get_inputs():
             shape = [1 if (d is None or isinstance(d, str)) else int(d)
                      for d in (spec.shape or [])]
@@ -241,9 +240,11 @@ def probe(model_key, model_path, providers, session_options=None, device_id=0):
                 dtype = np.int64
             else:
                 dtype = np.float32
-            feed[spec.name] = np.zeros(shape, dtype=dtype)
+            iob.bind_cpu_input(spec.name, np.zeros(shape, dtype=dtype))
+        for out in sess.get_outputs():
+            iob.bind_output(out.name)
         try:
-            sess.run(None, feed)
+            sess.run_with_iobinding(iob)
         except Exception as exc:
             if is_cudnn_frontend_error(exc):
                 verdict = 'DEFAULT'

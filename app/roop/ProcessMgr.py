@@ -4356,8 +4356,8 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                             _y, _p = face_yaw_pitch(face)
                             if abs(_y) > 75 or abs(_p) > 60:
                                 _facing_away = True
-                        except Exception:
-                            pass
+                        except Exception as _yp_err:
+                            _swallowed("roop/ProcessMgr.py:face_yaw_pitch", _yp_err, "fallback continued")
 
                         if _is_occ_or_contact:
                             _eff_lock_floor = min(LOCK_MIN_DET, 0.55)

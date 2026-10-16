@@ -642,15 +642,17 @@ class NVHardwareVideoWriter:
         filters = []
         if width != self.width or height != self.height:
             filters.append(f"scale={width}:{height}")
-        if self.sar and str(self.sar).strip() not in {"", "1:1", "1/1"}:
-            filters.append(f"setsar={self.sar}")
-        color = str(self.colorspace or os.environ.get("ROOP_FFMPEG_COLORSPACE", "bt709")).strip().lower()
+        sar = getattr(self, "sar", None)
+        if sar and str(sar).strip() not in {"", "1:1", "1/1"}:
+            filters.append(f"setsar={sar}")
+        color = str(getattr(self, "colorspace", None) or os.environ.get("ROOP_FFMPEG_COLORSPACE", "bt709")).strip().lower()
         if color not in {"", "off", "none", "passthrough", "0", "false"}:
             filters.append("colorspace=bt709:iall=bt601-6-625:fast=1")
         if filters:
             cmd.extend(["-vf", ",".join(filters)])
-        if self.dar and str(self.dar).strip():
-            cmd.extend(["-aspect", str(self.dar)])
+        dar = getattr(self, "dar", None)
+        if dar and str(dar).strip():
+            cmd.extend(["-aspect", str(dar)])
         if color not in {"", "off", "none", "passthrough", "0", "false"}:
             cmd.extend([
                 "-colorspace", "bt709",

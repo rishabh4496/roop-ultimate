@@ -2678,9 +2678,10 @@ class TrackingMixin:
                 temporal_expression is not None and temporal_expression.enabled)
             temporal_enabled = (identity_enabled or occlusion_enabled
                                 or expression_enabled)
+            input_face_datas = getattr(self, 'input_face_datas', None) or []
             pose_annotation_enabled = bool(
                 getattr(self.options, 'use_source_bank', False) or temporal_enabled
-                or any(len(getattr(fs, 'faces', [])) > 1 for fs in self.input_face_datas))
+                or any(len(getattr(fs, 'faces', [])) > 1 for fs in input_face_datas))
             pose_source_fs = None
             candidate_multi_fs = None
             if pose_annotation_enabled:
@@ -2689,8 +2690,8 @@ class TrackingMixin:
                                    .get(t['id']))
                     source_index = source_info[0] if source_info else None
                     if (source_index is not None
-                            and 0 <= int(source_index) < len(self.input_face_datas)):
-                        candidate = self.input_face_datas[int(source_index)]
+                            and 0 <= int(source_index) < len(input_face_datas)):
+                        candidate = input_face_datas[int(source_index)]
                         if (getattr(candidate, 'format_version', 1) >= 2
                                 and getattr(candidate, 'faceset_metadata', None)):
                             pose_source_fs = candidate
@@ -2720,8 +2721,8 @@ class TrackingMixin:
                                        .get(t['id']))
                         source_identity = source_info[0] if source_info else None
                         identity_embedding = None
-                        if source_identity is not None and 0 <= int(source_identity) < len(self.input_face_datas):
-                            source_fs = self.input_face_datas[int(source_identity)]
+                        if source_identity is not None and 0 <= int(source_identity) < len(input_face_datas):
+                            source_fs = input_face_datas[int(source_identity)]
                             identity_embedding = getattr(source_fs, 'identity_embedding', None)
                             if identity_embedding is None:
                                 identity_embedding = getattr(source_fs, 'embedding_average', None)

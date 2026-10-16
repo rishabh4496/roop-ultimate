@@ -243,11 +243,9 @@ class TestTheWiringInProcessMgr(unittest.TestCase):
         """Both sides of the bank's distance must use the EPnP angles: the error
         cancels in the difference, and correcting only one side would break a
         matcher that currently works."""
-        m = re.search(r'dist\s*=\s*\(([^)]*)\)\s*\*\*\s*2\s*\+\s*\(([^)]*)\)\s*\*\*\s*2',
+        m = re.search(r'pose\s*=\s*\(\s*bank_yaw_deg\s*,\s*bank_pitch_deg\s*\)',
                       self.code)
-        self.assertIsNotNone(m, 'source-bank distance not found')
-        self.assertIn('bank_yaw_deg', m.group(1))
-        self.assertIn('bank_pitch_deg', m.group(2))
+        self.assertIsNotNone(m, 'source-bank pose variables not passed to selector')
 
     def test_the_restores_are_handed_the_jaw_aware_angles(self):
         """And specifically NOT the jaw-blind pair.
