@@ -790,7 +790,11 @@ class BatchProcessingMixin:
             print("\n[Pipeline] === Stage 1/3: Sparse Auto-Range Pre-Scan ===", flush=True)
             try:
                 from roop.sparse_range_scan import scan_active_ranges
-                target_faces = getattr(self, 'target_face_datas', None) or getattr(self, 'input_face_datas', None) or []
+                target_faces = (
+                    getattr(self, 'target_face_datas', None)
+                    if (getattr(self, 'options', None) and getattr(self.options, 'swap_mode', '') in ('selected', 'selected_multi') and getattr(self, 'target_face_datas', None))
+                    else None
+                )
                 with ChunkedProgress(total=0, desc='Scanning keyframes', unit='samples',
                                      dynamic_ncols=True, bar_format=PROGRESS_BAR_FORMAT) as pbar:
                     def _scan_progress(done, total):

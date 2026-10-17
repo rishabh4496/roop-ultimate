@@ -236,8 +236,11 @@ class FFmpegVideoReader:
             capacity=max(8, (self.prefetch_depth or 2) * 2 + 4))
 
     def set(self, prop, value):
-        if prop == cv2.CAP_PROP_POS_FRAMES and self.proc is None:
-            self._start_frame = int(value)
+        if prop == cv2.CAP_PROP_POS_FRAMES:
+            target = int(value)
+            if self.proc is not None:
+                self.release()
+            self._start_frame = target
 
     def get(self, prop):
         return {cv2.CAP_PROP_FRAME_WIDTH: float(self.width),

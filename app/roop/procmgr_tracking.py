@@ -331,10 +331,17 @@ class TrackingMixin:
                     predicted_bbox = proj
             return predicted_bbox
 
+        active_ranges = getattr(self, '_active_ranges', None)
+        total_scan_frames = (
+            sum(end - start + 1 for start, end in active_ranges)
+            if active_ranges is not None
+            else (frame_count or 0)
+        )
+
         # Terminal progress bar (same style as the swap phase) so the pre-pass is
         # visible in the console too, not just the web UI.
         _bar_fmt = PROGRESS_BAR_FORMAT
-        pbar = ChunkedProgress(total=frame_count or 0, desc=desc, unit='frames',
+        pbar = ChunkedProgress(total=total_scan_frames, desc=desc, unit='frames',
                                dynamic_ncols=True, bar_format=_bar_fmt)
 
         # Parallelize detection across the FaceAnalysis pool (see analysis_pooled()/
@@ -782,8 +789,17 @@ class TrackingMixin:
         cap = None
         frame_iter = None
         if awebp_frames is not None:
-            subset = awebp_frames[frame_start:frame_end] if frame_end > frame_start else awebp_frames[frame_start:]
-            frame_iter = iter(subset)
+            if active_ranges is not None:
+                def _awebp_active_gen():
+                    for r_start, r_end in active_ranges:
+                        for f_idx in range(r_start, r_end + 1):
+                            actual_idx = frame_start + f_idx
+                            if actual_idx < len(awebp_frames):
+                                yield f_idx, awebp_frames[actual_idx]
+                frame_iter = _awebp_active_gen()
+            else:
+                subset = awebp_frames[frame_start:frame_end] if frame_end > frame_start else awebp_frames[frame_start:]
+                frame_iter = enumerate(subset)
         else:
             cap = cv2.VideoCapture(source_video)
             from roop.nvdec_reader import wrap_capture
@@ -813,30 +829,79 @@ class TrackingMixin:
 
         def _read_loop():
             try:
-                while not reader_stop and roop.globals.processing:
-                    ret_, fr_ = cap.read()
-                    if not ret_ or fr_ is None:
-                        break
-                    while not reader_stop and roop.globals.processing:
-                        try:
-                            frame_q.put(fr_, timeout=0.25)
+                if active_ranges is not None:
+                    for r_start, r_end in active_ranges:
+                        if reader_stop or not roop.globals.processing:
                             break
-                        except _QueueFull:
-                            continue        # consumer is behind (or paused) — hold
-                    else:
-                        return
+                        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_start + r_start)
+                        for cur_f in range(r_start, r_end + 1):
+                            if reader_stop or not roop.globals.processing:
+                                break
+                            ret_, fr_ = cap.read()
+                            if not ret_ or fr_ is None:
+                                break
+                            while not reader_stop and roop.globals.processing:
+                                try:
+                                    frame_q.put((cur_f, fr_), timeout=0.25)
+                                    break
+                                except _QueueFull:
+                                    continue
+                else:
+                    cur_f = 0
+                    while not reader_stop and roop.globals.processing:
+                        ret_, fr_ = cap.read()
+                        if not ret_ or fr_ is None:
+                            break
+                        while not reader_stop and roop.globals.processing:
+                            try:
+                                frame_q.put((cur_f, fr_), timeout=0.25)
+                                break
+                            except _QueueFull:
+                                continue
+                        cur_f += 1
+                        if frame_count and cur_f >= frame_count:
+                            break
             except Exception as _degrade_error:
                 _swallowed("roop/procmgr_tracking.py:628", _degrade_error, "fallback continued")
                 pass
             finally:
                 try:
-                    frame_q.put(None, timeout=1.0)   # EOF sentinel
+                    frame_q.put((None, None), timeout=1.0)   # EOF sentinel
                 except Exception as _degrade_error:
                     _swallowed("roop/procmgr_tracking.py:633", _degrade_error, "fallback continued")
                     pass
 
+        sync_gen = None
+        if cap is not None and not readahead:
+            def _sync_read_gen():
+                if active_ranges is not None:
+                    for r_start, r_end in active_ranges:
+                        if not roop.globals.processing:
+                            break
+                        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_start + r_start)
+                        for cur_f in range(r_start, r_end + 1):
+                            if not roop.globals.processing:
+                                break
+                            with _prof('track_decode'):
+                                ret, fr_ = cap.read()
+                            if not ret or fr_ is None:
+                                break
+                            yield cur_f, fr_
+                else:
+                    cur_f = 0
+                    while roop.globals.processing:
+                        if frame_count and cur_f >= frame_count:
+                            break
+                        with _prof('track_decode'):
+                            ret, fr_ = cap.read()
+                        if not ret or fr_ is None:
+                            break
+                        yield cur_f, fr_
+                        cur_f += 1
+            sync_gen = _sync_read_gen()
+
         try:
-            if cap is not None and frame_start and frame_start > 0:
+            if cap is not None and frame_start and frame_start > 0 and active_ranges is None:
                 cap.set(cv2.CAP_PROP_POS_FRAMES, frame_start)
             if readahead:
                 # Only a handful of frames of lead is needed to cover the jitter
@@ -854,32 +919,34 @@ class TrackingMixin:
             from roop.scene_detector import ContentAwareSceneDetector, flush_pipeline_temporal_buffers
             _scene_tracker = ContentAwareSceneDetector()
             idx = 0
+            prev_idx = None
+            scanned_count = 0
             while roop.globals.processing:
                 wait_while_paused()
                 if not roop.globals.processing:
                     break
-                if frame_count and idx >= frame_count:
-                    break
                 if frame_iter is not None:
-                    frame = next(frame_iter, None)
-                    if frame is None:
+                    item = next(frame_iter, None)
+                    if item is None:
                         break
+                    idx, frame = item
                 elif readahead:
                     with _prof('track_decode'):
-                        frame = None
+                        item = None
                         while roop.globals.processing:
                             try:
-                                frame = frame_q.get(timeout=0.25)
+                                item = frame_q.get(timeout=0.25)
                                 break
                             except _QueueEmpty:
                                 continue
-                    if frame is None:
+                    if item is None or item[0] is None or item[1] is None:
                         break
+                    idx, frame = item
                 else:
-                    with _prof('track_decode'):
-                        ret, frame = cap.read()
-                    if not ret or frame is None:
+                    item = next(sync_gen, None)
+                    if item is None:
                         break
+                    idx, frame = item
 
                 if (temporal_tracker is not None
                         and isinstance(frame, np.ndarray)
@@ -901,6 +968,14 @@ class TrackingMixin:
                 # clock read (~0.27us).
                 self._publish_live(frame)
 
+                # Discontinuity / gap between active ranges: treat as a shot cut
+                if prev_idx is not None and idx > prev_idx + 1:
+                    shot_boundaries.add(idx)
+                    flush_pipeline_temporal_buffers(self)
+                    if _scene_tracker is not None:
+                        _scene_tracker.reset()
+                prev_idx = idx
+
                 # ── Hard-cut detection, BEFORE this frame is dispatched ──────
                 # Order matters and it did not before: this used to sit at the
                 # bottom of the loop, after _consume had already associated the
@@ -921,16 +996,9 @@ class TrackingMixin:
                         import gc
                         gc.collect()
 
-                # Skip inactive frames determined by sparse auto-range pre-scan
-                active_mask = getattr(self, '_active_ranges_mask', None)
-                if active_mask is not None and 0 <= idx < len(active_mask) and not active_mask[idx]:
-                    idx += 1
-                    pbar.update(1)
-                    continue
-
                 # Skip frames to speed up detection and save memory
-                if idx > 0 and idx % TRACK_STEP != 0:
-                    idx += 1
+                if TRACK_STEP > 1 and idx > 0 and idx % TRACK_STEP != 0:
+                    scanned_count += 1
                     pbar.update(1)
                     continue
 
@@ -1017,18 +1085,18 @@ class TrackingMixin:
                     if not allowed:
                         break
                     del frame
-                    idx += 1
+                    scanned_count += 1
                     pbar.update(1)   # terminal bar
                     # Drive the UI progress bar so the pre-pass isn't a silent black box.
-                    if self.progress_gradio is not None and (idx % 10 == 0 or idx == 1):
-                        tot = frame_count or idx
+                    if self.progress_gradio is not None and (scanned_count % 10 == 0 or scanned_count == 1):
+                        tot = total_scan_frames or scanned_count
                         # The pre-pass is minutes long and has its own rate, so it
                         # publishes its own ETA too — otherwise the UI would show a
                         # stale swap-stage figure through the whole of it.
                         publish_eta(pbar)
-                        self.progress_gradio((idx, tot), desc=desc,
+                        self.progress_gradio((scanned_count, tot), desc=desc,
                                              total=tot, unit='frames')
-                if frame_count and idx >= frame_count:
+                if active_ranges is None and frame_count and idx >= frame_count:
                     break
             # Drain any detections still in flight, in submission (frame) order.
             while in_flight:
@@ -1083,7 +1151,10 @@ class TrackingMixin:
         # prefix of the clip. The temporal pre-pass needs to know that, because
         # "no entry for this frame" is otherwise indistinguishable from "scanned it,
         # nobody was there".
-        self._track_scanned = idx
+        if active_ranges is not None and scanned_count >= total_scan_frames:
+            self._track_scanned = frame_count or total_scan_frames
+        else:
+            self._track_scanned = idx if prev_idx is None else (idx + 1)
         if temporal_tracker is not None:
             self._temporal_tracker_state = temporal_tracker.export()
             _ts = self._temporal_tracker_state.get('stats', {})
@@ -3006,31 +3077,60 @@ class TrackingMixin:
             if entries:
                 precomputed[idx] = entries
 
+        active_ranges = getattr(self, '_active_ranges', None)
         if awebp_frames is not None:
-            subset = awebp_frames[frame_start:frame_end] if frame_end > frame_start else awebp_frames[frame_start:]
-            for idx, frame in enumerate(subset):
-                wait_while_paused()
-                if not roop.globals.processing:
-                    break
-                handle(idx, frame)
+            if active_ranges is not None:
+                for r_start, r_end in active_ranges:
+                    for idx in range(r_start, r_end + 1):
+                        wait_while_paused()
+                        if not roop.globals.processing:
+                            break
+                        actual_idx = frame_start + idx
+                        if actual_idx < len(awebp_frames):
+                            handle(idx, awebp_frames[actual_idx])
+            else:
+                subset = awebp_frames[frame_start:frame_end] if frame_end > frame_start else awebp_frames[frame_start:]
+                for idx, frame in enumerate(subset):
+                    wait_while_paused()
+                    if not roop.globals.processing:
+                        break
+                    handle(idx, frame)
         else:
             from roop import hdr_pipeline as _hdr_pipeline
             cap = _hdr_pipeline.video_capture(source_video)
             try:
-                if frame_start > 0:
-                    cap.set(cv2.CAP_PROP_POS_FRAMES, frame_start)
-                idx = 0
-                while roop.globals.processing:
-                    wait_while_paused()
-                    if not roop.globals.processing:
-                        break
-                    ret, frame = cap.read()
-                    if not ret or frame is None:
-                        break
-                    handle(idx, frame)
-                    idx += 1
-                    if idx >= frame_count:
-                        break
+                if active_ranges is not None:
+                    prev_r_end = None
+                    for r_start, r_end in active_ranges:
+                        if not roop.globals.processing:
+                            break
+                        if prev_r_end is not None and r_start > prev_r_end + 1:
+                            self.kps_stabilizer.reset()
+                        prev_r_end = r_end
+                        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_start + r_start)
+                        for idx in range(r_start, r_end + 1):
+                            wait_while_paused()
+                            if not roop.globals.processing:
+                                break
+                            ret, frame = cap.read()
+                            if not ret or frame is None:
+                                break
+                            handle(idx, frame)
+                else:
+                    if frame_start > 0:
+                        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_start)
+                    idx = 0
+                    while roop.globals.processing:
+                        wait_while_paused()
+                        if not roop.globals.processing:
+                            break
+                        ret, frame = cap.read()
+                        if not ret or frame is None:
+                            break
+                        handle(idx, frame)
+                        idx += 1
+                        if idx >= frame_count:
+                            break
             finally:
                 cap.release()
         return precomputed
