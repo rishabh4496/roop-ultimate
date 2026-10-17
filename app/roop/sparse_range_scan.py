@@ -14,11 +14,15 @@ During rendering and tracking pre-pass:
 from __future__ import annotations
 
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from queue import Queue
+from threading import Thread
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 import cv2
 import numpy as np
 
 import roop
+from roop import session_pool
 from roop.degrade import swallowed as _swallowed
 from roop.face_analyser import check_face_matches_target
 from roop.face_util import get_all_faces
@@ -185,42 +189,76 @@ def scan_active_ranges(
         if (total_frames - 1) not in sample_offsets:
             sample_offsets.append(total_frames - 1)
 
-        hits: List[int] = []
-        samples_done = 0
+        # Multi-worker parallel scanning over sample keyframes using FaceAnalysis pool
+        pool_size = (
+            session_pool.detmask_pool_size()
+            if hasattr(session_pool, 'detmask_pool_size') and session_pool.detmask_pooling_enabled()
+            else 1
+        )
+        workers = max(1, min(pool_size * 2, 4))
 
-        for offset in sample_offsets:
-            abs_frame_idx = frame_start + offset
-            cap.set(cv2.CAP_PROP_POS_FRAMES, abs_frame_idx)
-            ret, frame = cap.read()
-            if not ret or frame is None:
-                continue
+        sample_q: Queue[Tuple[Optional[int], Optional[np.ndarray]]] = Queue(maxsize=16)
 
+        def _read_samples():
+            c = cv2.VideoCapture(source_video)
+            try:
+                for offset in sample_offsets:
+                    abs_frame_idx = frame_start + offset
+                    c.set(cv2.CAP_PROP_POS_FRAMES, abs_frame_idx)
+                    ret, fr = c.read()
+                    sample_q.put((offset, fr if ret else None))
+            except Exception as _re:
+                _swallowed("sparse_range_scan:read_samples", _re, "reader error")
+            finally:
+                sample_q.put((None, None))
+                c.release()
+
+        reader_t = Thread(target=_read_samples, daemon=True)
+        reader_t.start()
+
+        def _eval_sample(offset: int, frame: Optional[np.ndarray]) -> Tuple[int, bool]:
+            if frame is None:
+                return offset, False
             try:
                 faces = get_all_faces(frame)
             except Exception as _exc:
                 _swallowed("sparse_range_scan:get_all_faces", _exc, "sample frame skipped")
                 faces = []
+            if not faces:
+                return offset, False
+            if target_faces:
+                for f in faces:
+                    matched, _ = check_face_matches_target(f, list(target_faces), threshold=threshold)
+                    if matched:
+                        return offset, True
+                return offset, False
+            return offset, True
 
-            if faces:
-                if target_faces:
-                    hit = False
-                    for f in faces:
-                        matched, _ = check_face_matches_target(f, list(target_faces), threshold=threshold)
-                        if matched:
-                            hit = True
-                            break
-                    if hit:
-                        hits.append(offset)
-                else:
-                    # When no target face specified, any detected face is considered active
+        hits: List[int] = []
+        samples_done = 0
+        total_samples = len(sample_offsets)
+
+        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="sparse_det") as executor:
+            futures = []
+            while True:
+                offset, fr = sample_q.get()
+                if offset is None:
+                    break
+                fut = executor.submit(_eval_sample, offset, fr)
+                futures.append(fut)
+
+            for fut in as_completed(futures):
+                offset, is_hit = fut.result()
+                if is_hit:
                     hits.append(offset)
+                samples_done += 1
+                if progress_cb is not None:
+                    try:
+                        progress_cb(samples_done, total_samples)
+                    except Exception as _cb_exc:
+                        _swallowed("sparse_range_scan:progress_cb", _cb_exc, "progress callback failed")
 
-            samples_done += 1
-            if progress_cb is not None:
-                try:
-                    progress_cb(samples_done, len(sample_offsets))
-                except Exception as _cb_exc:
-                    _swallowed("sparse_range_scan:progress_cb", _cb_exc, "progress callback failed")
+        reader_t.join(timeout=5.0)
 
         # If no hits detected, fail-safe to keeping all frames active
         if not hits:
