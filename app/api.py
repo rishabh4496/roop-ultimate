@@ -5044,6 +5044,7 @@ def _run_swap(payload):
         roop_globals.face_detector_nms = float(payload.get("face_detector_nms", roop_globals.CFG.face_detector_nms))
         roop_globals.sam2_model_size = payload.get("sam2_model_size", getattr(roop_globals.CFG, "sam2_model_size", "tiny"))
         roop_globals.track_identities = bool(payload.get("track_identities", getattr(roop_globals.CFG, "track_identities", False)))
+        roop_globals.sparse_auto_range = bool(payload.get("sparse_auto_range", getattr(roop_globals.CFG, "sparse_auto_range", False)))
         roop_globals.no_face_action = index_of_no_face_action(payload.get("no_face_action", roop_globals.CFG.no_face_action))
         roop_globals.vr_mode = bool(payload.get("vr_mode", roop_globals.CFG.vr_mode))
         roop_globals.autorotate_faces = bool(payload.get("autorotate", roop_globals.CFG.autorotate_faces))

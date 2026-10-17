@@ -3327,6 +3327,21 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         # runs only after the controller has granted the frame's work scope.
         if len(self.input_face_datas) < 1 and not self.options.show_face_masking:
             return frame
+
+        # Sparse auto-range passthrough fast-path: if frame is outside active ranges,
+        # skip GPU face detection, swap, enhancement, and stabilization entirely.
+        active_mask = getattr(self, '_active_ranges_mask', None)
+        if active_mask is not None and frame_idx is not None:
+            if 0 <= frame_idx < len(active_mask):
+                if not active_mask[frame_idx]:
+                    return frame
+                # Active range entry: flush temporal buffers if previous frame was inactive
+                if frame_idx > 0 and not active_mask[frame_idx - 1]:
+                    try:
+                        from roop.scene_detector import flush_pipeline_temporal_buffers
+                        flush_pipeline_temporal_buffers(self)
+                    except Exception as _flush_err:
+                        _swallowed("ProcessMgr:active_range_flush", _flush_err, "flush fallback")
         # `ordered` asks "is this worker seeing frames in order", and the answer
         # is yes on BOTH ordered paths: the sequential encoder loop, and a
         # contiguous parallel block, which runs its frames in order on one thread

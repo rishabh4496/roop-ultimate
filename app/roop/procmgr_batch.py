@@ -781,11 +781,58 @@ class BatchProcessingMixin:
             self.frames_queue.append(Queue(qdepth))
             self.processed_queue.append(Queue(qdepth))
 
+        # Sparse auto-range pre-scan: sample keyframes, detect target presence, and
+        # determine active swap ranges so non-target frames pass through at full speed.
+        self._active_ranges = None
+        self._active_ranges_mask = None
+        _sparse_active = bool(getattr(roop.globals, 'sparse_auto_range', False) and not is_awebp and source_video and os.path.isfile(source_video))
+        if _sparse_active:
+            print("\n[Pipeline] === Stage 1/3: Sparse Auto-Range Pre-Scan ===", flush=True)
+            try:
+                from roop.sparse_range_scan import scan_active_ranges
+                target_faces = getattr(self, 'target_face_datas', None) or getattr(self, 'input_face_datas', None) or []
+                with ChunkedProgress(total=0, desc='Scanning keyframes', unit='samples',
+                                     dynamic_ncols=True, bar_format=PROGRESS_BAR_FORMAT) as pbar:
+                    def _scan_progress(done, total):
+                        if pbar.total != total:
+                            pbar.total = total
+                        delta = done - pbar.n
+                        if delta > 0:
+                            pbar.update(delta)
+
+                    ranges, mask, stats = scan_active_ranges(
+                        source_video,
+                        target_faces=target_faces,
+                        frame_start=frame_start,
+                        frame_end=frame_end,
+                        frame_count=frame_count,
+                        fps=fps,
+                        threshold=roop.globals.distance_threshold,
+                        progress_cb=_scan_progress,
+                    )
+                self._active_ranges = ranges
+                self._active_ranges_mask = mask
+                self._active_ranges_stats = stats
+                print("[Pipeline] Sparse Auto-Range Pre-Scan complete.\n", flush=True)
+            except Exception as e:
+                print(f"[SparseScan] Pre-scan failed ({e}); falling back to full-frame processing")
+                self._active_ranges = None
+                self._active_ranges_mask = None
+
         # SAM2 temporal-mask pre-pass: track the faces across the trimmed clip and
         # cache a full-frame mask per frame, so the (still parallel) swap below can
         # look them up. Opt-in — only runs when the SAM2 engine is selected.
         sam2_p = next((p for p in self.processors
                        if getattr(p, 'processorname', None) == 'mask_sam2'), None)
+        _prepass_active = bool(
+            self._temporal_mode or
+            (roop.globals.track_identities and not is_awebp and len(self.target_face_datas) > 0) or
+            (sam2_p is not None and not is_awebp)
+        )
+        if _prepass_active:
+            _stage_lbl = "2/3" if _sparse_active else "1/2"
+            print(f"[Pipeline] === Stage {_stage_lbl}: Pre-Pass (Tracking & Detection) ===", flush=True)
+
         if sam2_p is not None and not is_awebp:
             try:
                 self._precompute_sam2(sam2_p, source_video, frame_start, frame_end, frame_count)
@@ -845,8 +892,13 @@ class BatchProcessingMixin:
                 self._track_mode = False
                 self._log_memory_stage('phase3:tracking-prepass-fallback')
 
+        if _prepass_active:
+            print("[Pipeline] Pre-Pass complete.\n", flush=True)
+
         self._log_memory_stage('phase4:before-main-processing')
         _bp.set_phase('main')
+        _main_lbl = "3/3" if (_sparse_active and _prepass_active) else ("2/2" if (_sparse_active or _prepass_active) else "Main")
+        print(f"[Pipeline] === Stage {_main_lbl}: Main Processing ===", flush=True)
         # Live FPS + queue monitor (ROOP_PIPELINE_LOG_EVERY, default 100, 0 = off).
         # `_runtime_read/write_queue` are only (re)bound by the parallel-stab path
         # and survive between runs, so clear them or a threaded render following a

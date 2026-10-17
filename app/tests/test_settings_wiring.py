@@ -142,6 +142,7 @@ RUN_ONLY_TEMPORAL = {
     # would show the user a frame in which they demonstrably did nothing,
     # which is a worse answer than their absence.
     "stabilize_landmarks", "stabilize_hf_texture", "stabilize_hf_texture_weight",
+    "sparse_auto_range",
 }
 RUN_ONLY_OUTPUT = {
     "keep_frames", "skip_audio", "output_method", "video_method",

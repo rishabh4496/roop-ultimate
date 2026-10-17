@@ -608,6 +608,12 @@ export default function Settings({ meta, settings, setSettings, notify }) {
             {...bindToggle('auto_thread_selection')}
           />
 
+          <Toggle
+            label="Sparse auto-range pre-scan"
+            info="Rapidly sample video keyframes before processing to detect target face presence and swap only active ranges, passing through non-target frames at maximum speed."
+            {...bindToggle('sparse_auto_range')}
+          />
+
           <Slider
             label="Face detection threshold"
             min={0.10}

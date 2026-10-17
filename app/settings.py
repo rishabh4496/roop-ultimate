@@ -44,6 +44,7 @@ UI_SETTINGS = (
     ('swap_quantization', 'Swap model quantization (INT8/FP8)', 'Performance'),
     ('force_cpu', 'Force CPU for face analyser', 'Performance'),
     ('auto_thread_selection', 'Auto thread selection', 'Performance'),
+    ('sparse_auto_range', 'Sparse auto-range pre-scan', 'Performance'),
     ('face_detector_threshold', 'Face detection threshold', 'Performance'),
     ('face_detector_nms', 'Overlap NMS threshold', 'Performance'),
     ('detector_scale_pyramid', 'Detector scale pyramid', 'Performance'),
@@ -1277,6 +1278,7 @@ class Settings:
         # Temporal detection pre-pass (video anti-flicker): tracked detection with
         # gap-fill so the swap can't blink out on missed detections.
         self.temporal_detection = self.default_get(data, 'temporal_detection', True)
+        self.sparse_auto_range = bool(self.default_get(data, 'sparse_auto_range', False))
         # Advanced perf knobs (env-backed; 'auto' = leave launcher/auto-tune
         # behaviour untouched). Applied to os.environ at startup by run.py, so
         # changes take effect after an app restart.
@@ -1631,6 +1633,7 @@ class Settings:
             'upright_remeasure': self.upright_remeasure,
             'process_priority': self.process_priority,
             'auto_thread_selection': getattr(self, 'auto_thread_selection', True),
+            'sparse_auto_range': getattr(self, 'sparse_auto_range', False),
             'benchmark_results': getattr(self, 'benchmark_results', {}),
         }
         # Atomic write: dump to a temp file and replace. Writing config.yaml in

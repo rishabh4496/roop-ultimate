@@ -13,6 +13,7 @@
     "swap_quantization",
     "force_cpu",
     "auto_thread_selection",
+    "sparse_auto_range",
     "face_detector_threshold",
     "face_detector_nms",
     "detector_scale_pyramid",
@@ -1103,6 +1104,14 @@
     "temporal_detection": {
       "default": true,
       "type": "bool"
+    },
+    "sparse_auto_range": {
+      "default": false,
+      "type": "bool",
+      "ui": {
+        "label": "Sparse auto-range pre-scan",
+        "section": "Performance"
+      }
     },
     "perf_trt_pool": {
       "default": "auto",

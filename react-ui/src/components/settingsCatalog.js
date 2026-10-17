@@ -25,6 +25,7 @@ export const SETTINGS_CATALOG = [
   { key: 'swap_quantization', label: 'Swap model quantization (INT8/FP8)', section: 'Performance' },
   { key: 'force_cpu', label: 'Force CPU for face analyser', section: 'Performance' },
   { key: 'auto_thread_selection', label: 'Auto thread selection', section: 'Performance' },
+  { key: 'sparse_auto_range', label: 'Sparse auto-range pre-scan', section: 'Performance' },
   { key: 'face_detector_threshold', label: 'Face detection threshold', section: 'Performance' },
   { key: 'face_detector_nms', label: 'Overlap NMS threshold', section: 'Performance' },
   { key: 'detector_scale_pyramid', label: 'Detector scale pyramid', section: 'Performance' },

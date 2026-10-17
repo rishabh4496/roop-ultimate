@@ -66,6 +66,7 @@ adaptive_motion_threshold = 0.05
 adaptive_roi_rescue = True
 sam2_model_size = 'tiny'   # SAM2 tracked-mask checkpoint: tiny|small|base_plus|large
 track_identities = True    # video: lock each tracked person to one source (anti identity-flip)
+sparse_auto_range = False  # video: auto-scan keyframes and swap only active ranges, passing through inactive frames
 # Skin-tone / lighting match of the swapped crop to the original crop.
 # 'rct' = LAB mean/std (Reinhard, legacy default), 'lct' = LAB covariance
 # whitening (handles color casts RCT can't), 'mkl' = Monge-Kantorovitch linear

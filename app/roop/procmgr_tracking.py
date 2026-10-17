@@ -921,6 +921,13 @@ class TrackingMixin:
                         import gc
                         gc.collect()
 
+                # Skip inactive frames determined by sparse auto-range pre-scan
+                active_mask = getattr(self, '_active_ranges_mask', None)
+                if active_mask is not None and 0 <= idx < len(active_mask) and not active_mask[idx]:
+                    idx += 1
+                    pbar.update(1)
+                    continue
+
                 # Skip frames to speed up detection and save memory
                 if idx > 0 and idx % TRACK_STEP != 0:
                     idx += 1
@@ -2978,6 +2985,9 @@ class TrackingMixin:
         precomputed = {}
 
         def handle(idx, frame):
+            active_mask = getattr(self, '_active_ranges_mask', None)
+            if active_mask is not None and 0 <= idx < len(active_mask) and not active_mask[idx]:
+                return
             with pause_scope(lambda: bool(roop.globals.processing)) as allowed:
                 if not allowed:
                     return
