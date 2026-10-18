@@ -1087,13 +1087,13 @@ html[data-render-lite] .animate-scanner-sweep {
 .fill-accent {
   background: var(--accent);
   color: #fff;
-  color: oklch(from var(--accent) clamp(0, (0.62 - l) * 1000, 1) 0 h);
+  color: oklch(from var(--accent) clamp(0, (0.565 - l) * 1000, 1) 0 h);
   border: 1px solid transparent;
 }
 
 .fill-accent:hover {
   background: var(--accent-hover);
-  color: oklch(from var(--accent-hover) clamp(0, (0.62 - l) * 1000, 1) 0 h);
+  color: oklch(from var(--accent-hover) clamp(0, (0.565 - l) * 1000, 1) 0 h);
 }
 
 /* ── Ink on an accent fill, in EVERY theme ─────────────────────────────────
@@ -1106,9 +1106,9 @@ html[data-render-lite] .animate-scanner-sweep {
    Needs a real `bg-[var(--accent)]` FILL: `/N` tints are different classes and
    keep their own (page-coloured) ink. */
 .bg-\[var\(--accent\)\] {
-  --color-white: oklch(from var(--accent) clamp(0, (0.62 - l) * 1000, 1) 0 h);
+  --color-white: oklch(from var(--accent) clamp(0, (0.565 - l) * 1000, 1) 0 h);
   color: #ffffff;
-  color: oklch(from var(--accent) clamp(0, (0.62 - l) * 1000, 1) 0 h);
+  color: oklch(from var(--accent) clamp(0, (0.565 - l) * 1000, 1) 0 h);
 }
 
 /* ── Muted text: ONE token, at least 4.5:1 ─────────────────────────────────
@@ -1385,6 +1385,8 @@ input[type="range"]:focus-visible::-moz-range-thumb {
      something dark?"), and is why this scopes correctly where a flat list of
      text utilities could not. */
   [class*="bg-black/"],
+  [class*="bg-slate-8"],
+  [class*="bg-slate-9"], [class*="bg-neutral-9"],
   .hud-glass,
   .bg-\[\#121420\],
   .bg-\[\#181016\],
@@ -1541,3 +1543,194 @@ input[type="range"]:focus-visible::-moz-range-thumb {
    dragging/wheel and a 15px bar would eat a third of the strip's height. */
 .no-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }
 .no-scrollbar::-webkit-scrollbar { display: none; }
+
+/* ── Legibility for the 36 non-default presets (e2e/contrast-themes.spec.js) ──────────────────
+   The ink system above is tuned on the default theme. A preset with a lighter panel (Solarized,
+   Gruvbox, Catppuccin) or a pale page (every light theme) puts the same utilities at 3-4:1, and
+   there are ~1,000 call sites, so the rules are stated per MODE here instead of per call site.
+   The default theme has neither a `theme-*` class nor light mode, so nothing below reaches it.
+
+   --ink-floor   no `text-white/N` renders fainter than the ink at this percentage
+                 (postcss-ink-floor.js rewrites every such rule, hover/focus variants included)
+   --muted-pct   the same for `text-muted`;  --text-muted: the same for the hand-written token
+   --hue-min/max the lightness window Tailwind's coloured text (text-emerald-400 ...) may use:
+                 light pages sink it to <= 0.46, dark presets lift it to >= 0.88, and a dark SCRIM
+                 on a light page (white ink inside it) resets it to a light window. */
+[data-theme-mode="light"] {
+  --ink-floor: 100%;
+  --muted-pct: 100%;
+  --text-muted: color-mix(in oklab, var(--text-main) 90%, transparent);
+  --hue-max: 0.36;
+  --accent-ink: var(--accent);
+  --accent-ink: oklch(from var(--accent) min(l, 0.38) c h);
+}
+html[class*="theme-"][data-theme-mode="dark"] {
+  --ink-floor: 92%;
+  --muted-pct: 92%;
+  --text-muted: color-mix(in oklab, var(--text-main) 90%, transparent);
+  --hue-min: 0.93;
+  --accent-ink: var(--accent);
+  --accent-ink: oklch(from var(--accent) max(l, 0.93) c h);
+}
+/* The theme class sits on <html> AND <body>, so a preset's own --text-muted is declared on <body> and
+   shadows the one above; restate it there. */
+[data-theme-mode="light"] body,
+html[class*="theme-"][data-theme-mode="dark"] body {
+  --text-muted: color-mix(in oklab, var(--text-main) 90%, transparent);
+}
+/* Surfaces that stay dark on a light page (scrims, the HUD, the hard-coded slate cards): light window, accent lifted. */
+[data-theme-mode="light"] :is([class*="bg-black/"], .hud-glass, [class*="bg-slate-8"], [class*="bg-slate-9"], [class*="bg-neutral-9"], .bg-\[\#121420\], .bg-\[\#181016\], .bg-\[\#0E0F15\]\/95, .bg-\[\#0c0e14\]\/90) {
+  --hue-min: 0.93;
+  --hue-max: 1;
+  --accent-ink: var(--accent);
+  --accent-ink: oklch(from var(--accent) max(l, 0.94) c h);
+}
+
+html[class*="theme-"][data-theme-mode="dark"] .text-person { color: oklch(from var(--person) max(l, 0.93) c h); }
+html[class*="theme-"][data-theme-mode="dark"] :is(.state-ok, .state-warn, .state-danger, .state-info, .state-accent) {
+  color: oklch(from var(--state-hue) max(l, 0.93) c h);
+}
+html[class*="theme-"][data-theme-mode="dark"] .ink-ok { color: oklch(from var(--ok) max(l, 0.93) c h); }
+html[class*="theme-"][data-theme-mode="dark"] .ink-warn { color: oklch(from var(--warn) max(l, 0.93) c h); }
+html[class*="theme-"][data-theme-mode="dark"] .ink-danger { color: oklch(from var(--danger) max(l, 0.93) c h); }
+html[class*="theme-"][data-theme-mode="dark"] .ink-info { color: oklch(from var(--info) max(l, 0.93) c h); }
+
+/* Tailwind's coloured text, windowed by the variables above (a no-op where they are unset). */
+:is([data-theme-mode="light"], html[class*="theme-"]) .text-red-200 { color: oklch(from var(--color-red-200) clamp(var(--hue-min, 0), l, var(--hue-max, 1)) c h); }
+:is([data-theme-mode="light"], html[class*="theme-"]) .text-red-300 { color: oklch(from var(--color-red-300) clamp(var(--hue-min, 0), l, var(--hue-max, 1)) c h); }
+:is([data-theme-mode="light"], html[class*="theme-"]) .text-red-400 { color: oklch(from var(--color-red-400) clamp(var(--hue-min, 0), l, var(--hue-max, 1)) c h); }
+:is([data-theme-mode="light"], html[class*="theme-"]) .text-orange-200 { color: oklch(from var(--color-orange-200) clamp(var(--hue-min, 0), l, var(--hue-max, 1)) c h); }
+:is([data-theme-mode="light"], html[class*="theme-"]) .text-orange-300 { color: oklch(from var(--color-orange-300) clamp(var(--hue-min, 0), l, var(--hue-max, 1)) c h); }
+:is([data-theme-mode="light"], html[class*="theme-"]) .text-orange-400 { color: oklch(from var(--color-orange-400) clamp(var(--hue-min, 0), l, var(--hue-max, 1)) c h); }
+:is([data-theme-mode="light"], html[class*="theme-"]) .text-amber-200 { color: oklch(from var(--color-amber-200) clamp(var(--hue-min, 0), l, var(--hue-max, 1)) c h); }
+:is([data-theme-mode="light"], html[class*="theme-"]) .text-amber-300 { color: oklch(from var(--color-amber-300) clamp(var(--hue-min, 0), l, var(--hue-max, 1)) c h); }
+:is([data-theme-mode="light"], html[class*="theme-"]) .text-amber-400 { color: oklch(from var(--color-amber-400) clamp(var(--hue-min, 0), l, var(--hue-max, 1)) c h); }
+:is([data-theme-mode="light"], html[class*="theme-"]) .text-yellow-200 { color: oklch(from var(--color-yellow-200) clamp(var(--hue-min, 0), l, var(--hue-max, 1)) c h); }
+:is([data-theme-mode="light"], html[class*="theme-"]) .text-yellow-300 { color: oklch(from var(--color-yellow-300) clamp(var(--hue-min, 0), l, var(--hue-max, 1)) c h); }
+:is([data-theme-mode="light"], html[class*="theme-"]) .text-yellow-400 { color: oklch(from var(--color-yellow-400) clamp(var(--hue-min, 0), l, var(--hue-max, 1)) c h); }
+:is([data-theme-mode="light"], html[class*="theme-"]) .text-lime-200 { color: oklch(from var(--color-lime-200) clamp(var(--hue-min, 0), l, var(--hue-max, 1)) c h); }
+:is([data-theme-mode="light"], html[class*="theme-"]) .text-lime-300 { color: oklch(from var(--color-lime-300) clamp(var(--hue-min, 0), l, var(--hue-max, 1)) c h); }
+:is([data-theme-mode="light"], html[class*="theme-"]) .text-lime-400 { color: oklch(from var(--color-lime-400) clamp(var(--hue-min, 0), l, var(--hue-max, 1)) c h); }
+:is([data-theme-mode="light"], html[class*="theme-"]) .text-green-200 { color: oklch(from var(--color-green-200) clamp(var(--hue-min, 0), l, var(--hue-max, 1)) c h); }
+:is([data-theme-mode="light"], html[class*="theme-"]) .text-green-300 { color: oklch(from var(--color-green-300) clamp(var(--hue-min, 0), l, var(--hue-max, 1)) c h); }
+:is([data-theme-mode="light"], html[class*="theme-"]) .text-green-400 { color: oklch(from var(--color-green-400) clamp(var(--hue-min, 0), l, var(--hue-max, 1)) c h); }
+:is([data-theme-mode="light"], html[class*="theme-"]) .text-emerald-200 { color: oklch(from var(--color-emerald-200) clamp(var(--hue-min, 0), l, var(--hue-max, 1)) c h); }
+:is([data-theme-mode="light"], html[class*="theme-"]) .text-emerald-300 { color: oklch(from var(--color-emerald-300) clamp(var(--hue-min, 0), l, var(--hue-max, 1)) c h); }
+:is([data-theme-mode="light"], html[class*="theme-"]) .text-emerald-400 { color: oklch(from var(--color-emerald-400) clamp(var(--hue-min, 0), l, var(--hue-max, 1)) c h); }
+:is([data-theme-mode="light"], html[class*="theme-"]) .text-teal-200 { color: oklch(from var(--color-teal-200) clamp(var(--hue-min, 0), l, var(--hue-max, 1)) c h); }
+:is([data-theme-mode="light"], html[class*="theme-"]) .text-teal-300 { color: oklch(from var(--color-teal-300) clamp(var(--hue-min, 0), l, var(--hue-max, 1)) c h); }
+:is([data-theme-mode="light"], html[class*="theme-"]) .text-teal-400 { color: oklch(from var(--color-teal-400) clamp(var(--hue-min, 0), l, var(--hue-max, 1)) c h); }
+:is([data-theme-mode="light"], html[class*="theme-"]) .text-cyan-200 { color: oklch(from var(--color-cyan-200) clamp(var(--hue-min, 0), l, var(--hue-max, 1)) c h); }
+:is([data-theme-mode="light"], html[class*="theme-"]) .text-cyan-300 { color: oklch(from var(--color-cyan-300) clamp(var(--hue-min, 0), l, var(--hue-max, 1)) c h); }
+:is([data-theme-mode="light"], html[class*="theme-"]) .text-cyan-400 { color: oklch(from var(--color-cyan-400) clamp(var(--hue-min, 0), l, var(--hue-max, 1)) c h); }
+:is([data-theme-mode="light"], html[class*="theme-"]) .text-sky-200 { color: oklch(from var(--color-sky-200) clamp(var(--hue-min, 0), l, var(--hue-max, 1)) c h); }
+:is([data-theme-mode="light"], html[class*="theme-"]) .text-sky-300 { color: oklch(from var(--color-sky-300) clamp(var(--hue-min, 0), l, var(--hue-max, 1)) c h); }
+:is([data-theme-mode="light"], html[class*="theme-"]) .text-sky-400 { color: oklch(from var(--color-sky-400) clamp(var(--hue-min, 0), l, var(--hue-max, 1)) c h); }
+:is([data-theme-mode="light"], html[class*="theme-"]) .text-blue-200 { color: oklch(from var(--color-blue-200) clamp(var(--hue-min, 0), l, var(--hue-max, 1)) c h); }
+:is([data-theme-mode="light"], html[class*="theme-"]) .text-blue-300 { color: oklch(from var(--color-blue-300) clamp(var(--hue-min, 0), l, var(--hue-max, 1)) c h); }
+:is([data-theme-mode="light"], html[class*="theme-"]) .text-blue-400 { color: oklch(from var(--color-blue-400) clamp(var(--hue-min, 0), l, var(--hue-max, 1)) c h); }
+:is([data-theme-mode="light"], html[class*="theme-"]) .text-indigo-200 { color: oklch(from var(--color-indigo-200) clamp(var(--hue-min, 0), l, var(--hue-max, 1)) c h); }
+:is([data-theme-mode="light"], html[class*="theme-"]) .text-indigo-300 { color: oklch(from var(--color-indigo-300) clamp(var(--hue-min, 0), l, var(--hue-max, 1)) c h); }
+:is([data-theme-mode="light"], html[class*="theme-"]) .text-indigo-400 { color: oklch(from var(--color-indigo-400) clamp(var(--hue-min, 0), l, var(--hue-max, 1)) c h); }
+:is([data-theme-mode="light"], html[class*="theme-"]) .text-violet-200 { color: oklch(from var(--color-violet-200) clamp(var(--hue-min, 0), l, var(--hue-max, 1)) c h); }
+:is([data-theme-mode="light"], html[class*="theme-"]) .text-violet-300 { color: oklch(from var(--color-violet-300) clamp(var(--hue-min, 0), l, var(--hue-max, 1)) c h); }
+:is([data-theme-mode="light"], html[class*="theme-"]) .text-violet-400 { color: oklch(from var(--color-violet-400) clamp(var(--hue-min, 0), l, var(--hue-max, 1)) c h); }
+:is([data-theme-mode="light"], html[class*="theme-"]) .text-purple-200 { color: oklch(from var(--color-purple-200) clamp(var(--hue-min, 0), l, var(--hue-max, 1)) c h); }
+:is([data-theme-mode="light"], html[class*="theme-"]) .text-purple-300 { color: oklch(from var(--color-purple-300) clamp(var(--hue-min, 0), l, var(--hue-max, 1)) c h); }
+:is([data-theme-mode="light"], html[class*="theme-"]) .text-purple-400 { color: oklch(from var(--color-purple-400) clamp(var(--hue-min, 0), l, var(--hue-max, 1)) c h); }
+:is([data-theme-mode="light"], html[class*="theme-"]) .text-fuchsia-200 { color: oklch(from var(--color-fuchsia-200) clamp(var(--hue-min, 0), l, var(--hue-max, 1)) c h); }
+:is([data-theme-mode="light"], html[class*="theme-"]) .text-fuchsia-300 { color: oklch(from var(--color-fuchsia-300) clamp(var(--hue-min, 0), l, var(--hue-max, 1)) c h); }
+:is([data-theme-mode="light"], html[class*="theme-"]) .text-fuchsia-400 { color: oklch(from var(--color-fuchsia-400) clamp(var(--hue-min, 0), l, var(--hue-max, 1)) c h); }
+:is([data-theme-mode="light"], html[class*="theme-"]) .text-pink-200 { color: oklch(from var(--color-pink-200) clamp(var(--hue-min, 0), l, var(--hue-max, 1)) c h); }
+:is([data-theme-mode="light"], html[class*="theme-"]) .text-pink-300 { color: oklch(from var(--color-pink-300) clamp(var(--hue-min, 0), l, var(--hue-max, 1)) c h); }
+:is([data-theme-mode="light"], html[class*="theme-"]) .text-pink-400 { color: oklch(from var(--color-pink-400) clamp(var(--hue-min, 0), l, var(--hue-max, 1)) c h); }
+:is([data-theme-mode="light"], html[class*="theme-"]) .text-rose-200 { color: oklch(from var(--color-rose-200) clamp(var(--hue-min, 0), l, var(--hue-max, 1)) c h); }
+:is([data-theme-mode="light"], html[class*="theme-"]) .text-rose-300 { color: oklch(from var(--color-rose-300) clamp(var(--hue-min, 0), l, var(--hue-max, 1)) c h); }
+:is([data-theme-mode="light"], html[class*="theme-"]) .text-rose-400 { color: oklch(from var(--color-rose-400) clamp(var(--hue-min, 0), l, var(--hue-max, 1)) c h); }
+
+/* Neutral greys written as palette utilities: the page ink on a light page, near-white inside a scrim. */
+[data-theme-mode="light"] :is(.text-neutral-200, .text-neutral-300, .text-neutral-400, .text-neutral-500, .text-slate-200, .text-slate-300, .text-slate-400, .text-slate-500, .text-gray-200, .text-gray-300, .text-gray-400, .text-gray-500, .text-zinc-200, .text-zinc-300, .text-zinc-400, .text-zinc-500, .text-stone-200, .text-stone-300, .text-stone-400, .text-stone-500) { color: color-mix(in oklab, var(--text-main) 92%, transparent); }
+[data-theme-mode="light"] :is([class*="bg-black/"], .hud-glass, [class*="bg-slate-8"], [class*="bg-slate-9"], [class*="bg-neutral-9"], .bg-\[\#121420\], .bg-\[\#181016\], .bg-\[\#0E0F15\]\/95, .bg-\[\#0c0e14\]\/90):is(.text-neutral-200, .text-neutral-300, .text-neutral-400, .text-neutral-500, .text-slate-200, .text-slate-300, .text-slate-400, .text-slate-500, .text-gray-200, .text-gray-300, .text-gray-400, .text-gray-500, .text-zinc-200, .text-zinc-300, .text-zinc-400, .text-zinc-500, .text-stone-200, .text-stone-300, .text-stone-400, .text-stone-500),
+[data-theme-mode="light"] :is([class*="bg-black/"], .hud-glass, [class*="bg-slate-8"], [class*="bg-slate-9"], [class*="bg-neutral-9"], .bg-\[\#121420\], .bg-\[\#181016\], .bg-\[\#0E0F15\]\/95, .bg-\[\#0c0e14\]\/90) :is(.text-neutral-200, .text-neutral-300, .text-neutral-400, .text-neutral-500, .text-slate-200, .text-slate-300, .text-slate-400, .text-slate-500, .text-gray-200, .text-gray-300, .text-gray-400, .text-gray-500, .text-zinc-200, .text-zinc-300, .text-zinc-400, .text-zinc-500, .text-stone-200, .text-stone-300, .text-stone-400, .text-stone-500) { color: rgba(255, 255, 255, 0.9); }
+html[class*="theme-"][data-theme-mode="dark"] :is(.text-neutral-200, .text-neutral-300, .text-neutral-400, .text-neutral-500, .text-slate-200, .text-slate-300, .text-slate-400, .text-slate-500, .text-gray-200, .text-gray-300, .text-gray-400, .text-gray-500, .text-zinc-200, .text-zinc-300, .text-zinc-400, .text-zinc-500, .text-stone-200, .text-stone-300, .text-stone-400, .text-stone-500) { color: color-mix(in oklab, var(--text-main) 92%, transparent); }
+
+/* `bg-[var(--accent)]/90` is an accent FILL too (a badge over the preview): same computed ink. */
+.bg-\[var\(--accent\)\]\/90,
+.bg-\[var\(--accent\)\]\/95 {
+  --color-white: oklch(from var(--accent) clamp(0, (0.565 - l) * 1000, 1) 0 h);
+  color: oklch(from var(--accent) clamp(0, (0.565 - l) * 1000, 1) 0 h);
+}
+
+/* A `bg-black/N` scrim (white ink inside it) over a PALE page renders as mid-grey: white on #979193 is
+   3.1:1. A second, fixed layer takes the thin scrims to a density that carries white at AA on any light
+   page, and leaves the thick ones (>= /60) as they were. */
+[data-theme-mode="light"] :is(
+  [class*="bg-black/25"], [class*="bg-black/30"], [class*="bg-black/35"], [class*="bg-black/40"],
+  [class*="bg-black/45"], [class*="bg-black/50"], [class*="bg-black/55"]) {
+  background-image: linear-gradient(rgba(0, 0, 0, 0.5), rgba(0, 0, 0, 0.5));
+}
+
+/* A THIN shade (`bg-black/5 .. /20`, `bg-black/[...]`) is a tint on a light page, not a scrim: it keeps the
+   page ink. (The light-mode block gives every `bg-black/*` white ink, which is right for a scrim and wrong
+   for a 10% shade that renders as the page colour.) */
+[data-theme-mode="light"] :is([class~="bg-black/5"], [class~="bg-black/10"], [class~="bg-black/15"], [class~="bg-black/20"], [class*="bg-black/["]) {
+  --color-white: var(--text-main);
+  --hue-min: 0;
+  --hue-max: 0.36;
+  --accent-ink: var(--accent);
+  --accent-ink: oklch(from var(--accent) min(l, 0.5) c h);
+}
+
+/* A dark MIDDLE stop in a gradient card (`via-black/40`) renders as mid-grey on a light page, under dark
+   ink: drop the stop in light mode, the card keeps its tinted ends. */
+[data-theme-mode="light"] [class*="via-black/"] { --tw-gradient-via: transparent; }
+
+/* Status ink on a light page: one step deeper than the dark-surface tokens, so it holds AA on the
+   tinted chips it sits in (the chip fill is the same hue at 15-20%). */
+[data-theme-mode="light"] {
+  --ok: #046249;
+  --warn: #8f4106;
+  --danger: #a31717;
+  --info: #1a45c4;
+}
+
+/* ── Light pages, second pass ─────────────────────────────────────────────────────────────── */
+
+/* The sticky run bar is `bg-[#0c0e14]/90` behind a LIGHT glass panel: on a light page that stacks to
+   mid-grey, under dark ink. On a light page the bar takes the page colour and the page ink. */
+[data-theme-mode="light"] .bg-\[\#0c0e14\]\/90 {
+  background-color: color-mix(in oklab, var(--bg-base) 90%, transparent);
+  --color-white: var(--text-main);
+  --hue-min: 0;
+  --hue-max: 0.36;
+  --accent-ink: var(--accent);
+  --accent-ink: oklch(from var(--accent) min(l, 0.38) c h);
+}
+
+/* A thin shade is a hint, not a surface: at 20% black the glass panel under it reads as #c3c0c8 and the
+   ink on it loses its margin. Render every thin shade at 6%. */
+[data-theme-mode="light"] :is([class~="bg-black/5"], [class~="bg-black/10"], [class~="bg-black/15"], [class~="bg-black/20"]) {
+  background-color: rgba(0, 0, 0, 0.06);
+}
+
+/* Hard-coded dark panels (`bg-neutral-900/60`, `bg-slate-900/40`) on a light page: the same density
+   layer the thin black scrims get, so their white ink has a dark enough ground. */
+[data-theme-mode="light"] :is([class*="bg-neutral-9"], [class*="bg-slate-9"], [class*="bg-slate-8"]) {
+  background-image: linear-gradient(rgba(0, 0, 0, 0.3), rgba(0, 0, 0, 0.3));
+}
+
+/* Inside a dark surface on a light page the light-mode status tokens are too dark: lift them. */
+[data-theme-mode="light"] :is([class*="bg-black/"], .hud-glass, [class*="bg-slate-8"], [class*="bg-slate-9"], [class*="bg-neutral-9"]) :is(.state-ok, .state-warn, .state-danger, .state-info, .state-accent) {
+  color: oklch(from var(--state-hue) max(l, 0.94) c h);
+}
+[data-theme-mode="light"] :is([class*="bg-black/"], .hud-glass, [class*="bg-slate-8"], [class*="bg-slate-9"], [class*="bg-neutral-9"]) .ink-ok { color: oklch(from var(--ok) max(l, 0.94) c h); }
+[data-theme-mode="light"] :is([class*="bg-black/"], .hud-glass, [class*="bg-slate-8"], [class*="bg-slate-9"], [class*="bg-neutral-9"]) .ink-warn { color: oklch(from var(--warn) max(l, 0.94) c h); }
+[data-theme-mode="light"] :is([class*="bg-black/"], .hud-glass, [class*="bg-slate-8"], [class*="bg-slate-9"], [class*="bg-neutral-9"]) .ink-danger { color: oklch(from var(--danger) max(l, 0.94) c h); }
+[data-theme-mode="light"] :is([class*="bg-black/"], .hud-glass, [class*="bg-slate-8"], [class*="bg-slate-9"], [class*="bg-neutral-9"]) .ink-info { color: oklch(from var(--info) max(l, 0.94) c h); }
+
+/* `bg-[var(--accent)]/90` over the preview: on an accent in the middle of the lightness range neither
+   ink reaches 4.5:1 (#9b5de5: black 4.3, white 4.1), so the fill itself moves a little toward the ink's
+   side: lighter when the ink is black, unchanged when it is white. */
+.bg-\[var\(--accent\)\]\/90 {
+  background-color: oklch(from var(--accent) calc(l + clamp(0, (l - 0.565) * 1000, 1) * 0.07) c h / 0.9);
+}

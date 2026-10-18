@@ -1,5 +1,6 @@
 // Thin client for the FastAPI backend (app/api.py) proxied via Vite.
 import { longRunningKey } from './longRunning';
+import { suspendWhileBusy } from './pipelineStatus';
 
 export const API = window.location.origin;
 
@@ -42,8 +43,12 @@ export const timeoutFor = (method, path) => (longRunningKey(method, path) ? 0 : 
 // reply); `kind` is 'http' | 'network' | 'timeout' | 'parse'; `body` is the parsed JSON
 // error body when there was one. A caller aborting its own request is NOT an ApiError:
 // that stays the AbortError the signal carried, because it is not a failure.
+//
+// `endpoint` is `METHOD /path` (the registry key shape of longRunning.js) and `elapsedMs` is how
+// long the request lived before it failed, wall clock, INCLUDING any time its deadline was
+// suspended for a TensorRT build (`suspendedMs` says how much of it that was).
 export class ApiError extends Error {
-  constructor({ detail, status = 0, method, path, kind = 'http', body = null, cause }) {
+  constructor({ detail, status = 0, method, path, kind = 'http', body = null, cause, elapsedMs = null, suspendedMs = 0 }) {
     const where = status ? `HTTP ${status} ${method} ${path}` : `${method} ${path}`;
     super(`${detail} (${where})`, cause ? { cause } : undefined);
     this.name = 'ApiError';
@@ -51,8 +56,11 @@ export class ApiError extends Error {
     this.status = status;
     this.method = method;
     this.path = path;
+    this.endpoint = `${method} ${path}`;
     this.kind = kind;
     this.body = body;
+    this.elapsedMs = elapsedMs;
+    this.suspendedMs = suspendedMs;
   }
 }
 
@@ -60,18 +68,18 @@ const bare = (path) => String(path).split('?')[0];
 
 // A response that is not 2xx. The backend's error bodies are `{message}` (and
 // sometimes `{error}`); anything else falls back to the status text.
-async function httpError(res, method, path) {
+async function httpError(res, method, path, track) {
   let body = null;
   let detail = res.statusText || `HTTP ${res.status}`;
   try {
     body = await res.json();
     detail = body.message || body.error || detail;
   } catch { /* not JSON: the status line is all there is to say */ }
-  return new ApiError({ detail: String(detail), status: res.status, method, path: bare(path), body });
+  return new ApiError({ detail: String(detail), status: res.status, method, path: bare(path), body, ...track() });
 }
 
-async function handle(res, method, path) {
-  if (!res.ok) throw await httpError(res, method, path);
+async function handle(res, method, path, track) {
+  if (!res.ok) throw await httpError(res, method, path, track);
   const ct = res.headers.get('content-type') || '';
   if (!ct.includes('application/json')) return res.text();
   try {
@@ -79,23 +87,51 @@ async function handle(res, method, path) {
   } catch (cause) {
     // A 2xx that is not parseable is a server bug, and saying so beats a bare
     // "Unexpected token" surfacing three components away.
-    throw new ApiError({ detail: 'Malformed JSON in the server response', status: res.status, method, path: bare(path), kind: 'parse', cause });
+    throw new ApiError({ detail: 'Malformed JSON in the server response', status: res.status, method, path: bare(path), kind: 'parse', cause, ...track() });
   }
 }
 
 const isAbort = (e) => e && e.name === 'AbortError';
 
 // The one place a request is made. `init` is fetch's init minus `signal`.
+//
+// THE DEADLINE IS SUSPENDED, NOT EXTENDED, WHILE THE BACKEND COMPILES. When the timer fires, the
+// request asks pipelineStatus whether the backend announced STAGE_COMPILING_TRT or
+// STAGE_RUNNING_CANARY (a cold engine build is 2-18 minutes with no frame counter):
+//   * busy      -> the request is left in flight, a non-blocking banner already says why, and
+//                  when the stage ends the request gets a FRESH full deadline;
+//   * not busy  -> it times out exactly as before (ApiError kind 'timeout').
+// A backend that dies mid-build stops answering the status probe, so the claim expires and the
+// request still fails. Only finite deadlines are involved: `timeout: 0` never had one.
 async function request(method, path, init, opts = {}) {
   const ms = opts.timeout === undefined ? DEFAULT_TIMEOUT_MS : opts.timeout;
   const caller = opts.signal;
   const ctrl = ms > 0 ? new AbortController() : null;
+  const waiting = new AbortController();      // ends a suspended wait when the request settles
+  const started = Date.now();
   let timer = null;
   let timedOut = false;
+  let settled = false;
+  let suspendedMs = 0;
   let onCallerAbort = null;
+  const track = () => ({ elapsedMs: Date.now() - started, suspendedMs });
+
+  const onDeadline = async () => {
+    timer = null;
+    const since = Date.now();
+    const resumed = await suspendWhileBusy(waiting.signal);
+    if (settled || caller?.aborted) return;
+    if (resumed) {
+      suspendedMs += Date.now() - since;
+      timer = setTimeout(onDeadline, ms);
+      return;
+    }
+    timedOut = true;
+    ctrl.abort(new Error('Request timed out'));
+  };
 
   if (ctrl) {
-    timer = setTimeout(() => { timedOut = true; ctrl.abort(new Error('Request timed out')); }, ms);
+    timer = setTimeout(onDeadline, ms);
     onCallerAbort = () => ctrl.abort(caller.reason);
     if (caller?.aborted) onCallerAbort();
     else caller?.addEventListener('abort', onCallerAbort, { once: true });
@@ -103,18 +139,21 @@ async function request(method, path, init, opts = {}) {
 
   try {
     const res = await fetch(`${API}${path}`, { ...init, signal: ctrl ? ctrl.signal : caller });
-    return await handle(res, method, path);
+    return await handle(res, method, path, track);
   } catch (err) {
     if (err instanceof ApiError) throw err;
     if (timedOut && !caller?.aborted) {
-      throw new ApiError({ detail: `Request timed out after ${ms / 1000} s`, method, path: bare(path), kind: 'timeout', cause: err });
+      const shown = suspendedMs ? Math.round((Date.now() - started) / 1000) : ms / 1000;
+      throw new ApiError({ detail: `Request timed out after ${shown} s`, method, path: bare(path), kind: 'timeout', cause: err, ...track() });
     }
     if (isAbort(err) || caller?.aborted) throw err;           // the caller's own abort: not a failure
     if (err instanceof TypeError) {                           // fetch's "Failed to fetch" / DNS / refused / reset
-      throw new ApiError({ detail: `Network error: ${err.message}`, method, path: bare(path), kind: 'network', cause: err });
+      throw new ApiError({ detail: `Network error: ${err.message}`, method, path: bare(path), kind: 'network', cause: err, ...track() });
     }
     throw err;
   } finally {
+    settled = true;
+    waiting.abort();
     clearTimeout(timer);
     caller?.removeEventListener('abort', onCallerAbort);
   }
@@ -155,6 +194,8 @@ const xhrUpload = (path, fd, { onProgress, signal, timeout } = {}) => new Promis
   const method = 'POST';
   const ms = timeout === undefined ? DEFAULT_TIMEOUT_MS : timeout;
   const xhr = new XMLHttpRequest();
+  const started = Date.now();
+  const elapsed = () => ({ elapsedMs: Date.now() - started });
   xhr.open(method, `${API}${path}`);
   if (ms > 0) xhr.timeout = ms;
 
@@ -189,7 +230,7 @@ const xhrUpload = (path, fd, { onProgress, signal, timeout } = {}) => new Promis
       // Mirrors handle(): a 2xx that is not parseable is a server bug.
       try { resolve(JSON.parse(xhr.responseText)); }
       catch (cause) {
-        reject(new ApiError({ detail: 'Malformed JSON in the server response', status: xhr.status, method, path: bare(path), kind: 'parse', cause }));
+        reject(new ApiError({ detail: 'Malformed JSON in the server response', status: xhr.status, method, path: bare(path), kind: 'parse', cause, ...elapsed() }));
       }
       return;
     }
@@ -199,15 +240,15 @@ const xhrUpload = (path, fd, { onProgress, signal, timeout } = {}) => new Promis
       body = JSON.parse(xhr.responseText);
       detail = body.message || body.error || detail;
     } catch { /* not JSON: the status line is all there is to say */ }
-    reject(new ApiError({ detail: String(detail), status: xhr.status, method, path: bare(path), body }));
+    reject(new ApiError({ detail: String(detail), status: xhr.status, method, path: bare(path), body, ...elapsed() }));
   };
   xhr.onerror = () => {
     cleanup();
-    reject(new ApiError({ detail: 'Network error during upload', method, path: bare(path), kind: 'network' }));
+    reject(new ApiError({ detail: 'Network error during upload', method, path: bare(path), kind: 'network', ...elapsed() }));
   };
   xhr.ontimeout = () => {
     cleanup();
-    reject(new ApiError({ detail: `Upload timed out after ${ms / 1000} s`, method, path: bare(path), kind: 'timeout' }));
+    reject(new ApiError({ detail: `Upload timed out after ${ms / 1000} s`, method, path: bare(path), kind: 'timeout', ...elapsed() }));
   };
   xhr.onabort = () => { cleanup(); reject(new DOMException('Upload cancelled', 'AbortError')); };
 

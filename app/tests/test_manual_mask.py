@@ -141,7 +141,12 @@ class TestMaskWiring(unittest.TestCase):
     def test_brush_size_is_converted_to_canvas_space(self):
         """brushSize is a screen measurement; the canvas is at native res."""
         src = PREVIEW_JSX.read_text(encoding="utf-8")
-        self.assertIn("canvas.width / rect.width", src)
+        # The conversion lives in maskBrush.js (canvas px per visual px of the CONTAINED picture, not of
+        # the whole box: an object-contain letterbox sits inside the rect); the stage must go through it.
+        self.assertIn("brushSample(rect, canvas.width, canvas.height", src)
+        helper = (PREVIEW_JSX.parent / "maskBrush.js").read_text(encoding="utf-8")
+        self.assertIn("canvasW / c.width", helper)
+        self.assertIn("(brushSize / 2) * scale", helper)
 
 
 if __name__ == "__main__":

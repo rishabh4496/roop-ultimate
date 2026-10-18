@@ -718,7 +718,7 @@ export default function BenchmarkPanel({ notify, onSettingsApplied }) {
                                 {p.label}
                               </span>
                               {p.key === 'balanced' && (
-                                <span className="px-1.5 py-0.2 rounded text-nano bg-[var(--accent)]/20 text-accent font-semibold uppercase">
+                                <span className="px-1.5 py-0.2 rounded text-nano bg-[var(--accent)]/10 text-accent font-semibold uppercase">
                                   Default
                                 </span>
                               )}

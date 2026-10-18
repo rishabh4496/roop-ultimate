@@ -242,5 +242,65 @@ class GovernorFloor(unittest.TestCase):
         self.assertEqual(len(calls), 1)
 
 
+class _FakeSession:
+    """Just enough of an onnxruntime session for `warmup_session` and `session_precision`."""
+
+    def __init__(self, trt_options, on_run=None):
+        self._opts = trt_options
+        self._on_run = on_run
+
+    def get_provider_options(self):
+        return {} if self._opts is None else {"TensorrtExecutionProvider": self._opts}
+
+    def get_inputs(self):
+        meta = type("M", (), {"name": "x", "shape": [1, 3, 8, 8], "type": "tensor(float)"})
+        return [meta]
+
+    def run(self, _outputs, _feed):
+        if self._on_run:
+            self._on_run()
+
+
+class StagePrecision(unittest.TestCase):
+    """The React banner names FP32 vs FP16, so the payload has to carry the precision the ENGINE builds with."""
+
+    def setUp(self):
+        ps.reset()
+
+    def test_precision_is_read_from_the_provider_options_the_session_was_built_with(self):
+        sp = ps.session_precision
+        self.assertEqual(sp(_FakeSession({"trt_fp16_enable": "True"})), "FP16")
+        self.assertEqual(sp(_FakeSession({"trt_fp16_enable": True})), "FP16")
+        self.assertEqual(sp(_FakeSession({"trt_fp16_enable": "False"})), "FP32")
+        self.assertEqual(sp(_FakeSession({})), "FP32")
+        self.assertEqual(sp(_FakeSession({"trt_bf16_enable": "1", "trt_fp16_enable": "False"})), "BF16")
+
+    def test_a_session_off_tensorrt_or_unreadable_says_n_a(self):
+        self.assertEqual(ps.session_precision(_FakeSession(None)), "n/a")
+        self.assertEqual(ps.session_precision(object()), "n/a")
+
+    def test_warmup_announces_the_model_and_its_precision_while_it_compiles(self):
+        from roop import predictor
+        seen = []
+        session = _FakeSession({"trt_fp16_enable": "False"}, on_run=lambda: seen.extend(ps.snapshot()["active"]))
+        tag = "stage5_test_model_%d" % time.time_ns()
+        self.assertTrue(predictor.warmup_session(session, tag, once=False))
+        self.assertEqual(len(seen), 1, "the stage was active DURING session.run")
+        self.assertEqual((seen[0]["kind"], seen[0]["model"], seen[0]["precision"]),
+                         (ps.STAGE_COMPILING_TRT, tag, "FP32"))
+        done = ps.snapshot()["events"][-1]
+        self.assertEqual((done["state"], done["precision"]), ("finished", "FP32"), "and the finish event keeps it")
+
+    def test_the_canary_announces_its_precision_too(self):
+        from roop import aux_canary
+        seen = []
+        session = _FakeSession({"trt_fp16_enable": "True"})
+        with patch.object(aux_canary, "_check_session",
+                          lambda *a, **k: seen.extend(ps.snapshot()["active"]) or "verdict"):
+            self.assertEqual(aux_canary.check_session("xseg", session, "xseg.onnx"), "verdict")
+        self.assertEqual((seen[0]["kind"], seen[0]["model"], seen[0]["precision"]),
+                         (ps.STAGE_RUNNING_CANARY, "xseg", "FP16"))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -455,7 +455,49 @@ async function startServer() {
 
   // Create HTTP server & WebSocket for telemetry
   const server = http.createServer(app);
-  const wss = new WebSocketServer({ server, path: '/ws/telemetry' });
+  // Two sockets share the server, so each is `noServer` and one upgrade listener routes by path:
+  // a `path`-bound ws server answers every OTHER path with 400, which would kill its sibling.
+  const wss = new WebSocketServer({ noServer: true });
+  const statusWss = new WebSocketServer({ noServer: true });
+  server.on('upgrade', (req, socket, head) => {
+    const pathname = (req.url || '').split('?')[0];
+    const target = pathname === '/ws/telemetry' ? wss : pathname === '/ws/v1/pipeline/status' ? statusWss : null;
+    if (target) target.handleUpgrade(req, socket, head, (ws) => target.emit('connection', ws, req));
+  });
+
+  // /api/v1/pipeline/status, as app/routes_pipeline_status.py serves it: a snapshot on connect and
+  // another whenever the registry changes. The e2e suite drives it through POST /__mock/pipeline.
+  const pipeline = { seq: 0, active: [] as Array<Record<string, unknown>> };
+  const pipelineSnapshot = () => {
+    const nowS = Date.now() / 1000;
+    const active = pipeline.active.map((a) => ({ ...a, elapsed_s: Math.max(0, nowS - Number(a.since)) }));
+    return {
+      seq: pipeline.seq,
+      time: nowS,
+      active,
+      compiling: active.some((a) => a.kind === 'STAGE_COMPILING_TRT'),
+      canary: active.some((a) => a.kind === 'STAGE_RUNNING_CANARY'),
+      governor: { throttles: 0, last: null },
+      segments: {},
+      events: [],
+    };
+  };
+  statusWss.on('connection', (ws: WebSocket) => {
+    let last = -1;
+    const timer = setInterval(() => {
+      if (ws.readyState !== WebSocket.OPEN || pipeline.seq === last) return;
+      last = pipeline.seq;
+      ws.send(JSON.stringify(pipelineSnapshot()));
+    }, 100);
+    ws.on('close', () => clearInterval(timer));
+  });
+  app.get('/api/v1/pipeline/status', (req, res) => res.json(pipelineSnapshot()));
+  app.post('/__mock/pipeline', (req, res) => {
+    const rows: Array<Record<string, unknown>> = Array.isArray(req.body?.active) ? req.body.active : [];
+    pipeline.active = rows.map((a) => ({ since: Date.now() / 1000 - Number(a.elapsed_s || 0), ...a }));
+    pipeline.seq += 1;
+    res.json({ ok: true, seq: pipeline.seq });
+  });
 
   wss.on('connection', (ws: WebSocket) => {
     const timer = setInterval(() => {

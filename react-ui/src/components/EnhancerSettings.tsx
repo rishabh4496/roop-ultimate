@@ -230,9 +230,10 @@ function DebouncedSlider({
       <p className="text-mini text-slate-400 leading-tight">{info}</p>
 
       <div className="flex items-center gap-2 pt-1">
-        <span className="text-micro font-mono text-slate-500 w-6">{min}</span>
+        <span className="text-micro font-mono text-muted w-6">{min}</span>
         <input
           type="range"
+          aria-label={label}
           min={min}
           max={max}
           step={step}
@@ -242,7 +243,7 @@ function DebouncedSlider({
           onPointerUp={handleBlur}
           className="flex-1 h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-cyan-400 focus:outline-none focus:ring-1 focus:ring-cyan-500/50"
         />
-        <span className="text-micro font-mono text-slate-500 w-6 text-right">{max}</span>
+        <span className="text-micro font-mono text-muted w-6 text-right">{max}</span>
       </div>
     </div>
   );
@@ -752,13 +753,13 @@ export default function EnhancerSettings({
                   <Gauge className="w-3.5 h-3.5 text-cyan-400" />
                   Speed (FPS)
                 </span>
-                <span className="font-mono text-micro text-slate-500">
+                <span className="font-mono text-micro text-muted">
                   avg {telemetry.average_fps.toFixed(1)}
                 </span>
               </div>
               <div className="text-2xl font-bold font-mono text-cyan-400 flex items-baseline gap-1">
                 {(telemetry.instantaneous_fps || telemetry.fps_now || 0).toFixed(1)}
-                <span className="text-xs text-slate-500 font-normal">fps</span>
+                <span className="text-xs text-muted font-normal">fps</span>
               </div>
               <div className="h-1 bg-slate-800 rounded-full overflow-hidden">
                 <div
@@ -777,11 +778,11 @@ export default function EnhancerSettings({
                   <Flame className="w-3.5 h-3.5 text-amber-400" />
                   GPU VRAM
                 </span>
-                <span className="font-mono text-micro text-slate-500">{vramPercent}%</span>
+                <span className="font-mono text-micro text-muted">{vramPercent}%</span>
               </div>
               <div className="text-lg font-bold font-mono text-amber-400 flex items-baseline gap-1">
                 {(telemetry.gpu_vram_used_mb / 1024).toFixed(1)}
-                <span className="text-xs text-slate-500 font-normal">
+                <span className="text-xs text-muted font-normal">
                   / {(telemetry.gpu_vram_total_mb / 1024).toFixed(1)} GB
                 </span>
               </div>
@@ -802,7 +803,7 @@ export default function EnhancerSettings({
                   <Cpu className="w-3.5 h-3.5 text-purple-400" />
                   CPU Load
                 </span>
-                <span className="font-mono text-micro text-slate-500">
+                <span className="font-mono text-micro text-muted">
                   {telemetry.cpu_load_percentage.toFixed(0)}%
                 </span>
               </div>
@@ -824,11 +825,11 @@ export default function EnhancerSettings({
                   <HardDrive className="w-3.5 h-3.5 text-blue-400" />
                   System RAM
                 </span>
-                <span className="font-mono text-micro text-slate-500">{ramPercent}%</span>
+                <span className="font-mono text-micro text-muted">{ramPercent}%</span>
               </div>
               <div className="text-lg font-bold font-mono text-blue-300 flex items-baseline gap-1">
                 {(telemetry.system_ram_mb / 1024).toFixed(1)}
-                <span className="text-xs text-slate-500 font-normal">
+                <span className="text-xs text-muted font-normal">
                   / {(telemetry.system_ram_total_mb / 1024).toFixed(0)} GB
                 </span>
               </div>
@@ -848,7 +849,7 @@ export default function EnhancerSettings({
                 <Workflow className="w-3.5 h-3.5 text-cyan-400" />
                 Pipeline Stage Queue Depths
               </span>
-              <span className="text-micro font-mono text-slate-500">Bounded (In-Flight)</span>
+              <span className="text-micro font-mono text-muted">Bounded (In-Flight)</span>
             </div>
 
             <div className="grid grid-cols-4 gap-1.5 text-micro font-mono pt-1">
@@ -925,7 +926,7 @@ export default function EnhancerSettings({
                 />
               </div>
 
-              {comp.message && <p className="text-micro text-slate-500 italic truncate">{comp.message}</p>}
+              {comp.message && <p className="text-micro text-muted italic truncate">{comp.message}</p>}
               {compileError && <p className="text-micro text-rose-400">{compileError}</p>}
             </div>
 

@@ -13,6 +13,8 @@ import { fmtTime } from './components/faceswap/utils';
 import useRunCompleteAlert from './components/faceswap/useRunCompleteAlert';
 import useJobRecovery from './components/faceswap/useJobRecovery';
 import useTelemetrySocket from './useTelemetrySocket';
+import CompileBanner from './components/CompileBanner';
+import { usePipelineStatusSocket } from './usePipelineStatus';
 import { useJobStore } from './store/jobStore';
 import { setRunTelemetry, selectProg, etaMsOf } from './store/telemetryStore';
 import { LiveText, LiveBar } from './components/LiveTelemetry';
@@ -445,6 +447,9 @@ export default function App() {
   }, [reportNet]);
 
   const { connected: telemetryLive } = useTelemetrySocket(onTelemetry, true);
+  // The "backend is compiling TensorRT / running the canary" channel. Owned by the shell, not by a
+  // tab, so a hash-route change never closes it; api.js reads it to suspend request deadlines.
+  usePipelineStatusSocket();
 
   useEffect(() => {
     if (!progress.processing && controlBusyRef.current === 'stop') {
@@ -1414,6 +1419,8 @@ export default function App() {
       </main>
 
       <Toasts toasts={toasts} onDismiss={dismissToast} />
+
+      <CompileBanner />
 
       {/* Backend went quiet mid-session (server restart, GPU stall, sleep).
           Non-blocking: the UI stays usable and this clears itself the moment a

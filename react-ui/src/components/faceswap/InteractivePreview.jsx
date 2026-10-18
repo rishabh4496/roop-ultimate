@@ -3,6 +3,7 @@ import AIScannerOverlay from './AIScannerOverlay';
 import PreviewCanvas from './PreviewCanvas';
 import CompareSlider from './CompareSlider';
 import FrameUnavailable from './FrameUnavailable';
+import { brushSample } from './maskBrush';
 import FastCanvasPlayer from '../player/FastCanvasPlayer';
 import {
   clampPan, panAnchoredAt, panCenteringAt, transformFor, uiScale, wheelZoom,
@@ -309,6 +310,12 @@ export default function InteractivePreview({
   }, [compare, splitView]);
 
   const handlePointerDown = (e) => {
+    // A press on one of the stage's own controls (the HUD's Lens / Mask Brush / Erase / zoom
+    // buttons, a range input) is that control's, not the stage's. Without this a press while
+    // zoomed started a pan and took pointer CAPTURE, which redirects the pointer-up to the
+    // stage, so the button never received its `click`: every HUD button went dead above 100%
+    // (and with the brush on, pressing one painted a dab under it).
+    if (e.target !== e.currentTarget && e.target.closest?.('button, a, input, select, textarea, label, [role="button"]')) return;
     if (maskBrushActive) {
       setIsDrawingMask(true);
       drawMaskStroke(e, true);   // start a fresh stroke, no join to the last one
@@ -413,23 +420,29 @@ export default function InteractivePreview({
     const rect = canvas.getBoundingClientRect();
     const cx = e.clientX ?? e.touches?.[0]?.clientX;
     const cy = e.clientY ?? e.touches?.[0]?.clientY;
-    if (cx === undefined || !rect.width) return;
+    if (cx === undefined) return;
 
     // brushSize is a SCREEN measurement; the canvas is at the media's native
     // resolution, so it has to be converted or the stroke is the wrong size by
     // exactly the display scale factor (e.g. 2.4x off for 1920px media in an
-    // 800px box). The rect already includes the stage zoom/pan transform.
-    const scale = canvas.width / rect.width;
-    const x = (cx - rect.left) * scale;
-    const y = (cy - rect.top) * scale;
-    const r = Math.max(0.5, (brushSize / 2) * scale);
+    // 800px box). The rect already includes the stage zoom/pan transform, but it is
+    // the BOX, not the picture: object-contain letterboxes the pixels inside it when
+    // the box takes a display aspect (SAR/DAR) the pixels do not have (maskBrush.js).
+    const sample = brushSample(rect, canvas.width, canvas.height, cx, cy, brushSize);
+    if (!sample) return;
+    const { x, y, r } = sample;
 
     // Join to the previous sample, otherwise a quick drag leaves a dotted trail
     // of disconnected circles instead of a stroke.
     const prev = isStart ? null : lastPtRef.current;
     const erase = brushMode === 'erase';
 
-    for (const [c, color] of [[canvas, 'rgba(233, 69, 96, 0.45)'], [exportCanvas, '#ffffff']]) {
+    // `destination-out` removes alpha in proportion to the SOURCE's alpha, so erasing with the
+    // viewing layer's 0.45 tint only thinned a stroke by 45% per pass and left a ghost on
+    // screen while the (opaque) export canvas was already clean: the picture the user saw
+    // was not the mask that was sent. Erase with an opaque source on both.
+    const tint = erase ? '#ffffff' : 'rgba(233, 69, 96, 0.45)';
+    for (const [c, color] of [[canvas, tint], [exportCanvas, '#ffffff']]) {
       const ctx = c.getContext('2d');
       if (!ctx) continue;
       ctx.globalCompositeOperation = erase ? 'destination-out' : 'source-over';

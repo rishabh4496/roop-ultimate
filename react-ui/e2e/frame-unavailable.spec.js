@@ -30,14 +30,20 @@ test('frame unavailable: shown once retries are spent, Retry recovers', async ({
   await page.goto('/#/faceswap');
   const banner = page.getByTestId('frame-unavailable');
 
-  // Five attempts at ~0.5/1/2/4 s gaps is ~8 s; not before.
-  await expect(banner).toBeVisible({ timeout: 25_000 });
+  // One request + three retries at 250 / 500 / 1000 ms is ~1.75 s of waiting; not before.
+  await expect(banner).toBeVisible({ timeout: 15_000 });
   await expect(banner).toHaveText(/Frame unavailable\s*-\s*Retry/);
   await expect(banner.getByRole('button', { name: 'Retry' })).toBeVisible();
 
   // ...and it has actually STOPPED asking.
   const spent = stage.length;
-  expect(spent, 'stage-frame attempts before giving up').toBe(5);
+  expect(spent, 'stage-frame attempts before giving up').toBe(4);
+  // The gaps follow the deterministic schedule (a gap is the delay plus a request round trip).
+  const gaps = stage.slice(1).map((t, i) => t - stage[i]);
+  [250, 500, 1000].forEach((want, i) => {
+    expect(gaps[i], `gap before retry ${i + 1}`).toBeGreaterThanOrEqual(want - 30);
+    expect(gaps[i], `gap before retry ${i + 1}`).toBeLessThan(want + 400);
+  });
   await page.waitForTimeout(5_000);
   expect(stage.length, 'requests after giving up').toBe(spent);
 
@@ -69,7 +75,49 @@ test('frame unavailable: over a stale swap, stepping to a frame that fails', asy
 
   failing = true;
   await page.getByRole('button', { name: 'Next frame (→)' }).click();   // the timeline's; the HUD has its own
-  await expect(banner).toBeVisible({ timeout: 25_000 });
-  await expect(stageEl, 'the stale stage is still there under the message').toBeVisible();
+  await expect(banner).toBeVisible({ timeout: 15_000 });
+  await expect(stageEl,'the stale stage is still there under the message').toBeVisible();
   await expect(banner.getByRole('button', { name: 'Retry' })).toBeEnabled();
 });
+
+// ── Playback at every speed ─────────────────────────────────────────────────
+// The Timeline plays at 0.25x .. 4x. The speed changes how fast frames are WANTED, never how a
+// FAILED chunk is retried: at every speed the chunk request is attempted four times (the first
+// plus three retries at 250 / 500 / 1000 ms), then playback stops with a message and Play asks
+// again. (A faster speed asking more often is exactly the request loop retryPolicy.js exists to
+// prevent.)
+for (const speed of [0.25, 0.5, 1, 2, 4]) {
+  test(`playback at ${speed}x: a failing chunk is tried 1 + 3 times at 250/500/1000 ms, then stops; Play recovers`, async ({ page }) => {
+    test.setTimeout(60_000);
+    let healthy = false;
+    const chunks = [];
+    await page.route('**/api/target/preview_seq*', (route) => {
+      chunks.push(Date.now());
+      return healthy
+        ? route.fulfill({ status: 200, contentType: 'application/octet-stream', body: Buffer.alloc(0) })
+        : route.fulfill(BOOM);
+    });
+
+    await page.goto('/#/faceswap');
+    const play = page.getByRole('button', { name: /^Play \(Space\)$/ });
+    await expect(play).toBeVisible({ timeout: 15_000 });
+    await page.getByRole('button', { name: `${speed}×`, exact: true }).click();
+    await play.click();
+
+    const toast = page.getByRole('button', { name: /Dismiss notification: Playback stopped/ });
+    await expect(toast, 'playback gives up with a message').toBeVisible({ timeout: 15_000 });
+    expect(chunks.length, 'chunk attempts before giving up').toBe(4);
+    const gaps = chunks.slice(1).map((t, i) => t - chunks[i]);
+    [250, 500, 1000].forEach((want, i) => {
+      expect(gaps[i], `gap before retry ${i + 1}`).toBeGreaterThanOrEqual(want - 30);
+      expect(gaps[i], `gap before retry ${i + 1}`).toBeLessThan(want + 450);
+    });
+    const spent = chunks.length;
+    await page.waitForTimeout(3_000);
+    expect(chunks.length, 'and it has stopped asking').toBe(spent);
+
+    healthy = true;                                              // the backend is back; Play asks again
+    await page.getByRole('button', { name: /^Play \(Space\)$/ }).click();
+    await expect.poll(() => chunks.length, { message: 'Play made a fresh request' }).toBeGreaterThan(spent);
+  });
+}

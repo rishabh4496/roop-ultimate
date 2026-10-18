@@ -83,7 +83,17 @@ that accepts the socket and stalls leaves the UI waiting in silence.
   call site and fails on a listed endpoint without its opt-out, an opt-out for an unlisted one, a computed path
   that says nothing, and a stale entry; `app/tests/test_ui_api_timeouts.py` runs it from the Python suite too.
   **Adding an endpoint that can run long means adding a line to `longRunning.js`.**
-* **Errors say which request.** Failures are `ApiError`s with `status`, `method`, `path` and `kind`
+* **The deadline is suspended, not extended, while the backend compiles.** A cold TensorRT build or the
+  fidelity canary after it takes minutes with no frame counter. The backend announces both
+  (`STAGE_COMPILING_TRT`, `STAGE_RUNNING_CANARY`, with model and precision) on `WS /ws/v1/pipeline/status`
+  (`app/roop/pipeline_status.py`). `src/pipelineStatus.js` holds that state; when a request's deadline fires,
+  `api.js` asks it: busy -> the request stays in flight and, when the stage ends, gets a **fresh** deadline;
+  not busy -> it times out as before. A busy claim is re-confirmed by a 2 s status GET and expires after 6 s
+  without one, so a backend that dies mid-build still fails its requests. `components/CompileBanner.jsx` shows the
+  stage (model, FP32 / FP16, elapsed) as a non-blocking status strip; the shell (`App.jsx`) owns the socket, so
+  hash-route changes never close it. `timeout: 0` calls have no deadline and never ask.
+* **Errors say which request.** Failures are `ApiError`s with `status`, `method`, `path`, `endpoint`
+  (`GET /api/state`), `elapsedMs` (including any suspended time; `suspendedMs` says how much) and `kind`
   (`http` / `network` / `timeout` / `parse`), and the message ends `(HTTP 409 POST /api/swap)`. Branch on
   `err.status`, never on message text. A caller's own abort stays an `AbortError`: it is not a failure.
 * **Failures are not swallowed.** A `.catch(() => {})` around a backend call becomes
@@ -95,6 +105,9 @@ that accepts the socket and stalls leaves the UI waiting in silence.
   the component's lifetime: its GETs, and any POST that only computes something (`abortOnUnmount: true`: a preview,
   an estimate), are aborted on unmount. Mutations and uploads are not: aborting a POST does not undo it, it only
   hides whether it happened. Dependency arrays that use these functions list them; the object is stable.
+* **Two lifetimes.** That is the *view* scope (the default). Requests that belong to the queue or the run
+  rather than to the tab that started them (the shared `/api/queue` poll) pass `scope: 'job'`: route changes
+  never abort them; only `abortJobRequests()` does, and only a deliberate action calls it (clearing the queue).
 
 ## Develop
 
@@ -134,7 +147,10 @@ real backend. The suite refuses to run if `dist/` is missing or older than `src/
 | `error-boundary.spec.js` | a lazy tab chunk that fails to download is contained to its panel; Retry, and coming back to the tab, recover it |
 | `api-client.spec.js` | a failed settings save is reported once with its status and path; a request is cancelled (`ERR_ABORTED`) when its tab unmounts; a hung GET is cut off at the 15 s default (fake clock) |
 | `idle-requests.spec.js` | idle Face Swap with a failing preview: <= 6 stage-frame requests in 30 s; valid preview: 0 |
-| `frame-unavailable.spec.js` | after the retries are spent the stage says "Frame unavailable - Retry", stops asking, and Retry recovers |
+| `frame-unavailable.spec.js` | a failing frame is tried 1 + 3 times at 250 / 500 / 1000 ms, then the stage says "Frame unavailable - Retry", stops asking, and Retry recovers; the same schedule for a failing playback chunk at **each** of 0.25x / 0.5x / 1x / 2x / 4x |
+| `compile-banner.spec.js` | the banner names model + precision, survives hash-route changes and clears; a request is not timed out at 15 s while compiling and gets a fresh deadline after |
+| `canvas-tools.spec.js` | on pixels: the Mask Brush lands under the pointer (sub-pixel, 100% and 2.5x, letterboxed media in `.render-check/brush-mapping-check.mjs`), Erase clears; alpha blend 25/50/75%, difference map, wipe; the 3.5x Lens |
+| `offline.spec.js` | no tab requests a foreign origin and the bundled font is the one loaded; Settings "Check compatibility" reports UNVERIFIED offline |
 | `idle-cpu.spec.js` | idle CPU with a failing preview is within 2x of the valid-frame case |
 | `tab-stops.spec.js` | Tab presses to walk the Face Swap tab (real key presses) |
 | `contrast-themes.spec.js` | **opt-in** (`test:e2e:themes`): text below AA under each of the 37 presets, as a per-theme ceiling |
@@ -350,6 +366,7 @@ Benchmark, auto-tune, TensorRT cache and hardware/telemetry.
 
 | Method | Path | Called from |
 | --- | --- | --- |
+| GET | `/api/v1/pipeline/status` | pipelineStatus (a probe when a deadline fires) |
 | GET | `/api/autotune` | AutoTunePanel |
 | POST | `/api/autotune/cancel` | AutoTunePanel |
 | POST | `/api/autotune/revert` | AutoTunePanel |
@@ -383,3 +400,4 @@ Telemetry and frame streaming.
 | WS | `/ws/enhancer/telemetry` | EnhancerSettings |
 | WS | `/ws/frames` | frameSocket |
 | WS | `/ws/telemetry` | useTelemetrySocket |
+| WS | `/ws/v1/pipeline/status` | pipelineStatus |

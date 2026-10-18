@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { timeoutFor } from '../../api';
-import { useApi } from '../../useApi';
+import { useApi, abortJobRequests } from '../../useApi';
 import { reportFailure } from '../../failureLog';
 
 // The batch queue, as owned by the backend (see app/routes_queue.py).
@@ -45,13 +45,17 @@ export default function useQueue({ notify } = {}) {
   const refresh = useCallback(async () => {
     try {
       const stamp = Date.now();
-      commit(await getJSON('/api/queue'), stamp);
+      // Job scope: the queue is shared by Face Swap, Batch Matrix and Processing, so leaving the tab
+      // that started this read must not cancel it (see useApi.js, "two lifetimes").
+      commit(await getJSON('/api/queue', { scope: 'job' }), stamp);
     } catch (err) { reportFailure('Polling the queue', err, { toast: false }); /* backend not up yet — the next poll or action will catch up */ }
   }, [commit, getJSON]);
 
   // `act` is every mutation: one request, commit its snapshot, surface failures.
   const act = useCallback(async (path, body, { quiet = false } = {}) => {
     setBusy(true);
+    // A deliberate wipe: a read that was already in flight describes the queue as it WAS.
+    if (path === '/api/queue/clear') abortJobRequests('Queue cleared');
     try {
       const snap = await postJSON(path, body || {}, { timeout: timeoutFor('POST', path) });
       commit(snap, Date.now());

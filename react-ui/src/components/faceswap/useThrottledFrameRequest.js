@@ -43,8 +43,8 @@ import { createFailureTracker, isAbort } from './retryPolicy';
 // frame on screen" stays true after a FAILURE — so with a backend answering 500
 // this hook was a request loop, one every throttle period: 196 in 30 s from an
 // idle tab (react-ui/e2e/idle-requests.spec.js). Failures are now counted per
-// URL (retryPolicy.js): each pushes the next attempt out exponentially with
-// jitter (0.5 s .. 8 s), the fifth consecutive one gives up, and the hook
+// URL (retryPolicy.js): each pushes the next attempt out exponentially
+// (250 ms, 500 ms, 1 s), the fourth consecutive one gives up, and the hook
 // returns `error` and `retry` so the stage can say so instead of silently
 // holding a frame that is not the one asked for. The count resets when the URL
 // (or `enabled`) changes and on `retry()`. An AbortError is the normal end of a

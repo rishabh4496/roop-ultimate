@@ -50,9 +50,43 @@ export function mergeSignals(a, b) {
   return ctrl.signal;
 }
 
+// TWO LIFETIMES, KEPT APART.
+//
+//   view scope  (the default)   one per mounted component; aborted when it unmounts. Hash-route
+//                               navigation (#/faceswap -> #/batch -> #/processing) unmounts the
+//                               tab, so everything the tab was merely LOOKING at stops with it.
+//   job scope   `scope: 'job'`  one for the whole page; aborted only by abortJobRequests(), which
+//                               a deliberate action calls (clearing the queue, resetting a run).
+//                               For requests that belong to the QUEUE or the RUN rather than to
+//                               the tab that happened to start them: the shared queue poll, a
+//                               job-status read. Leaving the tab must not cancel those, or the
+//                               other tab that is rendering the same job loses its refresh.
+//
+// A request in job scope ignores the unmount scope entirely; a caller's own `signal` still
+// applies to both.
+let jobCtrl = new AbortController();
+
+export const jobScope = {
+  get signal() { return jobCtrl.signal; },
+};
+
+/** Cancel every in-flight `scope: 'job'` request, then start a fresh job scope. */
+export function abortJobRequests(reason = 'Job requests cancelled') {
+  const old = jobCtrl;
+  jobCtrl = new AbortController();
+  old.abort(new DOMException(reason, 'AbortError'));
+}
+
 /** Build the bound functions over a scope (exported for tests). */
 export function bindApi(scope) {
-  const withScope = (opts, on) => (on ? { ...opts, signal: mergeSignals(opts?.signal, scope.signal) } : opts);
+  const signalFor = (opts, viewDefault) => {
+    if (opts?.scope === 'job') return mergeSignals(opts.signal, jobScope.signal);
+    return viewDefault ? mergeSignals(opts?.signal, scope.signal) : opts?.signal;
+  };
+  const withScope = (opts, viewDefault) => {
+    const signal = signalFor(opts, viewDefault);
+    return signal === opts?.signal ? opts : { ...opts, signal };
+  };
   const wanted = (opts) => !!opts?.abortOnUnmount;
   return {
     getJSON: (path, opts = {}) => client.getJSON(path, withScope(opts, true)),

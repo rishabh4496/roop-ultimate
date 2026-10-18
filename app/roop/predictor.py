@@ -549,7 +549,8 @@ def warmup_session(session, tag: str = "model",
         # TensorRT builds (or loads) its engine inside this first call; there is no frame
         # counter yet, so say so on the status channel instead of looking hung.
         from roop import pipeline_status
-        with pipeline_status.stage(pipeline_status.STAGE_COMPILING_TRT, model=tag):
+        with pipeline_status.stage(pipeline_status.STAGE_COMPILING_TRT, model=tag,
+                                   precision=pipeline_status.session_precision(session)):
             session.run(None, feed)
         elapsed = time.time() - started
     except Exception as exc:

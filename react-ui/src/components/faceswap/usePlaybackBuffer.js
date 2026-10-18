@@ -224,7 +224,7 @@ export default function usePlaybackBuffer({ frame, setFrame, selTarget, maxFrame
     // The same rule for the HTTP chunk path. A failed chunk used to be re-asked
     // on the very next animation frame -- up to 60 requests a second against a
     // backend that was answering 500. Now each consecutive failure pushes the
-    // next attempt out (0.5 s, 1 s, 2 s, 4 s) and the fifth stops playback with
+    // next attempt out (250 ms, 500 ms, 1 s) and the fourth stops playback with
     // an error; any chunk that lands clears the streak.
     const chunkFailures = createFailureTracker();
     let chunkNotBefore = 0;
@@ -285,7 +285,7 @@ export default function usePlaybackBuffer({ frame, setFrame, selTarget, maxFrame
         })
         .catch((err) => {
           // Aborted (seek, stop, teardown) is not a failure. A real one is
-          // re-requested by pump() -- but only after the backoff, and only five
+          // re-requested by pump() -- but only after the backoff, and only three
           // times.
           if (cancelled || ctrl.signal.aborted || isAbort(err)) return;
           const f = chunkFailures.fail('chunk');

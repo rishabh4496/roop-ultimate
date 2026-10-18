@@ -186,15 +186,18 @@ const PreviewCanvas = forwardRef(function PreviewCanvas({
       return fitBox(cw, ch, tw, th);
     };
 
-    const drawTop = () => {
+    // `gain` is the layer's overall opacity (the alpha-blend percentage); the cross-fade's own
+    // ramp multiplies it. Setting `ctx.globalAlpha` from the fade alone, as this did, silently
+    // overwrote the blend's value, so Blend at 25% showed the swap at 100%.
+    const drawTop = (gain = 1) => {
       if (top.prev && alpha < 1) {
         const pbox = getTopBox(top.prev);
-        ctx.globalAlpha = 1;
+        ctx.globalAlpha = gain;
         ctx.drawImage(top.prev, pbox.x, pbox.y, pbox.w, pbox.h);
       }
       if (top.img) {
         const tbox = getTopBox(top.img);
-        ctx.globalAlpha = top.prev ? alpha : 1;
+        ctx.globalAlpha = (top.prev ? alpha : 1) * gain;
         ctx.drawImage(top.img, tbox.x, tbox.y, tbox.w, tbox.h);
         ctx.globalAlpha = 1;
       }
@@ -207,8 +210,7 @@ const PreviewCanvas = forwardRef(function PreviewCanvas({
       drawTop();
       ctx.globalCompositeOperation = 'source-over';
     } else if (m === 'blend') {
-      ctx.globalAlpha = pct;
-      drawTop();
+      drawTop(pct);
       ctx.globalAlpha = 1;
     } else if (pct >= 0.999) {
       drawTop();

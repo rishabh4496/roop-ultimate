@@ -35,8 +35,21 @@ const json = (status, body, headers = { 'content-type': 'application/json' }) =>
   json: async () => { if (typeof body === 'string') throw new SyntaxError('Unexpected token'); return body; },
   text: async () => (typeof body === 'string' ? body : JSON.stringify(body)),
 });
-let lastInit = null;
-const stubFetch = (impl) => { globalThis.fetch = (url, init) => { lastInit = init; return impl(url, init); }; };
+let _lastInit = null;
+// The pipeline status probe (`/api/v1/pipeline/status`) is answered here, not by `impl`: a test that
+// hangs every request must not also hang the probe api.js makes when a deadline fires. Default: idle.
+let statusReply = () => ({ seq: 0, active: [] });
+let statusCalls = 0;
+const stubFetch = (impl) => {
+  globalThis.fetch = (url, init) => {
+    if (String(url).includes('/api/v1/pipeline/status')) {
+      statusCalls += 1;
+      return Promise.resolve(json(200, statusReply()));
+    }
+    _lastInit = init;
+    return impl(url, init);
+  };
+};
 // A fetch that never answers, but honours its abort signal like the real one: it rejects
 // when the signal aborts, and at once if the signal is ALREADY aborted.
 const hang = (url, init) => new Promise((_res, rej) => {
@@ -247,6 +260,145 @@ console.log('── useApi: unmount aborts reads, not mutations ─────�
   ok('a POST with abortOnUnmount is aborted too', rp?.name === 'AbortError', `${rp}`);
   ok('a plain POST (a mutation) is NOT aborted', w === 'still in flight', `${w?.name || w}`);
   ok('unmount never turns into a reported failure', failureLog.reportFailure('x', r) === false);
+}
+
+console.log('── errors say how long the request lived ───────────────────');
+{
+  stubFetch(hang);
+  const e = await rejects(getJSON('/api/state', { timeout: 40 }));
+  ok('a timeout carries elapsedMs >= its deadline', e instanceof ApiError && e.elapsedMs >= 35, `${e?.elapsedMs}`);
+  ok('...and its endpoint as METHOD /path', e?.endpoint === 'GET /api/state', e?.endpoint);
+  ok('...and no suspension, as nothing was compiling', e?.suspendedMs === 0 && e?.status === 0);
+  stubFetch(async () => json(404, { message: 'nope' }));
+  const h = await rejects(getJSON('/api/missing'));
+  ok('an HTTP error carries status, endpoint and elapsedMs', h?.status === 404 && h?.endpoint === 'GET /api/missing' && typeof h?.elapsedMs === 'number');
+  stubFetch(async () => { throw new TypeError('Failed to fetch'); });
+  const n = await rejects(getJSON('/api/state'));
+  ok('a network error carries elapsedMs', n?.kind === 'network' && typeof n?.elapsedMs === 'number');
+}
+
+console.log('── the deadline is suspended while the backend compiles ───');
+{
+  const ps = await import('../src/pipelineStatus.js');
+  const compiling = (extra = {}) => ({ seq: 1, active: [{ kind: 'STAGE_COMPILING_TRT', model: 'gpen_2048', precision: 'FP16', since: Date.now() / 1000, elapsed_s: 1, ...extra }] });
+  ps.resetPipelineStatus();
+
+  // activeStages(): only the two suspending kinds count, precision is normalised.
+  const rows = ps.activeStages({ active: [
+    { kind: 'STAGE_COMPILING_TRT', model: 'gpen', precision: 'fp32', since: 10, elapsed_s: 3 },
+    { kind: 'STAGE_RUNNING_CANARY', model: 'xseg', precision: 'n/a' },
+    { kind: 'VRAM_GOVERNOR_THROTTLE' }, { kind: 'SEGMENT_PROGRESS' },
+  ] });
+  ok('activeStages keeps only COMPILING_TRT and RUNNING_CANARY', rows.length === 2 && rows[0].model === 'gpen' && rows[1].model === 'xseg');
+  ok('...precision is upper-cased; "n/a" is dropped', rows[0].precision === 'FP32' && rows[1].precision === null);
+
+  // 1. Busy at the deadline: the request is NOT cut off, and finishes when the stage ends.
+  statusReply = () => compiling();
+  let release;
+  stubFetch((u, init) => new Promise((res, rej) => {
+    release = () => res(json(200, { done: true }));
+    init.signal?.addEventListener('abort', () => rej(init.signal.reason), { once: true });
+  }));
+  statusCalls = 0;
+  const waiting = getJSON('/api/state', { timeout: 40 });
+  let settled = false;
+  waiting.then(() => { settled = true; }, () => { settled = true; });
+  await new Promise((r) => realSetTimeout(r, 200));
+  ok('a request past its 40 ms deadline is still alive while STAGE_COMPILING_TRT is active', settled === false && ps.isBusy() === true);
+  ok('...having asked the status channel exactly when the deadline fired', statusCalls >= 1);
+  statusReply = () => ({ seq: 2, active: [] });
+  await ps.probe();                         // the confirm poll would do this; do it now rather than wait 2 s
+  ok('the stage ending releases the wait', ps.isBusy() === false);
+  await new Promise((r) => realSetTimeout(r, 10));
+  release();
+  ok('...and the request then completes with its answer', (await waiting)?.done === true);
+
+  // 2. After the stage ends the request gets a FRESH deadline, and still times out if nothing answers.
+  ps.resetPipelineStatus();
+  statusReply = () => compiling();
+  stubFetch(hang);
+  const t0 = Date.now();
+  const doomed = rejects(getJSON('/api/state', { timeout: 60 }));
+  await new Promise((r) => realSetTimeout(r, 150));              // suspended by now
+  statusReply = () => ({ seq: 3, active: [] });
+  await ps.probe();
+  const err = await doomed;
+  ok('after a suspension the request gets a fresh full deadline, then times out as usual', err?.kind === 'timeout' && Date.now() - t0 >= 150 + 55, `${err?.kind} after ${Date.now() - t0} ms`);
+  ok('...ApiError reports elapsedMs INCLUDING the suspended time, and how much of it that was', err?.elapsedMs >= 200 && err?.suspendedMs >= 80, `elapsed ${err?.elapsedMs} suspended ${err?.suspendedMs}`);
+
+  // 3. A status endpoint that stops answering must not hold a request forever.
+  ps.resetPipelineStatus();
+  statusReply = () => compiling();
+  stubFetch(hang);
+  const stuck = rejects(getJSON('/api/state', { timeout: 30 }));
+  await new Promise((r) => realSetTimeout(r, 120));
+  ok('(precondition) suspended', ps.isBusy() === true);
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (url, init) => (String(url).includes('/api/v1/pipeline/status') ? Promise.reject(new TypeError('Failed to fetch')) : realFetch(url, init));
+  await ps.probe();
+  const dead = await stuck;
+  ok('when the status probe fails the claim is dropped and the request times out', dead?.kind === 'timeout', `${dead}`);
+
+  // 4. Not busy at the deadline -> the plain old timeout, immediately.
+  ps.resetPipelineStatus();
+  statusReply = () => ({ seq: 0, active: [] });
+  stubFetch(hang);
+  const plain = await rejects(getJSON('/api/state', { timeout: 30 }));
+  ok('with nothing compiling a hung request times out at its deadline as before', plain?.kind === 'timeout' && plain.suspendedMs === 0 && /timed out after 0\.03 s/.test(plain.message), plain?.message);
+
+  // 5. A caller abort ends a suspended wait with the AbortError, not a timeout.
+  ps.resetPipelineStatus();
+  statusReply = () => compiling();
+  stubFetch(hang);
+  const ac = new AbortController();
+  const aborted = rejects(getJSON('/api/state', { timeout: 30, signal: ac.signal }));
+  await new Promise((r) => realSetTimeout(r, 120));
+  ac.abort();
+  const ae = await aborted;
+  ok('aborting a suspended request rejects with AbortError', ae?.name === 'AbortError' && !(ae instanceof ApiError), `${ae}`);
+
+  // 6. timeout:0 never asks (it has no deadline to suspend).
+  ps.resetPipelineStatus();
+  statusReply = () => compiling();
+  stubFetch(async () => json(200, { ok: 1 }));
+  statusCalls = 0;
+  await getJSON('/api/x', { timeout: 0 });
+  ok('`timeout: 0` makes no status request at all', statusCalls === 0);
+
+  // 7. Staleness: a busy claim nobody re-confirmed is not believed.
+  ps.resetPipelineStatus();
+  ps.applySnapshot(compiling());
+  ok('a fresh busy claim is believed', ps.isBusy() === true);
+  const realNow = Date.now;
+  Date.now = () => realNow() + ps.STALE_MS + 1;
+  const believed = ps.isBusy();
+  Date.now = realNow;
+  ok('...and expires after STALE_MS without confirmation', believed === false);
+  ps.resetPipelineStatus();
+}
+
+console.log('── useApi: view scope vs job scope ─────────────────────────');
+{
+  const { abortJobRequests } = await import('../src/useApi.js');
+  stubFetch(hang);
+  const s = createUnmountScope();
+  const api = bindApi(s);
+  const viewRead = rejects(api.getJSON('/api/state', { timeout: 0 }));
+  const jobRead = Promise.race([rejects(api.getJSON('/api/queue', { timeout: 0, scope: 'job' })), new Promise((res) => realSetTimeout(() => res('alive'), 100))]);
+  s.unmount();                                                          // the tab goes away (hash-route change)
+  const v = await viewRead;
+  ok('view scope: the tab\'s own read is aborted on unmount', v?.name === 'AbortError', `${v}`);
+  ok('job scope: a queue read SURVIVES the tab unmounting', (await jobRead) === 'alive');
+
+  const s2 = createUnmountScope();
+  const api2 = bindApi(s2);
+  const pending = rejects(api2.getJSON('/api/queue', { timeout: 0, scope: 'job' }));
+  s2.unmount();
+  abortJobRequests('Queue cleared');
+  const j = await pending;
+  ok('abortJobRequests() cancels in-flight job reads, with an AbortError', j?.name === 'AbortError' && /Queue cleared/.test(j.message || ''), `${j}`);
+  stubFetch(async () => json(200, { ok: 1 }));
+  ok('...and job scope works again afterwards (fresh controller)', (await bindApi(createUnmountScope()).getJSON('/api/queue', { scope: 'job' }))?.ok === 1);
 }
 
 globalThis.setTimeout = realSetTimeout;

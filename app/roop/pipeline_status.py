@@ -89,6 +89,28 @@ def stage(kind: str, **detail: Any) -> Iterator[None]:
         end(token, ok=ok)
 
 
+def session_precision(session: Any) -> str:
+    """'FP16' | 'BF16' | 'FP32' for a TensorRT session, 'n/a' when it is not on TensorRT (or cannot say).
+
+    Read from the provider options the session was BUILT with (`trt_fp16_enable` / `trt_bf16_enable`),
+    not from the global setting: xseg / 2d106det / 1k3d68 / RF++ are FP32 under an FP16 global, and the
+    React banner names the precision of the engine that is actually compiling. "Mixed" is FP16 with
+    FP32 islands, so it reads FP16 here.
+    """
+    try:
+        options = (session.get_provider_options() or {}).get("TensorrtExecutionProvider")
+    except Exception as exc:
+        from roop.degrade import swallowed
+        swallowed("roop/pipeline_status.py:session_precision", exc, "precision shown as n/a")
+        return "n/a"
+    if options is None:                 # absent = not a TensorRT session; {} = TensorRT at its defaults (FP32)
+        return "n/a"
+    on = lambda key: str(options.get(key, "")).strip().lower() in ("1", "true")
+    if on("trt_bf16_enable"):
+        return "BF16"
+    return "FP16" if on("trt_fp16_enable") else "FP32"
+
+
 def governor_throttle(**detail: Any) -> None:
     """The VRAM governor reduced work (called by `UnifiedRuntimeScheduler`)."""
     with _lock:
