@@ -25,6 +25,11 @@ import importlib.abc
 import os
 import sys
 
+# albumentations phones home at import and prints "A new version is available" on stderr.
+# The launchers already opt out (start_react.js, portable/bootstrap.py); a bare `pytest`
+# did not, so every run made a network call and a CI log carried a warning nobody can act on.
+os.environ.setdefault("NO_ALBUMENTATIONS_UPDATE", "1")
+
 import pytest
 
 HEAVY_PACKAGES = frozenset({

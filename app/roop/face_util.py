@@ -794,18 +794,67 @@ def _roi_window(frame, bbox, pad_ratio=1.0, min_crop=160):
     return frame[cy1:cy2, cx1:cx2], cx1, cy1
 
 
-def get_all_faces_in_roi(frame, bbox, pad_ratio=1.0, min_crop=160, rescue=True):
+def _roi_faces_derotated(crop, rotation_action):
+    """Faces in `crop` found with the crop first turned upright, in CROP coordinates.
+
+    `rotation_action` is the quarter turn a tracker saw this face needing last
+    time (`orientation.action_for_roll`). The detector then looks at an upright
+    face, and the aux models (recognition, 106/68 landmarks) run on it upright
+    too, which is why a rotated-pass embedding is better than the upright-pass
+    one for the same head.
+
+    A result is kept only if its own roll maps to the SAME quarter turn. A wrong
+    hint (the head came upright between frames) makes the detector look at a
+    sideways face, where it can return a confident face that is not there; its
+    roll will not agree with the hint, so it is dropped and the caller falls
+    back to the plain ROI detect, i.e. exactly the old behaviour.
+    """
+    turns = {"rotate_clockwise": ("clockwise", rotate_clockwise),
+             "rotate_anticlockwise": ("anticlockwise", rotate_anticlockwise),
+             "rotate_180": ("180", rotate_image_180)}
+    turn = turns.get(rotation_action)
+    if turn is None:
+        return []
+    ch, cw = crop.shape[:2]
+    try:
+        faces = get_all_faces(turn[1](crop), rescue=False) or []
+    except Exception as _degrade_error:
+        _swallowed("roop/face_util.py:roi_derotated", _degrade_error, "fell back to the upright ROI")
+        return []
+    if not faces:
+        return []
+    from roop import orientation
+    kept = []
+    for face in faces:
+        _unrotate_face_coords(face, cw, ch, turn[0])
+        roll = orientation.roll_from_face(face)
+        if roll is not None and orientation.action_for_roll(roll) == rotation_action:
+            kept.append(face)
+    return kept
+
+
+def get_all_faces_in_roi(frame, bbox, pad_ratio=1.0, min_crop=160, rescue=True,
+                         rotation_action=None):
     """Detect faces within a padded crop around `bbox` (a tracked face's
     previous/predicted location) instead of the full frame. The detector's
     input canvas size is unchanged, so a small tracked face fills far more of
     it — improving recall on rotated/angled faces at no extra compute versus
     a full-frame detect. Returns faces in full-frame coordinates, or an empty
     list if none were found in the crop (caller decides whether to fall back
-    to a full-frame detect on a miss)."""
+    to a full-frame detect on a miss).
+
+    `rotation_action` (a track's last quarter turn) is tried FIRST; if it yields
+    nothing that agrees with it, the plain upright path below runs unchanged."""
     win = _roi_window(frame, bbox, pad_ratio, min_crop)
     if win is None:
         return []
     crop, cx1, cy1 = win
+    if rotation_action is not None:
+        hinted = _roi_faces_derotated(crop, rotation_action)
+        if hinted:
+            for face in hinted:
+                _offset_face_coords(face, cx1, cy1)
+            return hinted
     faces = (get_all_faces(crop) if rescue else get_all_faces(crop, rescue=False)) or []
     for face in faces:
         _offset_face_coords(face, cx1, cy1)

@@ -398,7 +398,8 @@ class TrackingMixin:
                   f'backs off to every {rescue_backoff.every} frames. '
                   f'ROOP_SMALL_CARD_PREPASS=full restores the exhaustive scan.')
 
-        def _run_detect(fr, crop_bbox, expected_count=None, rescue_ok=True):
+        def _run_detect(fr, crop_bbox, expected_count=None, rescue_ok=True,
+                        rotation_action=None):
             def _cache_identity_embeddings(faces):
                 # Target-assignment identity uses one metric for the whole run.
                 # Temporal association below intentionally remains the existing
@@ -413,8 +414,11 @@ class TrackingMixin:
             # this frame rejected, not a leftover from the previous one.
             audit_detect_frame_begin()
             if crop_bbox is not None:
-                faces = (get_all_faces_in_roi(fr, crop_bbox, rescue=False)
-                         if small_card_scan else get_all_faces_in_roi(fr, crop_bbox))
+                # Only a track last seen rolled carries a hint; for everyone else the
+                # call is exactly what it always was.
+                _hint = {'rotation_action': rotation_action} if rotation_action else {}
+                faces = (get_all_faces_in_roi(fr, crop_bbox, rescue=False, **_hint)
+                         if small_card_scan else get_all_faces_in_roi(fr, crop_bbox, **_hint))
                 if faces:
                     return _DetectionResult(_cache_identity_embeddings(faces), mode='roi')
             _stamp = None
@@ -459,7 +463,7 @@ class TrackingMixin:
                 rescue_backoff.record(f_idx, st[0], st[1])
 
         def _detect_one(fr, crop_bbox=None, expected_count=None, skip_detection=False,
-                        rescue_ok=True):
+                        rescue_ok=True, rotation_action=None):
             # Runs inside a pool worker, one at a time per worker (ThreadPoolExecutor
             # caps concurrency at pool_workers == the analyser pool size), so this is
             # real GPU/model time, not queue-wait — lease_face_analyser() should never
@@ -477,7 +481,8 @@ class TrackingMixin:
                     return _DetectionResult([], mode='coast')
                 with _prof('track_detect'), _gpu_guard(pooled=True):
                     with _prof('detection'):
-                        return _run_detect(fr, crop_bbox, expected_count, rescue_ok)
+                        return _run_detect(fr, crop_bbox, expected_count, rescue_ok,
+                                           rotation_action)
 
         def _consume(f_idx, faces):
             nonlocal active, retired, next_id, reid_refused, contam_seen, contam_reid
@@ -1034,7 +1039,8 @@ class TrackingMixin:
                     _rok = (rescue_backoff.allow(idx, cut=(idx in shot_boundaries))
                             if rescue_backoff is not None else True)
                     in_flight.append((idx, det_executor.submit(
-                        _detect_one, frame, crop_bbox, expected_count, skip_detection, _rok)))
+                        _detect_one, frame, crop_bbox, expected_count, skip_detection, _rok,
+                        getattr(detect_plan, 'rotation_action', None))))
                     max_in_flight = pool_workers + 2
                     if len(in_flight) >= max_in_flight:
                         done_idx, done_fut = in_flight.popleft()
@@ -1066,7 +1072,8 @@ class TrackingMixin:
                                     if rescue_backoff is not None else True)
                             with _prof('track_detect'), _gpu_guard(pooled=analysis_pooled(), owner='analysis'):
                                 with _prof('detection'):
-                                    faces = _run_detect(frame, crop_bbox, expected_count, _rok)
+                                    faces = _run_detect(frame, crop_bbox, expected_count, _rok,
+                                                        getattr(detect_plan, 'rotation_action', None))
                         with _prof('track_consume'):
                             _consume(idx, faces)
                         _note_rescue(idx, faces)

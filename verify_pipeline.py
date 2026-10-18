@@ -13,6 +13,9 @@ import sys
 import tempfile
 import subprocess
 
+# albumentations phones home at import and warns on stderr; the launchers opt out already.
+os.environ.setdefault("NO_ALBUMENTATIONS_UPDATE", "1")
+
 # Ensure app is on import path
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 APP_DIR = os.path.join(ROOT_DIR, "app")

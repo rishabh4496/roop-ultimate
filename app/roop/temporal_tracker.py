@@ -119,14 +119,34 @@ def _cosine_distance(a, b):
     return float(1.0 - np.dot(a, b) / den)
 
 
+#: A track that was last seen rolled past 45 degrees has its ROI turned upright
+#: BEFORE the detector looks at it (see `DetectionPlan.rotation_action`). On the
+#: shipped path an upright detector is shown the sideways crop first, and when it
+#: "succeeds badly" -- a confident upright face that is not the one there -- the
+#: rotated rescue never runs. Measured 2026-10-19 on 228 real faces rolled
+#: +90 / -90 / 180: ROI recall 70+69+67 -> 75+75+74 with the roll known.
+#: ROOP_ROI_DEROTATE=0 restores the upright-first ROI for an A/B.
+ROI_DEROTATE = os.environ.get("ROOP_ROI_DEROTATE", "1") != "0"
+
+
 @dataclass
 class DetectionPlan:
-    """The next safe detector operation."""
+    """The next safe detector operation.
+
+    `rotation_action` is the quarter turn (`orientation.action_for_roll`) that
+    stands the tracked face(s) of an ROI plan up, or None. Set only when EVERY
+    live track agrees on one. A track that never rolls past ~45 degrees never
+    has it, so a plan for such footage is exactly what it was (replayed on four
+    real clips: Love, Weeds, Monica Bellucci get no hint at all; b1 has a head that
+    really is rolled for its first ~40 frames, is hinted there, and recalls the
+    same 438/440 with or without).
+    """
 
     mode: str
     roi: object = None
     reason: str = ""
     track_ids: tuple = ()
+    rotation_action: object = None
 
 
 @dataclass
@@ -149,6 +169,8 @@ class TemporalTrack:
     hits: int = 1
     status: str = "uncertain"
     current_mask: object = None
+    roll: object = None
+    roll_action: object = None
 
     def snapshot(self):
         """Return a detached, JSON/debug-friendly state snapshot."""
@@ -386,9 +408,11 @@ class TemporalFaceTracker:
             if roi[3] - roi[1] < self.min_roi:
                 extra = (self.min_roi - (roi[3] - roi[1])) * 0.5
                 roi[1], roi[3] = max(0.0, roi[1] - extra), min(float(h), roi[3] + extra)
+            actions = {t.roll_action for t in live}
+            turn = actions.pop() if (ROI_DEROTATE and len(actions) == 1) else None
             plan = DetectionPlan("roi", tuple(float(v) for v in roi),
                                  reason="uncertain_roi" if uncertain else "stable_roi",
-                                 track_ids=tuple(ids))
+                                 track_ids=tuple(ids), rotation_action=turn)
             self._last_requested_frame = frame_index
         self._last_plan = plan
         return plan
@@ -502,6 +526,7 @@ class TemporalFaceTracker:
             predicted_bbox=box.copy(),
             current_mask=_mask(det),
         )
+        self._note_roll(track, det)
         self._next_id += 1
         self.tracks.append(track)
         self.stats["new_tracks"] += 1
@@ -509,7 +534,23 @@ class TemporalFaceTracker:
                             "frame_index": int(frame_index)})
         return track
 
+    @staticmethod
+    def _note_roll(track, det):
+        """Remember this observation's in-plane roll and the quarter turn that
+        stands it up (with the hysteresis band, so a head hovering at 45 or 135
+        degrees does not flip the plan every frame)."""
+        try:
+            from roop import orientation
+            roll = orientation.roll_from_face(det)
+            if roll is None:
+                return
+            track.roll = float(roll)
+            track.roll_action = orientation.action_for_roll(roll, track.roll_action)
+        except Exception as _degrade_error:
+            _swallowed("roop/temporal_tracker.py:note_roll", _degrade_error, "roll hint unchanged")
+
     def _update_matched(self, track, det, frame_index):
+        self._note_roll(track, det)
         raw_box = _bbox(det)
         old_box = track.bbox.copy()
         old_frame = track.last_frame_index
