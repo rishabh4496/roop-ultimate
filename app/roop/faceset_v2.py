@@ -215,13 +215,11 @@ def _pose(face, landmarks_2d):
         except Exception as _degrade_error:
             _swallowed("roop/faceset_v2.py:212", _degrade_error, "fallback continued")
             pass
-    value = _array(_get(face, "pose"))
-    if value is not None and value.size >= 3:
-        # InsightFace exposes pose as pitch, yaw, roll; normalize to this
-        # module's public yaw, pitch, roll convention.
-        return (float(value.reshape(-1)[1]), float(value.reshape(-1)[0]),
-                float(value.reshape(-1)[2]))
-    return None
+    # InsightFace exposes pose as pitch, yaw, roll; normalize to this
+    # module's public yaw, pitch, roll convention.
+    from roop.head_pose import INSIGHTFACE_ORDER, normalize_pose_tuple
+    hp = normalize_pose_tuple(_get(face, "pose"), INSIGHTFACE_ORDER)
+    return tuple(hp) if hp is not None else None
 
 
 def _pose_bin(pose):

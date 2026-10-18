@@ -233,6 +233,62 @@ class FaceSet:
             pass
         return self.face_poses
 
+    def canonical_poses(self):
+        """Per-face ``(yaw, pitch)`` in `solve_pose_5pt`'s convention (frontal = 0).
+
+        `face_poses` cannot be used to ask "which face is frontal": on a V1 set it
+        holds `ensure_face_poses`' EPnP angles, where a frontal head reads yaw
+        ~ +-170 and pitch ~ -50 (measured on 5 banks in roop-keep; riya kansal:
+        frontal 175.6, profile 99.8), so min(yaw^2 + pitch^2) picks the PROFILE.
+        A V2 set's `face_poses` come from its metadata and are already canonical.
+        V1 faces are solved from their own keypoints, the way a target is.
+
+        Entries are None for a face with no usable keypoints. Falls back to
+        `face_poses` only when NO face has keypoints (hand-built sets).
+        """
+        if self.format_version >= 2 and self.faceset_metadata and self.face_poses:
+            return list(self.face_poses)
+        cached = getattr(self, '_canonical_poses', None)
+        if cached is not None and len(cached) == len(self.faces):
+            return list(cached)
+        from roop.head_pose import head_pose_from_kps
+        poses = []
+        for face in self.faces:
+            pose = None
+            try:
+                kps = getattr(face, 'kps', None)
+                if kps is None and hasattr(face, 'get'):
+                    kps = face.get('kps')
+                hp = head_pose_from_kps(kps)
+                if hp is not None:
+                    pose = (hp.yaw, hp.pitch)
+            except Exception as _degrade_error:
+                _swallowed("roop/FaceSet.py:canonical_poses", _degrade_error, "fallback continued")
+            poses.append(pose)
+        if not any(p is not None for p in poses):
+            return list(self.face_poses) if self.face_poses else None
+        self._canonical_poses = poses
+        return list(poses)
+
+    @staticmethod
+    def _nearest_pose_index(poses, pose, previous_index, n_faces):
+        """Index of the pose nearest `pose`, with the 15-degree switching margin
+        (225 deg^2) that keeps a hovering target from chattering between two
+        references. None when no stored pose is usable."""
+        yaw, pitch = float(pose[0]), float(pose[1])
+        valid = [(i, (yaw - float(y or 0.0)) ** 2 + (pitch - float(p or 0.0)) ** 2)
+                 for i, (y, p) in enumerate(poses) if y is not None]
+        if not valid:
+            return None
+        best_i, best_cost = min(valid, key=lambda item: item[1])
+        if previous_index is not None and 0 <= int(previous_index) < n_faces:
+            prev_i = int(previous_index)
+            prev_match = next((cost for (i, cost) in valid if i == prev_i), None)
+            if prev_match is not None:
+                # Switch only if candidate is substantially better (margin ~15° -> 225 deg^2)
+                return best_i if best_cost < prev_match - 225.0 else prev_i
+        return best_i
+
     def canonical_face_index(self):
         """Return the index of the most frontal face in the faceset.
 
@@ -240,13 +296,40 @@ class FaceSet:
         """
         if not self.faces:
             return 0
+        if self.format_version < 2 and self.embeddings_backup is not None:
+            # `AverageEmbeddings` ran (source_gallery does it for every multi-face
+            # V1 archive): faces[0] now carries the MEAN identity vector and the
+            # other faces their own. Face 0 is the one built to be the swap source
+            # whatever angle its photograph is. The old EPnP ranking landed on it
+            # for 22 of 36 banks in roop-keep and on a single profile photo's own
+            # embedding for the other 14, i.e. by numerical accident.
+            return 0
         self.ensure_face_poses()
-        if self.face_poses:
+        poses = self.canonical_poses()
+        if poses:
             valid = [(i, float(y or 0.0) ** 2 + float(p or 0.0) ** 2)
-                     for i, (y, p) in enumerate(self.face_poses) if y is not None]
+                     for i, (y, p) in enumerate(poses) if y is not None]
             if valid:
                 return min(valid, key=lambda item: item[1])[0]
         return 0
+
+    def select_reference_index_canonical(self, pose, previous_index=None):
+        """`select_reference_index` for a target pose in `solve_pose_5pt`'s convention.
+
+        `select_reference_index` compares against `face_poses`, which on a V1 set
+        are EPnP angles, so it is only valid with a target measured by the same
+        EPnP fit (ProcessMgr's swap-time lookup does exactly that). The tracking
+        pre-pass has the canonical target pose (`PoseEstimate`) and must use this.
+        """
+        if self.format_version >= 2 and self.faceset_metadata:
+            return self.select_reference_index(pose=pose, previous_index=previous_index)
+        self.ensure_face_poses()
+        poses = self.canonical_poses()
+        if pose is not None and poses:
+            index = self._nearest_pose_index(poses, pose, previous_index, len(self.faces))
+            if index is not None:
+                return index
+        return self.canonical_face_index()
 
     def select_reference_index(self, pose=None, appearance=None, embedding=None, previous_index=None):
         """Fast V2 lookup with legacy pose-bank fallback and hysteresis."""
@@ -255,20 +338,9 @@ class FaceSet:
                                            appearance=appearance, embedding=embedding)
             return max(0, min(int(index), max(0, len(self.faces) - 1)))
         if pose is not None and self.face_poses:
-            yaw, pitch = float(pose[0]), float(pose[1])
-            valid = [(i, (yaw - float(y or 0.0)) ** 2 + (pitch - float(p or 0.0)) ** 2)
-                     for i, (y, p) in enumerate(self.face_poses) if y is not None]
-            if valid:
-                best_i, best_cost = min(valid, key=lambda item: item[1])
-                if previous_index is not None and 0 <= int(previous_index) < len(self.faces):
-                    prev_i = int(previous_index)
-                    prev_match = next((cost for (i, cost) in valid if i == prev_i), None)
-                    if prev_match is not None:
-                        # Switch only if candidate is substantially better (margin ~15° -> 225 deg^2)
-                        if best_cost < prev_match - 225.0:
-                            return best_i
-                        return prev_i
-                return best_i
+            index = self._nearest_pose_index(self.face_poses, pose, previous_index, len(self.faces))
+            if index is not None:
+                return index
         return self.canonical_face_index()
 
     def select_pose_aware_reference(self, target_pose, appearance=None,

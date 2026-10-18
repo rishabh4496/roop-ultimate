@@ -2787,6 +2787,7 @@ class TrackingMixin:
             v1_source_hold_count = 0
             if pose_annotation_enabled:
                 from roop.pose_source_selector import annotate_face_pose
+                from roop.head_pose import normalize_pose_tuple
 
             for i, f in merged.items():
                 temporal_state = None
@@ -2910,10 +2911,18 @@ class TrackingMixin:
                         elif candidate_multi_fs is not None:
                             target_p = (temporal_state.pose if temporal_state is not None
                                         and temporal_state.pose is not None else pose)
-                            t_yaw = getattr(target_p, 'yaw', 0.0) if target_p else 0.0
-                            t_pitch = getattr(target_p, 'pitch', 0.0) if target_p else 0.0
-                            proposed_index = candidate_multi_fs.select_reference_index(
-                                pose=(t_yaw, t_pitch),
+                            # `temporal_state.pose` is a DICT (TemporalIdentity.update_pose);
+                            # `pose` is a PoseEstimate. getattr(dict, 'yaw', 0.0) was 0.0
+                            # for every frame, so with temporal identity on the bank was
+                            # always asked for a frontal face. The adapter reads both.
+                            hp = normalize_pose_tuple(target_p)
+                            t_yaw = hp.yaw if hp is not None else 0.0
+                            t_pitch = hp.pitch if hp is not None else 0.0
+                            # Canonical, not `select_reference_index`: that compares against
+                            # the V1 bank's EPnP angles (frontal ~ +-170), this target is
+                            # solve_pose_5pt's (frontal 0) -- it picked the profile photo.
+                            proposed_index = candidate_multi_fs.select_reference_index_canonical(
+                                (t_yaw, t_pitch),
                                 previous_index=previous_source_index
                             )
                             if previous_source_index is None:

@@ -201,10 +201,10 @@ def estimate_target_pose(face, frame_shape=None):
     kps, bbox, lm = _kps(face), _bbox(face), _lm68(face)
     pose = _pose_from_kps(kps)
     if pose is None:
-        value = _array(_get(face, "pose"))
-        if value is not None and value.size >= 3:
-            value = value.reshape(-1)
-            pose = (float(value[1]), float(value[0]), float(value[2]))
+        from roop.head_pose import INSIGHTFACE_ORDER, normalize_pose_tuple
+        hp = normalize_pose_tuple(_get(face, "pose"), INSIGHTFACE_ORDER)
+        if hp is not None:
+            pose = tuple(hp)
     available = pose is not None
     yaw, pitch, roll = pose if pose is not None else (0.0, 0.0, 0.0)
     resolved_roll = _finite(_get(face, "roll_deg"), None)
