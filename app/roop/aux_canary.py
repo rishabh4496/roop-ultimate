@@ -86,10 +86,13 @@ class Spec:
 
 #: Floors calibrated 2026-10-10 on 500 real faces plus a wrong-face control: docs/perf/aux_canary_calibration.md.
 SPECS: Dict[str, Spec] = {
-    "xseg": Spec("mask", (("soft_mean_abs", 0.08), ("iou", 0.60))),
+    # 'cosine' on every spec is the cosine similarity of the flattened raw output against the FP32 reference (Stage 2, 2026-10-18).
+    # xseg / 2d106det / 1k3d68 run FP32 (PRECISION_OVERRIDES), where a healthy engine scores >= 0.9999, so 0.998 is a tripwire for a
+    # mixed/FP16 engine that has slipped back in (xseg mixed has IoU min 0.81); it sits beside the calibrated IoU / pixel floors.
+    "xseg": Spec("mask", (("soft_mean_abs", 0.08), ("iou", 0.60), ("cosine", 0.998))),
     "w600k_r50": Spec("embedding", (("cosine", 0.99),)),
-    "2d106det": Spec("landmarks", (("mean_px", 1.5), ("max_px", 5.0)), points=106, dim=2),
-    "1k3d68": Spec("landmarks", (("mean_px", 4.0), ("max_px", 12.0)), points=68, dim=3),
+    "2d106det": Spec("landmarks", (("mean_px", 1.5), ("max_px", 5.0), ("cosine", 0.998)), points=106, dim=2),
+    "1k3d68": Spec("landmarks", (("mean_px", 4.0), ("max_px", 12.0), ("cosine", 0.998)), points=68, dim=3),
     # A face restorer (single NCHW image in, image out, both in [-1, 1]): SSIM of the output against a one-off FP32 reference
     # (swap_canary.py's metric; its swapper floor is 0.98 with good >= 0.9958 and corrupt <= 0.8653). Here the floor is 0.96:
     # noisier inputs amplify FP16 noise (good engine 0.9863 at noise 0.15, 0.994 at 0.08), and the failures to catch sit far lower.
@@ -100,7 +103,10 @@ SPECS: Dict[str, Spec] = {
     # DELIBERATELY NOT COVERED: GPEN-256 / GPEN-512. Their shipped TensorRT mixed engines sit at SSIM 0.84 / 0.85 mean (min 0.79 /
     # 0.80) from FP32 on real faces while CPU, CUDA and TensorRT FP32 agree to 0.99998 - FP16 is the look the 4070 is tuned for
     # (the 3060 runs them FP32 and is tuned separately), so a 0.98 floor would "fail" every good engine and rebuild it FP32.
-    "restoreformer_plus_plus": Spec("image", (("ssim", 0.96),), in_lo=-1.0, in_hi=1.0, ref_cpu=True,
+    # cosine >= 0.995 (Stage 2): measured 2026-10-18 on the 4070, mixed engine vs CPU FP32, 2 canary inputs + 6 real faces: cosine
+    # min 0.99972 / mean 0.99994 (the FP32 TensorRT engine: 0.999999). A weak metric on its own - a grey output scores 0 but a blurred
+    # one 0.99+ - which is why SSIM stays the discriminating floor and this is the second, brief-mandated one.
+    "restoreformer_plus_plus": Spec("image", (("ssim", 0.96), ("cosine", 0.995)), in_lo=-1.0, in_hi=1.0, ref_cpu=True,
                                     cases=(("skin+n0.04", 1), ("skin+n0.08", 2))),
     # UltraMax = codeformer.fp16.onnx (also Enhance_CodeFormer's fp16 tier): x is fp16 NCHW in [-1, 1], `w` the fidelity scalar
     # (float64, what Run() binds; 0.5 is the shipped default). Reference = the same graph on the CPU EP at ORT_ENABLE_EXTENDED
@@ -109,8 +115,20 @@ SPECS: Dict[str, Spec] = {
     # engine vs that reference scores min 0.9798 / mean 0.9938 on 32 real crops and 0.9847 / 0.9880 on the two canary inputs;
     # on THOSE inputs a smeared output (sigma 5) scores 0.918, another case's output 0.910, a grey output 0.005 (0.089 worst on
     # real crops), non-finite fails outright. The synthetic side leaves 0.025 below the good engine and 0.042 above smear.
-    "codeformer.fp16": Spec("image", (("ssim", 0.96),), in_lo=-1.0, in_hi=1.0, ref_cpu=True, ref_extended=True,
+    # cosine >= 0.995 (Stage 2): measured 2026-10-18, shipped TensorRT engine vs CPU FP32 on the same 8 inputs: min 0.99963 / mean 0.99986.
+    "codeformer.fp16": Spec("image", (("ssim", 0.96), ("cosine", 0.995)), in_lo=-1.0, in_hi=1.0, ref_cpu=True, ref_extended=True,
                             aux_inputs=(0.5,), cases=(("skin+n0.04", 1), ("skin+n0.08", 2))),
+    # GPEN (GPEN Realistic's 512 and 256 files). The brief asked for cosine >= 0.995 with an FP32 fallback below it. NOT applicable:
+    # measured 2026-10-18 on the 4070, the shipped TensorRT mixed engine vs CPU FP32 on 2 canary inputs + 6 real faces scores cosine
+    # min 0.9939 / mean 0.9964 (512) and min 0.9922 / mean 0.9955 (256), i.e. a HEALTHY engine fails 0.995 on 3/8 and 6/8 inputs and the
+    # guard would rebuild the look the 4070 is tuned for as FP32 (same finding as the 2026-10-10 SSIM study: 0.85-0.89 mean).
+    # So this floor is a COLLAPSE detector, not a drift detector: 0.97 sits 0.022 under the worst healthy engine and clear above
+    # the wrong-picture controls (output for another face <= 0.84, shifted 24 px <= 0.92, grey 0.0, NaN fails outright). It does NOT see a
+    # blur: a sigma-5 smear scores 0.991-0.995 against FP32, indistinguishable from healthy.
+    "gpen-bfr-512": Spec("image", (("cosine", 0.97),), in_lo=-1.0, in_hi=1.0, ref_cpu=True,
+                         cases=(("skin+n0.04", 1), ("skin+n0.08", 2))),
+    "gpen_bfr_256": Spec("image", (("cosine", 0.97),), in_lo=-1.0, in_hi=1.0, ref_cpu=True,
+                         cases=(("skin+n0.04", 1), ("skin+n0.08", 2))),
 }
 _LOWER_BOUNDS = frozenset(("cosine", "iou", "ssim"))
 
@@ -186,6 +204,11 @@ def _decode_points(spec: Spec, raw: np.ndarray, crop: int) -> np.ndarray:
     return (pred + 1.0) * (crop // 2)
 
 
+def _cosine(a: np.ndarray, b: np.ndarray) -> float:
+    x, y = np.asarray(a, np.float64).reshape(-1), np.asarray(b, np.float64).reshape(-1)
+    return float(np.dot(x, y) / (np.linalg.norm(x) * np.linalg.norm(y) + 1e-12))
+
+
 def compare(stem: str, candidate: np.ndarray, reference: np.ndarray, crop: int = 192) -> Dict[str, float]:
     """The metrics SPECS[stem].floors read. Non-finite candidate output scores as failing on every metric."""
     spec = SPECS[stem]
@@ -196,17 +219,16 @@ def compare(stem: str, candidate: np.ndarray, reference: np.ndarray, crop: int =
         return {k: (-1.0 if k in _LOWER_BOUNDS else bad) for k, _ in spec.floors}
     if spec.kind == "image":
         from roop.swap_canary import _compare
-        return {"ssim": float(_compare(a.astype(np.float32), b.astype(np.float32)))}
+        return {"ssim": float(_compare(a.astype(np.float32), b.astype(np.float32))), "cosine": _cosine(a, b)}
     if spec.kind == "mask":
         ma, mb = a > 0.5, b > 0.5
         union = np.logical_or(ma, mb).sum()
         return {"soft_mean_abs": float(np.abs(a - b).mean()),
-                "iou": 1.0 if union == 0 else float(np.logical_and(ma, mb).sum() / union)}
+                "iou": 1.0 if union == 0 else float(np.logical_and(ma, mb).sum() / union), "cosine": _cosine(a, b)}
     if spec.kind == "embedding":
-        x, y = a.reshape(-1), b.reshape(-1)
-        return {"cosine": float(np.dot(x, y) / (np.linalg.norm(x) * np.linalg.norm(y) + 1e-12))}
+        return {"cosine": _cosine(a, b)}
     d = np.linalg.norm(_decode_points(spec, a, crop) - _decode_points(spec, b, crop), axis=1)
-    return {"mean_px": float(d.mean()), "max_px": float(d.max())}
+    return {"mean_px": float(d.mean()), "max_px": float(d.max()), "cosine": _cosine(a, b)}
 
 
 def judge(stem: str, metrics: Dict[str, float]) -> bool:
@@ -290,18 +312,55 @@ _KEY_OPTIONS = ("trt_fp16_enable", "trt_layer_norm_fp32_fallback", "trt_build_he
                 "trt_profile_opt_shapes", "trt_profile_max_shapes", "trt_bf16_enable")
 
 
+def runtime_stamp() -> dict:
+    """The TensorRT version and GPU compute capability this process builds and runs engines with.
+
+    Both are already baked into an engine file's bytes, so the engine hash covers them; they are named in the verdict identity
+    anyway so that a stale cache path reused across a TensorRT upgrade or a different GPU can never inherit a verdict, and so the
+    stored record says what it was measured on.
+    """
+    stamp = _MEMO.get("runtime_stamp")
+    if stamp is None:
+        trt = "unknown"
+        try:
+            import importlib.metadata as md
+            for dist in ("tensorrt", "tensorrt_cu12", "tensorrt-cu12", "tensorrt_libs", "tensorrt-cu12-libs"):
+                try:
+                    trt = md.version(dist)
+                    break
+                except md.PackageNotFoundError:
+                    continue
+        except Exception as exc:
+            _swallowed("roop/aux_canary.py:runtime_stamp", exc, "TensorRT version unknown")
+        sm = "unknown"
+        try:
+            import sys
+            torch = sys.modules.get("torch")
+            if torch is not None and torch.cuda.is_available():
+                sm = "sm%d%d" % torch.cuda.get_device_capability(0)
+        except Exception as exc:
+            _swallowed("roop/aux_canary.py:runtime_stamp", exc, "compute capability unknown")
+        stamp = _MEMO["runtime_stamp"] = {"trt": trt, "sm": sm}
+    return dict(stamp)
+
+
 def verdict_key(stem: str, session, model_file: str, store: dict) -> Optional[Tuple[str, dict]]:
     """(key, identity) for this live engine, or None when it cannot be identified (no engine cache to hash)."""
-    opts = _trt_options(session)
-    cache_dir = opts.get("trt_engine_cache_path")
-    try:
-        graph = session.get_modelmeta().graph_name
-    except Exception as exc:
-        _swallowed("roop/aux_canary.py:verdict_key", exc, "no engine identity; verdict not cached")
-        return None
-    engines = engine_hashes(cache_dir, graph, store)
-    if not engines:
-        return None
+    native = getattr(session, "engine_path", None)
+    if native:          # a natively built engine (trt_native_runner.NativeSession): one file, hashed whole
+        opts, cache_dir = {"native": "1"}, "native"
+        engines = [_file_hash(native, store)]
+    else:
+        opts = _trt_options(session)
+        cache_dir = opts.get("trt_engine_cache_path")
+        try:
+            graph = session.get_modelmeta().graph_name
+        except Exception as exc:
+            _swallowed("roop/aux_canary.py:verdict_key", exc, "no engine identity; verdict not cached")
+            return None
+        engines = engine_hashes(cache_dir, graph, store)
+        if not engines:
+            return None
     from roop.precision_policy import _model_digest
     spec = SPECS[stem]          # the floors are part of the identity: edit one and every verdict made under the old one is a miss
     identity = {"v": VERSION, "stem": stem, "spec": [spec.kind, [list(f) for f in spec.floors], spec.points, spec.dim,
@@ -309,6 +368,7 @@ def verdict_key(stem: str, session, model_file: str, store: dict) -> Optional[Tu
                 "model": _model_digest(model_file),
                 **({"aux": [list(spec.aux_inputs), spec.ref_extended]} if spec.aux_inputs or spec.ref_extended else {}),
                 "engines": engines, "cache": os.path.basename(str(cache_dir)),
+                "runtime": runtime_stamp(),
                 "options": {k: str(opts.get(k)) for k in _KEY_OPTIONS}}
     raw = json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()
     return hashlib.sha256(raw).hexdigest()[:32], identity
@@ -353,7 +413,8 @@ def _first_output(session):
 
 def on_tensorrt(session) -> bool:
     try:
-        return bool(session.get_providers()) and session.get_providers()[0] == "TensorrtExecutionProvider"
+        return bool(session.get_providers()) and session.get_providers()[0] in (
+            "TensorrtExecutionProvider", "TensorrtNativeEngine")
     except Exception as exc:
         _swallowed("roop/aux_canary.py:on_tensorrt", exc, "treated as not on TensorRT")
         return False
@@ -434,6 +495,15 @@ def check_session(stem: str, session, model_file: str,
                             seconds=time.perf_counter() - started)
 
 
+def _record_downgrade(stem: str, requested: str, active: str, reason: str) -> None:
+    """Put a canary-driven step down in the runtime state's PROVIDER section (it was only printed before)."""
+    try:
+        from roop.backend_manager import record_provider_degradation
+        record_provider_degradation(requested, active, reason[:400], "canary", model=stem)
+    except Exception as exc:
+        _swallowed("roop/aux_canary.py:_record_downgrade", exc, "downgrade printed but not recorded")
+
+
 def guard(stem: str, session, model_file: str, providers: Sequence[Any],
           build: Callable[[Sequence[Any]], Any]) -> Tuple[Any, List[Any], CanaryResult]:
     """Check *session*; on a failed verdict rebuild via *build(chain)* on TensorRT FP32, then on CUDA/CPU.
@@ -461,12 +531,14 @@ def guard(stem: str, session, model_file: str, providers: Sequence[Any],
             again = check_session(stem, rebuilt, model_file)
             if again.passed is not False:
                 print("[AuxCanary] %s: running on the TensorRT FP32 engine instead" % stem, flush=True)
+                _record_downgrade(stem, "tensorrt-fp16", "tensorrt-fp32", first.reason)
                 return rebuilt, fp32, again
             print("[AuxCanary] %s: the TensorRT FP32 engine failed too - %s" % (stem, again.reason), flush=True)
         except Exception as exc:
             _swallowed("roop/aux_canary.py:guard", exc, "TensorRT FP32 rebuild failed; using CUDA/CPU")
     plain = non_trt_providers(chain) or ["CPUExecutionProvider"]
     print("[AuxCanary] %s: falling back to %s" % (stem, plain[0] if isinstance(plain[0], str) else plain[0][0]), flush=True)
+    _record_downgrade(stem, "tensorrt", plain[0] if isinstance(plain[0], str) else plain[0][0], first.reason)
     return build(plain), plain, CanaryResult(tag, False, "fell back to CUDA/CPU after a failed TensorRT engine")
 
 

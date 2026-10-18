@@ -340,7 +340,8 @@ def test_session_logging_sits_in_the_builder_so_pool_extras_are_covered():
     for rel in ('roop/processors/Mask_XSeg.py', 'roop/processors/FaceSwapInsightFace.py',
                 'roop/processors/Enhance_RestoreFormerPPlus.py'):
         src = _src(rel)
-        m = re.search(r'def _build\(_i=0\):(.*?)return ', src, re.S)
+        # RF++ names its ONNX Runtime builder `_build_ort` (the opt-in native engine has `_build_native`); `_build` aliases one of them.
+        m = re.search(r'def _build(?:_ort)?\(_i=0\):(.*?)return ', src, re.S)
         assert m and 'log_session' in m.group(1), rel
 
 

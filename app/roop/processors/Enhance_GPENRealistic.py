@@ -157,20 +157,36 @@ class Enhance_GPENRealistic:
         session_providers, _precision = providers_for(
             'gpen_realistic', roop.globals.execution_providers, model_path)
 
-        def _build(_i=0):
+        def _session(chain):
             # No FP32 forcing here. That guard exists for GPEN 1024/2048, whose
             # activations overflow in FP16 and paint a black face. 512 is the
             # classic weight and is FP16-stable — Enhance_GPEN says so itself and
             # only forces FP32 at >=1024 — and 256 more so.
             from roop.strict_session import create_strictly_accelerated_session
-            sess = create_strictly_accelerated_session(
-                model_path, providers=session_providers, sess_options=opts,
+            return create_strictly_accelerated_session(
+                model_path, providers=chain, sess_options=opts,
                 tag='enhancer:gpen_realistic')
+
+        def _bind(sess):
             iob = sess.io_binding()
             iob.bind_output(sess.get_outputs()[0].name, self.devicename)
             return (sess, iob)
 
+        def _build(_i=0):
+            # Reads `session_providers` at call time: the canary below may rebind it,
+            # and the pool extras must be built on whatever the primary now runs on.
+            return _bind(_session(session_providers))
+
         self.session, self.io_binding = _build()
+        # Startup canary (roop/aux_canary.py): a COLLAPSE detector, not a drift detector. The shipped FP16 look is cosine 0.992-0.998
+        # from FP32 (SSIM ~0.85-0.89), so the floor is 0.97: it catches another face's picture, a grey or shifted output and NaN,
+        # not a blur (docs/perf/stage2_canary_cosine_2026-10-18.md). Verdict cached by engine hash; skipped off TensorRT (the 3060).
+        # On failure the enhancer is rebuilt on TensorRT FP32, then CUDA/CPU.
+        from roop import aux_canary
+        _guarded, session_providers, _verdict = aux_canary.guard(
+            aux_canary.stem_of(model_path), self.session, model_path, session_providers, _session)
+        if _guarded is not self.session:
+            self.session, self.io_binding = _bind(_guarded)
         self.in_name = self.session.get_inputs()[0].name
         self.out_name = self.session.get_outputs()[0].name
         # Assert the provider actually registered, then pay TensorRT's

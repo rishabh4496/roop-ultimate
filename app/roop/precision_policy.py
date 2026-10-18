@@ -125,8 +125,9 @@ POLICIES = {
                                 reason="Ships as a distinct FP16 graph and is the measured UltraMax/CodeFormer FP16 path."),
     "gfpgan": _policy("GFPGAN v1.4", fp16=_UNSAFE, mixed=_UNSAFE,
                        recommended="fp32", reason="Measured finite FP16 collapse produces a flat grey face; FP32 matches CUDA."),
-    "restoreformer_pp": _policy("RestoreFormer++", fp16=_UNKNOWN, mixed=_CANDIDATE,
-                                 reason="TensorRT path exists, but no model-specific FP16 quality gate is recorded."),
+    "restoreformer_pp": _policy("RestoreFormer++", fp16=_UNKNOWN, mixed=_CANDIDATE, recommended="fp32",
+                                 reason="FP32 by default (PRECISION_OVERRIDES, 2026-10-18). Mixed measured SSIM 0.9945 mean / 0.978 min, "
+                                        "cosine 0.9997 min vs FP32 but 21.6 vs 39.3 ms/face; FP32 islands unreachable at >= 90% speed."),
     "dmdnet": _policy("DMDNet", backend="pytorch", fp16=_UNSAFE, mixed=_NO,
                        recommended="fp32", trt_supported="no",
                        reason="PyTorch checkpoint path is FP32-only and is not an ONNX/TensorRT session."),
@@ -426,7 +427,16 @@ def _global_precision() -> str:
 # 2026-10-13: 'resnet18' (the BiSeNet face parser) joins them on the owner's instruction, NOT on a measurement: it is a
 # per-pixel 19-class mask whose boundaries feed the same compositor as XSeg, and FP32 costs a network this small about a
 # millisecond. Its mixed-vs-FP32 IoU has not been captured; take the entry out if that ever shows the cost is not worth it.
-PRECISION_OVERRIDES: dict = {"xseg": "fp32", "2d106det": "fp32", "1k3d68": "fp32", "resnet18": "fp32"}
+#
+# 2026-10-18 (Stage 2): 'restoreformer_plus_plus' joins them, on the owner's repeated instruction (RF++ locked to FP32 by default),
+# NOT on a new fidelity finding: the 10-10 study already put the mixed engine at SSIM 0.9945 mean / 0.978 min and cosine 0.9997 min
+# against FP32 (2 canary inputs + 6 real faces, re-measured today), and FP32 islands were unreachable at >= 90% speed. THE COST,
+# measured the same session on the 4070 (ORT TensorRT, one process, median of 35 calls): mixed 21.63 ms/face -> FP32 39.31 ms/face,
+# +82% on the enhance stage for every RF++ / Restore Ultra render. TensorRT is not admitted on the 3060, so nothing changes there.
+# Revert in one line: take the entry out, or ROOP_TRT_MODEL_PRECISION="restoreformer_plus_plus:global". The opt-in native engine
+# (ROOP_RESTORER_NATIVE_ENGINE) is unaffected and is now canary-checked.
+PRECISION_OVERRIDES: dict = {"xseg": "fp32", "2d106det": "fp32", "1k3d68": "fp32", "resnet18": "fp32",
+                             "restoreformer_plus_plus": "fp32"}
 PRECISION_OVERRIDE_ENV = "ROOP_TRT_MODEL_PRECISION"
 precision_log: list = []        # every per-model precision applied or refused in this process, for harnesses and tests
 _precision_announced: set = set()

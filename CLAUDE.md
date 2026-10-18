@@ -10,3 +10,5 @@ Claude-specific notes:
   two hardware profiles; where they differ, `AGENTS.md` is the one checked into this repo.
 - Read `<MEDIA_DIR>/RECODE_STATUS.md` (outside the repo) newest section first at the start
   of every session, as `AGENTS.md` Part 1 says.
+- **Never close a stage as "not built" / "already exists" without a named site and a passing test** —
+  `AGENTS.md`, "Never mark a stage 'not built' or 'already exists' on a reading".

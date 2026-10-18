@@ -138,6 +138,29 @@ def _active_provider() -> str:
         return UNKNOWN
 
 
+#: How many downgrade records the PROVIDER section carries. The newest are kept: a long session that
+#: rebuilds engines repeatedly must not turn one status poll into a megabyte.
+_MAX_DOWNGRADES = 50
+
+
+def _provider_downgrades() -> list:
+    """Every provider/precision step-down taken this process: session builds, canary failures, provider decision.
+
+    Recorded by ``backend_manager.record_provider_degradation``. Until this read it nothing reported them: they were
+    printed once to the terminal and then sat in a list no endpoint, panel or test consumed.
+    """
+    try:
+        from roop.backend_manager import provider_degradations
+        records = provider_degradations()
+    except Exception as _degrade_error:
+        _swallowed("roop/runtime_state.py:_provider_downgrades", _degrade_error, "downgrades reported as none")
+        return []
+    return [{"model": _text(r.get("model")) if r.get("model") else NOT_APPLICABLE,
+             "requested": _text(r.get("requested")), "active": _text(r.get("active")),
+             "stage": _text(r.get("stage")), "reason": _text(r.get("reason"))[:400]}
+            for r in records[-_MAX_DOWNGRADES:]]
+
+
 def _resource_snapshot() -> dict:
     """Return cached read-only host/GPU measurements.
 
@@ -553,6 +576,8 @@ def snapshot(progress: Optional[Mapping[str, Any]] = None,
                     "level": level,
                 })
 
+    downgrades = _provider_downgrades()
+
     requested_provider = UNKNOWN
     model_values = {"swap_model": configured_model}
     try:
@@ -646,6 +671,7 @@ def snapshot(progress: Optional[Mapping[str, Any]] = None,
             "requested": requested_provider,
             "effective": effective_provider,
             "available": available_provider_values,
+            "downgrades": downgrades,
         }, "runtime globals/profile"),
         "MODEL": _section("AVAILABLE" if available(model_values) else "UNKNOWN",
                            model_values, "runtime configuration"),

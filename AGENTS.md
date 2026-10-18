@@ -132,6 +132,26 @@ unchanged config (non-deterministic GPU reduction order; survives threads=1, CUD
 of TensorRT, and `PYTHONHASHSEED=0`). A delta at or below that is **not** evidence a
 feature ran.
 
+## Never mark a stage "not built" or "already exists" on a reading
+
+Briefs arrive as numbered stages, and several have been closed as "not built, everything exists" on the
+strength of reading code and a memory note. That is how a write-only list of provider downgrades, a
+fallback ladder with no DirectML/CoreML rung and a "recorded" canary result that no report read all stayed
+invisible: each LOOKED shipped. So:
+
+1. **A claim needs a named site AND a passing test.** Before a stage is written down as *not built*,
+   *already exists*, *premise false* or *rejected*, name the `file:line` that implements (or would
+   implement) it and run a unit or integration test that exercises that path. If no such test exists,
+   write one first. A test that stubs the very thing the claim is about does not count.
+2. **"Exists" means the path executes and its output is read.** For anything that records, reports or
+   falls back, show the consumer: who reads the record, what the report prints, which test drives the
+   failure. A function nothing calls is not shipped (`grep` the callers).
+3. **Without that, say "unverified", not "shipped" and not "not built".** Report the gap in the
+   `RECODE_STATUS.md` entry and `docs/CHANGELOG.md`; do not close the item.
+4. **A measured negative result is still a deliverable** (see below): "tried, here are the numbers, it
+   failed" backed by the harness and its output satisfies rule 1. This section forbids the unmeasured
+   claim, not the honest one.
+
 ## The discipline that keeps being learned the hard way
 
 - **Before tuning a gate, measure the distribution that gate actually reads.** Five gate

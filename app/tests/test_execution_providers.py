@@ -409,6 +409,25 @@ class GracefulFallback(unittest.TestCase):
         self.assertEqual(entries[-1]['model'], 'recorded')
         self.assertIn('boom', entries[-1]['error'])
 
+    def test_directml_and_coreml_failures_step_down_to_cpu(self):
+        """The CPU rung used to be built only for tensorrt/cuda/rocm chains, so a
+        DirectML or CoreML build that raised had nothing below it and killed the
+        worker. Each accelerated provider the app resolves needs the same rung."""
+        for chain, token in ((['DmlExecutionProvider', 'CPUExecutionProvider'], 'dml'),
+                             ([('CoreMLExecutionProvider', {}), 'CPUExecutionProvider'], 'coreml'),
+                             (['MIGraphXExecutionProvider', 'CPUExecutionProvider'], 'migraphx')):
+            with self.subTest(provider=token):
+                def build(c, token=token):
+                    if any(token in str(p[0] if isinstance(p, tuple) else p).lower() for p in c):
+                        raise RuntimeError('device lost')
+                    return 'cpu-session'
+
+                with redirect_stdout(io.StringIO()):
+                    session, used = build_session_with_fallback(build, chain, tag='gpu-' + token)
+                self.assertEqual(session, 'cpu-session')
+                self.assertEqual([str(p) for p in used], ['CPUExecutionProvider'])
+                self.assertEqual(session_degradations()[-1]['model'], 'gpu-' + token)
+
     def test_a_broken_model_still_raises(self):
         """Degrading forever would hide a genuinely broken model."""
         def build(chain):

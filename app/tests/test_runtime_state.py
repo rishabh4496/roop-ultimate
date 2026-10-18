@@ -103,6 +103,39 @@ class RuntimeStateContractTest(unittest.TestCase):
             api._log_state.clear()
             api._log_state.update(original_state)
 
+    def test_provider_downgrades_reach_the_runtime_report(self):
+        """A step down the provider chain used to be printed once and kept in a list
+        nothing read, so the report said nothing about a worker running on a worse
+        provider than the one asked for."""
+        from roop import backend_manager
+        backend_manager.clear_probe_cache()
+        try:
+            backend_manager.record_provider_degradation(
+                "tensorrt", "CPUExecutionProvider", "engine deserialization failed", "session_construction",
+                model="unit-model")
+            with patch.object(runtime_state, "_manager", return_value=None), \
+                 patch.object(runtime_state, "_active_provider", return_value="cpu"):
+                value = runtime_state.snapshot()
+            provider = value["sections"]["PROVIDER"]["values"]
+            self.assertEqual(len(provider["downgrades"]), 1)
+            record = provider["downgrades"][0]
+            self.assertEqual(record["model"], "unit-model")
+            self.assertEqual(record["requested"], "tensorrt")
+            self.assertEqual(record["active"], "CPUExecutionProvider")
+            self.assertEqual(record["stage"], "session_construction")
+            self.assertIn("deserialization", record["reason"])
+            json.dumps(value)       # the whole state stays JSON-safe
+        finally:
+            backend_manager.clear_probe_cache()
+
+    def test_no_downgrades_reads_as_an_empty_list_not_unknown(self):
+        from roop import backend_manager
+        backend_manager.clear_probe_cache()
+        with patch.object(runtime_state, "_manager", return_value=None), \
+             patch.object(runtime_state, "_active_provider", return_value="cuda"):
+            value = runtime_state.snapshot()
+        self.assertEqual(value["sections"]["PROVIDER"]["values"]["downgrades"], [])
+
     def test_missing_facts_use_contract_sentinels(self):
         with patch.object(runtime_state, "_manager", return_value=None), \
              patch.object(runtime_state, "_active_provider", return_value=runtime_state.UNKNOWN), \

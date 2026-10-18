@@ -61,7 +61,7 @@ class Enhance_RestoreFormerPPlus():
                 iob.bind_output(sess.get_outputs()[0].name, self.devicename)
                 return (sess, iob)
 
-            def _build(_i=0):
+            def _build_ort(_i=0):
                 from roop.strict_session import create_strictly_accelerated_session
                 sess = create_strictly_accelerated_session(
                     model_path, providers=session_providers, sess_options=opts,
@@ -70,18 +70,32 @@ class Enhance_RestoreFormerPPlus():
                                            session_providers, model_file=model_path)
                 return _bind(sess)
 
-            if native_engine:
-                def _build(_i=0):       # noqa: F811 - the opt-in native engine replaces the ORT builder, pool extras included
-                    from roop.trt_native_runner import NativeSession
-                    sess = NativeSession(native_engine)
-                    print('[Session] enhancer:restoreformer++ file=%s provider=TensorrtNativeEngine trt_fp16=islands '
-                          'input=input:1x3x512x512' % os.path.basename(native_engine), flush=True)
-                    return (sess, sess.io_binding())
+            def _build_native(_i=0):    # the opt-in native engine replaces the ORT builder, pool extras included
+                from roop.trt_native_runner import NativeSession
+                sess = NativeSession(native_engine)
+                print('[Session] enhancer:restoreformer++ file=%s provider=TensorrtNativeEngine trt_fp16=islands '
+                      'input=input:1x3x512x512' % os.path.basename(native_engine), flush=True)
+                return (sess, sess.io_binding())
 
+            _build = _build_native if native_engine else _build_ort
             self.model_restoreformerpplus, self.io_binding = _build()
+            if native_engine:
+                # The native engine used to skip the canary entirely: it is the one RF++ path with per-layer precision the
+                # perceptual check could not see. Same two inputs and floors as the ORT engine, verdict cached by the engine
+                # file's content. A failed engine is dropped for the ORT engine (FP32 by default), which is then canary-checked
+                # below like any other start; the downgrade is recorded for the runtime report.
+                from roop import aux_canary
+                _verdict = aux_canary.check_session('restoreformer_plus_plus', self.model_restoreformerpplus, model_path)
+                if _verdict.passed is False:
+                    print('[AuxCanary] restoreformer_plus_plus: the native engine FAILED - %s; using the ONNX Runtime engine'
+                          % _verdict.reason, flush=True)
+                    aux_canary._record_downgrade('restoreformer_plus_plus', 'tensorrt-native', 'tensorrt-ort', _verdict.reason)
+                    native_engine = ''
+                    _build = _build_ort
+                    self.model_restoreformerpplus, self.io_binding = _build()
             if not native_engine:
                 # Startup canary (roop/aux_canary.py): two fixed inputs through the live engine and a one-off FP32 reference,
-                # SSIM floor 0.98, verdict cached by engine hash. A TensorRT engine that builds, runs at speed and smears the
+                # SSIM >= 0.96 and cosine >= 0.995, verdict cached by engine hash. A TensorRT engine that builds, runs at speed and smears the
                 # face passes every other check. On failure the restorer is rebuilt on TensorRT FP32, then CUDA/CPU;
                 # `session_providers` is rebound so the pool extras below are built on whatever the primary now runs on.
                 from roop import aux_canary

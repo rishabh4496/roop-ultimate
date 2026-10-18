@@ -1,0 +1,297 @@
+{
+ "rfpp_mixed": {
+  "fp16": "1",
+  "ms_median": 21.63,
+  "cos_min": 0.999723,
+  "cos_mean": 0.999935,
+  "ssim_min": 0.97815,
+  "ssim_mean": 0.99452,
+  "rows": {
+   "synth:skin+n0.04#1": {
+    "cosine": 0.999832,
+    "ssim": 0.98607,
+    "max_abs": 0.2308,
+    "finite": true
+   },
+   "synth:skin+n0.08#2": {
+    "cosine": 0.999723,
+    "ssim": 0.97815,
+    "max_abs": 0.5988,
+    "finite": true
+   },
+   "face:akansha.png": {
+    "cosine": 0.999995,
+    "ssim": 0.9996,
+    "max_abs": 0.1066,
+    "finite": true
+   },
+   "face:anshita.png": {
+    "cosine": 0.999996,
+    "ssim": 0.99951,
+    "max_abs": 0.1155,
+    "finite": true
+   },
+   "face:anushree.png": {
+    "cosine": 0.999984,
+    "ssim": 0.99888,
+    "max_abs": 0.33,
+    "finite": true
+   },
+   "face:ashna.png": {
+    "cosine": 0.999992,
+    "ssim": 0.99937,
+    "max_abs": 0.1149,
+    "finite": true
+   },
+   "face:debasmita.png": {
+    "cosine": 0.999992,
+    "ssim": 0.99908,
+    "max_abs": 0.1,
+    "finite": true
+   },
+   "face:gargee.png": {
+    "cosine": 0.999966,
+    "ssim": 0.99551,
+    "max_abs": 0.1651,
+    "finite": true
+   }
+  },
+  "build_s": 48.6
+ },
+ "ultramax": {
+  "fp16": "1",
+  "ms_median": 22.66,
+  "cos_min": 0.999634,
+  "cos_mean": 0.99986,
+  "ssim_min": 0.9874,
+  "ssim_mean": 0.99286,
+  "rows": {
+   "synth:skin+n0.04#1": {
+    "cosine": 0.999888,
+    "ssim": 0.9874,
+    "max_abs": 0.1284,
+    "finite": true
+   },
+   "synth:skin+n0.08#2": {
+    "cosine": 0.999634,
+    "ssim": 0.98818,
+    "max_abs": 1.231,
+    "finite": true
+   },
+   "face:akansha.png": {
+    "cosine": 0.999874,
+    "ssim": 0.99335,
+    "max_abs": 0.4363,
+    "finite": true
+   },
+   "face:anshita.png": {
+    "cosine": 0.999962,
+    "ssim": 0.99697,
+    "max_abs": 0.2212,
+    "finite": true
+   },
+   "face:anushree.png": {
+    "cosine": 0.999931,
+    "ssim": 0.99021,
+    "max_abs": 0.2148,
+    "finite": true
+   },
+   "face:ashna.png": {
+    "cosine": 0.999944,
+    "ssim": 0.99895,
+    "max_abs": 0.5525,
+    "finite": true
+   },
+   "face:debasmita.png": {
+    "cosine": 0.999878,
+    "ssim": 0.99569,
+    "max_abs": 0.4003,
+    "finite": true
+   },
+   "face:gargee.png": {
+    "cosine": 0.999768,
+    "ssim": 0.99214,
+    "max_abs": 0.568,
+    "finite": true
+   }
+  },
+  "build_s": 68.6
+ },
+ "gpen512": {
+  "fp16": "1",
+  "ms_median": 18.71,
+  "cos_min": 0.993894,
+  "cos_mean": 0.996434,
+  "ssim_min": 0.8569,
+  "ssim_mean": 0.89768,
+  "rows": {
+   "synth:skin+n0.04#1": {
+    "cosine": 0.995186,
+    "ssim": 0.88937,
+    "max_abs": 1.1595,
+    "finite": true
+   },
+   "synth:skin+n0.08#2": {
+    "cosine": 0.996664,
+    "ssim": 0.93336,
+    "max_abs": 0.7516,
+    "finite": true
+   },
+   "face:akansha.png": {
+    "cosine": 0.996885,
+    "ssim": 0.89009,
+    "max_abs": 0.8375,
+    "finite": true
+   },
+   "face:anshita.png": {
+    "cosine": 0.997826,
+    "ssim": 0.89091,
+    "max_abs": 0.9892,
+    "finite": true
+   },
+   "face:anushree.png": {
+    "cosine": 0.998096,
+    "ssim": 0.92381,
+    "max_abs": 1.0329,
+    "finite": true
+   },
+   "face:ashna.png": {
+    "cosine": 0.993894,
+    "ssim": 0.8569,
+    "max_abs": 1.2236,
+    "finite": true
+   },
+   "face:debasmita.png": {
+    "cosine": 0.996607,
+    "ssim": 0.91018,
+    "max_abs": 1.1587,
+    "finite": true
+   },
+   "face:gargee.png": {
+    "cosine": 0.996317,
+    "ssim": 0.88678,
+    "max_abs": 0.9428,
+    "finite": true
+   }
+  },
+  "build_s": 425.7
+ },
+ "gpen256": {
+  "fp16": "1",
+  "ms_median": 8.85,
+  "cos_min": 0.992152,
+  "cos_mean": 0.995525,
+  "ssim_min": 0.85081,
+  "ssim_mean": 0.89074,
+  "rows": {
+   "synth:skin+n0.04#1": {
+    "cosine": 0.994171,
+    "ssim": 0.93183,
+    "max_abs": 1.1269,
+    "finite": true
+   },
+   "synth:skin+n0.08#2": {
+    "cosine": 0.995718,
+    "ssim": 0.93451,
+    "max_abs": 0.9031,
+    "finite": true
+   },
+   "face:akansha.png": {
+    "cosine": 0.996357,
+    "ssim": 0.88158,
+    "max_abs": 1.336,
+    "finite": true
+   },
+   "face:anshita.png": {
+    "cosine": 0.997513,
+    "ssim": 0.85219,
+    "max_abs": 0.8919,
+    "finite": true
+   },
+   "face:anushree.png": {
+    "cosine": 0.997531,
+    "ssim": 0.90097,
+    "max_abs": 0.8987,
+    "finite": true
+   },
+   "face:ashna.png": {
+    "cosine": 0.992152,
+    "ssim": 0.85081,
+    "max_abs": 0.9252,
+    "finite": true
+   },
+   "face:debasmita.png": {
+    "cosine": 0.995778,
+    "ssim": 0.90492,
+    "max_abs": 0.8116,
+    "finite": true
+   },
+   "face:gargee.png": {
+    "cosine": 0.994981,
+    "ssim": 0.8691,
+    "max_abs": 0.9773,
+    "finite": true
+   }
+  },
+  "build_s": 230.3
+ },
+ "rfpp_fp32": {
+  "fp16": "0",
+  "ms_median": 39.31,
+  "cos_min": 0.999999,
+  "cos_mean": 1.0,
+  "ssim_min": 0.99991,
+  "ssim_mean": 0.99999,
+  "rows": {
+   "synth:skin+n0.04#1": {
+    "cosine": 1.0,
+    "ssim": 1.0,
+    "max_abs": 0.0078,
+    "finite": true
+   },
+   "synth:skin+n0.08#2": {
+    "cosine": 1.0,
+    "ssim": 1.0,
+    "max_abs": 0.0069,
+    "finite": true
+   },
+   "face:akansha.png": {
+    "cosine": 0.999999,
+    "ssim": 0.99991,
+    "max_abs": 0.0557,
+    "finite": true
+   },
+   "face:anshita.png": {
+    "cosine": 1.0,
+    "ssim": 1.0,
+    "max_abs": 0.0064,
+    "finite": true
+   },
+   "face:anushree.png": {
+    "cosine": 1.0,
+    "ssim": 1.0,
+    "max_abs": 0.0093,
+    "finite": true
+   },
+   "face:ashna.png": {
+    "cosine": 1.0,
+    "ssim": 1.0,
+    "max_abs": 0.0039,
+    "finite": true
+   },
+   "face:debasmita.png": {
+    "cosine": 1.0,
+    "ssim": 1.0,
+    "max_abs": 0.005,
+    "finite": true
+   },
+   "face:gargee.png": {
+    "cosine": 1.0,
+    "ssim": 1.0,
+    "max_abs": 0.004,
+    "finite": true
+   }
+  },
+  "build_s": 87.4
+ }
+}

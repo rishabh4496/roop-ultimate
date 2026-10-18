@@ -53,7 +53,7 @@ def test_required_models_are_registered_and_pinned():
 
 
 @pytest.mark.parametrize("stem,expected", [
-    ("xseg", "fp32"), ("2d106det", "fp32"), ("1k3d68", "fp32"),
+    ("xseg", "fp32"), ("2d106det", "fp32"), ("1k3d68", "fp32"), ("restoreformer_plus_plus", "fp32"),
 ])
 def test_fp32_models_match_the_precision_policy(stem, expected):
     """Every zoo entry whose file the policy forces to FP32 declares FP32, and back."""
@@ -75,7 +75,7 @@ def test_declared_fp32_is_always_a_policy_override():
                 f"{_stem(spec)!r}; either add the override (and measure it) or drop the claim")
 
 
-@pytest.mark.parametrize("name", ["codeformer_fp16", "gpen_bfr_512", "restoreformer_plus_plus"])
+@pytest.mark.parametrize("name", ["codeformer_fp16", "gpen_bfr_512"])
 def test_enhancers_without_an_override_are_declared_half_precision(name):
     """These follow the global trt_precision. If someone adds an FP32 override for
     one of them, this fails until the zoo is updated to say so."""

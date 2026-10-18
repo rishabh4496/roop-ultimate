@@ -319,9 +319,10 @@ MODEL_ZOO: dict[str, ModelSpec] = {spec.name: spec for spec in (
         inputs={"input": (1, 3, 512, 512)},
         native_resolution=512,
         description="RestoreFormer++ face restoration 512",
-        license="see upstream (RestoreFormer)", default_precision="fp16",
-        notes="Half precision (follows the global trt_precision). FP32 was measured on "
-              "2026-10-10 and costs 31.6 vs 21.75 ms/face; see docs/perf/restorer_fp16_islands_2026-10-10.md."),
+        license="see upstream (RestoreFormer)", default_precision="fp32",
+        notes="FP32 per roop.precision_policy.PRECISION_OVERRIDES (owner instruction, 2026-10-18). "
+              "Costs +82% per face (21.63 -> 39.31 ms, docs/perf/stage2_canary_cosine_2026-10-18.md); "
+              "mixed measured SSIM 0.9945 mean."),
     ModelSpec(
         name="codeformer_fp16", task=ModelTask.RESTORATION, filename="codeformer.fp16.onnx",
         urls=("https://huggingface.co/netrunner-exe/Face-Upscalers-onnx/resolve/main/"

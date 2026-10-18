@@ -175,13 +175,21 @@ def provider_degradations() -> List[Dict[str, Any]]:
         return list(_PROVIDER_DEGRADATIONS)
 
 
-def record_provider_degradation(requested: str, active: str, reason: str, stage: str) -> None:
-    """Record a structured provider downgrade record."""
+def record_provider_degradation(requested: str, active: str, reason: str, stage: str,
+                                model: str = "") -> None:
+    """Record a structured provider downgrade record.
+
+    ``model`` names the model that stepped down (the session tag or canary stem);
+    it is empty for a process-wide provider decision. These records are what
+    ``runtime_state`` reports under PROVIDER, so a downgrade that is only printed
+    is not a downgrade anyone can find afterwards.
+    """
     entry = {
         "requested": requested,
         "active": active,
         "reason": reason,
         "stage": stage,
+        "model": str(model or ""),
     }
     with _lock:
         _PROVIDER_DEGRADATIONS.append(entry)
@@ -553,6 +561,9 @@ def trt_tuning_namespace(builder_optimization_level: int = 3,
 _DEGRADATIONS: List[dict] = []
 
 
+_ACCELERATED_TOKENS = ("tensorrt", "cuda", "rocm", "migraphx", "dml", "coreml")
+
+
 def _strip_provider(providers: Iterable, token: str) -> List:
     return [p for p in list(providers or ())
             if token not in str(_name(p)).lower()]
@@ -576,6 +587,7 @@ def _record_degradation(tag: str, frm: str, to: str, error: BaseException,
         active_provider or to,
         entry["error"],
         "session_construction",
+        model=str(tag),
     )
     print(f"[Backend] {tag}: {frm} session build FAILED, falling back to {to}. "
           f"{entry['error']}")
@@ -597,9 +609,11 @@ def build_session_with_fallback(build, providers, tag: str = "model"):
     attempts: List[Tuple[str, List]] = [("requested", list(providers or ()))]
     if any("tensorrt" in str(_name(p)).lower() for p in (providers or ())):
         attempts.append(("cuda/cpu", _strip_provider(providers, "tensorrt")))
+    # Every accelerated provider the app can resolve (see _HIERARCHY), not
+    # only the NVIDIA/AMD-Linux ones: a DirectML or CoreML build that raised used
+    # to have no rung below it, so the exception ended the worker.
     without_gpu = [p for p in (providers or ())
-                   if not any(token in str(_name(p)).lower()
-                              for token in ("tensorrt", "cuda", "rocm"))]
+                   if not any(token in str(_name(p)).lower() for token in _ACCELERATED_TOKENS)]
     if without_gpu != list(providers or ()):
         attempts.append(("cpu", without_gpu or ["CPUExecutionProvider"]))
 

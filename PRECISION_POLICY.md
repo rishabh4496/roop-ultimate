@@ -28,14 +28,14 @@ Status labels:
 | CodeFormer FP16 graph | ORT + TRT/CUDA | safe | safe | safe | unsupported | unsupported | unsupported | available | available | yes |
 | UltraMax (same CodeFormer FP16 graph) | ORT + TRT/CUDA | safe | safe | safe | unsupported | unsupported | unsupported | available | available | yes |
 | GFPGAN v1.4 | ORT + TRT/CUDA | required | unsafe | unsafe | unsupported | unsupported | unsupported | available | available | yes, FP32 only |
-| RestoreFormer++ | ORT + TRT/CUDA | safe/reference | not-validated | candidate | unsupported | unsupported | unsupported | available | available | yes |
+| RestoreFormer++ | ORT + TRT/CUDA | **default** (override, 2026-10-18) | not-validated | candidate (21.6 vs 39.3 ms/face) | unsupported | unsupported | unsupported | available | available | yes, FP32 |
 | Frame upscalers / ESRGAN family | ORT + CUDA | safe/reference | unsafe | unsafe | unsupported | unsupported | unsupported | preferred | available | no (shipping) |
 | RIFE | ORT + CUDA | safe/reference | not-validated | unsupported | unsupported | unsupported | unsupported | preferred | available | no |
 | LivePortrait | ORT + TRT/CUDA/CPU split | safe/reference | not-validated | candidate | candidate* | unsupported | unsupported | available for patched graph | required for stock 5-D warp | patched TRT; stock split |
 | Face detection (SCRFD/RetinaFace/YOLOFace) | ORT/InsightFace + TRT/CUDA | safe | candidate | safe | unsupported | unsupported | unsupported | available | available | yes where provider supports |
-| Recognition (buffalo/AdaFace) | ORT/InsightFace + TRT/CUDA | safe | candidate | safe | unsupported | unsupported | unsupported | available | available | yes where provider supports |
+| Recognition (buffalo/AdaFace); **2d106det and 1k3d68 landmarks are FP32 by override** | ORT/InsightFace + TRT/CUDA | safe | candidate | safe (w600k_r50 only; landmarks drift 1.2-8.8 px) | unsupported | unsupported | unsupported | available | available | yes where provider supports |
 | Face swapping (all listed swap nets) | ORT + TRT/CUDA | safe/reference | unsafe | candidate | unsupported | unsupported | unsupported | available | available | yes, guarded |
-| XSeg / XSeg3 / occluder / BiSeNet | ORT + TRT/CUDA | safe | candidate | safe | unsupported | unsupported | unsupported | available | available | yes |
+| XSeg / XSeg3 / occluder / BiSeNet | ORT + TRT/CUDA | **default for xseg.onnx and resnet18** (override) | candidate | **unsafe for xseg** (IoU min 0.81) | unsupported | unsupported | unsupported | available | available | yes |
 | FastSAM / MobileSAM / SAM2 | PyTorch/ORT + CUDA/CPU | safe/reference | not-validated | unsupported | not-validated | unsupported | unsupported | preferred | available | no |
 | Frame colorizer | ORT + TRT/CUDA | safe/reference | not-validated | candidate | unsupported | unsupported | unsupported | available | available | yes |
 | IS-Net / foreground masking | ORT + TRT/CUDA | safe/reference | not-validated | candidate | unsupported | unsupported | unsupported | available | available | yes |
@@ -139,3 +139,55 @@ assuming that a provider accepted by ORT is numerically safe.
 
 The policy therefore adapts to detected provider/runtime capability while
 keeping RTX 3060 and RTX 4070 as separate validation targets.
+
+## Stage 2 (2026-10-18): what is enforced in code, by whom, and what the evidence is
+
+The table above is the matrix. This section is the part that is **enforced**, with the site and the test, and the one place the Stage 2 brief
+and the measurements disagree.
+
+### FP32 locks (`precision_policy.PRECISION_OVERRIDES`, resolved by `providers_for`)
+
+| File stem | Precision | Why |
+|---|---|---|
+| `xseg`, `2d106det`, `1k3d68` | FP32 | mixed TensorRT: xseg IoU min 0.81, landmarks 1.2-8.8 px (commit 967e17e) |
+| `resnet18` (BiSeNet parser) | FP32 | owner instruction, mixed error not measured |
+| `restoreformer_plus_plus` | FP32 | owner instruction, repeated 2026-10-18. **+82% enhance-stage cost**: 21.63 -> 39.31 ms/face (4070, ORT TensorRT) |
+
+`ROOP_TRT_MODEL_PRECISION="stem:global"` drops one lock; an entry removed from the table hands the model back to `trt_precision`. The RF++ native
+engine (`ROOP_RESTORER_NATIVE_ENGINE`) is opt-in, and is now put through the same canary as the ORT engine; a failing native engine is dropped for the
+ORT engine and the step is recorded. Tests: `test_model_registry_precision.py`, `test_stage2_precision_profiles.py`.
+
+### Startup canaries (`roop/aux_canary.py`, `SPECS`)
+
+Two fixed inputs through the live TensorRT engine and a one-off CPU/CUDA FP32 reference. Non-finite output fails outright. The verdict is cached
+by **engine content hash + ONNX digest + spec floors + builder options + profile shapes + TensorRT version + GPU compute capability**
+(`verdict_key`, `runtime_stamp`), so a TensorRT upgrade, a different GPU, a rebuilt engine or an edited floor each miss the cache once.
+Skipped off TensorRT (the 3060).
+
+| Stem | Floors | Measured (4070, vs CPU FP32) |
+|---|---|---|
+| `xseg` | soft_mean_abs <= 0.08, IoU >= 0.60, **cosine >= 0.998** | FP32 engine at the engine floor |
+| `2d106det`, `1k3d68` | mean/max px, **cosine >= 0.998** | same |
+| `restoreformer_plus_plus` | SSIM >= 0.96, **cosine >= 0.995** | mixed: cosine min 0.99972, SSIM min 0.978; FP32: 0.999999 / 0.9999 |
+| `codeformer.fp16` (UltraMax) | SSIM >= 0.96, **cosine >= 0.995** | cosine min 0.99963, SSIM min 0.987 |
+| `gpen-bfr-512`, `gpen_bfr_256` (GPEN Realistic) | **cosine >= 0.97** | healthy cosine min 0.9939 / 0.9922 |
+
+**Where the brief and the data disagree: GPEN at cosine >= 0.995.** The shipped GPEN FP16 engines are *healthy* and score cosine 0.9922-0.9978
+(SSIM 0.85-0.89) against FP32; 0.995 fails 3 of 8 inputs on GPEN-512 and 6 of 8 on GPEN-256, so the "fall back to FP32 below 0.995" rule would rebuild the
+look the 4070 is tuned for and cost an unmeasured amount of throughput. GPEN therefore gets a **collapse** floor at 0.97: it separates healthy (>= 0.992) from
+another face (<= 0.84), a 24 px shift (<= 0.92), grey (0.0) and NaN. It does **not** detect blur (a sigma-5 smear scores 0.991-0.995). Raise it only with a
+measurement that shows what the stricter floor costs. Numbers: `docs/perf/stage2_canary_cosine_2026-10-18.md`.
+
+### Fallback chain
+
+`aux_canary.guard`: failed verdict -> TensorRT FP32 engine -> CUDA/CPU. `backend_manager.build_session_with_fallback` (detectors, buffalo_l): requested ->
+TensorRT removed -> every accelerated provider removed (TensorRT, CUDA, ROCm, MIGraphX, **DirectML, CoreML**), CPU last; the original exception is re-raised
+if even CPU fails. `strict_session` deliberately does **not** retry (a swallowed exception left stale state in the swapper's FP32 rebuild). Every step is
+recorded by `record_provider_degradation(..., model=...)` and reported in `/api/runtime/state` -> `sections.PROVIDER.values.downgrades`.
+
+### Optimisation profiles
+
+`trt_shape_profile.resolve_profile` reads each graph and binds `trt_profile_{min,opt,max}_shapes` only for inputs that have a dynamic dimension. Measured on the
+shipped files: UltraMax (`codeformer.fp16`) `x:1x3x512x512 .. 8x3x512x512` (the brief's 1..4 is a subset); GPEN-256/512, RF++, CodeFormer v0.1 and
+`inswapper_128` are exported **static** `[1,3,S,S]`, so a `[1..4]` or Pixel-Boost `[1..16,3,128,128]` profile cannot be bound to them (TensorRT rejects a
+max above a static dimension) without re-exporting the models, and a dynamic-batch swapper was measured slower. `test_stage2_precision_profiles.py` pins both facts.

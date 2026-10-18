@@ -136,6 +136,7 @@ class NativeSession:
     """
 
     def __init__(self, engine_path: str, device_id: int = 0, input_name: str = "input"):
+        self.engine_path = engine_path      # aux_canary keys its verdict on this file's content
         self.engine = NativeEngine(engine_path, device_id)
         self._in = _Meta(input_name, self.engine.in_shape)
         self._out = _Meta("output", self.engine.out_shape)
@@ -148,6 +149,18 @@ class NativeSession:
 
     def get_providers(self):
         return ["TensorrtNativeEngine"]
+
+    def get_provider_options(self):
+        return {}
+
+    def run(self, output_names, feed):
+        """ORT's ``run`` shape, so ``aux_canary`` can put a native engine through the same canary as an ORT one.
+
+        Until this existed the opt-in native engine was the one restorer path no canary could check: it has no ORT session to hand
+        to ``aux_canary.check_session``, and the processors skipped the canary for it.
+        """
+        x = next(iter(feed.values()))
+        return [self.engine.run(x.astype("float32", copy=False).reshape(self.engine.in_shape))]
 
     def io_binding(self):
         return _Binding(self)
