@@ -213,10 +213,19 @@ def check_ready() -> None:
         )
 
 
-def commit(manifest_path: str) -> None:
+def commit(manifest_path: str, require_react_build: bool = False) -> None:
     manifest_file = Path(manifest_path)
     if not manifest_file.is_absolute():
         manifest_file = (Path.cwd() / manifest_file).resolve()
+    # Pinokio keeps running a script after a shell command fails, so the
+    # launcher cannot rely on an earlier step having stopped it. The marker is
+    # what unlocks Start; it must not be published without the UI Start serves.
+    react_build = ROOT / "react-ui" / "dist" / "index.html"
+    if require_react_build and (not react_build.is_file() or react_build.stat().st_size == 0):
+        fail("react_build", f"{react_build.relative_to(ROOT)} is missing or empty")
+        raise InstallationStateError(
+            "refusing to publish the installation manifest: the React UI build is missing"
+        )
     manifest = read_json(manifest_file)
     if not _manifest_valid(manifest):
         fail("manifest_commit", "runtime manifest is incomplete or verification did not pass")
@@ -266,6 +275,7 @@ def main(argv: list[str] | None = None) -> int:
     subparsers.add_parser("check")
     commit_parser = subparsers.add_parser("commit")
     commit_parser.add_argument("--manifest", required=True)
+    commit_parser.add_argument("--require-react-build", action="store_true")
     args = parser.parse_args(argv)
     try:
         if args.command == "begin":
@@ -280,7 +290,7 @@ def main(argv: list[str] | None = None) -> int:
             check_ready()
             print("[InstallState] READY", flush=True)
         elif args.command == "commit":
-            commit(args.manifest)
+            commit(args.manifest, require_react_build=args.require_react_build)
     except InstallationStateError as exc:
         print(f"[InstallState:FATAL] {exc}", file=sys.stderr, flush=True)
         return 1

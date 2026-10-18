@@ -45,7 +45,7 @@ module.exports = async (kernel) => {
           },
           path: "react-ui",
           message: [
-            "npm ci --no-audit --no-fund"
+            "npm ci --no-audit --no-fund || npm install --no-audit --no-fund --legacy-peer-deps"
           ]
         }
       },
@@ -101,12 +101,15 @@ module.exports = async (kernel) => {
           },
           path: "react-ui",
           message: [
-            "npm run build"
+            "node scripts/verify-build.mjs vite",
+            "npm run build",
+            "node scripts/verify-build.mjs dist"
           ],
           on: [{
             // A failed build must stop before the backend is offered as a
-            // healthy UI. Match the failure forms emitted by npm and Vite.
-            "event": "/(npm ERR!|ELIFECYCLE|error during build|failed to compile|build failed|command failed)/i",
+            // healthy UI. Match the failure forms emitted by npm and Vite, and
+            // verify-build.mjs's own marker for a missing vite or dist.
+            "event": "/(npm ERR!|ELIFECYCLE|error during build|failed to compile|build failed|command failed|\\[build-verify\\] FAIL)/i",
             "break": true
           }]
         }

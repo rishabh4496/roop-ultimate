@@ -63,9 +63,23 @@ module.exports = {
           // package-lock.json is shipped with the project. npm ci makes the
           // frontend install deterministic on a fresh machine and installs
           // the platform-specific optional build binary selected by npm.
-          "npm ci --no-audit --no-fund",
-          "npm run build"
-        ]
+          // `npm ci` exits EUSAGE when the lockfile is missing or disagrees
+          // with package.json; `||` is the same in cmd.exe and POSIX shells,
+          // and the fallback resolves from package.json instead of failing.
+          "npm ci --no-audit --no-fund || npm install --no-audit --no-fund --legacy-peer-deps",
+          // Name the missing vite binary here instead of letting the next
+          // line fail with the shell's "'vite' is not recognized".
+          "node scripts/verify-build.mjs vite",
+          "npm run build",
+          "node scripts/verify-build.mjs dist"
+        ],
+        // Pinokio does not stop a script because a command in a shell failed.
+        // verify-build.mjs prints this marker, and the break keeps the later
+        // steps (and the completion marker) from running on a broken build.
+        on: [{
+          event: "/\\[build-verify\\] FAIL/",
+          break: true
+        }]
       }
     },
     {
@@ -156,7 +170,10 @@ module.exports = {
         venv: "env",
         path: "app",
         message: [
-          "python verify_ort.py --manifest-out .runtime-verification.json"
+          // --require-extras: the manifest below is the install-complete
+          // marker, so it must also depend on the --no-deps installs above
+          // (SAM 2, onnxconverter-common), whose failures Pinokio ignores.
+          "python verify_ort.py --manifest-out .runtime-verification.json --require-extras"
         ]
       }
     },
@@ -164,7 +181,7 @@ module.exports = {
       method: "shell.run",
       params: {
         path: "app",
-        message: ["python install_state.py commit --manifest .runtime-verification.json"]
+        message: ["python install_state.py commit --manifest .runtime-verification.json --require-react-build"]
       }
     }
   ]

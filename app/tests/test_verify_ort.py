@@ -137,6 +137,24 @@ class TestVerifyOrt(unittest.TestCase):
         with patch.dict(sys.modules, {"numpy": mock_np}):
             verify_ort.verify_numpy()
 
+    def test_install_extras_missing_sam2_fails_loudly(self):
+        """A failed `--no-deps` sam2 install must not reach the install marker."""
+        with patch.dict(sys.modules, {"sam2": None, "onnxconverter_common": types.ModuleType("x")}):
+            with self.assertRaises(SystemExit) as cm:
+                verify_ort.verify_install_extras()
+            self.assertEqual(cm.exception.code, 1)
+
+    def test_install_extras_pass_when_importable(self):
+        fake = {name: types.ModuleType(name) for name in ("sam2", "onnxconverter_common")}
+        with patch.dict(sys.modules, fake):
+            verify_ort.verify_install_extras()
+
+    def test_extras_are_opt_in_for_verify_environment(self):
+        """Start-up verification (--require-complete) must not start requiring SAM 2."""
+        import inspect
+        params = inspect.signature(verify_ort.verify_environment).parameters
+        self.assertIs(params["require_extras"].default, False)
+
 
 class TestActiveProviderGate(unittest.TestCase):
     """The preflight session must have run on the GPU on an NVIDIA machine.

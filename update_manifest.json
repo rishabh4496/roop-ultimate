@@ -57,6 +57,6 @@
     "react-ui/package.json": "5d140a946eef587911f4c63bea26193f5b3f779b0cb0b084dfb510ae613bbada",
     "scripts/fix_tensorrt.js": "1084ea447a5076b65469ca2b4824142245946908620c0c11d960531f5a0721ac",
     "torch.js": "fc11d982a64ed659e0fe8f40e46bb11d163afb5262ed8a6784dc9d2e4c534006",
-    "update.js": "4df6b254c66456204f4b3cce80c0e108a62620aa34e5f301013d504cfcc68716"
+    "update.js": "d6aa05ecfd23b4cda947121b657058b942d9491f30bba43e259cac451c29a84f"
   }
 }

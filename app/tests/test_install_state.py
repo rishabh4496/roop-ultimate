@@ -98,6 +98,41 @@ class TestInstallState(unittest.TestCase):
         self.assertEqual(state["failed_stage"], "manifest_commit")
         self.assertFalse(self.paths["COMPLETE"].exists())
 
+    def _write_valid_manifest(self):
+        manifest_path = Path(self.tempdir.name) / ".runtime-verification.json"
+        manifest_path.write_text(json.dumps(self.manifest()), encoding="utf-8")
+        return manifest_path
+
+    def test_commit_refuses_without_react_build_when_required(self):
+        """Pinokio keeps running after a failed shell command, so the build step
+        cannot be trusted to have stopped the script; commit must check."""
+        install_state.begin("runtime_verification")
+        manifest_path = self._write_valid_manifest()
+        with self.assertRaises(install_state.InstallationStateError):
+            install_state.commit(str(manifest_path), require_react_build=True)
+        state = json.loads(self.paths["INCOMPLETE"].read_text(encoding="utf-8"))
+        self.assertEqual(state["failed_stage"], "react_build")
+        self.assertFalse(self.paths["COMPLETE"].exists())
+        self.assertFalse(self.paths["READY"].exists())
+
+    def test_commit_refuses_an_empty_react_build(self):
+        dist = self.paths["ROOT"] / "react-ui" / "dist"
+        dist.mkdir(parents=True)
+        (dist / "index.html").write_text("", encoding="utf-8")
+        install_state.begin("runtime_verification")
+        with self.assertRaises(install_state.InstallationStateError):
+            install_state.commit(str(self._write_valid_manifest()), require_react_build=True)
+        self.assertFalse(self.paths["COMPLETE"].exists())
+
+    def test_commit_succeeds_with_react_build_when_required(self):
+        dist = self.paths["ROOT"] / "react-ui" / "dist"
+        dist.mkdir(parents=True)
+        (dist / "index.html").write_text("<!doctype html>", encoding="utf-8")
+        install_state.begin("runtime_verification")
+        install_state.commit(str(self._write_valid_manifest()), require_react_build=True)
+        self.assertTrue(self.paths["COMPLETE"].exists())
+        self.assertTrue(self.paths["READY"].exists())
+
 
 if __name__ == "__main__":
     unittest.main()

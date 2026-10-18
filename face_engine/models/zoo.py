@@ -67,6 +67,31 @@ MODEL_ZOO: dict[str, ModelSpec] = {spec.name: spec for spec in (
         inputs={"input": (1, 3, 256, 256)},
         description="2D-FAN-4 68-point landmarks (FAN, 3D-consistent 68 layout)",
         license="BSD-3-Clause (face-alignment)"),
+    # The two buffalo_l landmark models the app's face analyser runs. Digests are
+    # the Hugging Face X-Linked-ETag of the URL listed (checked 2026-10-18) and
+    # equal the local app/models/buffalo_l copies.
+    ModelSpec(
+        name="2d106det", task=ModelTask.LANDMARKS, filename="2d106det.onnx",
+        urls=(_INSIGHT + "2d106det.onnx",),
+        sha256="f001b856447c413801ef5c42091ed0cd516fcd21f2d6b79635b1e733a7109dbf",
+        size=5030888,
+        inputs={"data": ("batch", 3, 192, 192)},
+        native_resolution=192,
+        description="InsightFace 2D 106-point landmarks (buffalo_l)",
+        license="InsightFace: non-commercial research", default_precision="fp32",
+        notes="FP32 per roop.precision_policy.PRECISION_OVERRIDES: mixed TensorRT moves "
+              "landmarks up to 1.25 px."),
+    ModelSpec(
+        name="1k3d68", task=ModelTask.LANDMARKS, filename="1k3d68.onnx",
+        urls=(_INSIGHT + "1k3d68.onnx",),
+        sha256="df5c06b8a0c12e422b2ed8947b8869faa4105387f199c477af038aa01f9a45cc",
+        size=143607619,
+        inputs={"data": ("batch", 3, 192, 192)},
+        native_resolution=192,
+        description="InsightFace 3D 68-point landmarks (buffalo_l)",
+        license="InsightFace: non-commercial research", default_precision="fp32",
+        notes="FP32 per roop.precision_policy.PRECISION_OVERRIDES: mixed TensorRT gives a "
+              "1.19 px mean / 8.8 px max landmark error."),
     # ------------------------------------------------------------- embedding
     ModelSpec(
         name="arcface_w600k_r50", task=ModelTask.EMBEDDING, filename="arcface_w600k_r50.onnx",
@@ -207,7 +232,9 @@ MODEL_ZOO: dict[str, ModelSpec] = {spec.name: spec for spec in (
             "threshold": {"type": "float", "min": 0.0, "max": 1.0, "default": 0.50, "label": "Occlusion Threshold"},
         },
         description="DeepFaceLab XSeg v2 occlusion segmentation (NHWC input)",
-        license="GPL-3.0 (DeepFaceLab)"),
+        license="GPL-3.0 (DeepFaceLab)", default_precision="fp32",
+        notes="FP32 per roop.precision_policy.PRECISION_OVERRIDES: mixed TensorRT fails the "
+              "IoU fidelity gate (min 0.81)."),
     ModelSpec(
         name="xseg", task=ModelTask.OCCLUSION, filename="xseg.onnx",
         urls=(_CF + "xseg.onnx",),
@@ -216,7 +243,8 @@ MODEL_ZOO: dict[str, ModelSpec] = {spec.name: spec for spec in (
         inputs={"xseg_input:0": ("batch", 256, 256, 3)},
         native_resolution=256,
         description="DeepFaceLab XSeg occlusion segmentation (NHWC input)",
-        license="GPL-3.0 (DeepFaceLab)"),
+        license="GPL-3.0 (DeepFaceLab)", default_precision="fp32",
+        notes="FP32 per roop.precision_policy.PRECISION_OVERRIDES (same file as dfl_xseg_v2)."),
     ModelSpec(
         name="face_parser_bisenet34", task=ModelTask.PARSING, filename="bisenet_resnet_34.onnx",
         urls=(_FF30 + "bisenet_resnet_34.onnx",),
@@ -262,7 +290,8 @@ MODEL_ZOO: dict[str, ModelSpec] = {spec.name: spec for spec in (
         inputs={"input": (1, 3, 512, 512)},
         native_resolution=512,
         description="GPEN blind face restoration 512",
-        license="see upstream (GPEN)"),
+        license="see upstream (GPEN)", default_precision="fp16",
+        notes="Half precision (follows the global trt_precision); there is no FP32 override."),
     ModelSpec(
         name="gpen_bfr_1024", task=ModelTask.RESTORATION, filename="gpen_bfr_1024.onnx",
         urls=(_FF30 + "gpen_bfr_1024.onnx",),
@@ -290,7 +319,22 @@ MODEL_ZOO: dict[str, ModelSpec] = {spec.name: spec for spec in (
         inputs={"input": (1, 3, 512, 512)},
         native_resolution=512,
         description="RestoreFormer++ face restoration 512",
-        license="see upstream (RestoreFormer)"),
+        license="see upstream (RestoreFormer)", default_precision="fp16",
+        notes="Half precision (follows the global trt_precision). FP32 was measured on "
+              "2026-10-10 and costs 31.6 vs 21.75 ms/face; see docs/perf/restorer_fp16_islands_2026-10-10.md."),
+    ModelSpec(
+        name="codeformer_fp16", task=ModelTask.RESTORATION, filename="codeformer.fp16.onnx",
+        urls=("https://huggingface.co/netrunner-exe/Face-Upscalers-onnx/resolve/main/"
+              "codeformer.fp16.onnx",),
+        sha256="5414b2c989eb93feb7b5bccd22a1a9f3842a127411932663d03884af140a48b6",
+        size=188576500,
+        inputs={"x": ("batch", 3, 512, 512), "w": ()},
+        native_resolution=512,
+        description="CodeFormer half-precision export, the network behind UltraMax. "
+                    "Input x is float16; w (fidelity weight) is a float64 scalar",
+        license="S-Lab License 1.0 (CodeFormer)", default_precision="fp16",
+        notes="Digest and size are app/model_manifest.json's (checked against the host on "
+              "2026-10-13). Guarded at startup by aux_canary.SPECS['codeformer.fp16']."),
     # ------------------------------------------------------------- expression (LivePortrait)
     *(ModelSpec(
         name=f"liveportrait_{key}", task=ModelTask.EXPRESSION, filename=f"liveportrait_{file}",

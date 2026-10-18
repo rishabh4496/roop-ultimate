@@ -82,9 +82,18 @@ module.exports = {
       },
       path: "react-ui",
       message: [
-        "npm ci --no-audit --no-fund",
-        "npm run build"
-      ]
+        // Same sequence and reasoning as install.js: fall back when the
+        // lockfile is out of step with package.json, and fail loudly and
+        // early when vite or the build output is missing.
+        "npm ci --no-audit --no-fund || npm install --no-audit --no-fund --legacy-peer-deps",
+        "node scripts/verify-build.mjs vite",
+        "npm run build",
+        "node scripts/verify-build.mjs dist"
+      ],
+      on: [{
+        event: "/\\[build-verify\\] FAIL/",
+        break: true
+      }]
     }
   }, {
     when: "{{!exists('app/config.yaml') && exists('app/default_config.yaml')}}",
@@ -112,7 +121,7 @@ module.exports = {
     method: "shell.run",
     params: {
       path: "app",
-      message: ["python install_state.py commit --manifest .runtime-verification.json"]
+      message: ["python install_state.py commit --manifest .runtime-verification.json --require-react-build"]
     }
   }]
 }

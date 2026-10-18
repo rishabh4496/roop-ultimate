@@ -107,6 +107,37 @@ class LauncherActivationTests(unittest.TestCase):
         self.assertIn('install_state.py commit --manifest', install)
         self.assertIn('fs.rm', _read("reset.js"))
 
+    def test_frontend_build_falls_back_and_is_verified_on_every_path(self):
+        """`npm ci` exits EUSAGE when the lockfile is missing or stale, and Pinokio
+        keeps running the script afterwards, so the next line used to fail with the
+        shell's "'vite' is not recognized". Every path that builds must fall back,
+        check vite before building and the output after, and stop on the marker."""
+        fallback = 'npm ci --no-audit --no-fund || npm install --no-audit --no-fund --legacy-peer-deps'
+        for name in ('install.js', 'update.js'):
+            with self.subTest(script=name):
+                src = _read(name)
+                self.assertIn(fallback, src)
+                self.assertIn('node scripts/verify-build.mjs vite', src)
+                self.assertIn('node scripts/verify-build.mjs dist', src)
+                self.assertIn(r'\\[build-verify\\] FAIL', src)
+                self.assertLess(src.index('verify-build.mjs vite'), src.index('npm run build'))
+                self.assertLess(src.index('npm run build'), src.index('verify-build.mjs dist'))
+                # The marker is what unlocks Start; it must itself refuse a missing UI.
+                self.assertIn('install_state.py commit --manifest .runtime-verification.json'
+                              ' --require-react-build', src)
+        start = _read('start_react.js')
+        self.assertIn(fallback, start)
+        self.assertIn('node scripts/verify-build.mjs dist', start)
+        self.assertIn(r'\\[build-verify\\] FAIL', start)
+        self.assertTrue(os.path.isfile(os.path.join(_ROOT, 'react-ui', 'scripts', 'verify-build.mjs')))
+
+    def test_install_commit_depends_on_the_no_deps_installs(self):
+        """sam2 and onnxconverter-common are installed with --no-deps after torch.js;
+        a failure of those commands is invisible to Pinokio, so the manifest check
+        must import them."""
+        self.assertIn('verify_ort.py --manifest-out .runtime-verification.json --require-extras',
+                      _read('install.js'))
+
     def test_update_follows_the_checked_out_branch_not_main(self):
         """A hard-coded `checkout main`/`pull origin main` pinned every device to
         a main that was 18 commits behind the working branch."""

@@ -8,6 +8,7 @@ venv or a successful package-manager command as proof of installation.
 from __future__ import annotations
 
 import argparse
+import importlib
 import importlib.metadata
 import os
 import shutil
@@ -254,18 +255,39 @@ def verify_complete_marker() -> None:
         _fatal(str(exc))
 
 
+def verify_install_extras() -> None:
+    """The packages install.js adds with `--no-deps` after torch.js.
+
+    Pinokio keeps running a script after one of its shell commands fails, so a
+    failed `uv pip install --no-deps sam2 ...` would otherwise still end in a
+    committed install. Importing them here makes the manifest -- the only thing
+    that unlocks Start -- depend on them. SAM 2 is imported rather than looked up
+    in the distribution list: its pure-Python dependencies are installed
+    separately, and a missing one only shows up at import time.
+    """
+    for module in ("sam2", "onnxconverter_common"):
+        try:
+            importlib.import_module(module)
+        except (ImportError, OSError) as exc:
+            _fatal(f"install step did not complete: cannot import {module}: {exc}")
+        print(f"[Verify Runtime] {module:<12}: importable", flush=True)
+
+
 def _write_manifest(path: str, manifest: dict[str, Any]) -> None:
     destination = os.path.abspath(path)
     atomic_write_json(Path(destination), manifest)
     print(f"[Verify Runtime] manifest  : {destination}", flush=True)
 
 
-def verify_environment(*, require_complete: bool = False, manifest: bool = False) -> dict[str, Any]:
+def verify_environment(*, require_complete: bool = False, manifest: bool = False,
+                       require_extras: bool = False) -> dict[str, Any]:
     if require_complete:
         verify_complete_marker()
     app_dir = os.path.dirname(os.path.abspath(__file__))
     detect_shadowing(app_dir)
     verify_numpy()
+    if require_extras:
+        verify_install_extras()
     hardware = _hardware()
     print(f"[Verify Runtime] hardware   : {hardware.vendor}/{hardware.system}", flush=True)
     ort_distribution = verify_distribution_contract(hardware)
@@ -347,10 +369,13 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--require-complete", action="store_true")
     parser.add_argument("--manifest-out", default=None)
+    parser.add_argument("--require-extras", action="store_true",
+                        help="also require sam2 and onnxconverter_common (install/update only)")
     args = parser.parse_args(argv)
     result = verify_environment(
         require_complete=args.require_complete,
         manifest=args.manifest_out is not None,
+        require_extras=args.require_extras,
     )
     if args.manifest_out:
         _write_manifest(args.manifest_out, result)

@@ -23,6 +23,10 @@ from face_engine.utils.downloads import download_file, verify_file
 
 Shape = tuple[object, ...]  # ints for fixed dims, str for symbolic ones
 
+# The three precisions the app's TensorRT policy knows (roop/precision_policy.py
+# PRECISIONS). "mixed" is TensorRT's FP16 build with FP32 kept where it must be.
+PRECISIONS = ("fp32", "fp16", "mixed")
+
 
 class ModelTask(str, Enum):
     """Pipeline stage a model serves."""
@@ -61,6 +65,11 @@ class ModelSpec(BaseModel):
         dynamic_axes: True when any input dimension is symbolic.
         description: Human-readable summary.
         license: Upstream license identifier or note.
+        default_precision: Precision the app runs this model at by default, or None
+            when it simply follows the global ``trt_precision`` setting. It is a
+            declaration of what ``roop.precision_policy`` does, not a control:
+            changing it here changes nothing at runtime, and
+            ``app/tests/test_model_registry_precision.py`` fails when the two disagree.
         notes: Provenance and caveats.
     """
 
@@ -77,7 +86,15 @@ class ModelSpec(BaseModel):
     parameters_schema: dict[str, Any] = Field(default_factory=dict)
     description: str = ""
     license: str = "unknown"
+    default_precision: str | None = None
     notes: str = ""
+
+    @field_validator("default_precision")
+    @classmethod
+    def _check_precision(cls, value: str | None) -> str | None:
+        if value is not None and value not in PRECISIONS:
+            raise ValueError(f"default_precision must be one of {PRECISIONS}, got {value!r}")
+        return value
 
     @field_validator("sha256")
     @classmethod
@@ -204,6 +221,11 @@ class ModelRegistry:
                 "pinned": s.pinned,
                 "downloadable": s.downloadable,
                 "description": s.description,
+                "sha256": s.sha256,
+                "size": s.size,
+                "license": s.license,
+                "default_precision": s.default_precision,
+                "inputs": {k: list(v) for k, v in s.inputs.items()},
             }
             for s in self._specs.values()
         }
