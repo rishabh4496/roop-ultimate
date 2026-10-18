@@ -104,6 +104,12 @@ face_engine/tests/sample_*.mp4
 .githooks/*
 !.githooks/pre-commit
 
+# Repo-root scratch output. 86ace34 committed four scratch_*.log files here. Anchored to
+# the root on purpose: docs/perf/**/*.log are deliberate evidence logs (the changelog
+# cites them) and must stay trackable. .githooks/pre-commit refuses these if staged.
+/scratch_*
+/*.log
+
 # Diagnostic / session scratch directories (created during investigations)
 scratch/
 temp_frames_analysis/

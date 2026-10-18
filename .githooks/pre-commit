@@ -5,6 +5,22 @@
 # CI (tools/gen_update_manifest.py --check) rejects the commit otherwise.
 set -e
 root="$(git rev-parse --show-toplevel)"
+
+# Refuse scratch output at the repo root (scratch_*, *.log). 86ace34 committed four of
+# them because nothing stopped `git add -A`. Only ADDED/MODIFIED paths are checked, so
+# removing one (git rm --cached) is always allowed, and docs/perf/**/*.log -- deliberate
+# evidence logs, not at the root -- are unaffected.
+scratch="$(git diff --cached --name-only --diff-filter=AM | grep -E '^(scratch_[^/]*|[^/]+\.log)$' || true)"
+if [ -n "$scratch" ]; then
+  echo "pre-commit: refusing to commit scratch output at the repo root:" >&2
+  echo "$scratch" | sed 's/^/  /' >&2
+  echo "  Move it under docs/perf/<topic>/ if it is evidence the changelog cites," >&2
+  echo "  otherwise: git restore --staged <file>   (it is gitignored from now on)" >&2
+  exit 1
+fi
+# Test seam: tests/test_precommit_scratch_guard.py runs the guard alone.
+[ "${ROOP_PRECOMMIT_GUARD_ONLY:-}" = "1" ] && exit 0
+
 py=""
 for candidate in "$root/app/env/Scripts/python.exe" "$root/app/env/bin/python" python3 python; do
   if command -v "$candidate" >/dev/null 2>&1 || [ -x "$candidate" ]; then
