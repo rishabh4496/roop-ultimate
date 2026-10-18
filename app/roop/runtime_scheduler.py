@@ -44,6 +44,18 @@ from roop.runtime_optimizer import (
 _MAX_STREAM_INFLIGHT = 4
 
 
+def governor_floor_gb() -> float:
+    """Free VRAM (GiB) under which the stream throttles and flushes the cache.
+
+    1.2 by default; `ROOP_GOVERNOR_MIN_FREE_GB=0` turns the absolute floor off (the
+    proportional `vram_margin_ratio` still applies)."""
+    raw = os.environ.get("ROOP_GOVERNOR_MIN_FREE_GB", "")
+    try:
+        return max(0.0, float(raw)) if raw.strip() else 1.2
+    except ValueError:
+        return 1.2
+
+
 def _number(value: Any, default: float = 0.0) -> float:
     try:
         return float(value)
@@ -446,13 +458,35 @@ class UnifiedRuntimeScheduler:
         self._last_snapshot = self.snapshot()
         return self._last_snapshot
 
+    def _flush_vram_cache(self) -> None:
+        """`torch.cuda.empty_cache()` at most once every 5 s: it synchronises the device."""
+        now = time.perf_counter()
+        if now - getattr(self, "_last_flush", -1e9) < 5.0:
+            return
+        self._last_flush = now
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception as _degrade_error:
+            _swallowed("roop/runtime_scheduler.py:flush_vram_cache", _degrade_error,
+                       "cache flush skipped")
+
     def _update_admission(self, resource: Mapping[str, Any]) -> None:
         vram_total = _number(resource.get("vram_total_gb"))
         vram_free = _number(resource.get("vram_free_gb"))
         ram_total = _number(resource.get("ram_total_gb"))
         ram_available = _number(resource.get("ram_available_gb"))
+        # An ABSOLUTE floor beside the proportional margin: on a 12 GB card the ratio
+        # leaves several GB, on a small one it can leave less than a single 4K frame's
+        # working set. Under the floor the cache is flushed (the allocator holds freed
+        # blocks the next frame would reuse, so "free" understates what is available).
+        floor_gb = governor_floor_gb()
+        below_floor = bool(vram_total and floor_gb > 0 and vram_free < floor_gb)
+        if below_floor:
+            self._flush_vram_cache()
         vram_pressure = bool(vram_total and
-                             vram_free <= vram_total * self.budget.vram_margin_ratio)
+                             vram_free <= vram_total * self.budget.vram_margin_ratio) or below_floor
         ram_pressure = bool(ram_total and
                             ram_available <= ram_total * self.budget.ram_margin_ratio)
         queue_depths = resource.get("queue_depths") or {}
@@ -483,6 +517,13 @@ class UnifiedRuntimeScheduler:
             }
             with self._lock:
                 self.metrics.actions.append(action)
+            if new < old:
+                from roop import pipeline_status
+                pipeline_status.governor_throttle(
+                    reason=("vram_floor" if below_floor else "resource_pressure"),
+                    in_flight_before=old, in_flight_after=new,
+                    vram_free_gb=round(vram_free, 3), vram_floor_gb=floor_gb,
+                    queue_pressure=bool(queue_pressure), ram_pressure=bool(ram_pressure))
             if self.adaptive is not None:
                 try:
                     self.adaptive.tuning = self.adaptive.tuning  # keep ownership explicit

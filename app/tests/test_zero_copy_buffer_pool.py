@@ -392,7 +392,27 @@ class TestOrtBinding(unittest.TestCase):
             out = slot.run(sess, sess.io_binding(), 'x', 'y', output_is_static=False)
             self.assertNotEqual(out.data_ptr(), slot.output.data_ptr(), 'dynamic output must not be Torch-owned')
             got = out.cpu().numpy()
-        self.assertTrue(np.array_equal(got, self._host(sess, x)))
+        want = self._host(sess, x)
+        self.assertTrue(np.array_equal(got, want),
+                        f"shape {got.shape} vs {want.shape}, dtype {got.dtype}, "
+                        f"max|d|={np.abs(got - want).max()}, nan={np.isnan(got).sum()}, "
+                        f"got[0,0,0,:3]={got[0,0,0,:3]} want={want[0,0,0,:3]}")
+
+    def test_the_ort_owned_copy_is_complete_before_torch_reads_it(self):
+        """Regression: `cudaMemcpy` D2D does not block the host, and the ring's worker streams
+        do not wait for the legacy default stream, so ~5% of calls (17/300 single-threaded)
+        returned stale memory. Many short calls is how that shows."""
+        sess = _cuda_session('N')
+        iob = sess.io_binding()
+        rng = np.random.RandomState(5)
+        bad = 0
+        for i in range(250):
+            x = rng.randn(1, 3, R, R).astype(np.float32)
+            with self.pool.lease(R, frame_idx=i) as slot:
+                slot.load(torch.from_numpy(x).cuda())
+                got = slot.run(sess, iob, 'x', 'y', output_is_static=False).cpu().numpy()
+            bad += int(not np.array_equal(got, 2 * x + 1))
+        self.assertEqual(bad, 0, f"{bad}/250 ORT-owned outputs were read before the copy finished")
 
     def test_many_threads_on_four_slots_never_see_each_others_pixels(self):
         threads, rounds, errors = 8, 25, []

@@ -693,3 +693,21 @@ These are planning estimates, not guarantees.
 The actual count depends on test failures, architecture complexity, and whether major bottlenecks require redesign.
 
 Do NOT compress phases merely to finish faster.
+
+---
+
+# STAGE 4 (2026-10-18) — pipeline governor, segmented render, status channel
+
+Record: `docs/CHANGELOG.md` (2026-10-18, "Stage 4") and `docs/perf/stage4_segments_governor_2026-10-18.md`.
+
+* **Not adopted: a single CUDA owner thread for every render.** The ordered one-owner stream already
+  exists for `ROOP_STAB_STREAMING=1` (`UnifiedRuntimeScheduler.run`, bounded to 4 in-flight frames by
+  `_MAX_STREAM_INFLIGHT`); measured 3.88 fps against 13.4 fps for the threaded path (3.4x slower,
+  2026-09-24, 4070, d4, 600 frames). Forcing it everywhere is a regression, not a governor.
+* **Added to the stream's governor:** an absolute free-VRAM floor (`ROOP_GOVERNOR_MIN_FREE_GB`, default
+  1.2 GiB; 0 = off) beside the proportional margin, a rate-limited `torch.cuda.empty_cache()` under it,
+  and a `VRAM_GOVERNOR_THROTTLE` event whenever in-flight frames are reduced.
+* **Added:** `roop/pipeline_status.py` + `GET /api/v1/pipeline/status` + `WS /ws/v1/pipeline/status`
+  (STAGE_COMPILING_TRT, STAGE_RUNNING_CANARY, VRAM_GOVERNOR_THROTTLE, SEGMENT_PROGRESS, SEGMENTS_JOINED).
+* **Fixed:** split renders overwrote each other's output (`clear_output`, template naming) —
+  `roop/segment_output.py`, `core.final_video_destination`, `api._clear_output_folder`, `routes_queue`.

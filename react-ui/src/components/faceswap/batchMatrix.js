@@ -302,6 +302,11 @@ export function stageSegments({
   if (totalFrames <= 1) return { jobs: [], error: ERR_SPLIT_SINGLE_FRAME };
   const segs = Math.max(2, Math.min(segmentCount, 32));
   const step = Math.ceil(totalFrames / segs);
+  // One id per split: the backend names each slice by (index, range) so none overwrites
+  // another, and joins the group once every slice has completed.
+  const group = `seg-${Date.now().toString(36)}-${targetIndex}`;
+  let planned = 0;
+  while (planned < segs && planned * step + 1 <= totalFrames) planned += 1;
   const jobs = [];
   for (let i = 0; i < segs; i++) {
     const fs = i * step + 1;
@@ -312,6 +317,7 @@ export function stageSegments({
       ...stagedJob({ target, targetIndex, built, sourceFacesInfo,
         frameStart: fs, frameEnd: fe, totalFrames: fe - fs + 1,
         label: `Segment ${i + 1}/${segs} (${fs}-${fe}) | ${target.name}` }),
+      segment: { group, index: i + 1, count: planned },
       source_name: sourceFacesInfo[built.primarySourceIdx]?.name
         || `Faceset #${built.primarySourceIdx + 1}`,
     });
@@ -333,6 +339,7 @@ export function queueRequestFromStagedJobs(stagedJobs = []) {
     payload: j.payload,
     frame_start: j.frame_start,
     frame_end: j.frame_end,
+    ...(j.segment ? { segment: j.segment } : {}),
     label: j.label,
   }));
 }

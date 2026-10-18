@@ -1870,12 +1870,7 @@ def batch_process(output_method, files:list[ProcessEntry], use_new_method) -> No
                             _remove_file_retry(video_file_name)
                     else:
                         skip_audio = roop.globals.skip_audio
-                        fixed_output = getattr(roop.globals, '_project_output_file', None)
-                        destination = (
-                            os.path.join(roop.globals.output_path, fixed_output)
-                            if fixed_output and index == 0
-                            else util.replace_template(video_file_name, index=index)
-                        )
+                        destination = final_video_destination(video_file_name, v.filename, index)
                         pathlib.Path(os.path.dirname(destination)).mkdir(parents=True, exist_ok=True)
 
                         if not skip_audio:
@@ -1958,6 +1953,24 @@ def batch_process(output_method, files:list[ProcessEntry], use_new_method) -> No
         if '_batch_gc_was_enabled' in locals() and _batch_gc_was_enabled:
             import gc
             gc.enable()
+
+
+def final_video_destination(temp_video: str, source_path: str, index: int = 0) -> str:
+    """Where the finished video of `source_path` is written.
+
+    A queue slice of a split render (Batch Matrix "split into N", `roop.globals._segment_spec`)
+    is named by its position and range, never by the output template: the template knows neither,
+    so slices collided and only the last survived. A project's fixed output name applies to the
+    first file; everything else goes through the output template."""
+    segment_spec = getattr(roop.globals, '_segment_spec', None)
+    if segment_spec is not None:
+        from roop import segment_output
+        return segment_output.segment_destination(
+            roop.globals.output_path, source_path, segment_spec, os.path.splitext(temp_video)[1])
+    fixed_output = getattr(roop.globals, '_project_output_file', None)
+    if fixed_output and index == 0:
+        return os.path.join(roop.globals.output_path, fixed_output)
+    return util.replace_template(temp_video, index=index)
 
 
 def end_processing(msg:str):

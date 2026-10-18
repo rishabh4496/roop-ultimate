@@ -98,7 +98,8 @@ def test_chunk_project_is_local_and_audio_disabled(tmp_path):
 # worker is its OWN process (torch streams, the caching allocator and cuBLAS workspaces
 # are process-private), pinned to exactly one physical GPU and addressing it as device
 # 0, and no GPU ever runs two chunks at once.
-def _stub_render_distributed(monkeypatch, tmp_path, gpus, n_chunks, render_seconds=0.05):
+def _stub_render_distributed(monkeypatch, tmp_path, gpus, n_chunks, render_seconds=0.05,
+                             verify_chunks=lambda paths: []):
     import sys
     import threading
     import time
@@ -121,6 +122,7 @@ def _stub_render_distributed(monkeypatch, tmp_path, gpus, n_chunks, render_secon
     monkeypatch.setattr(dist, "_project_for_chunk", project_for_chunk)
     monkeypatch.setattr(dist, "_export_elementary", lambda c, o, codec: Path(o).write_bytes(b"e"))
     monkeypatch.setattr(dist, "_signature", lambda path: ("h264", 1920, 1080))
+    monkeypatch.setattr(dist, "_verify_chunks", verify_chunks)
     monkeypatch.setattr(dist, "_duration",
                         lambda path: float(sum(c.frames for c in chunks)) / 10
                         if path.endswith("joined.mp4") or path.endswith("final.mp4")
@@ -189,3 +191,24 @@ def test_workers_never_outnumber_chunks_and_never_share_a_gpu(monkeypatch, tmp_p
     assert len(calls) == 2
     assert len({c["env"]["CUDA_VISIBLE_DEVICES"] for c in calls}) == 2   # one chunk per GPU
     assert overlaps == []
+
+
+def test_unusable_chunks_stop_the_join_and_are_kept(monkeypatch, tmp_path):
+    """A worker that 'finished' with a truncated file must stop the run BEFORE the concat list
+    is written, with the chunk workspace left in place for inspection."""
+    import pytest
+    with pytest.raises(RuntimeError, match="chunk\(s\) unusable"):
+        _stub_render_distributed(monkeypatch, tmp_path, ["GPU-a"], 2,
+                                 verify_chunks=lambda paths: ["zero bytes: chunk_00001_render.mp4"])
+    workspace = tmp_path / "w"
+    assert workspace.is_dir() and any(workspace.iterdir()), "intermediates must be retained"
+    assert not (workspace / "concat.txt").exists(), "no join list for unusable chunks"
+
+
+def test_the_real_chunk_check_refuses_missing_empty_and_non_video_files(tmp_path):
+    empty = tmp_path / "empty.mp4"
+    empty.write_bytes(b"")
+    junk = tmp_path / "junk.mp4"
+    junk.write_bytes(b"x" * 500)
+    reasons = dist._verify_chunks([str(empty), str(junk), str(tmp_path / "gone.mp4")])
+    assert len(reasons) == 3

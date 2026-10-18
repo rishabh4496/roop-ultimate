@@ -45,6 +45,22 @@ Per-face savings do not become throughput: the render is GPU-bound (AGENTS "stan
 3,800 faces at 20 threads x 100 and 12 threads x 150 plus 8 x 30, live TRT engine, 0 hangs, 0 mismatches vs each
 face's own first pass. GPEN Realistic / RF++: 4 arms x 8 threads x 40 each, 0 mismatches.
 
+### Correction (found by the Stage 4 full-suite run, same day)
+
+The stress numbers above compared each face with ITS OWN first pass, which a systematic race would
+reproduce, and the UltraMax ring path had a real one: `enhance_common.ort_cuda_output_to_torch` copies the
+ORT-owned output with `cudaMemcpy` device-to-device, which does not block the host and runs on the legacy
+default stream that the ring's non-blocking worker streams do not wait for, so Torch sometimes read the
+allocation before the copy landed. **~5% of dynamic-output calls returned stale data** (17/300 single-threaded,
+115/2400 at 8 threads on a synthetic graph). It affected only the ORT-owned (dynamic) output path, i.e.
+UltraMax on the ring (CUDA EP by default, TensorRT only when opted in); GPEN Realistic / RF++ bind a static
+output by pointer and do not use that copy. Fixed with a `cudaStreamSynchronize(0)` after the copy (0 of 2,700
+afterwards), regression test `test_the_ort_owned_copy_is_complete_before_torch_reads_it` (fails 19/250 with the
+sync removed). Re-verified after the fix: UltraMax ring vs old CUDA path 0 differing subpixels; TensorRT ring,
+12 threads x 50 faces against a single-thread reference, 0 mismatches. The end-to-end A/B below was rendered
+BEFORE the fix; its swap counts matched but its ring-arm pixels carried the race, so treat its fps as
+indicative only (the fix adds one stream-0 wait per face).
+
 ## End to end (single/s7.mp4, 600 frames, UltraMax + realswap + RealityUX, config.yaml, 20 threads, TRT mixed)
 
 Counterbalanced H H R R H R R H after a discarded warm-up (harness elapsed incl. setup, so absolute fps is low):

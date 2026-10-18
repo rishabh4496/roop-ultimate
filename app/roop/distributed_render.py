@@ -252,6 +252,13 @@ def _export_elementary(container: str, output: str, codec: str) -> None:
           "-f", fmt, output], timeout=300)
 
 
+def _verify_chunks(paths: list[str]) -> list[str]:
+    """Reasons the rendered chunks cannot be joined (empty = fine): missing, zero bytes, no
+    decodable video stream. Shared with the queue's segment join (`roop.segment_output`)."""
+    from roop import segment_output
+    return segment_output.verify_segments(paths)
+
+
 def render_distributed(project_path: str, output: str, *, target_seconds: float = 10.0,
                        work_dir: str | None = None) -> str:
     if target_seconds <= 0:
@@ -348,6 +355,13 @@ def render_distributed(project_path: str, output: str, *, target_seconds: float 
     if failures:
         raise RuntimeError(f"{len(failures)} chunk(s) failed; intermediates kept in {root}: "
                            f"{failures[0]}")
+    # Every chunk must exist, be non-empty and hold a decodable video stream BEFORE the join
+    # list is written: a worker that "finished" with a truncated file would otherwise be
+    # discovered only by the frame-count check after a full concat.
+    unusable = _verify_chunks(containers)
+    if unusable:
+        raise RuntimeError("chunk(s) unusable; intermediates retained in %s: %s"
+                           % (root, "; ".join(unusable)))
     signatures = [_signature(path) for path in containers]
     if len(set(signatures)) != 1:
         raise RuntimeError(f"worker streams differ; cannot concat-copy: {signatures}")

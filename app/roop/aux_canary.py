@@ -425,7 +425,16 @@ def check_session(stem: str, session, model_file: str,
     """Verdict for the live *session*: cached by engine hash, otherwise computed against a transient FP32 reference.
 
     Never raises. A check that cannot run is returned as skipped (passed=None) and is not cached.
+    Announced on the pipeline status channel (STAGE_RUNNING_CANARY) while it runs: a first-time
+    check builds a reference engine and can take minutes with no frame counter to show for it.
     """
+    from roop import pipeline_status
+    with pipeline_status.stage(pipeline_status.STAGE_RUNNING_CANARY, model=stem):
+        return _check_session(stem, session, model_file, reference_factory)
+
+
+def _check_session(stem: str, session, model_file: str,
+                   reference_factory: Optional[Callable[[], Any]] = None) -> CanaryResult:
     tag = "aux:%s" % stem
     if not enabled():
         return CanaryResult(tag, None, "disabled by %s=0" % CANARY_ENV)

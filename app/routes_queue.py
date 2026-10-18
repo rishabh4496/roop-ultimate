@@ -156,7 +156,10 @@ def _state(job):
     return current
 
 
-def _set_state(job, new_state):
+def _set_state(job, new_state, persist=False):
+    """Move `job` to `new_state`. `persist=True` also writes the queue file, for the
+    transitions no caller saves right after (PROCESSING, PAUSED / PAUSE_REQUESTED):
+    a crash in any of the ten states must find that state on disk, not the previous one."""
     if new_state not in JOB_STATES:
         raise ValueError(f"unknown queue state: {new_state}")
     job["state"] = new_state
@@ -165,6 +168,9 @@ def _set_state(job, new_state):
     progress = job.setdefault("progress", _empty_progress())
     progress["phase"] = new_state
     progress["updated_at"] = time.time()
+    if persist:
+        with _lock:
+            _save()
 
 
 def _progress_snapshot():
@@ -323,6 +329,20 @@ def _job_selection(payload: dict) -> dict:
     return selection
 
 
+def _clean_segment(value):
+    """A well-formed segment marker or None. Never raises: a bad marker is an ordinary job."""
+    if not isinstance(value, dict):
+        return None
+    try:
+        group = str(value.get("group") or "").strip()
+        index, count = int(value.get("index")), int(value.get("count"))
+    except (TypeError, ValueError):
+        return None
+    if not group or index < 1 or count < 2 or index > count:
+        return None
+    return {"group": group, "index": index, "count": count}
+
+
 def _normalize_job(payload: dict) -> dict:
     selection = _job_selection(payload)
     return {
@@ -341,6 +361,9 @@ def _normalize_job(payload: dict) -> dict:
         "request_id": selection.get("request_id"),
         "frame_start": payload.get("frame_start"),
         "frame_end": payload.get("frame_end"),
+        # {"group", "index", "count"} when this job is one slice of a split render
+        # (Batch Matrix "split into N"); None for an ordinary job.
+        "segment": _clean_segment(payload.get("segment")),
         "label": str(payload.get("label") or ""),
         "status": "pending",
         "error": "",
@@ -548,6 +571,103 @@ def _apply_segment(entry, job):
         entry.startframe, entry.endframe = entry.endframe, entry.startframe
 
 
+def _segment_spec_for(job):
+    """The `SegmentSpec` for a job that is one slice of a split render, else None.
+
+    Marked jobs (Batch Matrix stamps `segment`) use their marker. An unmarked job with an
+    explicit frame range that shares its target with other ranged jobs is treated as a slice
+    too, so a hand-built or older queue cannot overwrite itself either; its index is its
+    position by `frame_start`. Call with `_lock` held."""
+    from roop.segment_output import SegmentSpec
+    fs, fe = job.get("frame_start"), job.get("frame_end")
+    if fs is None or fe is None:
+        return None
+    seg = job.get("segment")
+    if seg:
+        return SegmentSpec(seg["group"], seg["index"], seg["count"], int(fs), int(fe))
+    key = job.get("target_media_id") or job.get("target_name")
+    peers = sorted((j for j in _queue["jobs"]
+                    if (j.get("target_media_id") or j.get("target_name")) == key
+                    and j.get("frame_start") is not None and j.get("frame_end") is not None),
+                   key=lambda j: (int(j["frame_start"]), j.get("added", 0)))
+    if len(peers) < 2:
+        return None
+    index = next((i for i, j in enumerate(peers, 1) if j["id"] == job["id"]), None)
+    if index is None:
+        return None
+    return SegmentSpec("auto:%s" % key, index, len(peers), int(fs), int(fe))
+
+
+def _announce_segment(job, spec, state, **detail):
+    try:
+        from roop import pipeline_status
+        pipeline_status.segment_update(spec.group, spec.index, spec.count, state,
+                                       start_frame=spec.start_frame, end_frame=spec.end_frame,
+                                       job_id=job.get("id"), **detail)
+    except Exception as exc:
+        _swallowed("routes_queue.py:announce_segment", exc, "status event dropped")
+
+
+def _segment_path(job, spec):
+    from roop.segment_output import segment_destination
+    ext = "." + str(getattr(roop_globals.CFG, "output_video_format", "mp4") or "mp4")
+    return segment_destination(roop_globals.output_path, job.get("target_name") or "output", spec, ext)
+
+
+def _join_if_group_done(job_id):
+    """When every slice of `job_id`'s split is COMPLETED, join them (stream copy).
+
+    The numbered segments stay on disk; the join is `<stem>_joined.mp4` beside them with its
+    `<stem>_concat_list.txt`. A failed join is recorded on the job and announced, never raised:
+    the slices are finished work and the user can still join them by hand."""
+    from roop import segment_output
+    with _lock:
+        job = _find(job_id)
+        seg = (job or {}).get("segment")
+        if not seg:
+            return
+        group = [j for j in _queue["jobs"] if (j.get("segment") or {}).get("group") == seg["group"]]
+        if len(group) < seg["count"] or any(_state(j) != "COMPLETED" for j in group):
+            return
+        group.sort(key=lambda j: j["segment"]["index"])
+        specs = [_segment_spec_for(j) for j in group]
+        paths = [_segment_path(j, s) for j, s in zip(group, specs)]
+        stem = segment_output.safe_stem(group[0].get("target_name") or "output")
+        ext = os.path.splitext(paths[0])[1]
+        ranges = [(s.start_frame, s.end_frame) for s in specs]
+        media_id = group[0].get("target_media_id")
+        source, total = None, 0
+        for entry in list_files_process:
+            if str(getattr(entry, "media_id", "") or "") == str(media_id or "__none__") or \
+                    os.path.basename(getattr(entry, "filename", "") or "") == group[0].get("target_name"):
+                source, total = getattr(entry, "filename", None), int(getattr(entry, "total_frames", 0) or 0)
+                break
+        out_dir = roop_globals.output_path
+    use_source_audio = bool(source and segment_output.covers_whole_source(ranges, total)
+                            and not getattr(roop_globals, "skip_audio", False))
+    try:
+        joined = segment_output.join_segments(
+            paths, segment_output.joined_path(out_dir, stem, ext),
+            segment_output.concat_list_path(out_dir, stem),
+            source_media=source, source_audio=use_source_audio)
+        result = {"ok": True, "output": joined, "segments": paths, "source_audio": use_source_audio}
+        _say(f"[Queue] joined {len(paths)} segments -> {os.path.basename(joined)}")
+    except Exception as exc:
+        _swallowed("routes_queue.py:join_segments", exc, "segments kept, join failed")
+        result = {"ok": False, "error": str(exc), "segments": paths}
+        _say(f"[Queue] segments kept but NOT joined: {exc}")
+    with _lock:
+        for j in group:
+            j["group_join"] = result
+        _save()
+    try:
+        from roop import pipeline_status
+        pipeline_status.segments_joined(seg["group"], result["ok"],
+                                        **{k: v for k, v in result.items() if k != "ok"})
+    except Exception as exc:
+        _swallowed("routes_queue.py:segments_joined", exc, "status event dropped")
+
+
 def _next_pending():
     for job in _queue["jobs"]:
         if _state(job) in RUNNABLE_STATES:
@@ -690,22 +810,32 @@ def _run_one(job):
     if project_id:
         payload["_project_id"] = project_id
 
-    _set_state(job, "PROCESSING")
+    _set_state(job, "PROCESSING", persist=True)
     job["processing_started"] = True
     job["progress"] = _empty_progress()
     pause_controller.start()
     _progress.update({"processing": True, "paused": False, "pause_requested": False, "progress": 0.0,
                       "desc": "Starting queued job…", "error": ""})
     before = _snapshot_outputs() if _snapshot_outputs else None
-    _run_swap(payload)          # blocking; clears processing in its own finally
+    # A slice of a split render is named by its position and range and never clears
+    # the output folder (core.batch_process_regular / api._run_swap read this).
+    with _lock:
+        spec = _segment_spec_for(job)
+    roop_globals._segment_spec = spec
+    if spec is not None:
+        _announce_segment(job, spec, "PROCESSING")
+    try:
+        _run_swap(payload)          # blocking; clears processing in its own finally
 
-    # Auto-Fallback Enhancer Retry on Error
-    if _progress.get("error") and (payload.get("auto_fallback") or job.get("auto_fallback")):
-        err_msg = str(_progress["error"])
-        if payload.get("enhancer") != "None":
-            _progress.update({"error": "", "desc": f"Auto-retrying with enhancer=None due to error: {err_msg}"})
-            payload["enhancer"] = "None"
-            _run_swap(payload)
+        # Auto-Fallback Enhancer Retry on Error
+        if _progress.get("error") and (payload.get("auto_fallback") or job.get("auto_fallback")):
+            err_msg = str(_progress["error"])
+            if payload.get("enhancer") != "None":
+                _progress.update({"error": "", "desc": f"Auto-retrying with enhancer=None due to error: {err_msg}"})
+                payload["enhancer"] = "None"
+                _run_swap(payload)
+    finally:
+        roop_globals._segment_spec = None
 
     if before is not None and _outputs_since:
         try:
@@ -818,6 +948,13 @@ def _loop(gen):
                 _queue["current"] = None
                 _save()
             _say(f'[Queue] "{job["target_name"]}" -> {status}' + (f" ({error})" if error else ""))
+            with _lock:
+                final_job = _find(job["id"])
+                spec = _segment_spec_for(final_job) if final_job else None
+            if spec is not None:
+                _announce_segment(final_job, spec, status, error=error)
+                if status == "COMPLETED":
+                    _join_if_group_done(job["id"])
         except Exception:
             # Bookkeeping must never end the batch either — the job itself is
             # over, and the remaining jobs are the whole point of a queue.
@@ -866,7 +1003,7 @@ def queue_pause():
     with _lock:
         current = _find(_queue["current"]) if _queue["current"] else None
         if current is not None:
-            _set_state(current, "PAUSED" if pause["acknowledged"] else "PAUSE_REQUESTED")
+            _set_state(current, "PAUSED" if pause["acknowledged"] else "PAUSE_REQUESTED", persist=True)
             if pause["acknowledged"] and _set_project_state and current.get("project_id"):
                 try:
                     _set_project_state(current["project_id"], "PAUSED")

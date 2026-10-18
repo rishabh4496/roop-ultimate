@@ -546,7 +546,11 @@ def warmup_session(session, tag: str = "model",
                 return False
             feed[meta.name] = np.zeros(shape, dtype=_numpy_dtype(meta))
         started = time.time()
-        session.run(None, feed)
+        # TensorRT builds (or loads) its engine inside this first call; there is no frame
+        # counter yet, so say so on the status channel instead of looking hung.
+        from roop import pipeline_status
+        with pipeline_status.stage(pipeline_status.STAGE_COMPILING_TRT, model=tag):
+            session.run(None, feed)
         elapsed = time.time() - started
     except Exception as exc:
         print("[Warmup] %s: dummy pass FAILED (%s: %s). The first real frame "

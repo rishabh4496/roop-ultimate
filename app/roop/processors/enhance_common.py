@@ -201,6 +201,19 @@ def ort_cuda_output_to_torch(ort_value, torch_dtype):
                         ctypes.c_size_t(nbytes), ctypes.c_int(3))
     if rc != 0:
         return None
+    # `cudaMemcpy` device-to-device does NOT block the host (CUDA docs: no host-side
+    # synchronization for D2D), and it runs on the legacy default stream, which a
+    # non-blocking Torch stream (the zero-copy ring's worker streams) does not wait for.
+    # Without this, Torch read `out` before the copy landed: ~5% of calls returned the
+    # previous contents of that allocation (reproduced: 17/300 single-threaded, 115/2400
+    # at 8 threads). Waiting on stream 0 waits for exactly this copy.
+    sync = getattr(lib, "cudaStreamSynchronize", None)
+    if sync is not None:
+        sync.restype = ctypes.c_int
+        if sync(ctypes.c_void_p(0)) != 0:
+            torch.cuda.synchronize()
+    else:
+        torch.cuda.synchronize()
     return out
 
 

@@ -779,6 +779,27 @@ def _project_face_bank(target_path):
         return {"clusters": [], "scene_cuts": []}
 
 
+def _clear_output_folder(has_checkpoint=False):
+    """Apply "Clear output folder before each run". Returns True when it cleared.
+
+    Never for a project that owns committed segments (its partial output is the only safe
+    resume prefix) and never for one slice of a split render: the earlier slices in the
+    folder are finished deliverables, and with `clear_output` on (the default) each slice used
+    to wipe the previous ones so only the last survived."""
+    if not roop_globals.CFG.clear_output:
+        return False
+    spec = getattr(roop_globals, "_segment_spec", None)
+    if spec is not None:
+        print(f"[Segments] keeping the output folder: segment {spec.index}/{spec.count} of a "
+              f"split render (clear_output is skipped)", flush=True)
+        return False
+    if has_checkpoint:
+        return False
+    shutil.rmtree(roop_globals.output_path, ignore_errors=True)
+    os.makedirs(roop_globals.output_path, exist_ok=True)
+    return True
+
+
 def _create_processing_project(payload, job_id=None):
     target_index = payload.get("target_index", state.selected_target_index)
     try:
@@ -5014,9 +5035,7 @@ def _run_swap(payload):
             except Exception as _degrade_error:
                 _swallowed("api.py:3061", _degrade_error, "fallback continued")
                 pass
-        if roop_globals.CFG.clear_output and not has_checkpoint:
-            shutil.rmtree(roop_globals.output_path, ignore_errors=True)
-            os.makedirs(roop_globals.output_path, exist_ok=True)
+        _clear_output_folder(has_checkpoint)
 
         enhancer = payload.get("enhancer", roop_globals.CFG.selected_enhancer)
         selection_state = processing_request["selection_state"]
@@ -5810,6 +5829,7 @@ import routes_trt_cache as _routes_trt_cache
 import routes_recognition as _routes_recognition
 import routes_autotune as _routes_autotune
 import routes_telemetry as _routes_telemetry
+import routes_pipeline_status as _routes_pipeline_status
 import routes_frames as _routes_frames
 import routes_models as _routes_models
 import routes_model_catalog as _routes_model_catalog
@@ -5830,6 +5850,7 @@ app.include_router(_routes_recognition.router)
 app.include_router(_routes_identity.router)
 app.include_router(_routes_autotune.router)
 app.include_router(_routes_telemetry.router)
+app.include_router(_routes_pipeline_status.router)
 app.include_router(_routes_frames.router)
 app.include_router(_routes_models.router)
 app.include_router(_routes_model_catalog.router)

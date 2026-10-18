@@ -149,6 +149,30 @@ group('Recipe matrix: segment splitter');
     assert.deepEqual(five.map((j) => [j.frame_start, j.frame_end]),
       [[1, 24], [25, 48], [49, 72], [73, 96], [97, 120]]);
   });
+  check('every slice carries ONE shared group, its 1-based index and the real slice count', () => {
+    const groups = new Set(jobs.map((j) => j.segment.group));
+    assert.equal(groups.size, 1);
+    assert.deepEqual(jobs.map((j) => [j.segment.index, j.segment.count]),
+      [[1, 4], [2, 4], [3, 4], [4, 4]]);
+  });
+  check('the count is the number of slices actually built, not the number asked for', () => {
+    // 3 frames asked to split 32 ways: step = ceil(3/32) = 1, so only 3 slices exist.
+    const { jobs: few } = stageSegments({
+      ...common(), targets: [{ ...TARGETS[1], frames: 3, end_frame: 3 }], targetIndex: 0, segmentCount: 32 });
+    assert.ok(few.length >= 2);
+    assert.ok(few.every((j) => j.segment.count === few.length), JSON.stringify(few.map((j) => j.segment)));
+  });
+  check('the queue request keeps the marker for a slice and adds none to an ordinary job', () => {
+    const body = queueRequestFromStagedJobs(jobs);
+    assert.deepEqual(body.map((b) => b.segment.index), [1, 2, 3, 4]);
+    const plain = stageOneToMany({ ...common(), selectedTargets: [0], mappings: [{ personRank: 0, sourceIdx: ALICE }] });
+    assert.ok(queueRequestFromStagedJobs(plain.jobs).every((b) => !('segment' in b)));
+  });
+  check('two splits get different groups', () => {
+    const a = stageSegments({ ...common(), targetIndex: 2, segmentCount: 2 }).jobs[0].segment.group;
+    const b = stageSegments({ ...common(), targetIndex: 1, segmentCount: 2 }).jobs[0].segment.group;
+    assert.notEqual(a, b);
+  });
 }
 
 // ── Per-file matrix ──────────────────────────────────────────────────────
