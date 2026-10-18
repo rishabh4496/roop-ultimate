@@ -304,6 +304,13 @@ class Enhance_UltraMax:
     model_template = 'ffhq_512'
 
     _SIZE = 512
+    # TensorRT + the zero-copy ring. The pre-ring external binding deadlocked the driver
+    # with several workers, so TensorRT stayed on the host path; the ring serialises
+    # each slot and leases sessions in one fixed order. Opt-in until a multi-worker
+    # stress run on the live engine clears it.
+    @staticmethod
+    def _trt_ring_enabled():
+        return os.environ.get('ROOP_ULTRAMAX_TRT_RING', '0').strip().lower() in ('1', 'on', 'true', 'yes')
 
     # How much of CODEFORMER'S OWN colour to keep. 0 = none of it: the network
     # supplies luminance and the swapper's crop supplies chrominance, which is
@@ -443,6 +450,7 @@ class Enhance_UltraMax:
         self.in_dtype = np.float32
         self._lut = None
         self._faces = 0
+        self._ring_faces = 0
         self._lowband = 0
         # ``False`` means this ORT build/provider rejected binding its output
         # directly into a PyTorch CUDA allocation; avoid retrying per face.
@@ -997,20 +1005,14 @@ class Enhance_UltraMax:
             uses_tensorrt = 'TensorrtExecutionProvider' in self.session.get_providers()
         except (AttributeError, TypeError):
             uses_tensorrt = False
-        if uses_tensorrt:
+        from roop.optimized_processor import get_zero_copy_pool, zero_copy_enabled
+        ring = get_zero_copy_pool(0) if zero_copy_enabled() else None
+        if uses_tensorrt and not (ring is not None and self._trt_ring_enabled()):
             self._cuda_iob_available = False
             return None
         try:
             dtype = torch.float16 if self.in_dtype == np.float16 else torch.float32
             source = torch.from_numpy(src512).to('cuda', dtype=torch.float32, non_blocking=False)
-            # `.contiguous()` IS LOAD-BEARING. `permute` + `flip` leave a
-            # non-contiguous view, and `bind_input` is handed a raw
-            # `data_ptr()` -- ORT reads that pointer as though the tensor were
-            # contiguous, so without this the network receives transposed
-            # garbage. It still returns a plausible finite image, so the only
-            # symptom was the collapse guard rejecting the face.
-            x = (source.permute(2, 0, 1).flip(0).unsqueeze(0)
-                 .div(127.5).sub(1.0).to(dtype).contiguous())
             fidelity = torch.tensor(float(getattr(roop.globals, 'codeformer_fidelity', 0.5)),
                                     device=source.device, dtype=torch.float64)
             in0, in1 = self.model_inputs[0].name, self.model_inputs[1].name
@@ -1018,22 +1020,48 @@ class Enhance_UltraMax:
             input_element = np.float16 if dtype == torch.float16 else np.float32
             out_dtype = (torch.float16 if 'float16' in self.model_outputs[0].type
                          else torch.float32)
-            if torch.cuda.is_available():
-                torch.cuda.current_stream().synchronize()
-            with exclusive(self.pool, self._session_lock,
-                           (self.session, self.io_binding)) as (sess, iob):
-                if hasattr(iob, 'clear_binding_inputs'):
-                    iob.clear_binding_inputs()
-                if hasattr(iob, 'clear_binding_outputs'):
-                    iob.clear_binding_outputs()
-                iob.bind_input(in0, 'cuda', 0, input_element, tuple(x.shape), x.data_ptr())
-                iob.bind_input(in1, 'cuda', 0, np.float64, tuple(fidelity.shape), fidelity.data_ptr())
-                # ORT allocates and owns this. Do NOT pass a Torch pointer
-                # here; see the note above for what that cost.
-                iob.bind_output(out_name, 'cuda', 0)
-                sess.run_with_iobinding(iob)
-                iob.synchronize_outputs()
-                output = ort_cuda_output_to_torch(iob.get_outputs()[0], out_dtype)
+            if ring is not None:
+                # Lock order everywhere: ring slot first, then the session lease.
+                # The slot's input is a dense tensor `slot.load` gathers into (the
+                # contiguity trap below is closed once, there), and the output stays
+                # ORT-OWNED -- `output_is_static=False` -- because a Torch pointer
+                # for this dynamic output is what striped the face. The returned
+                # tensor is a fresh Torch copy, so the lease ends before the post-ops.
+                with ring.lease(self._SIZE, dtype=dtype, out_dtype=out_dtype) as slot:
+                    slot.load(source.permute(2, 0, 1).flip(0).unsqueeze(0)
+                              .div(127.5).sub(1.0))
+                    with exclusive(self.pool, self._session_lock,
+                                   (self.session, self.io_binding)) as (sess, iob):
+                        output = slot.run(sess, iob, in0, out_name, 0,
+                                          output_is_static=False,
+                                          extra_inputs={in1: fidelity})
+                with self._lock:
+                    self._ring_faces += 1
+            else:
+                # `.contiguous()` IS LOAD-BEARING. `permute` + `flip` leave a
+                # non-contiguous view, and `bind_input` is handed a raw
+                # `data_ptr()` -- ORT reads that pointer as though the tensor were
+                # contiguous, so without this the network receives transposed
+                # garbage. It still returns a plausible finite image, so the only
+                # symptom was the collapse guard rejecting the face.
+                x = (source.permute(2, 0, 1).flip(0).unsqueeze(0)
+                     .div(127.5).sub(1.0).to(dtype).contiguous())
+                if torch.cuda.is_available():
+                    torch.cuda.current_stream().synchronize()
+                with exclusive(self.pool, self._session_lock,
+                               (self.session, self.io_binding)) as (sess, iob):
+                    if hasattr(iob, 'clear_binding_inputs'):
+                        iob.clear_binding_inputs()
+                    if hasattr(iob, 'clear_binding_outputs'):
+                        iob.clear_binding_outputs()
+                    iob.bind_input(in0, 'cuda', 0, input_element, tuple(x.shape), x.data_ptr())
+                    iob.bind_input(in1, 'cuda', 0, np.float64, tuple(fidelity.shape), fidelity.data_ptr())
+                    # ORT allocates and owns this. Do NOT pass a Torch pointer
+                    # here; see the note above for what that cost.
+                    iob.bind_output(out_name, 'cuda', 0)
+                    sess.run_with_iobinding(iob)
+                    iob.synchronize_outputs()
+                    output = ort_cuda_output_to_torch(iob.get_outputs()[0], out_dtype)
             if output is None:
                 # No CUDA runtime, or a device/shape the copy declined. The
                 # host path below is the supported fallback, not an error.
@@ -1289,5 +1317,6 @@ class Enhance_UltraMax:
         _dw = self._detail_weight()
         gate = (f"; swap low band + {_dw:g} x restorer detail on {lowband}" if _dw is not None
                 else "; full restorer output (legacy, low band not anchored to the swap)")
-        return (f"[UltraMax] {f} faces restored (codeformer.fp16, {path}, "
+        ring = f", {self._ring_faces} through the zero-copy ring" if self._ring_faces else ""
+        return (f"[UltraMax] {f} faces restored (codeformer.fp16, {path}{ring}, "
                 f"{colour}){gate}")

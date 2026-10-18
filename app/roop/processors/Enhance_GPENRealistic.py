@@ -64,6 +64,13 @@ from roop.utilities import resolve_relative_path, conditional_download
 from roop import session_pool
 from roop.precision_policy import providers_for
 
+try:
+    import torch
+    _TORCH_CUDA = torch.cuda.is_available()
+except (ImportError, OSError):                      # CPU-only / no torch: the host path runs
+    torch = None
+    _TORCH_CUDA = False
+
 
 class Enhance_GPENRealistic:
     processorname = 'gpen_realistic'
@@ -125,6 +132,9 @@ class Enhance_GPENRealistic:
         self.in_name = None
         self.out_name = None
         self._lut = None
+        self._lut_t = None        # the LUT on the GPU, for the zero-copy path
+        self._zc_ok = None        # None = undecided, True/False after the first face
+        self._zc_faces = 0
         self._faces = 0
         self._lock = threading.Lock()
         # Guards the SINGLE shared (session, io_binding) used when there is no
@@ -257,6 +267,8 @@ class Enhance_GPENRealistic:
         self.io_binding = None
         self.session = None
         self._lut = None
+        self._lut_t = None
+        self._zc_ok = None
 
     # ── colour ───────────────────────────────────────────────────────────────
     @classmethod
@@ -288,6 +300,95 @@ class Enhance_GPENRealistic:
                 print(f"[GPEN Realistic] colour fix skipped: {e}", flush=True)
             return restored
 
+    # ── zero-copy path ───────────────────────────────────────────────────────
+    def _zero_copy_ready(self):
+        """Structural eligibility, decided once: CUDA/TensorRT session, and a
+        fully static float32 (1,3,S,S) -> (1,3,S,S) graph.
+
+        Static output is the condition that makes a Torch-owned output pointer
+        safe: it measured bit-identical to the host path on this net under
+        TensorRT (tests/test_enhancer_gpen_realistic.py), whereas CodeFormer's
+        dynamic output striped when bound that way (enhance_common.ort_cuda_output_to_torch).
+        """
+        if self._zc_ok is not None:
+            return self._zc_ok
+        ok = False
+        try:
+            if (_TORCH_CUDA and self.devicename == 'cuda' and self.session is not None
+                    and self.session.get_providers()[0] in ('CUDAExecutionProvider',
+                                                            'TensorrtExecutionProvider')):
+                i, o = self.session.get_inputs()[0], self.session.get_outputs()[0]
+                want = [1, 3, self.size, self.size]
+                ok = (i.type == o.type == 'tensor(float)'
+                      and list(i.shape) == want and list(o.shape) == want)
+        except Exception as error:
+            from roop.degrade import swallowed
+            swallowed("roop/processors/Enhance_GPENRealistic.py:zero_copy_ready", error, "host path used")
+        self._zc_ok = ok
+        return ok
+
+    def _run_zero_copy(self, src, temp_frame, input_size):
+        """The whole pass on CUDA between the crop upload and the final uint8 download.
+
+        Input is normalised on the GPU straight into a ring slot's contiguous
+        tensor, ORT reads and writes the slot's tensors by pointer, and the
+        finite / collapse / luminance-recolour steps are exact integer or
+        elementwise ports of the host ones (enhance_common), so the result is
+        the host path's bytes. ONE device-to-host copy remains, the uint8 face,
+        because the merger takes NumPy. Returns None for "use the host path".
+        """
+        from roop.optimized_processor import get_zero_copy_pool, zero_copy_enabled
+        if not zero_copy_enabled() or not self._zero_copy_ready():
+            return None
+        try:
+            chroma = float(os.environ.get('ROOP_GPENR_CHROMA', '') or 0.0)
+        except ValueError:
+            chroma = 0.0
+        if chroma > 0.0:                      # cv2.addWeighted blend: host path only
+            return None
+        from roop.processors.enhance_common import (looks_collapsed_tensor,
+                                                    luma_only_recolour_u8_tensor,
+                                                    model_output_to_u8_tensor)
+        dev = int(getattr(roop.globals, 'cuda_device_id', 0) or 0)
+        try:
+            pool = get_zero_copy_pool(dev)
+            if pool is None:
+                return None
+            if self._lut_t is None or self._lut_t.device.index != dev:
+                self._lut_t = torch.as_tensor(self._lut, device=f'cuda:{dev}')
+            # Lock order everywhere: ring slot first, then the session lease.
+            with pool.lease(self.size) as slot:
+                src_t = torch.from_numpy(np.ascontiguousarray(src)).to(f'cuda:{dev}')
+                slot.load(self._lut_t[src_t.long()].permute(2, 0, 1).flip(0).unsqueeze(0))
+                with exclusive(self.pool, self._session_lock,
+                               (self.session, self.io_binding)) as (sess, iob):
+                    out = slot.run(sess, iob, self.in_name, self.out_name, dev,
+                                   output_is_static=True)
+                hwc = out[0].flip(0).permute(1, 2, 0)
+                finite = torch.isfinite(hwc.sum())
+                restored = model_output_to_u8_tensor(hwc)
+                collapsed = looks_collapsed_tensor(restored, src_t)
+                recoloured = luma_only_recolour_u8_tensor(restored, src_t)
+                flags = torch.stack([finite, collapsed]).cpu()
+                if not bool(flags[0]):
+                    print("[GPEN Realistic] non-finite output — using unenhanced frame")
+                    return sized(temp_frame, input_size)
+                if bool(flags[1]):
+                    print("[GPEN Realistic] output collapsed (flat) — using unenhanced frame")
+                    return sized(temp_frame, input_size)
+                result = recoloured.cpu().numpy()
+        except Exception as error:
+            from roop.degrade import swallowed
+            swallowed("roop/processors/Enhance_GPENRealistic.py:zero_copy", error, "host path used")
+            self._zc_ok = False
+            print(f"[GPEN Realistic] zero-copy path disabled ({type(error).__name__}: {error}); "
+                  f"host path used", flush=True)
+            return None
+        with self._lock:
+            self._faces += 1
+            self._zc_faces += 1
+        return sized(result, input_size)
+
     # ── run ──────────────────────────────────────────────────────────────────
     def Run(self, source_faceset: FaceSet, target_face: Face, temp_frame: Frame) -> Frame:
         if temp_frame is None or getattr(temp_frame, 'size', 0) == 0:
@@ -300,12 +401,23 @@ class Enhance_GPENRealistic:
         else:
             src = temp_frame
 
+        zero_copy = self._run_zero_copy(src, temp_frame, input_size)
+        if zero_copy is not None:
+            return zero_copy
+
         # One gather: uint8 BGR HWC -> float32 RGB CHW in [-1, 1]. Fancy indexing
         # returns a fresh C-contiguous array, so [None] after it is a free view.
         x = self._lut[src.transpose(2, 0, 1)[::-1]][None]
 
         def _infer(sess, iob):
+            # The zero-copy path leaves this binding cleared; bind the output
+            # here rather than rely on what `_bind` did once at construction.
+            if hasattr(iob, 'clear_binding_inputs'):
+                iob.clear_binding_inputs()
+            if hasattr(iob, 'clear_binding_outputs'):
+                iob.clear_binding_outputs()
             iob.bind_cpu_input(self.in_name, x)
+            iob.bind_output(self.out_name, self.devicename)
             sess.run_with_iobinding(iob)
             return iob.copy_outputs_to_cpu()
 
@@ -358,4 +470,5 @@ class Enhance_GPENRealistic:
             return None
         return (f"[GPEN Realistic] {f} faces at {self.size} "
                 f"(GPEN luminance, swapper chrominance"
-                f"{', pooled' if self.pool is not None else ''})")
+                f"{', pooled' if self.pool is not None else ''}, "
+                f"{self._zc_faces} on the zero-copy path)")

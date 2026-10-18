@@ -13,6 +13,13 @@ from roop.processors.enhance_common import (is_usable, looks_collapsed, sized,
 from roop.precision_policy import providers_for
 from roop import session_pool, baseline_probe
 
+try:
+    import torch
+    _TORCH_CUDA = torch.cuda.is_available()
+except (ImportError, OSError):                      # CPU-only / no torch: the host path runs
+    torch = None
+    _TORCH_CUDA = False
+
 class Enhance_RestoreFormerPPlus():
     plugin_options:dict = None
     model_restoreformerpplus = None
@@ -139,6 +146,80 @@ class Enhance_RestoreFormerPPlus():
                 from roop.degrade import swallowed as _swallowed
                 _swallowed("roop/processors/Enhance_RestoreFormerPPlus.py:model_lifecycle", _e_reg, "model lifecycle register fallback")
 
+    # ── zero-copy path ───────────────────────────────────────────────────────
+    _zc_ok = None          # None = undecided; decided once, on the first face
+    _zc_faces = 0
+    _lut_t = None
+    _zc_lock = threading.Lock()
+
+    def _zero_copy_ready(self):
+        """An ONNX Runtime CUDA/TensorRT session with a static float32 (1,3,512,512) first
+        output. The opt-in native TensorRT engine has its own binding API and keeps the host path."""
+        if self._zc_ok is not None:
+            return self._zc_ok
+        ok = False
+        try:
+            sess = self.model_restoreformerpplus
+            if (_TORCH_CUDA and self.devicename == 'cuda' and isinstance(sess, onnxruntime.InferenceSession)
+                    and sess.get_providers()[0] in ('CUDAExecutionProvider', 'TensorrtExecutionProvider')):
+                i, o = sess.get_inputs()[0], sess.get_outputs()[0]
+                want = [1, 3, 512, 512]
+                ok = (i.type == o.type == 'tensor(float)'
+                      and list(i.shape) == want and list(o.shape) == want)
+        except Exception as error:
+            from roop.degrade import swallowed
+            swallowed("roop/processors/Enhance_RestoreFormerPPlus.py:zero_copy_ready", error, "host path used")
+        self._zc_ok = ok
+        return ok
+
+    def _run_zero_copy(self, src, input_size):
+        """Normalise on the GPU into a ring slot, let ORT read/write the slot by pointer,
+        finish on the GPU (finite check, uint8 cast, collapse test) and download the face once.
+        The host path's bytes (tests/test_enhancer_restoreformer_zero_copy.py). None = host path."""
+        from roop.optimized_processor import get_zero_copy_pool, zero_copy_enabled
+        if not zero_copy_enabled() or not self._zero_copy_ready():
+            return None
+        from roop.processors.enhance_common import looks_collapsed_tensor
+        dev = int(getattr(roop.globals, 'cuda_device_id', 0) or 0)
+        try:
+            pool = get_zero_copy_pool(dev)
+            if pool is None:
+                return None
+            if self._lut_t is None or self._lut_t.device.index != dev:
+                from roop.restore_ultra_optimizer import RestoreUltraBufferPool
+                self._lut_t = torch.as_tensor(RestoreUltraBufferPool._LUT_NORM, device=f'cuda:{dev}')
+            # Lock order everywhere: ring slot first, then the session lease.
+            with pool.lease(512) as slot:
+                src_t = torch.from_numpy(np.ascontiguousarray(src)).to(f'cuda:{dev}')
+                slot.load(self._lut_t[src_t.long()].permute(2, 0, 1).flip(0).unsqueeze(0))
+                with exclusive(self.pool, self._session_lock,
+                               (self.model_restoreformerpplus, self.io_binding)) as (sess, iob):
+                    out = slot.run(sess, iob, self.model_inputs[0].name, sess.get_outputs()[0].name,
+                                   dev, output_is_static=True)
+                finite = torch.isfinite(out).all()
+                # postprocess_model_output: RGB CHW -> BGR HWC, (x + 1) * 127.5, clip, truncating cast.
+                res = ((out[0].flip(0).permute(1, 2, 0) + 1.0) * 127.5).clamp_(0.0, 255.0).to(torch.uint8)
+                collapsed = looks_collapsed_tensor(res, src_t)
+                flags = torch.stack([finite, collapsed]).cpu()
+                if not bool(flags[0]):
+                    print("[RestoreFormer++] non-finite output — using unenhanced frame "
+                          "(FP16 overflow? try an fp32 provider)")
+                    return sized(src.astype(np.uint8), input_size)
+                if bool(flags[1]):
+                    print("[RestoreFormer++] collapsed output — using unenhanced frame")
+                    return sized(src.astype(np.uint8), input_size)
+                result = res.cpu().numpy()
+        except Exception as error:
+            from roop.degrade import swallowed
+            swallowed("roop/processors/Enhance_RestoreFormerPPlus.py:zero_copy", error, "host path used")
+            self._zc_ok = False
+            print(f"[RestoreFormer++] zero-copy path disabled ({type(error).__name__}: {error}); "
+                  f"host path used", flush=True)
+            return None
+        with self._zc_lock:
+            Enhance_RestoreFormerPPlus._zc_faces += 1
+        return sized(result, input_size)
+
     def Run(self, source_faceset: FaceSet, target_face: Face, temp_frame: Frame) -> Frame:
         if temp_frame is None or getattr(temp_frame, 'size', 0) == 0:
             return temp_frame, 1
@@ -149,16 +230,25 @@ class Enhance_RestoreFormerPPlus():
             src = temp_frame
         fallback_bgr = src
 
+        zero_copy = self._run_zero_copy(src, input_size)
+        if zero_copy is not None:
+            return zero_copy
+
         # Preallocated buffer gather: uint8 BGR HWC -> float32 RGB CHW in [-1, 1].
         from roop.restore_ultra_optimizer import BUFFER_POOL
         x = BUFFER_POOL.prepare_model_input(src)
-        
+
         # An independent (session, io_binding) per worker when pooled, else
         # this class's own lock over the single shared pair -- either way
         # exclusive, and no wider than the model call.
         with exclusive(self.pool, self._session_lock,
                        (self.model_restoreformerpplus, self.io_binding)) as (sess, iob):
+            # The zero-copy path clears this binding after each run; bind the
+            # output here instead of relying on what `_bind` did at construction.
+            if hasattr(iob, 'clear_binding_outputs'):
+                iob.clear_binding_outputs()
             iob.bind_cpu_input(self.model_inputs[0].name, x)
+            iob.bind_output(sess.get_outputs()[0].name, self.devicename)
             sess.run_with_iobinding(iob)
             ort_outs = iob.copy_outputs_to_cpu()
         result = ort_outs[0][0]
@@ -180,6 +270,12 @@ class Enhance_RestoreFormerPPlus():
 
 
     def Release(self):
+        if Enhance_RestoreFormerPPlus._zc_faces:
+            print(f"[RestoreFormer++] {Enhance_RestoreFormerPPlus._zc_faces} faces on the zero-copy path",
+                  flush=True)
+            Enhance_RestoreFormerPPlus._zc_faces = 0
+        self._zc_ok = None
+        self._lut_t = None
         if self.pool is not None:
             self.pool.release()
             self.pool = None

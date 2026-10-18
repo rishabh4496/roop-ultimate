@@ -199,19 +199,51 @@ class TestUltraMaxRun(unittest.TestCase):
         "never bind anything" -- inputs are legitimately bound from Torch
         memory -- it is specifically "never bind an OUTPUT POINTER".
         """
+        import torch
+        if not torch.cuda.is_available():
+            self.skipTest('requires CUDA')
         p = self._make()
         p._cuda_iob_available = None
         p.session.get_providers.return_value = ['TensorrtExecutionProvider',
                                                 'CUDAExecutionProvider']
         frame = np.zeros((512, 512, 3), dtype=np.uint8)
-        with patch.object(UM, '_TORCH_CUDA', True):
-            p._run_cuda_postprocess(frame, 512, frame)
-        for call_ in p.io_binding.bind_output.call_args_list:
+        saved = os.environ.get('ROOP_ULTRAMAX_TRT_RING')
+        os.environ['ROOP_ULTRAMAX_TRT_RING'] = '1'      # the only way TensorRT reaches the binding
+        try:
+            with patch.object(UM, '_TORCH_CUDA', True):
+                p._run_cuda_postprocess(frame, 512, frame)
+        finally:
+            if saved is None:
+                os.environ.pop('ROOP_ULTRAMAX_TRT_RING', None)
+            else:
+                os.environ['ROOP_ULTRAMAX_TRT_RING'] = saved
+        calls = p.io_binding.bind_output.call_args_list
+        # This loop used to run over an EMPTY list: the TensorRT refusal returned before any
+        # binding, so the invariant was never exercised under TensorRT at all.
+        self.assertGreaterEqual(len(calls), 1, 'the TensorRT path never reached bind_output')
+        self.assertGreaterEqual(p.io_binding.bind_input.call_count, 2)
+        for call_ in calls:
             self.assertLessEqual(
                 len(call_.args), 3,
                 'bind_output was given a data pointer; ORT must own the output '
                 'allocation or TensorRT can return spatially corrupt faces')
             self.assertNotIn('buffer_ptr', call_.kwargs)
+
+    def test_tensorrt_stays_on_the_host_path_unless_the_ring_is_switched_on(self):
+        p = self._make()
+        p._cuda_iob_available = None
+        p.session.get_providers.return_value = ['TensorrtExecutionProvider',
+                                                'CUDAExecutionProvider']
+        frame = np.zeros((512, 512, 3), dtype=np.uint8)
+        saved = os.environ.pop('ROOP_ULTRAMAX_TRT_RING', None)
+        try:
+            with patch.object(UM, '_TORCH_CUDA', True):
+                self.assertIsNone(p._run_cuda_postprocess(frame, 512, frame))
+        finally:
+            if saved is not None:
+                os.environ['ROOP_ULTRAMAX_TRT_RING'] = saved
+        self.assertEqual(p.io_binding.bind_output.call_count, 0)
+        self.assertIs(p._cuda_iob_available, False)
 
     def test_cuda_input_is_contiguous_before_its_pointer_is_bound(self):
         """`bind_input` takes a RAW POINTER and reads it as contiguous.

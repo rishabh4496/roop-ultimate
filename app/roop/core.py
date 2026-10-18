@@ -645,6 +645,13 @@ def release_resources() -> None:
 
     clear_frame_cache()
     release_video()
+    # The enhancers' zero-copy ring (input/output tensors per resolution). Waits for any
+    # in-flight lease, so a cancelled job frees it only after its last worker has let go.
+    try:
+        from roop.optimized_processor import release_zero_copy_pools
+        release_zero_copy_pools()
+    except Exception as _degrade_error:
+        _swallowed("roop/core.py:release_zero_copy_pools", _degrade_error, "cleanup continued")
     gc.collect()
     if torch is not None:
         try:

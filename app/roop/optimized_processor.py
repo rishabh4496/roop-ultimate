@@ -18,6 +18,7 @@ by a CPU compositor.
 from __future__ import annotations
 from roop.degrade import swallowed as _swallowed
 
+import contextlib
 import json
 import os
 import shutil
@@ -28,7 +29,7 @@ from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
 from queue import Empty, Full, Queue
-from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterable, Iterator, List, Mapping, Optional, Sequence, Tuple
 
 import cv2
 import numpy as np
@@ -998,6 +999,355 @@ class CudaIOBinding:
             self.session.run_with_iobinding(binding)
             binding.synchronize_outputs()
             return output_tensors
+
+
+class ZeroCopySlot:
+    """One ring entry: a contiguous input and output tensor and its completion event.
+
+    Obtained only through :meth:`ZeroCopyBufferPool.lease`; the lease holds the
+    slot's lock, so nobody else can write ``input``/``output`` until the lessee
+    has finished reading them.
+    """
+
+    __slots__ = ("index", "resolution", "input", "output", "event", "ready", "lock")
+
+    def __init__(self, index: int, resolution: int, input_tensor: Any, output_tensor: Any,
+                 torch_module: Any) -> None:
+        self.index = int(index)
+        self.resolution = int(resolution)
+        self.input = input_tensor
+        self.output = output_tensor
+        # `event` = "every consumer of this slot's tensors has been enqueued up to here".
+        # `ready` = "the input has been written", waited on from the host before ORT reads it.
+        self.event = torch_module.cuda.Event(enable_timing=False)
+        self.ready = torch_module.cuda.Event(enable_timing=False)
+        self.lock = threading.Lock()
+
+    def load(self, source: Any) -> Any:
+        """Write ``source`` into the slot's contiguous input and return it.
+
+        ``copy_`` gathers a strided source, so what ORT is later handed through
+        ``data_ptr()`` is always dense. Binding a permuted/flipped view directly
+        reads transposed bytes that still decode to a plausible finite image
+        (the UltraMax ``.contiguous()`` defect), which no numeric guard sees.
+        """
+
+        if tuple(source.shape) != tuple(self.input.shape):
+            raise ValueError(
+                f"slot input is {tuple(self.input.shape)}, got {tuple(source.shape)}")
+        self.input.copy_(source)
+        return self.input
+
+    def run(
+        self,
+        session: Any,
+        iobinding: Any,
+        input_name: str,
+        output_name: str,
+        device_id: int = 0,
+        output_is_static: bool = True,
+        extra_inputs: Optional[Mapping[str, Any]] = None,
+    ) -> Any:
+        """Bind this slot to ``iobinding``, run ``session``, return the CUDA output tensor.
+
+        No host copy happens. ``output_is_static`` must be True only when the
+        session declares the output's full shape and it equals the slot's:
+        then ORT writes straight into ``slot.output``. For a dynamic output
+        (CodeFormer) ORT allocates and owns it and a fresh Torch copy is
+        returned: a Torch-owned pointer for that output was measured to give a
+        striped/ghosted face under TensorRT (``enhance_common.ort_cuda_output_to_torch``).
+        """
+
+        torch = _torch_module
+        # Input kernels are on this thread's worker stream, ORT reads on its
+        # own: a host wait on the event is the only ordering ORT can see.
+        self.ready.record(torch.cuda.current_stream())
+        self.ready.synchronize()
+        def _clear() -> None:
+            # A binding that still names this slot's pointers would write into it
+            # on the NEXT run of that binding, from whoever holds the lease then
+            # (the host path of the same processor reuses the same binding).
+            for method in ("clear_binding_inputs", "clear_binding_outputs"):
+                if hasattr(iobinding, method):
+                    getattr(iobinding, method)()
+
+        _clear()
+        if not self.input.is_contiguous() or not self.output.is_contiguous():
+            raise RuntimeError("zero-copy slot tensors must be contiguous")
+        extras: List[Any] = []
+        try:
+            iobinding.bind_input(
+                input_name, "cuda", int(device_id), _numpy_dtype_for_torch(self.input.dtype),
+                tuple(int(d) for d in self.input.shape), int(self.input.data_ptr()))
+            for name, value in (extra_inputs or {}).items():
+                if not value.is_contiguous():
+                    value = value.contiguous()
+                extras.append(value)
+                iobinding.bind_input(
+                    name, "cuda", int(device_id), _numpy_dtype_for_torch(value.dtype),
+                    tuple(int(d) for d in value.shape), int(value.data_ptr()))
+            if output_is_static:
+                iobinding.bind_output(
+                    output_name, "cuda", int(device_id), _numpy_dtype_for_torch(self.output.dtype),
+                    tuple(int(d) for d in self.output.shape), int(self.output.data_ptr()))
+            else:
+                iobinding.bind_output(output_name, "cuda", int(device_id))
+            session.run_with_iobinding(iobinding)
+            iobinding.synchronize_outputs()
+            if output_is_static:
+                return self.output
+            from roop.processors.enhance_common import ort_cuda_output_to_torch
+            owned = ort_cuda_output_to_torch(iobinding.get_outputs()[0], self.output.dtype)
+            if owned is None:
+                raise RuntimeError("ORT-owned CUDA output could not be copied to Torch")
+            return owned
+        finally:
+            _clear()
+            del extras
+
+
+class ZeroCopyBufferPool:
+    """Ring of contiguous CUDA input/output tensors for the face enhancers.
+
+    One ring per (resolution, dtype): ``SLOTS`` slots of ``(1, 3, R, R)`` input
+    and output, allocated on first use so a 512-only install never pays for
+    1024. ``lease(resolution, frame_idx)`` picks ``slot = frame_idx % SLOTS``
+    (a lease counter when no index is known), takes that slot's lock and makes
+    the lessee's stream wait on the slot's completion event; leaving the lease
+    records the event again. Together they close the race the old design had:
+    a later pass writing the buffer while an earlier pass's warp/blend is still
+    reading it.
+
+    Two facts shape it, both measured here rather than assumed:
+
+    * ORT's CUDA/TensorRT provider runs on ITS OWN stream, so
+      ``stream.wait_event`` cannot order ORT against Torch. The Torch side is
+      ordered with the event; the ORT side with a host wait on ``slot.ready``
+      before the run and ``synchronize_outputs()`` after it (``ZeroCopySlot.run``).
+    * Leases are exclusive and must not nest on one ring (a thread holding
+      slot 0 asking for slot 1 of the same ring can deadlock against another
+      doing the reverse), so a second lease on a ring this thread already holds
+      raises. Lock order everywhere is slot -> session lease (``exclusive``).
+
+    VRAM: ``stats()`` carries the allocated bytes and the high-water mark; a ring
+    that would leave less than the governor's safety margin free is built with
+    fewer slots (down to one) and says so.
+    """
+
+    SLOTS = 4
+    RESOLUTIONS = (512, 1024)
+
+    def __init__(self, device_id: int = 0, slots: int = SLOTS, channels: int = 3,
+                 margin_mb: Optional[float] = None) -> None:
+        if _torch_module is None or not _torch_module.cuda.is_available():
+            raise RuntimeError("CUDA is required for ZeroCopyBufferPool")
+        if int(slots) < 1:
+            raise ValueError("slots must be >= 1")
+        self.torch = _torch_module
+        self.device_id = int(device_id)
+        self.slots = int(slots)
+        self.channels = int(channels)
+        if margin_mb is None:
+            from roop.vram_governor import DEFAULT_MARGIN_GB
+            margin_mb = DEFAULT_MARGIN_GB * 1024.0
+        self.margin_mb = float(margin_mb)
+        self._rings: Dict[Tuple[int, Any, Any], List[ZeroCopySlot]] = {}
+        self._ring_lock = threading.Lock()
+        self._counter = 0
+        self._local = threading.local()
+        self.allocated_bytes = 0
+        self.peak_bytes = 0
+        self.leases = 0
+        self.degraded: Dict[Tuple[int, str], int] = {}
+
+    # ── rings ────────────────────────────────────────────────────────────────
+    def _ring(self, resolution: int, dtype: Any, out_dtype: Any) -> List[ZeroCopySlot]:
+        key = (int(resolution), dtype, out_dtype)
+        ring = self._rings.get(key)
+        if ring is not None:
+            return ring
+        with self._ring_lock:
+            ring = self._rings.get(key)
+            if ring is not None:
+                return ring
+            torch = self.torch
+            shape = (1, self.channels, int(resolution), int(resolution))
+            per_slot = int(np.prod(shape)) * (
+                torch.empty((), dtype=dtype).element_size()
+                + torch.empty((), dtype=out_dtype).element_size())
+            slots = self.slots
+            try:
+                free_mb = torch.cuda.mem_get_info(self.device_id)[0] / (1024.0 ** 2)
+            except Exception as error:  # no counter: build the full ring
+                _swallowed("roop/optimized_processor.py:ZeroCopyBufferPool", error, "fallback continued")
+                free_mb = float("inf")
+            while slots > 1 and free_mb - slots * per_slot / (1024.0 ** 2) < self.margin_mb:
+                slots -= 1
+            if slots != self.slots:
+                self.degraded[(int(resolution), str(dtype))] = slots
+                print(f"[ZeroCopy] {resolution}px ring cut {self.slots} -> {slots} slots: "
+                      f"{free_mb:.0f} MiB free, margin {self.margin_mb:.0f} MiB", flush=True)
+            device = f"cuda:{self.device_id}"
+            ring = [
+                ZeroCopySlot(i, resolution,
+                             torch.empty(shape, dtype=dtype, device=device),
+                             torch.empty(shape, dtype=out_dtype, device=device), torch)
+                for i in range(slots)
+            ]
+            self._rings[key] = ring
+            self.allocated_bytes += slots * per_slot
+            self.peak_bytes = max(self.peak_bytes, self.allocated_bytes)
+            print(f"[ZeroCopy] {resolution}px ring: {slots} slots, "
+                  f"{slots * per_slot / (1024.0 ** 2):.1f} MiB", flush=True)
+            return ring
+
+    def worker_stream(self) -> Any:
+        """This thread's dedicated CUDA stream (created on first use)."""
+
+        stream = getattr(self._local, "stream", None)
+        if stream is None:
+            stream = self.torch.cuda.Stream(device=self.device_id)
+            self._local.stream = stream
+        return stream
+
+    def _next_index(self) -> int:
+        with self._ring_lock:
+            self._counter += 1
+            return self._counter
+
+    # ── leasing ──────────────────────────────────────────────────────────────
+    @contextlib.contextmanager
+    def lease(self, resolution: int, frame_idx: Optional[int] = None,
+              dtype: Any = None, out_dtype: Any = None) -> Iterator[ZeroCopySlot]:
+        torch = self.torch
+        dtype = dtype or torch.float32
+        out_dtype = out_dtype or dtype
+        held = self._local.__dict__.setdefault("held", set())
+        while True:
+            ring = self._ring(resolution, dtype, out_dtype)
+            if id(ring) in held:
+                raise RuntimeError(
+                    f"this thread already holds a {resolution}px slot; leases do not nest")
+            index = (frame_idx if frame_idx is not None else self._next_index()) % len(ring)
+            slot = ring[index]
+            slot.lock.acquire()
+            if slot.input is not None:
+                break
+            # release() ran while this thread waited on the lock: that ring is gone.
+            slot.lock.release()
+        held.add(id(ring))
+        stream = self.worker_stream()
+        failed = True
+        try:
+            with torch.cuda.device(self.device_id), torch.cuda.stream(stream):
+                # Everything the previous lessee enqueued against this slot.
+                stream.wait_event(slot.event)
+                with self._ring_lock:
+                    self.leases += 1
+                yield slot
+                failed = False
+        finally:
+            try:
+                if failed:
+                    # ORT may still be writing on ITS stream: a device-wide
+                    # sync is the only thing that covers a stream we do not own.
+                    torch.cuda.synchronize(self.device_id)
+                slot.event.record(stream)
+            finally:
+                held.discard(id(ring))
+                slot.lock.release()
+
+    # ── accounting and teardown ──────────────────────────────────────────────
+    def stats(self) -> Dict[str, Any]:
+        with self._ring_lock:
+            return {
+                "device_id": self.device_id,
+                "rings": {f"{k[0]}:{k[1]}": len(v) for k, v in self._rings.items()},
+                "allocated_mib": self.allocated_bytes / (1024.0 ** 2),
+                "peak_mib": self.peak_bytes / (1024.0 ** 2),
+                "leases": self.leases,
+                "degraded": {f"{k[0]}:{k[1]}": v for k, v in self.degraded.items()},
+            }
+
+    def release(self) -> None:
+        """Free every ring. Waits for in-flight leases, so a cancel is safe."""
+
+        with self._ring_lock:
+            rings = list(self._rings.values())
+            self._rings = {}
+        for ring in rings:
+            for slot in ring:
+                slot.lock.acquire()
+        try:
+            self.torch.cuda.synchronize(self.device_id)
+        finally:
+            for ring in rings:
+                for slot in ring:
+                    slot.input = slot.output = None
+                    slot.lock.release()
+        with self._ring_lock:
+            self.allocated_bytes = 0
+            peak_mib, leases = self.peak_bytes / (1024.0 ** 2), self.leases
+        if rings:
+            print(f"[ZeroCopy] released {len(rings)} ring(s): peak {peak_mib:.1f} MiB, "
+                  f"{leases} lease(s) since start", flush=True)
+        del rings
+        try:
+            with self.torch.cuda.device(self.device_id):
+                self.torch.cuda.empty_cache()
+        except Exception as error:
+            _swallowed("roop/optimized_processor.py:ZeroCopyBufferPool.release", error, "cleanup continued")
+
+    @contextlib.contextmanager
+    def scope(self, *iobindings: Any) -> Iterator["ZeroCopyBufferPool"]:
+        """Release the rings, drop ``iobindings``' bound tensors and empty the
+        Torch cache when the block ends -- normally, on an exception, or on a
+        cancel (``KeyboardInterrupt`` / ``GeneratorExit``)."""
+
+        try:
+            yield self
+        finally:
+            for iob in iobindings:
+                for method in ("clear_binding_inputs", "clear_binding_outputs"):
+                    try:
+                        getattr(iob, method)()
+                    except Exception as error:
+                        _swallowed("roop/optimized_processor.py:ZeroCopyBufferPool.scope", error,
+                                   "cleanup continued")
+            self.release()
+
+
+_ZERO_COPY_POOLS: Dict[int, ZeroCopyBufferPool] = {}
+_ZERO_COPY_LOCK = threading.Lock()
+
+
+def zero_copy_enabled() -> bool:
+    """``ROOP_ZEROCOPY_ENHANCE=0`` returns every enhancer to the host path."""
+
+    return os.environ.get("ROOP_ZEROCOPY_ENHANCE", "1").strip().lower() not in (
+        "0", "off", "false", "no")
+
+
+def get_zero_copy_pool(device_id: int = 0) -> Optional[ZeroCopyBufferPool]:
+    """The process-wide pool for ``device_id``, or None without CUDA."""
+
+    if _torch_module is None or not _torch_module.cuda.is_available():
+        return None
+    with _ZERO_COPY_LOCK:
+        pool = _ZERO_COPY_POOLS.get(int(device_id))
+        if pool is None:
+            pool = ZeroCopyBufferPool(device_id=int(device_id))
+            _ZERO_COPY_POOLS[int(device_id)] = pool
+        return pool
+
+
+def release_zero_copy_pools() -> None:
+    """Free every ring (job end, cancel, ``core.release_resources``)."""
+
+    with _ZERO_COPY_LOCK:
+        pools = list(_ZERO_COPY_POOLS.values())
+    for pool in pools:
+        pool.release()
 
 
 def create_onnx_session(
@@ -2299,7 +2649,12 @@ __all__ = [
     "TrtOnnxBatchRunner",
     "VideoSpec",
     "VramGovernor",
+    "ZeroCopyBufferPool",
+    "ZeroCopySlot",
     "create_onnx_session",
     "create_strict_tensorrt_session",
+    "get_zero_copy_pool",
     "probe_video",
+    "release_zero_copy_pools",
+    "zero_copy_enabled",
 ]

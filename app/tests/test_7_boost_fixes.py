@@ -239,6 +239,7 @@ class TestBoostFixes(unittest.TestCase):
         mock_output = MagicMock()
         with patch.object(UM, '_TORCH_CUDA', True), \
              patch('torch.cuda.is_available', return_value=True), \
+             patch.dict('os.environ', {'ROOP_ZEROCOPY_ENHANCE': '0'}), \
              patch('torch.cuda.current_stream'), \
              patch('torch.from_numpy') as mock_from_numpy, \
              patch('roop.processors.Enhance_UltraMax.ort_cuda_output_to_torch') as mock_out_to_torch:

@@ -124,3 +124,28 @@ that benchmark issue is retained as an error row, not converted to a zero.
 The 4070 decision is therefore to retain capability-driven bounded policy and
 the user/configurable TensorRT setting, while not enabling aux=1 as the default.
 No RTX 3060 conclusion is drawn from this A/B.
+
+## Stage 3 — zero-copy enhancer ring (2026-10-18)
+
+`roop.optimized_processor.ZeroCopyBufferPool` (`get_zero_copy_pool(device)`) holds, per enhancer
+resolution (built on first use, so a 512-only run never pays for 1024), a ring of `SLOTS = 4`
+contiguous CUDA input and output tensors, each with a `torch.cuda.Event`.
+
+| Rule | Where it is enforced |
+|---|---|
+| Slot = `frame_idx % 4`, or a lease counter when the enhancer has no frame index (`Run()` has none) | `ZeroCopyBufferPool.lease` |
+| A lease takes the slot's lock, runs on the thread's own CUDA stream, and `wait_event`s the slot's event; leaving it records the event | `lease` |
+| ORT runs on its OWN stream, so `wait_event` cannot order it against Torch: a host wait on `slot.ready` before the run and `synchronize_outputs()` after | `ZeroCopySlot.run` |
+| Everything handed to `bind_input` is dense: `load()` gathers a strided source with `copy_` | `ZeroCopySlot.load` |
+| A Torch-owned OUTPUT pointer only when the session declares the full static output shape (GPEN Realistic, RF++: measured byte-identical under TensorRT). A dynamic output (CodeFormer / UltraMax) stays ORT-owned, copied to a fresh Torch tensor — a Torch pointer there striped faces | `run(output_is_static=...)`, `enhance_common.ort_cuda_output_to_torch` |
+| Lock order is ring slot, then session lease (`exclusive`); a nested lease on one ring raises | `lease`, `_zero_copy_ready` callers |
+| The binding is cleared after every run, so a later host-path call cannot write into a slot it no longer holds; every host path rebinds its own output | `ZeroCopySlot.run` (`finally`), the three `Run()` host branches |
+| A ring that would leave less than the VRAM governor's margin (1.5 GB) free is built with fewer slots; `stats()` carries allocated / peak MiB | `_ring`, `stats` |
+| Job end and cancel free the rings (waits for in-flight leases) and empty the Torch cache; `scope(*iobindings)` does the same for a block, on error or `KeyboardInterrupt` | `core.release_resources`, `release`, `scope` |
+
+Wired: `Enhance_GPENRealistic`, `Enhance_RestoreFormerPPlus` (ONNX Runtime session; the opt-in
+native engine keeps the host path) — both default ON, `ROOP_ZEROCOPY_ENHANCE=0` returns them to
+the host path. `Enhance_UltraMax` uses the ring for its input; on TensorRT it stays on the host path
+unless `ROOP_ULTRAMAX_TRT_RING=1` (see `docs/perf/stage3_zero_copy_ring_2026-10-18.md`).
+The compositor still takes NumPy, so ONE device-to-host copy of the finished uint8 face remains per
+face; removing it means changing the merger API, not the enhancers.

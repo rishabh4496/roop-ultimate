@@ -228,6 +228,54 @@ def luma_only_recolour_tensor(restored, source, chroma=0.0):
     return out
 
 
+def model_output_to_u8_tensor(hwc):
+    """`cv2.convertScaleAbs(np.maximum(hwc, -1), alpha=127.5, beta=127.5)` for a CUDA float tensor.
+
+    OpenCV evaluates `x*127.5 + 127.5` as ONE fused multiply-add and rounds to nearest even. Two
+    float32 ops (mul, then add) disagree with that on ~1 value in 6M; doing the arithmetic in
+    float64 and rounding to float32 once is the fused result, and measured 0 differences over
+    23.6M random values (30 arrays) where the two-op spelling gave 4-6 per array.
+    """
+    scaled = (hwc.clamp_min(-1.0).double() * 127.5 + 127.5).float()
+    return scaled.abs_().round_().clamp_(0, 255).to(torch.uint8)
+
+
+def gray_u8_tensor(bgr):
+    """`cv2.cvtColor(bgr, COLOR_BGR2GRAY)` for an int32 HxWx3 BGR tensor, to the bit.
+
+    OpenCV's 8-bit path is fixed point -- (B*3735 + G*19235 + R*9798 + 2^14) >> 15 in 4.11
+    (the older 14-bit 1868/9617/4899 set is NOT what this build uses: 7k of 2.6M pixels
+    differ) -- so reproducing it with integers keeps the GPU enhancers byte-identical to
+    the host ones instead of off by one level wherever float rounding disagrees. Pinned
+    against cv2 by tests/test_enhance_common_gpu.py, so a cv2 upgrade that changes the
+    coefficients fails a test instead of shifting a face.
+    """
+    return (bgr[..., 0] * 3735 + bgr[..., 1] * 19235 + bgr[..., 2] * 9798 + 16384) >> 15
+
+
+def luma_only_recolour_u8_tensor(restored, source):
+    """`luma_only_recolour(restored, source, 0.0)` on CUDA uint8 HxWx3 BGR tensors, bit-exact.
+
+    `cv2.subtract(..., dtype=CV_16S)` then `cv2.add(source, merge(d,d,d), dtype=CV_8U)` is
+    an exact integer difference added with saturation. Chroma 0 only: the `chroma > 0`
+    blend is `cv2.addWeighted` with its own rounding, and callers keep the host path for it.
+    """
+    d = gray_u8_tensor(restored.to(torch.int32)) - gray_u8_tensor(source.to(torch.int32))
+    return (source.to(torch.int32) + d.unsqueeze(-1)).clamp_(0, 255).to(torch.uint8)
+
+
+def looks_collapsed_tensor(result, source):
+    """`looks_collapsed` as a 0-d CUDA bool tensor (no host sync; read it with others).
+
+    Same rule -- source spread above 8 and output spread under 0.35 of it -- computed as
+    the population std of every channel in float64, which `_global_std` documents as
+    exactly what its per-channel recombination returns.
+    """
+    s = source.to(torch.float64).std(unbiased=False)
+    r = result.to(torch.float64).std(unbiased=False)
+    return (s > 8.0) & (r < s * 0.35)
+
+
 def luma_only_recolour(restored, source, chroma=0.0, lab_exact=False):
     """The restorer's LUMINANCE carried on the SOURCE's chrominance."""
     import numpy as np
