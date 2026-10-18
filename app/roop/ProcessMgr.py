@@ -6335,12 +6335,17 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     _fs = self.input_face_datas[face_index] if (0 <= face_index < len(self.input_face_datas)) else (self.input_face_datas[0] if self.input_face_datas else None)
                     if target_face is not None:
                         try:
-                            target_face.aligned_img = _ctx if (_realign and '_ctx' in locals() and _ctx is not None) else aligned_img
+                            _use_ctx = bool(_realign and '_ctx' in locals() and _ctx is not None)
+                            target_face.aligned_img = _ctx if _use_ctx else aligned_img
+                            # The frame->aligned_img similarity: landmarks on this face are
+                            # FRAME pixels, so any enhancer-side mouth/occlusion work needs it.
+                            target_face._aligned_M = _M_e if _use_ctx else M
                         except Exception as _aligned_err:
                             _swallowed("roop/ProcessMgr.py:aligned_img", _aligned_err)
                     enhanced_frame, scale_factor = p.Run(_fs, target_face, enh_input)
                     if target_face is not None and hasattr(target_face, 'aligned_img'):
                         target_face.aligned_img = None
+                        target_face._aligned_M = None
 
                 if _A is not None and enhanced_frame is not None:
                     # Back to swap-crop space. The enhancer may have returned a

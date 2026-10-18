@@ -122,20 +122,10 @@ def _scaled_blur(img, ksize, sigma, scale):
 def _frame_pts_to_crop(pts, M):
     """Landmarks come off the detector in FRAME pixels; the mask works in the
     aligned crop. `M` is the frame->crop similarity the crop was cut with.
-
-    With no `M` the points are taken to be in crop space already (the contract
-    the unit tests and any standalone caller use)."""
-    if pts is None or M is None:
-        return pts
-    try:
-        m = np.asarray(M, dtype=np.float32)[:2]
-        p = np.asarray(pts, dtype=np.float32).reshape(-1, 2)
-        if m.shape != (2, 3) or not np.all(np.isfinite(p)):
-            return None
-        return cv2.transform(p[None, :, :], m)[0]
-    except Exception as _degrade_error:
-        _swallowed("Mask_RealityUX._frame_pts_to_crop", _degrade_error)
-        return None
+    One mapper for this module and the UltraMax hook: see
+    `roop.enhancers.mouth_dynamics.frame_pts_to_crop`."""
+    from roop.enhancers.mouth_dynamics import frame_pts_to_crop
+    return frame_pts_to_crop(pts, M)
 
 
 def _non_target_keep_mask(mask_shape, crop_shape, M, non_targets, target_face=None):

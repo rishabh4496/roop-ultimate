@@ -81,6 +81,8 @@ class AnatomicalEngine:
                     target_face,
                     mar_threshold=mouth_open_threshold,
                     feather_radius=4,
+                    # frame -> original_crop; ProcessMgr stamps it beside aligned_img
+                    M=getattr(target_face, "_aligned_M", None),
                 )
                 telemetry["mar"] = mar_val
                 telemetry["mouth_restored"] = mouth_triggered

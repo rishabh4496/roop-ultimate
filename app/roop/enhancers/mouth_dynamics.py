@@ -18,6 +18,33 @@ import numpy as np
 LOGGER = logging.getLogger(__name__)
 
 
+def frame_pts_to_crop(pts: Any, M: Any) -> Optional[np.ndarray]:
+    """Map detector landmarks (FRAME pixels) into the aligned crop they were cut into.
+
+    `M` is the 2x3 frame->crop similarity the crop was made with. With no `M` the
+    points are taken to be in crop space already -- the contract the unit tests and
+    any standalone caller use. Returns None for points or an `M` that cannot be used,
+    so the caller falls back to the template mouth instead of drawing garbage.
+
+    Why this exists: `get_inner_lip_points` returns raw detector coordinates (a
+    face at x=900,y=500 in a 1080p frame). Drawn straight into a 256/512 crop they
+    were clipped onto the crop's corner and the cavity mask was empty (measured in
+    RealityUX 2026-10-14); the UltraMax hook had the same bug.
+    """
+    if pts is None or M is None:
+        return pts
+    try:
+        m = np.asarray(M, dtype=np.float32)
+        p = np.asarray(pts, dtype=np.float32).reshape(-1, 2)
+        if m.shape == (3, 3):
+            m = m[:2]
+        if m.shape != (2, 3) or not np.all(np.isfinite(m)) or not np.all(np.isfinite(p)):
+            return None
+        return cv2.transform(p[None, :, :], m)[0]
+    except (TypeError, ValueError, cv2.error):
+        return None
+
+
 def compute_mar(landmarks: Any) -> float:
     """Calculate Mouth Aspect Ratio (MAR) from inner lip landmarks.
 
@@ -115,7 +142,8 @@ class MouthDynamicsEngine:
         self.feather_radius = int(np.clip(feather_radius, 1, 10))
 
     def get_inner_lip_points(self, face: Any, crop_shape: Tuple[int, int]) -> Optional[np.ndarray]:
-        """Extract inner lip polygon points mapped into crop coordinates."""
+        """Inner lip polygon (landmark_3d_68[60:68], or the 106-point equivalent) in the
+        detector's own coordinates -- FRAME pixels. Map with `frame_pts_to_crop`."""
         if face is None:
             return None
 
@@ -269,6 +297,7 @@ class MouthDynamicsEngine:
         face: Any,
         mar_threshold: Optional[float] = None,
         feather_radius: Optional[int] = None,
+        M: Any = None,
     ) -> Tuple[np.ndarray, bool, float]:
         """Execute mouth dynamics check and conditional surgical restoration.
 
@@ -277,7 +306,10 @@ class MouthDynamicsEngine:
             original_crop: Untouched original target face crop (H, W, 3) uint8.
             face: Target Face object containing landmarks.
             mar_threshold: Optional override for MAR trigger threshold.
-            feather_radius: Optional override for feathering radius.
+            feather_radius: Optional override for feathering radius, stated at a
+                256 px crop and scaled to `original_crop`'s height.
+            M: Frame->`original_crop` similarity. The landmarks on `face` are in
+                FRAME pixels; without `M` they are taken to be in crop space.
 
         Returns:
             Tuple[np.ndarray, bool, float]:
@@ -305,7 +337,11 @@ class MouthDynamicsEngine:
             return swapped_crop, False, mar
 
         # MAR exceeded threshold (indicating speech, yawning, smile, or open mouth)
-        inner_pts = self.get_inner_lip_points(face, swapped_crop.shape[:2])
+        inner_pts = frame_pts_to_crop(
+            self.get_inner_lip_points(face, original_crop.shape[:2]), M)
+        # A 4 px feather is 1.6% of a 256 crop and 0.8% of a 512 one: state it at
+        # the 256 reference so the seam is the same fraction of the face at both.
+        feather = max(1, int(round(feather * original_crop.shape[0] / 256.0)))
         mouth_mask = self.generate_inner_mouth_mask(original_crop, inner_pts, feather_radius=feather)
         restored = self.composite_mouth_aperture(swapped_crop, original_crop, mouth_mask)
 
