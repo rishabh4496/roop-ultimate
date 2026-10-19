@@ -89,6 +89,11 @@ class FlowResult:
     inlier_ratio: float = 0.0
     median_residual: float = float('inf')
     reason: str = ''
+    # Fraction of the ANCHOR cloud still proven rigid. An occluder covering part
+    # of the face takes the points under it out of the chain (they fail the
+    # forward-backward / patch checks), so this falls with the covered fraction:
+    # an occlusion estimate that needs no mask. 1.0 for a failed step (unknown).
+    survival: float = 1.0
 
 
 def _as_points(value: Any) -> Optional[np.ndarray]:
@@ -149,6 +154,7 @@ class FlowCoaster:
         # in that flow space and is divided by the scale when it is applied to
         # full-resolution coordinates.
         self._scale: float = 1.0
+        self._n0: int = 0
         self._shape: Optional[Tuple[int, int]] = None
         self._pts: Optional[np.ndarray] = None          # tracked cloud, full-frame px
         self._landmarks: Optional[np.ndarray] = None
@@ -232,6 +238,7 @@ class FlowCoaster:
         self._crop, self._origin, self._crop_hw = self._crop_around(gray, pts)
         self._shape = gray.shape
         self._pts = pts
+        self._n0 = len(pts)
         self._landmarks = lm
         self._kps = k5
         self._bbox = bb
@@ -351,7 +358,8 @@ class FlowCoaster:
         return FlowResult(True, None if self._landmarks is None else self._landmarks.copy(),
                           None if self._kps is None else self._kps.copy(),
                           self._bbox.copy(), m.astype(np.float32), len(pts), n_in,
-                          ratio, med, 'ok')
+                          ratio, med, 'ok',
+                          survival=float(len(self._pts)) / float(max(1, self._n0)))
 
     def _fail(self, reason: str, n_points: int = 0, n_inliers: int = 0,
               ratio: float = 0.0, median: float = float('inf')) -> FlowResult:
@@ -424,3 +432,54 @@ def bridge_gap(flow_path: Sequence[np.ndarray], flow_end: Optional[np.ndarray],
     if float(np.mean(np.linalg.norm(residual, axis=1))) > tolerance * max(iod, 1e-6):
         return None
     return spread_residual(flow_path, flow_end, closing)
+
+
+# ── Alignment through an occluder: the per-frame policy for a persistent chain ─
+#
+# Stage 17. A chain anchored on the last TRUSTED detection is stepped on every
+# frame, detected or not. `FlowResult.survival` (the fraction of the anchor cloud
+# still proven rigid) is a mask-free occlusion estimate: measured on real footage
+# with a pasted occluder (`tests/probe_alignment_chain_stage17.py`) it stays high on
+# clean frames (median 0.84-1.00; under 0.7 in 0-4.3% of chains) and falls under a
+# covering occluder (median 0.23-0.71). The keypoints the chain carries then beat
+# the detector's, which an occluder drags by several pixels.
+#
+# A detector-vs-flow DISAGREEMENT gate was measured and rejected: on clean frames
+# flow disagrees with a good detection by > 0.05 x IOD in 23-81% of s5/s7 chains,
+# so it cannot tell "detector hijacked" from "flow wrong".
+OCCLUDED_BELOW = 0.70       # survival under this: the face is partly covered
+REFRESH_ABOVE = 0.90        # survival over this (and old enough): safe to re-anchor
+REFRESH_AGE = 4             # frames before a clean chain is re-anchored
+# The probe validated chains of AT MOST 8 frames from a clean anchor (clean
+# survival < 0.7 in 0-4.3%). Longer chains lose anchor points to blur and
+# rotation until clean frames read as occluded, and points lost under an
+# occluder never come back after it leaves: the first end-to-end version let
+# chains run to 24 frames and replaced 99 of 156 CLEAN frames on s6.
+MAX_AGE = 8                 # a chain this old is re-anchored whatever it says
+MAX_SUBSTITUTED = 8         # consecutive occluded frames carried before the detector is trusted again
+
+SUBSTITUTE = 'substitute'   # use the chain's geometry for this detected face
+REFRESH = 'refresh'         # re-anchor on this detection
+CONTINUE = 'continue'       # keep the chain, keep the detector's geometry
+REANCHOR = 'reanchor'       # chain unusable: start over from this detection
+
+
+def chain_policy(consistent: bool, survival: float, age: int, substituted: int,
+                 occluded_below: float = OCCLUDED_BELOW, refresh_above: float = REFRESH_ABOVE,
+                 refresh_age: int = REFRESH_AGE, max_age: int = MAX_AGE,
+                 max_substituted: int = MAX_SUBSTITUTED) -> str:
+    """What to do with a DETECTED face whose chain has just been stepped onto it.
+
+    ``consistent``: the LK step passed every guard. ``survival``: fraction of the
+    anchor cloud still rigid. ``age``: steps since the anchor. ``substituted``:
+    consecutive frames already carried on the chain's geometry.
+    """
+    if not consistent:
+        return REANCHOR
+    if survival < occluded_below and substituted < max_substituted:
+        return SUBSTITUTE
+    if age >= max_age:
+        return REANCHOR
+    if survival >= refresh_above and age >= refresh_age:
+        return REFRESH
+    return CONTINUE

@@ -67,10 +67,11 @@ from roop.procmgr_runtime import (_DEBUG_MATCH, _TRACK_EMB_MAX, _TRACK_ASSIGN_MA
                                   _INTERP_COLLIDE_FRAC,
                                   _COAST_FRAMES, _COAST_LOST_FRAMES,
                                   _COAST_MIN_HITS, _TRACK_COST,
-                                  _FLOW_COAST, _FLOW_MAX_GAP,
+                                  _FLOW_COAST, _FLOW_MAX_GAP, _FLOW_ALIGN,
                                   _BYSTANDER_VETO, _BYSTANDER_MIN_OBS)
 from roop.association_cost import composite_cost, legacy_cost, propagate_kps
-from roop.flow_coast import FlowCoaster, bridge_gap, spread_residual
+from roop.flow_coast import (FlowCoaster, bridge_gap, spread_residual, chain_policy,
+                             SUBSTITUTE, REFRESH, CONTINUE, REANCHOR)
 from roop.bystander_bank import TargetBank, bystanders_from_tracks
 
 import roop.globals
@@ -309,7 +310,9 @@ class TrackingMixin:
         # between would have no flow entry to bridge across.
         flow_on = bool(_FLOW_COAST and collect_obs and TRACK_STEP == 1)
         gray_ring = {}
-        flow_stats = {'anchored': 0, 'steps': 0, 'refused': 0, 'closed': 0}
+        flow_stats = {'anchored': 0, 'steps': 0, 'refused': 0, 'closed': 0,
+                      'aligned': 0, 'occ_steps': 0, 'occ_failed': 0}
+        align_on = bool(flow_on and _FLOW_ALIGN)
         self._flow_stats = flow_stats
         # Detections the appearance-only fallback was not allowed to claim.
         reid_refused = 0
@@ -505,6 +508,64 @@ class TrackingMixin:
                 return None
             return cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
+        def _occ_observe(t, face, f_idx):
+            """Stage 17: a DETECTED face. Step the occlusion chain onto it; if the
+            chain says the face is partly covered, the detector's keypoints are not
+            to be trusted (an occluder drags them several pixels) and the chain's
+            replace them. Otherwise the chain is kept, refreshed or restarted per
+            `flow_coast.chain_policy`. Runs BEFORE `_flow_observe`, so the hole
+            chain anchors on the corrected geometry."""
+            g = gray_ring.get(f_idx)
+            if g is None or int(t.get('emb_n') or 0) < 3:
+                t['oc'] = None
+                return
+            oc = t.get('oc')
+            r = None
+            if oc is not None and oc.anchored:
+                r = oc.step(g)
+                t['oc_age'] = int(t.get('oc_age', 0)) + 1
+                flow_stats['occ_steps'] += 1
+            action = (REANCHOR if r is None else
+                      chain_policy(r.consistent, r.survival, t['oc_age'],
+                                   int(t.get('oc_sub', 0))))
+            if r is not None and not r.consistent:
+                flow_stats['occ_failed'] += 1
+            if (action == SUBSTITUTE and r.landmarks is not None and r.kps is not None
+                    and r.bbox is not None):
+                lm0 = getattr(face, 'landmark_2d_106', None)
+                if lm0 is not None and np.asarray(lm0).shape[0] == r.landmarks.shape[0]:
+                    face['_kps_detector'] = np.asarray(face.kps, np.float32).copy()
+                    face['kps'] = r.kps.astype(np.float32)
+                    face['landmark_2d_106'] = r.landmarks.astype(np.float32)
+                    face['bbox'] = r.bbox.astype(np.float32)
+                    face['_flow_aligned'] = True
+                    face['_flow_survival'] = float(r.survival)
+                    t['oc_sub'] = int(t.get('oc_sub', 0)) + 1
+                    flow_stats['aligned'] += 1
+                    return
+                action = CONTINUE
+            t['oc_sub'] = 0
+            if action in (REFRESH, REANCHOR):
+                if oc is None:
+                    oc = t['oc'] = FlowCoaster()
+                if oc.anchor(g, face.bbox, getattr(face, 'landmark_2d_106', None),
+                             getattr(face, 'kps', None)):
+                    t['oc_age'] = 0
+                else:
+                    t['oc'] = None
+
+        def _occ_miss(t, f_idx):
+            """No detection this frame: keep the occlusion chain in step."""
+            oc = t.get('oc')
+            if oc is None or not oc.anchored:
+                return
+            g = gray_ring.get(f_idx)
+            r = oc.step(g) if g is not None else None
+            if r is None or not r.consistent:
+                t['oc'] = None
+                return
+            t['oc_age'] = int(t.get('oc_age', 0)) + 1
+
         def _flow_observe(t, face, f_idx):
             """A real detection: close any open flow chain, then re-anchor."""
             g = gray_ring.get(f_idx)
@@ -574,6 +635,7 @@ class TrackingMixin:
                     t['vel'] = None
                     t['prev_bbox'] = None
                     t['fc'] = None              # flow never crosses a cut
+                    t['oc'] = None
             # Retire tracks not seen for STALE frames so matching stays O(active).
             if active:
                 fresh = []
@@ -864,6 +926,8 @@ class TrackingMixin:
                         best.get('emb_mean', emb), dtype=np.float32).copy()
 
                 used.add(best['id'])
+                if align_on:
+                    _occ_observe(best, face, f_idx)
                 if flow_on:
                     _flow_observe(best, face, f_idx)
                 if collect_obs:
@@ -878,6 +942,8 @@ class TrackingMixin:
                 for t in active:
                     if t['id'] not in used:
                         _flow_miss(t, f_idx)
+                        if align_on:
+                            _occ_miss(t, f_idx)
             per_frame[f_idx] = entries
 
         cap = None
@@ -1272,6 +1338,7 @@ class TrackingMixin:
         tracks = active + retired
         for _t in tracks:
             _t.pop('fc', None)                 # coasters are scan state, not an artefact
+            _t.pop('oc', None)
         # Chain fragments that are one person interrupted, BEFORE any identity
         # gate sees them — including the true-mean finalisation just below, so a
         # chain's identity is averaged over all its segments rather than over the
@@ -2342,6 +2409,11 @@ class TrackingMixin:
         _fs = getattr(self, '_flow_stats', None) or {}
         n_flow = int(getattr(self, '_flow_bridged', 0) or 0)
         n_flow_refused = int(getattr(self, '_flow_refused', 0) or 0)
+        if _FLOW_ALIGN and _fs.get('aligned'):
+            print(f'[FlowAlign] {_fs["aligned"]} detected face(s) of {_fs.get("occ_steps", 0)} chain step(s) '
+                  f'had their keypoints replaced by optical-flow-carried ones (face partly covered, '
+                  f'survival < 0.70); {_fs.get("occ_failed", 0)} chain step(s) refused. '
+                  f'ROOP_FLOW_ALIGN=0 disables.', flush=True)
         if _FLOW_COAST and (_fs.get('steps') or n_flow or n_flow_refused):
             print(f'[Flow] {_fs.get("steps", 0)} dropout frame(s) followed by optical flow '
                   f'({_fs.get("refused", 0)} chain(s) ended inconsistent); '

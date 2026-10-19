@@ -414,6 +414,24 @@ _BYSTANDER_MIN_OBS = int(os.environ.get('ROOP_BYSTANDER_MIN_OBS', '10'))
 #
 # ROOP_FLOW_COAST=0 disables it and restores the previous output exactly.
 _FLOW_COAST = os.environ.get('ROOP_FLOW_COAST', '1') != '0'
+# ROOP_FLOW_ALIGN=1 enables flow-carried alignment through an occluder (Stage 17):
+# a SECOND chain per track, anchored on the last trusted detection and stepped on
+# every frame; when it reports the face partly covered (survival < 0.70) the
+# detected keypoints/landmarks are replaced by the chain's (flow_coast.chain_policy).
+#
+# DEFAULT OFF, on measured evidence (`tests/probe_align_e2e_stage17.py`: the real
+# pre-pass on a clip with a skin-coloured occluder slid over an eye / the mouth /
+# half the face, truth = the same clip's clean run; error in 256-px-crop pixels):
+#   s6  inside the windows 6.39 -> 4.92 (eye 2.5 -> 1.6, mouth 6.6 -> 3.2, half none)
+#       but CLEAN frames outside them 0.04 -> 1.19 (30 replaced)
+#   s7  inside 6.69 -> 6.92, clean 1.06 -> 3.08 (33 replaced)
+# The controlled single-chain probe was much kinder (0.7 px vs 2-22 px) because it
+# ran 3-8 frame chains from a clean anchor; in the scan loop a chain that has lost
+# points to blur, rotation or an occluder reads as 'covered' on clean frames, and
+# survival does not recover when the occluder leaves. A flow-vs-detector
+# disagreement trigger was measured and rejected (fires on 23-81% of clean s5/s7
+# chains). Do not enable without a trigger that is quiet on clean frames.
+_FLOW_ALIGN = os.environ.get('ROOP_FLOW_ALIGN', '0') == '1'
 # A flow chain is abandoned after this many consecutive missed frames: LK drift
 # compounds, and the Kalman coast (15 frames) takes over beyond it.
 _FLOW_MAX_GAP = int(os.environ.get('ROOP_FLOW_MAX_GAP', '12'))

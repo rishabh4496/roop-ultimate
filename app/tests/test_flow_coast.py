@@ -320,3 +320,68 @@ class BridgeGapTest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class ChainPolicyTest(unittest.TestCase):
+    """The decision a persistent chain makes on a DETECTED face (Stage 17)."""
+
+    def setUp(self):
+        from roop.flow_coast import (chain_policy, SUBSTITUTE, REFRESH, CONTINUE, REANCHOR)
+        self.p, self.S, self.R, self.C, self.A = chain_policy, SUBSTITUTE, REFRESH, CONTINUE, REANCHOR
+
+    def test_an_occluded_face_takes_the_chains_geometry(self):
+        self.assertEqual(self.p(True, 0.55, 3, 0), self.S)
+
+    def test_a_clean_young_chain_just_continues(self):
+        self.assertEqual(self.p(True, 0.95, 2, 0), self.C)
+
+    def test_a_clean_old_chain_is_refreshed_on_the_detection(self):
+        self.assertEqual(self.p(True, 0.95, 4, 0), self.R)
+
+    def test_a_chain_in_the_grey_zone_is_neither_trusted_nor_refreshed(self):
+        # survival 0.8: not occluded enough to override the detector, not clean
+        # enough to anchor on it
+        self.assertEqual(self.p(True, 0.80, 5, 0), self.C)
+
+    def test_a_failed_step_starts_over_from_the_detection(self):
+        self.assertEqual(self.p(False, 0.2, 3, 0), self.A)
+
+    def test_the_detector_is_trusted_again_after_the_substitution_budget(self):
+        self.assertEqual(self.p(True, 0.5, 5, 8), self.C)
+        self.assertEqual(self.p(True, 0.5, 8, 8), self.A)
+
+    def test_nothing_runs_forever(self):
+        self.assertEqual(self.p(True, 0.8, 8, 0), self.A)
+
+    def test_thresholds_are_the_measured_ones(self):
+        from roop import flow_coast as fc
+        self.assertEqual((fc.OCCLUDED_BELOW, fc.REFRESH_ABOVE), (0.70, 0.90))
+
+
+class SurvivalTest(unittest.TestCase):
+    """`survival` is the mask-free occlusion estimate the policy leans on."""
+
+    def test_clean_motion_keeps_survival_high(self):
+        img, lm = _texture(), _landmarks()
+        c = _coaster(img, lm)
+        r = None
+        for k in range(1, 5):
+            r = c.step(_warp(img, _similarity(1.5 * k, -1.0 * k)))
+            self.assertTrue(r.consistent, r.reason)
+        self.assertGreater(r.survival, 0.85)
+
+    def test_a_covering_occluder_lowers_survival(self):
+        img, lm = _texture(), _landmarks()
+        c = _coaster(img, lm)
+        moved = _warp(img, _similarity(2.0, 1.0))
+        moved[150:400, 240:330] = _texture(seed=42)[150:400, 240:330]
+        r = c.step(moved)
+        self.assertTrue(r.consistent, r.reason)
+        self.assertLess(r.survival, 0.75)
+
+    def test_a_failed_step_reports_unknown_not_occluded(self):
+        img, lm = _texture(), _landmarks()
+        c = _coaster(img, lm)
+        r = c.step(_warp(img, _similarity(140.0, 0.0)))
+        self.assertFalse(r.consistent)
+        self.assertEqual(r.survival, 1.0)
