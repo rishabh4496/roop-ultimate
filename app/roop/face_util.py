@@ -1008,7 +1008,7 @@ def _faces_like_insightface(bboxes, kpss):
     return faces
 
 
-def _detect_faces_raw(frame, det_size=None, det_thresh=None, aux=True, unclamped=False):
+def _detect_faces_raw(frame, det_size=None, det_thresh=None, aux=True, unclamped=False, fa=None):
     """Run the selected detector engine and return raw Face objects (unsorted) without rescues.
 
     `unclamped=True` (only meaningful with `aux=False` on SCRFD) returns the faces with
@@ -1027,6 +1027,11 @@ def _detect_faces_raw(frame, det_size=None, det_thresh=None, aux=True, unclamped
     landmark_3d_68) and returns bbox/kps/det_score only — 39% of the call on the
     measured machine, and pure waste for a caller that reads neither the
     embedding nor the landmarks.
+
+    `fa` is an instance the caller already LEASED (see `detect_faces_for_prescan`,
+    which needs the same instance for the recognition model afterwards). Leasing a
+    second one while holding the first would deadlock a pool whose every instance
+    is held by a worker.
     """
     engine = getattr(roop.globals, 'detector_engine', 'scrfd')
     if _bp.enabled():
@@ -1048,11 +1053,11 @@ def _detect_faces_raw(frame, det_size=None, det_thresh=None, aux=True, unclamped
         eff_size = 640
     eff_thresh = (det_thresh if det_thresh is not None
                   else getattr(roop.globals, 'face_detector_threshold', 0.60))
-    with lease_face_analyser() as fa:
+    with (contextlib.nullcontext(fa) if fa is not None else lease_face_analyser()) as fa:
         for model in fa.models.values():
             if hasattr(model, 'nms_thresh'):
                 model.nms_thresh = nms_thresh
-                
+
         # Temporarily override detection size and threshold on the underlying model if requested
         orig_input_size = getattr(fa.det_model, 'input_size', None)
         orig_det_thresh = getattr(fa.det_model, 'det_thresh', None)
@@ -2069,6 +2074,109 @@ def get_all_faces(frame: Frame, expected_count: Optional[int] = None,
         _swallowed("roop/face_util.py:1239", exc, "fallback continued")
         _warn_detect_failure(exc)
         return []
+
+
+def prescan_pool_size() -> int:
+    """Number of FaceAnalysis instances the Stage 1 pre-scan may run at once.
+
+    Builds the pool if it is not resident, so the caller (the MAIN thread, before it
+    starts any worker) pays the construction, and with it the engine-hash-cached aux
+    canary that `_build_face_analyser` runs synchronously (`_guard_aux_models`).
+    Leasing blocks once every instance is out, so more workers than this only queue.
+    """
+    _ensure_face_analyser()
+    return max(1, len(FACE_ANALYSER_POOL))
+
+
+def prescan_has_recognition() -> bool:
+    """True when every pooled instance carries the recognition model."""
+    _ensure_face_analyser()
+    pool = list(FACE_ANALYSER_POOL) or ([FACE_ANALYSER] if FACE_ANALYSER is not None else [])
+    return bool(pool) and all('recognition' in getattr(fa, 'models', {}) for fa in pool)
+
+
+def _prescan_embed(rec, image, faces):
+    """Recognition on `faces` of `image` only (5 keypoints required); never raises."""
+    for f in faces:
+        kps = getattr(f, 'kps', None)
+        if kps is None or np.asarray(kps).shape != (5, 2):
+            continue
+        try:
+            rec.get(image, f)
+        except Exception as exc:
+            _swallowed("roop/face_util.py:_prescan_embed", exc, "embedding skipped")
+
+
+PRESCAN_TURNS = ("clockwise", "anticlockwise", "180")
+
+
+def detect_faces_for_prescan(frame: Frame, det_thresh: float, embed: bool = False,
+                             turn: Optional[str] = None) -> Any:
+    """Stage 1 sparse pre-scan detection: detector (+ recognition when `embed`) only.
+
+    No landmark_2d_106 / landmark_3d_68 / genderage inference: those cost 39% of a
+    `fa.get()` call and a pre-scan reads neither. The models stay LOADED, because the
+    pre-pass and the render that follow lease the same pool, and changing the module set
+    here would tear the pool down and rebuild it twice.
+
+    One call is ONE pass: the frame as it is (`turn` None) or turned by one of
+    PRESCAN_TURNS, with the face upright in the turned frame so its embedding is the right
+    one. The CALLER decides whether to try the turns (see `FaceAnalyserProbe.positive`),
+    because "the first pass found nothing" is the wrong trigger here: at the relaxed
+    pre-scan threshold a junk 0.42 detection makes the frame non-empty, which would
+    switch the rescue off exactly when it is needed (angle_inverted.mp4 frames 299-300:
+    junk 0.42 upright, real inverted face 0.93 one turn away).
+
+    With `embed`, a face of the un-turned pass whose keypoint roll is past FACE_ROLL_LOWER
+    is embedded on the frame turned to stand it up, as `_upright_remeasure` does, reusing
+    `face_down_axis` / `_action_for_down_axis`. On the raw crop an inverted face scores
+    ~0.02 cosine against itself upright; targeted mode dropped 193 of 268 frames of
+    angle_inverted.mp4 before this.
+
+    Small-face / close-up / padded / CLAHE rescues are not run: on the baseline clips they
+    only produced edge-sliver and back-of-head detections (viewed), and each costs a pass.
+
+    One lease covers every pass of the call, so a pool of N cannot be deadlocked by N
+    workers each waiting for a second instance. Faces come back unsorted; `embedding` is
+    set only when `embed` is true and the face has 5 keypoints. Their geometry is in the
+    coordinates of whichever (possibly turned) image they were measured on - nothing here
+    reads it.
+    """
+    rotators = {"clockwise": rotate_clockwise, "anticlockwise": rotate_anticlockwise,
+                "180": rotate_image_180}
+    action_turns = {"rotate_clockwise": rotate_clockwise,
+                    "rotate_anticlockwise": rotate_anticlockwise,
+                    "rotate_180": rotate_image_180}
+    with lease_face_analyser() as fa:
+        rec = fa.models.get('recognition') if embed else None
+        image = frame if turn is None else rotators[turn](frame)
+        faces = list(_detect_faces_raw(image, det_thresh=det_thresh, aux=False, fa=fa) or [])
+        if rec is None or not faces:
+            return faces
+        if turn is not None:
+            _prescan_embed(rec, image, faces)           # upright in this frame
+            return faces
+
+        upright, rolled = [], {}
+        for f in faces:
+            axis = face_down_axis(f)
+            action = _action_for_down_axis(*axis) if axis is not None else None
+            if action in action_turns:
+                rolled.setdefault(action, []).append(f)
+            else:
+                upright.append(f)
+        _prescan_embed(rec, frame, upright)
+        out = list(upright)
+        for action, group in rolled.items():
+            rframe = action_turns[action](frame)
+            found = list(_detect_faces_raw(rframe, det_thresh=det_thresh, aux=False, fa=fa) or [])
+            if found:
+                _prescan_embed(rec, rframe, found)
+                out.extend(found)
+            else:                       # the turn found nothing: keep the raw reading
+                _prescan_embed(rec, frame, group)
+                out.extend(group)
+        return out
 
 
 def get_all_faces_hires(frame: Frame, det_size: int) -> Any:

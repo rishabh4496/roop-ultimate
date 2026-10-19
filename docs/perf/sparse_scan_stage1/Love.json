@@ -1,0 +1,114 @@
+{
+ "video": "Love.mp4",
+ "window": [
+  0,
+  1200
+ ],
+ "fps": 23.976023976023978,
+ "dense_seconds": 37.54,
+ "rows": [
+  {
+   "name": "new",
+   "seconds": 2.01,
+   "ranges": 1,
+   "active": 1159,
+   "total": 1200,
+   "skipped_pct": 3.4,
+   "truth_frames": 1116,
+   "missed": 2,
+   "missed_first": [
+    34,
+    39
+   ],
+   "mode": "sparse_auto_range",
+   "stride": 4,
+   "cuts": 8,
+   "mids": 8,
+   "workers": 2,
+   "detector_errors": 0
+  },
+  {
+   "name": "new (2nd, warm)",
+   "seconds": 1.99,
+   "ranges": 1,
+   "active": 1159,
+   "total": 1200,
+   "skipped_pct": 3.4,
+   "truth_frames": 1116,
+   "missed": 2,
+   "missed_first": [
+    34,
+    39
+   ],
+   "mode": "sparse_auto_range",
+   "stride": 4,
+   "cuts": 8,
+   "mids": 8,
+   "workers": 2,
+   "detector_errors": 0
+  },
+  {
+   "name": "old",
+   "seconds": 1.13,
+   "ranges": 2,
+   "active": 1153,
+   "total": 1200,
+   "skipped_pct": 3.9,
+   "truth_frames": 1116,
+   "missed": 0,
+   "missed_first": [],
+   "mode": "sparse_auto_range",
+   "stride": 24,
+   "cuts": null,
+   "mids": null,
+   "workers": null,
+   "detector_errors": null
+  },
+  {
+   "name": "new",
+   "seconds": 4.85,
+   "ranges": 5,
+   "active": 937,
+   "total": 1200,
+   "skipped_pct": 21.9,
+   "truth_frames": 632,
+   "missed": 0,
+   "missed_first": [],
+   "mode": "sparse_auto_range",
+   "stride": 4,
+   "cuts": 8,
+   "mids": 8,
+   "workers": 2,
+   "detector_errors": 0
+  },
+  {
+   "name": "old",
+   "seconds": 0.97,
+   "ranges": 6,
+   "active": 918,
+   "total": 1200,
+   "skipped_pct": 23.5,
+   "truth_frames": 632,
+   "missed": 11,
+   "missed_first": [
+    561,
+    562,
+    563,
+    564,
+    565,
+    566,
+    567,
+    568,
+    569,
+    1174,
+    1179
+   ],
+   "mode": "sparse_auto_range",
+   "stride": 24,
+   "cuts": null,
+   "mids": null,
+   "workers": null,
+   "detector_errors": null
+  }
+ ]
+}

@@ -811,8 +811,10 @@ class BatchProcessingMixin:
                         frame_end=frame_end,
                         frame_count=frame_count,
                         fps=fps,
-                        threshold=roop.globals.distance_threshold,
+                        swap_distance_threshold=getattr(self.options, 'face_distance_threshold', None),
+                        det_thresh=getattr(roop.globals, 'face_detector_threshold', None),
                         progress_cb=_scan_progress,
+                        should_stop=lambda: not roop.globals.processing,
                     )
                 self._active_ranges = ranges
                 self._active_ranges_mask = mask
