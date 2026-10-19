@@ -373,6 +373,51 @@ _COAST_LOST_FRAMES = int(os.environ.get('ROOP_COAST_LOST_FRAMES', '30'))
 # whatever produced it.
 _COAST_MIN_HITS = int(os.environ.get('ROOP_COAST_MIN_HITS', '3'))
 
+# ── Pre-pass association cost ────────────────────────────────────────────────
+# 'composite' (Stage 16, default): identity + GIoU + 5-keypoint + pose against the
+# track's propagated prior (roop/association_cost.py). 'legacy': the original
+# (1 - IoU) + cosine distance, appearance-blind for a contaminated face.
+# Measured on real kissing footage in docs/CHANGELOG.md (Stage 16): the
+# keypoint term is what stops a face in contact being handed to its neighbour's
+# track. ROOP_TRACK_COST=legacy restores the previous association exactly.
+_TRACK_COST = os.environ.get('ROOP_TRACK_COST', 'composite').strip().lower()
+
+# ── Bystander exclusion (Stage 16) — OFF by default ──────────────────────────
+# A track is bound to a captured person only if it is not CLOSER to a registered
+# bystander than to that person. Bystanders are the scene's other long, clean
+# tracks that no captured person explains (roop/bystander_bank.py).
+#
+# DEFAULT OFF, on measured evidence. `tests/probe_bystander_veto_stage16.py`
+# (one person captured, veto on vs off, real `_precompute_temporal`): neutral on
+# d1/d2/d5 (0 fires), but on Love it removed 35 target face-frames and on Weeds
+# 39 -- and rendering the vetoed tracks (veto_inspect) showed BOTH were the real
+# target turned away (Weeds: the woman, hair and ear only; Love: the man in dark
+# profile), bound at a weak 0.71 against a 0.75 gate. Those are exactly the
+# faces whose embedding is noise, and a RELATIVE comparison of two noisy
+# readings is noise too. The census that justified the gate (clean/contaminated
+# FRONTAL faces, Love margin 0.12: 0% false-bind) did not cover turned-away
+# heads. Do not flip this on without a pose-aware evidence rule and a run that
+# loses 0 target frames on Love and Weeds. ROOP_BYSTANDER_VETO=1 enables it.
+_BYSTANDER_VETO = os.environ.get('ROOP_BYSTANDER_VETO', '0') == '1'
+# A track must be this long (clean observations) to register as a bystander.
+_BYSTANDER_MIN_OBS = int(os.environ.get('ROOP_BYSTANDER_MIN_OBS', '10'))
+
+# ── Optical-flow landmark propagation through a detector dropout ─────────────
+# Interpolation and Kalman coasting place a hidden face from GEOMETRY alone.
+# roop/flow_coast.py also looks at the pixels still visible, so a head that
+# turns or ducks behind the occluder is placed by its measured motion. During
+# the pre-pass scan, an established track that the detector missed is followed
+# by pyramidal Lucas-Kanade from its last real detection; the result is used by
+# `_build_temporal_faces` only where it ARRIVES at the closing detection (the
+# bridge test), or, past the last observation, where every step stayed
+# self-consistent. Measured in `docs/CHANGELOG.md` (Stage 16).
+#
+# ROOP_FLOW_COAST=0 disables it and restores the previous output exactly.
+_FLOW_COAST = os.environ.get('ROOP_FLOW_COAST', '1') != '0'
+# A flow chain is abandoned after this many consecutive missed frames: LK drift
+# compounds, and the Kalman coast (15 frames) takes over beyond it.
+_FLOW_MAX_GAP = int(os.environ.get('ROOP_FLOW_MAX_GAP', '12'))
+
 
 # ── Track → source assignment gate ───────────────────────────────────────────
 # Binding a track to a source is a DURABLE decision: every face on that track,

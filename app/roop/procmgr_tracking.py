@@ -66,7 +66,12 @@ from roop.procmgr_runtime import (_DEBUG_MATCH, _TRACK_EMB_MAX, _TRACK_ASSIGN_MA
                                   _INTERP_MAX_TRAVEL, _INTERP_MAX_SCALE,
                                   _INTERP_COLLIDE_FRAC,
                                   _COAST_FRAMES, _COAST_LOST_FRAMES,
-                                  _COAST_MIN_HITS)
+                                  _COAST_MIN_HITS, _TRACK_COST,
+                                  _FLOW_COAST, _FLOW_MAX_GAP,
+                                  _BYSTANDER_VETO, _BYSTANDER_MIN_OBS)
+from roop.association_cost import composite_cost, legacy_cost, propagate_kps
+from roop.flow_coast import FlowCoaster, bridge_gap, spread_residual
+from roop.bystander_bank import TargetBank, bystanders_from_tracks
 
 import roop.globals
 from roop import session_pool
@@ -298,6 +303,14 @@ class TrackingMixin:
         temporal_tracker = TemporalFaceTracker.from_env() if collect_obs else None
         self._temporal_tracker = temporal_tracker
         self._temporal_frame_shape = None
+        # Optical-flow landmark propagation (roop/flow_coast.py). Only where a
+        # gap-fill consumer exists (collect_obs) and every frame is scanned: a
+        # flow chain needs consecutive frames, and with a stride the frames in
+        # between would have no flow entry to bridge across.
+        flow_on = bool(_FLOW_COAST and collect_obs and TRACK_STEP == 1)
+        gray_ring = {}
+        flow_stats = {'anchored': 0, 'steps': 0, 'refused': 0, 'closed': 0}
+        self._flow_stats = flow_stats
         # Detections the appearance-only fallback was not allowed to claim.
         reid_refused = 0
         # Observations whose embedding was disbelieved because the recognition
@@ -484,6 +497,53 @@ class TrackingMixin:
                         return _run_detect(fr, crop_bbox, expected_count, rescue_ok,
                                            rotation_action)
 
+
+        def _gray_of(frame):
+            """Grayscale for flow, or None when the frame is not a real picture."""
+            if (not isinstance(frame, np.ndarray) or frame.ndim != 3
+                    or frame.shape[2] != 3 or frame.dtype != np.uint8):
+                return None
+            return cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+        def _flow_observe(t, face, f_idx):
+            """A real detection: close any open flow chain, then re-anchor."""
+            g = gray_ring.get(f_idx)
+            if g is None or int(t.get('emb_n') or 0) < 3:
+                t['fc'] = None
+                return
+            fc = t.get('fc')
+            if fc is not None and fc.anchored and t.get('flow_gap', 0) > 0:
+                r = fc.step(g)                      # flow onto the CLOSING frame
+                if r is not None and r.consistent:
+                    t.setdefault('flow', {})[f_idx] = r
+                    flow_stats['closed'] += 1
+            lm = getattr(face, 'landmark_2d_106', None)
+            kp = getattr(face, 'kps', None)
+            if fc is None:
+                fc = t['fc'] = FlowCoaster()
+            if fc.anchor(g, face.bbox, lm, kp):
+                flow_stats['anchored'] += 1
+            t['flow_gap'] = 0
+
+        def _flow_miss(t, f_idx):
+            """An established track the detector missed: follow it by flow."""
+            fc = t.get('fc')
+            if fc is None or not fc.anchored:
+                return
+            gap = int(t.get('flow_gap', 0)) + 1
+            g = gray_ring.get(f_idx)
+            if g is None or gap > _FLOW_MAX_GAP:
+                t['fc'] = None
+                return
+            t['flow_gap'] = gap
+            r = fc.step(g)
+            flow_stats['steps'] += 1
+            if r is None or not r.consistent:
+                flow_stats['refused'] += 1
+                t['fc'] = None                       # a failed chain is over
+                return
+            t.setdefault('flow', {})[f_idx] = r
+
         def _consume(f_idx, faces):
             nonlocal active, retired, next_id, reid_refused, contam_seen, contam_reid
             # ── Shot boundary ────────────────────────────────────────────────
@@ -513,6 +573,7 @@ class TrackingMixin:
                 for t in retired:
                     t['vel'] = None
                     t['prev_bbox'] = None
+                    t['fc'] = None              # flow never crosses a cut
             # Retire tracks not seen for STALE frames so matching stays O(active).
             if active:
                 fresh = []
@@ -529,16 +590,32 @@ class TrackingMixin:
                     bb = np.asarray(face.bbox, dtype=np.float32)
                     e = np.asarray(face.embedding, dtype=np.float32)
                     is_dirty = face_contact.unreliable(face)
+                    _fkps = getattr(face, 'kps', None)
+                    _fpose = getattr(face, 'pose', None)
+                    try:
+                        _fcon = float(face.get('_emb_contam', 0.0) or 0.0)
+                    except (AttributeError, TypeError, ValueError):   # a test double with no .get
+                        _fcon = 0.0
                     for ti, t in enumerate(active):
                         pred_bb = _predict_bbox(t, f_idx)
                         iou = self._bbox_iou(bb, pred_bb)
                         if iou < IOU_MIN:
                             continue
                         cos_dist = compute_cosine_distance(t['emb_mean'], e)
-                        if cos_dist > EMB_MAX and not is_dirty:
-                            continue
-                        cost = (1.0 - iou) if is_dirty else ((1.0 - iou) + cos_dist)
-                        cost_matrix[fi, ti] = cost
+                        if _TRACK_COST == 'legacy':
+                            cost = legacy_cost(iou, cos_dist, is_dirty, IOU_MIN, EMB_MAX)
+                        else:
+                            # Stage 16 composite: identity + GIoU + keypoint +
+                            # pose against the track's PROPAGATED prior. The
+                            # keypoint term is what separates two faces whose
+                            # boxes overlap in contact (see association_cost).
+                            cost = composite_cost(
+                                bb, _fkps, _fpose, cos_dist, _fcon, is_dirty,
+                                pred_bb,
+                                propagate_kps(t.get('kps'), t.get('kps_box'), pred_bb),
+                                t.get('pose'), IOU_MIN, EMB_MAX)
+                        if cost is not None:
+                            cost_matrix[fi, ti] = cost
                 row_ind, col_ind = linear_sum_assignment(cost_matrix)
                 for r, c in zip(row_ind, col_ind):
                     if cost_matrix[r, c] < 1e4:
@@ -668,6 +745,9 @@ class TrackingMixin:
                         'previous_mask': None,
                         'mask': (None if _mask is None else np.asarray(_mask).copy()),
                         'previous_frame_index': -1,
+                        'kps': (None if getattr(face, 'kps', None) is None
+                                else np.asarray(face.kps, dtype=np.float32).copy()),
+                        'kps_box': bbox.copy(),
                         # True while every observation this track has ever had
                         # was contaminated. The seed still has to be SOMETHING
                         # (association needs a mean to compare against), so it
@@ -722,6 +802,9 @@ class TrackingMixin:
                     else:
                         best['bbox'] = bbox
                     best['last_seen'] = f_idx
+                    if getattr(face, 'kps', None) is not None:
+                        best['kps'] = np.asarray(face.kps, dtype=np.float32).copy()
+                        best['kps_box'] = bbox.copy()
                     _lm = getattr(face, 'landmark_2d_106', None)
                     if _lm is None:
                         _lm = getattr(face, 'kps', None)
@@ -781,6 +864,8 @@ class TrackingMixin:
                         best.get('emb_mean', emb), dtype=np.float32).copy()
 
                 used.add(best['id'])
+                if flow_on:
+                    _flow_observe(best, face, f_idx)
                 if collect_obs:
                     # Keep the full Face for this frame — the temporal
                     # pre-pass gap-fills/smooths these and the swap pass
@@ -789,6 +874,10 @@ class TrackingMixin:
                 centroid = np.array([(bbox[0] + bbox[2]) * 0.5,
                                      (bbox[1] + bbox[3]) * 0.5], np.float32)
                 entries.append((centroid, best['id']))
+            if flow_on:
+                for t in active:
+                    if t['id'] not in used:
+                        _flow_miss(t, f_idx)
             per_frame[f_idx] = entries
 
         cap = None
@@ -1007,6 +1096,12 @@ class TrackingMixin:
                     pbar.update(1)
                     continue
 
+                if flow_on:
+                    _g = _gray_of(frame)
+                    if _g is not None:
+                        gray_ring[idx] = _g
+                        gray_ring.pop(idx - (pool_workers + 8), None)
+
                 detect_plan = None
                 if temporal_tracker is not None and isinstance(frame, np.ndarray):
                     # The temporal tracker is deliberately used only for real
@@ -1175,6 +1270,8 @@ class TrackingMixin:
                       _ts.get('recovered_tracks', 0)), flush=True)
 
         tracks = active + retired
+        for _t in tracks:
+            _t.pop('fc', None)                 # coasters are scan state, not an artefact
         # Chain fragments that are one person interrupted, BEFORE any identity
         # gate sees them — including the true-mean finalisation just below, so a
         # chain's identity is averaged over all its segments rather than over the
@@ -1347,6 +1444,9 @@ class TrackingMixin:
               + f', {matched} matched to a source (gate {assign_max:.2f})'
               + (f', {refused_margin} refused as too far from their person\'s '
                  f'closest track (margin {summary_margin})' if refused_margin else '')
+              + (f', {self._bystander_refused} (track, person) pair(s) refused as '
+                 f'closer to a registered bystander'
+                 if getattr(self, '_bystander_refused', 0) else '')
               + (f'; {reid_refused} detections refused by the appearance-only '
                  f'fallback (Re-ID gate {REID_MAX})' if reid_refused else '')
               + (f'; {contam_seen} detections had a contaminated recognition crop '
@@ -1524,6 +1624,8 @@ class TrackingMixin:
                                    / float(dst['ada_n'])).astype(np.float32)
             if src.get('obs'):
                 dst.setdefault('obs', {}).update(src['obs'])
+            if src.get('flow'):
+                dst.setdefault('flow', {}).update(src['flow'])
             dst['first_seen'] = min(int(dst.get('first_seen', 0)), int(src.get('first_seen', 0)))
             if int(src.get('last_seen', 0)) >= int(dst.get('last_seen', 0)):
                 dst['last_seen'] = int(src.get('last_seen', 0))
@@ -1690,6 +1792,26 @@ class TrackingMixin:
         else:
             assign_max = min(identity_threshold, gate_max) if gate_max > 0 else identity_threshold
 
+        # Registered bystanders: the scene's other long, CLEAN tracks that no
+        # captured person explains. A track clearly outside every person's gate
+        # (assign_max + 0.10 in distance) is somebody else; folding those into a
+        # bank lets the loop below refuse to hand a person's source to a track
+        # that sits closer to one of them than to that person.
+        bystanders = None
+        self._bystander_refused = 0
+        if _BYSTANDER_VETO and persons and len(tracks) > 1:
+            _gallery = [_target_identity_embedding(self.target_face_datas[ti])
+                        for tis in persons.values() for ti in tis]
+            _tbank = TargetBank([e for e in _gallery if e is not None])
+            if len(_tbank):
+                bystanders = bystanders_from_tracks(
+                    tracks, _tbank,
+                    exclude_below=max(0.0, 1.0 - (assign_max + 0.10)),
+                    min_obs=_BYSTANDER_MIN_OBS,
+                    embedding_key='ada_mean' if identity_active else 'emb_mean')
+                if not len(bystanders):
+                    bystanders = None
+
         candidates = []
         track_map = {t['id']: t for t in tracks}
         # Every track's distance to every person's captured angles, kept whether
@@ -1738,6 +1860,15 @@ class TrackingMixin:
                         print(f"[MINOBS] track {t['id']} rescued for group {g} "
                               f"(mean d={d:.2f} > gate {assign_max:.2f}) by "
                               f"{hits} clean frame(s): {hit_frames}", flush=True)
+                if strong and bystanders is not None:
+                    # Closer to a registered bystander than to this person: not
+                    # this person, whatever the absolute gate says. Judged only
+                    # on tracks that WOULD have bound, so the count is the number
+                    # of bindings the veto actually prevented.
+                    s_b, _bi = bystanders.max_similarity(t_emb)
+                    if s_b > 1.0 - d:
+                        self._bystander_refused += 1
+                        strong = False
                 if strong:
                     candidates.append((d, g, t['id']))
 
@@ -2208,6 +2339,16 @@ class TrackingMixin:
                         for f in v if f.get('_coasted'))
         n_refused = int(getattr(self, '_interp_refused', 0) or 0)
         n_coast_refused = int(getattr(self, '_coast_refused', 0) or 0)
+        _fs = getattr(self, '_flow_stats', None) or {}
+        n_flow = int(getattr(self, '_flow_bridged', 0) or 0)
+        n_flow_refused = int(getattr(self, '_flow_refused', 0) or 0)
+        if _FLOW_COAST and (_fs.get('steps') or n_flow or n_flow_refused):
+            print(f'[Flow] {_fs.get("steps", 0)} dropout frame(s) followed by optical flow '
+                  f'({_fs.get("refused", 0)} chain(s) ended inconsistent); '
+                  f'{n_flow} gap-filled face(s) placed by flow'
+                  + (f', {n_flow_refused} refused because flow missed the closing detection'
+                     if n_flow_refused else '')
+                  + '. ROOP_FLOW_COAST=0 disables.', flush=True)
         n_refused_cut = int(getattr(self, '_interp_refused_cut', 0) or 0)
         n_cuts = len(getattr(self, '_shot_boundaries', None) or ())
         tracker_state = getattr(self, '_temporal_tracker', None)
@@ -2365,6 +2506,46 @@ class TrackingMixin:
             f['_interpolated'] = True
             return f
 
+    def _flow_bridge_geometry(self, t, a, b, prev, i):
+        """Flow-measured geometry for the dropped frames ``prev+1 .. i-1``.
+
+        Returns ``{frame: (landmark_2d_106, kps, bbox)}`` or ``None`` (the
+        caller keeps the Hermite blend). Flow is believed ONLY if every dropped
+        frame has a self-consistent LK step and the chain, flowed onto the
+        closing frame, lands within `flow_coast.BRIDGE_TOLERANCE_IOD` of the
+        closing detection: that detection is the one piece of evidence flow
+        cannot fake, and it is what stops a path that followed an occluder.
+        """
+        flow = t.get('flow')
+        if not flow or not _FLOW_COAST:
+            return None
+        end = flow.get(i)
+        frames = list(range(prev + 1, i))
+        steps = [flow.get(g) for g in frames]
+        if end is None or not end.consistent or any(
+                r is None or not r.consistent for r in steps):
+            return None
+        lm_b = getattr(b, 'landmark_2d_106', None)
+        kp_b = getattr(b, 'kps', None)
+        if (lm_b is None or kp_b is None or end.landmarks is None
+                or end.kps is None or any(r.landmarks is None or r.kps is None for r in steps)):
+            return None
+        lm_b = np.asarray(lm_b, np.float32)[:, :2]
+        kp_b = np.asarray(kp_b, np.float32)[:, :2]
+        if lm_b.shape != end.landmarks.shape:
+            return None
+        iod = float(np.linalg.norm(kp_b[0] - kp_b[1]))
+        lms = bridge_gap([r.landmarks for r in steps], end.landmarks, lm_b, iod)
+        if lms is None:
+            self._flow_refused = getattr(self, '_flow_refused', 0) + len(frames)
+            return None
+        kps = spread_residual([r.kps for r in steps], end.kps, kp_b)
+        bb_b = np.asarray(b.bbox, np.float32).reshape(2, 2)
+        bbs = spread_residual([r.bbox.reshape(2, 2) for r in steps],
+                              end.bbox.reshape(2, 2), bb_b)
+        return {g: (lms[j], kps[j], bbs[j].reshape(4))
+                for j, g in enumerate(frames)}
+
     def _coast_track_gaps(self, merged, idxs, tid, other_real, cuts=None):
         """Fill frames interpolation left empty with guarded Kalman predictions.
 
@@ -2515,6 +2696,8 @@ class TrackingMixin:
         self._landmark_smooth_lines = []
         self._interp_refused = 0
         self._coast_refused = 0
+        self._flow_bridged = 0
+        self._flow_refused = 0
         # Gaps that were refused specifically because a shot boundary falls
         # inside them, reported separately so the effect of the cut-aware guard
         # is visible rather than folded into the geometric refusals.
@@ -2580,7 +2763,16 @@ class TrackingMixin:
             merged = dict(obs)
             prev = None
             for i in idxs:
-                if prev is not None and 1 < (i - prev) <= gap_max:
+                # A hole longer than `gap_max` is normally left to the Kalman coast,
+                # which on a fast-moving head wanders 20-100% of the inter-ocular
+                # distance off by the middle of it. If optical flow followed the
+                # whole hole AND arrives at the closing detection, that is a
+                # measured path with a verified end, so it may fill a hole up to
+                # the flow chain's reach. `flow_only` holes are filled ONLY when
+                # the flow bridge holds; otherwise they stay with the coast.
+                flow_only = bool(prev is not None and _FLOW_COAST and t.get('flow')
+                                 and gap_max < (i - prev) <= _FLOW_MAX_GAP + 1)
+                if prev is not None and (1 < (i - prev) <= gap_max or flow_only):
                     a, b = obs[prev], obs[i]
                     span = float(i - prev)
                     # A gap containing a shot change is never bridged, however
@@ -2610,12 +2802,25 @@ class TrackingMixin:
                         self._interp_refused += (i - prev - 1)
                         prev = i
                         continue
+                    bridged = self._flow_bridge_geometry(t, a, b, prev, i)
+                    if flow_only and bridged is None:
+                        prev = i                    # not verified: the coast keeps it
+                        continue
                     for g in range(prev + 1, i):
                         cand = self._interp_face(a, b, (g - prev) / span, emb_mean)
+                        if bridged is not None and g in bridged:
+                            # Flow supplies the SHAPE of the path through the
+                            # dropout; the closing detection pins its end.
+                            cand['landmark_2d_106'] = bridged[g][0].astype(np.float32)
+                            cand['kps'] = bridged[g][1].astype(np.float32)
+                            cand['bbox'] = bridged[g][2].astype(np.float32)
+                            cand['_flow_bridged'] = True
                         if self._interp_collides(cand, t['id'], g, other_real):
                             self._interp_refused += 1
                             continue
                         merged[g] = cand
+                        if cand.get('_flow_bridged'):
+                            self._flow_bridged = getattr(self, '_flow_bridged', 0) + 1
                 prev = i
 
             # ── Kalman coasting over what interpolation could not reach ──────
