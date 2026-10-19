@@ -21,6 +21,10 @@ working history. The first incomplete gate is the physical RTX 3060 Laptop
 validation for Phases 0 through 4. Phase 5 must not begin until that gate is
 complete and documented.
 
+**2026-10-19 note (does not change the gate):** the RTX 4070 numbers verified at the close of the Stage 11-15 briefs are recorded in
+`PERFORMANCE_BASELINE.md` ("Final verified numbers"), together with the rows that were NOT run (`benchmark_pipeline.py`, the Pixel-Boost /
+SAM 2 / GPEN Realistic / RF++ per-model rows, `verify_integration.py` which does not exist) and the pending RTX 3060 gate.
+
 ---
 
 # MANDATORY HARDWARE VALIDATION MATRIX

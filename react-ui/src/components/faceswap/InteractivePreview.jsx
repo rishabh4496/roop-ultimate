@@ -92,7 +92,21 @@ export default function InteractivePreview({
 
   // Feature 1: Interactive Magnifier Glass Lens State
   const [magnifierActive, setMagnifierActive] = useState(false);
-  const [lensPos, setLensPos] = useState({ x: 0, y: 0, relX: 0, relY: 0, visible: false });
+  // The glass follows the pointer, so its position must NOT live in React state: a setState per
+  // pointermove re-rendered this whole 1,300-line component about sixty times a second, and
+  // moving it with `left`/`top` made the browser re-lay-out the stage on every one of them
+  // (frame-budget.spec.js: 58 React commits/s and 6% of frames over 20 ms against 2/s and 0%
+  // with no tool active). The pointer handler records the geometry in `lensPendingRef`; one
+  // requestAnimationFrame per frame writes it straight to the two elements as `transform`
+  // (compositor-only, no layout). React renders the glass once, when the tool is switched on.
+  const lensGlassRef = useRef(null);
+  const lensImgRef = useRef(null);
+  const lensPendingRef = useRef(null);
+  const lensRafRef = useRef(null);
+  const lensBoxRef = useRef('');          // last "w x h" written to the image, so it is only rewritten on change
+  // A new <img> mounts each time the tool is switched on and has no size yet: forget the cached box.
+  useEffect(() => { lensBoxRef.current = ''; }, [magnifierActive]);
+  useEffect(() => () => { if (lensRafRef.current) cancelAnimationFrame(lensRafRef.current); }, []);
 
   // Feature 2: Interactive Face Mask Brush Tool State
   const [maskBrushActive, setMaskBrushActive] = useState(false);
@@ -371,7 +385,7 @@ export default function InteractivePreview({
       // in the stage still mixing the two spaces; the pan, the drag and the
       // double-click all divide it out.
       const s = uiScale(containerRef.current);
-      setLensPos({
+      lensPendingRef.current = {
         x: (cx - rect.left) / s,
         y: (cy - rect.top) / s,
         imgW: (ir?.width || rect.width) / s,
@@ -379,7 +393,27 @@ export default function InteractivePreview({
         imgX: ((ir?.left ?? rect.left) - rect.left) / s,
         imgY: ((ir?.top ?? rect.top) - rect.top) / s,
         visible: cx >= rect.left && cx <= rect.right && cy >= rect.top && cy <= rect.bottom,
-      });
+      };
+      if (!lensRafRef.current) {
+        lensRafRef.current = requestAnimationFrame(() => {
+          lensRafRef.current = null;
+          const p = lensPendingRef.current;
+          const glass = lensGlassRef.current;
+          const img = lensImgRef.current;
+          if (!p || !glass || !img) return;
+          glass.style.display = p.visible ? '' : 'none';
+          if (!p.visible) return;
+          glass.style.transform = `translate3d(${p.x - LENS_R}px, ${p.y - LENS_R}px, 0)`;
+          const box = `${p.imgW}x${p.imgH}`;
+          if (box !== lensBoxRef.current) {
+            lensBoxRef.current = box;
+            img.style.width = `${p.imgW * LENS_ZOOM}px`;
+            img.style.height = `${p.imgH * LENS_ZOOM}px`;
+          }
+          // Put the pixel under the cursor at the centre of the glass.
+          img.style.transform = `translate3d(${-((p.x - p.imgX) * LENS_ZOOM - LENS_R)}px, ${-((p.y - p.imgY) * LENS_ZOOM - LENS_R)}px, 0)`;
+        });
+      }
     }
 
     // Mask Brush drawing
@@ -1320,29 +1354,31 @@ export default function InteractivePreview({
       </div>
 
       {/* Feature 1: Interactive Magnifier Glass Lens Overlay */}
-      {magnifierActive && lensPos.visible && (
+      {magnifierActive && (
         <div
+          ref={lensGlassRef}
           className="absolute rounded-full border-2 border-cyan-400 shadow-[0_0_30px_rgba(6,182,212,0.6)] overflow-hidden pointer-events-none z-50 bg-black"
+          // Hidden until the first pointermove places it; `display` and `transform` are owned by the
+          // rAF writer above, so React must not list them here (it would reset them on a re-render).
           style={{
             width: LENS_R * 2,
             height: LENS_R * 2,
-            left: `${lensPos.x - LENS_R}px`,
-            top: `${lensPos.y - LENS_R}px`,
+            left: 0,
+            top: 0,
+            display: 'none',
           }}
         >
           <img
+            ref={lensImgRef}
             src={isPeekingOriginal ? beforeSrc : (afterSrc || beforeSrc)}
             alt="Magnifier lens view"
             draggable={false}
             style={{
               position: 'absolute',
-              width: lensPos.imgW * LENS_ZOOM,
-              height: lensPos.imgH * LENS_ZOOM,
+              left: 0,
+              top: 0,
               maxWidth: 'none',
               objectFit: 'contain',
-              // Put the pixel under the cursor at the centre of the glass.
-              left: -((lensPos.x - lensPos.imgX) * LENS_ZOOM - LENS_R),
-              top: -((lensPos.y - lensPos.imgY) * LENS_ZOOM - LENS_R),
             }}
           />
           {/* Crosshair so the exact sampled pixel is unambiguous */}
