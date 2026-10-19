@@ -1,4 +1,8 @@
-"""Automated Benchmarking Harness for roop-ultimate on D:\k1.mp4.
+"""Automated Benchmarking Harness for roop-ultimate on one target clip (default ``k1.mp4``, resolved at runtime).
+
+The clip is found the way every other harness finds its fixtures (``app/tests/fixtures.py``): ``$ROOP_CLIP_ROOT``, then
+``<PINOKIO_HOME>/roop-keep`` or ``roop keep``. ``--video`` takes a clip name to search for or a full path to use as given.
+When the clip cannot be found the run reports PENDING and exits 2 before loading any model; it never substitutes another clip.
 
 Iterates through swapper models:
   ['inswapper_128', 'inswapper_128_fp16', 'hyperswap_256', 'hififace_256']
@@ -6,7 +10,7 @@ crossed against masking engines:
   ['none', 'dfl_xseg_v2', 'bisenet_face_parser', 'face_occluder_v3', 'sam2_tracked']
 
 For each permutation:
-  - Executes inference across a continuous 300-frame slice of "D:\k1.mp4".
+  - Executes inference across a continuous 300-frame slice of the target clip.
   - Discards first 10 warm-up frames from latency calculations.
   - Measures Mean, 95th-percentile, and 99th-percentile latency per frame (ms).
   - Measures Overall throughput in FPS.
@@ -38,6 +42,13 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 if str(APP_DIR) not in sys.path:
     sys.path.insert(0, str(APP_DIR))
+if str(APP_DIR / "tests") not in sys.path:
+    sys.path.insert(0, str(APP_DIR / "tests"))
+
+import fixtures  # noqa: E402  (the shared clip resolver; no drive letter is written into this tool)
+
+# A NAME, not a path: where it lives differs per machine (the 4070 and the 3060 keep their clips on different drives).
+DEFAULT_CLIP = "k1.mp4"
 
 from face_engine.core.zero_copy_engine import ZeroCopyExecutionEngine
 from face_engine.models.zoo import build_default_registry
@@ -77,12 +88,13 @@ def ssim_boundary_variance(prev_mask: np.ndarray, curr_mask: np.ndarray) -> floa
 class BenchmarkSuite:
     def __init__(
         self,
-        video_path: str = r"D:\k1.mp4",
+        video_path: str | None = None,
         slice_frames: int = 300,
         warmup_frames: int = 10,
         device_id: int = 0,
     ) -> None:
-        self.video_path = Path(video_path)
+        # FIRST, before the model registry: a missing clip must fail (FileNotFoundError, PENDING) without loading anything.
+        self.video_path = Path(fixtures.resolve_target(video_path, DEFAULT_CLIP))
         self.slice_frames = slice_frames
         self.warmup_frames = warmup_frames
         self.device_id = device_id
@@ -463,13 +475,19 @@ class BenchmarkSuite:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="roop-ultimate Automated Benchmarking Harness")
-    parser.add_argument("--video", default=r"D:\k1.mp4", help="Path to target benchmark video")
+    parser.add_argument("--video", default=None,
+                        help="Clip to benchmark: a name to search for in the clip root, or a full path used as given "
+                             "(default: %s, found via $ROOP_CLIP_ROOT / <PINOKIO_HOME>/roop-keep)" % DEFAULT_CLIP)
     parser.add_argument("--frames", type=int, default=300, help="Continuous slice frame count")
     parser.add_argument("--warmup", type=int, default=10, help="Number of warmup frames to exclude")
     parser.add_argument("--output", default="benchmark_results.json", help="JSON output path")
     args = parser.parse_args()
 
-    suite = BenchmarkSuite(video_path=args.video, slice_frames=args.frames, warmup_frames=args.warmup)
+    try:
+        suite = BenchmarkSuite(video_path=args.video, slice_frames=args.frames, warmup_frames=args.warmup)
+    except FileNotFoundError as exc:
+        print("[PENDING] %s" % exc, file=sys.stderr)
+        sys.exit(2)          # 2 = could not run (the regression benchmark's convention), never a clean-looking pass
     suite.run_all(output_json=args.output)
 
 

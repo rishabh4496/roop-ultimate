@@ -123,6 +123,35 @@ def clip(rel, required=False):
     return rel
 
 
+def resolve_target(arg, default):
+    """The clip a harness was asked to run, as a real file -- or FileNotFoundError, never a stand-in.
+
+    `arg` is what the operator typed (``--video``), or None for the harness's own default NAME. Two cases, kept apart on
+    purpose because `clip()`'s basename fallback is right for one and wrong for the other:
+
+      * a bare name or a relative path (``k1.mp4``, ``double/d4.mp4``): searched in the fixture roots like any other fixture;
+      * a path the operator spelled out (absolute, or one that exists as given): used exactly as given. If it does not
+        exist the harness fails, it does NOT fall back to a same-named clip under the fixture root -- that would run a
+        different workload under the operator's chosen name, the failure `fingerprint()` below exists to catch.
+
+    The error names every root searched and the override, so "where do I put the clip" is answered by the failure.
+    """
+    name = arg or default
+    if os.path.isfile(name):
+        return name
+    if os.path.isabs(name):
+        raise FileNotFoundError(
+            "benchmark clip %r does not exist. An explicit absolute path is used as given and is not searched for "
+            "(a same-named clip elsewhere would be a different workload)." % name)
+    found = clip(name)
+    if os.path.isfile(found):
+        return found
+    raise FileNotFoundError(
+        "benchmark clip %r not found on this machine; the run is PENDING, not substituted.\nSearched:\n  %s\n"
+        "Set ROOP_CLIP_ROOT to the folder holding it, or pass --video with a full path."
+        % (name, "\n  ".join(clip_roots())))
+
+
 def available(rel):
     """True when `rel` resolves to a real file here. Use to mark rows PENDING."""
     return os.path.isfile(clip(rel))

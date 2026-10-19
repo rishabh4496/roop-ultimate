@@ -252,9 +252,9 @@ modules, API-timeout lint OK, build OK, Playwright 96 passed / 38 skipped (opt-i
 checks pass; `verify_pipeline.py` passes (h264 / yuv420p, HTTP 206).
 
 **Not run, and why** - none of these has a verified number here:
-- `benchmark_pipeline.py`: it defaults to `D:\k1.mp4` (absent on this machine; a drive letter written into a tool), runs a one-frame
-  preview loop over swapper x mask combinations (not the render path) and has no enhancer arms; its `sam2_tracked` arm needs the SAM 2
-  checkpoint, which was never downloaded.
+- `benchmark_pipeline.py`: its default clip `k1.mp4` is not in any clip root on this machine, so the run is PENDING (it now reports that
+  and exits 2; it used to hardcode `D:\k1.mp4`, fixed 2026-10-19). It also runs a one-frame preview loop over swapper x mask combinations
+  (not the render path) and has no enhancer arms; its `sam2_tracked` arm needs the SAM 2 checkpoint, which was never downloaded.
 - Per-model rows for Pixel-Boost, SAM 2 end to end, GPEN Realistic and RestoreFormer++ (FP32): no end-to-end render was run with them
   this session; the RF++ FP32 cost on record (21.63 -> 39.31 ms/face) is from `PRECISION_POLICY.md`, not re-measured.
 - `verify_integration.py`: does not exist in the repository.
