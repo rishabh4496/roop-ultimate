@@ -199,3 +199,18 @@ the production models/settings, and the same detected RTX 4070 software stack.
 The measured 4070 change is +1.0% end-to-end FPS with stable resource use and
 no quality regression. It is not a universal dual-GPU acceptance until the
 physical RTX 3060 pair is run; the 3060 row remains independently pending.
+
+## Pre-pass baseline (Stage 11, 2026-10-19, RTX 4070)
+
+The live "Analyzing faces" pass (`procmgr_tracking._precompute_tracks`, not `optimized_prepass.py`), measured
+with `app/tests/probe_prepass_stage11.py --section baseline`: d4 frames 0-600, `ROOP_PROFILE=1`, 3 repeats.
+
+| Repeat | Seconds | fps | Frames with a face / faces / detected |
+|---:|---:|---:|---|
+| 1 (engine build) | 22.9 | 26.2 | 503 / 740 / 705 |
+| 2 | 13.9 | 43.2 | 503 / 740 / 705 |
+| 3 | 12.5 | 48.1 | 503 / 740 / 705 |
+
+Schedule 179 full / 421 ROI / 21 ROI-fallback-full / 0 coast. Repeat 3 stage timing: `track_detect` 40.15 ms per call
+(40.8% of summed thread time), `track_decode` wait 0.21 ms per frame (0.2%). Compare repeats 2-3 only. The 3060 row is
+not measured. Why no change followed: `docs/CHANGELOG.md`, 2026-10-19, "Stage 11".
