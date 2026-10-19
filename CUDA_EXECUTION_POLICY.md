@@ -149,3 +149,26 @@ the host path. `Enhance_UltraMax` uses the ring for its input; on TensorRT it st
 unless `ROOP_ULTRAMAX_TRT_RING=1` (see `docs/perf/stage3_zero_copy_ring_2026-10-18.md`).
 The compositor still takes NumPy, so ONE device-to-host copy of the finished uint8 face remains per
 face; removing it means changing the merger API, not the enhancers.
+
+## Stage 12 — fork-join streams, GPU spatial ops, graphs for compositing (2026-10-19, RTX 4070)
+
+Asked: XSeg on a second CUDA stream while the swapper/enhancer run (`event_crop_ready` / `event_mask_done`), every
+`cv2` warp / blur / dilate / erode / colour op replaced by Torch GPU kernels, and a `torch.cuda.CUDAGraph` around the
+fixed-shape compositing. Nothing was built; the measurements are below. The targeted code,
+`optimized_processor.GpuFaceSwapProcessor` (`:2213`) and `MemoryStreamingProcessor` (`:2405`), has no production caller
+(grep over `app/roop`, `app/tests`, `tests`, `tools`): the per-face loop that runs is `ProcessMgr` (`alignment` `:5482`,
+`swap` `:6004`, `mask` `:6179`, `enhance` `:6334`, `blend` `:6890`) on 20 worker threads, each leasing its own TensorRT
+context.
+
+| Ask | Evidence | Verdict |
+|---|---|---|
+| XSeg ∥ swap on a forked stream | `app/tests/probe_stream_overlap_stage12.py`: one pair at a time 62.3 → 72.2 pairs/s (+15.9%), but frame workers T=2/3/4: plain 82.9 / 96.1 / 100.5 vs each forking 85.0 / 99.0 / 102.7 (+2.2-3.0%, inside the ~3% spread). T=6 plain 105.9. | The overlap is real and is already taken by running frames concurrently. Fork-join only helps the single-owner path (`ROOP_STAB_STREAMING=1`), which 09-24 measured at 3.4x slower than the threaded default; its best case (72 pairs/s) is below plain T=3 (96). Not built. |
+| `cv2.warpAffine` → `grid_sample` | Built and reverted once in June 2026 (history from before the 2026-06-26 master reset, so not in this repo; recorded in the operator's notes: 1.1-40x slower per call at real call-site sizes). `CudaAffineBatch` (`optimized_processor.py:1732`) exists with 150 passing tests in `test_cuda_affine_batch.py` + `test_mask_roi.py`; resampling cannot match OpenCV's 1/32-pixel fixed point (3 grey levels), TF32 makes `affine_grid` ~5x worse. | Exists, dormant by design. Not wired. |
+| `cv2.dilate` / `erode` → `max_pool2d` | `max_pool2d` is a square; the shipped kernel is `MORPH_ELLIPSE`: error up to 1.0 per pixel (`tools/bench_mask_gpu_morphology.py`). The CPU cost was the FULL-FRAME call, fixed bit-identically by `mask_roi.py`. | Rejected on parity. |
+| `cv2` colour ops / NumPy blend on GPU | 600-frame regression render, live config, 20 threads (ROOP_PROFILE): `blend` 37.1 ms/call + `lighting` 7.2 + `alignment` 2.9 = 33.9 s of `frame_total`'s 276 s summed thread time (12.3%), an upper bound, not a speedup budget. The frame arrives as a host NumPy pipe from NVDEC and leaves as one to NVENC, so a GPU-resident compositor pays an upload and a download per face (the 23% slower graph row above). | Not built. |
+| CUDA graph over the 512×512 compositing | Nothing in the compositor is on the device (see above); the one captured fixed-shape filter in this repo was 23% slower (`ROOP_CUDA_GRAPH_FILTER`). | Not built. |
+| "cv2 calls force `cudaStreamSynchronize`" | OpenCV's CPU ops act on host arrays and never touch a CUDA stream. The syncs are the device-to-host copies at model output boundaries. `ROOP_PROFILE_DETAIL` cannot see them: its `gpu_event_ms` covers the PyTorch stream only (ORT/TRT run on their own streams) and its transfer bytes are "opaque", so its per-stage CPU and GPU-event times are equal. | Not demonstrable with this profiler; an `nsys` capture is the missing instrument. |
+
+Same render: end-to-end 7.74 fps over 600 frames (wall 77.5 s; the timed render phase 13.58 fps), GPU util mean 48% /
+peak 93%, ~6 frames in flight. The pre-existing frame is unchanged: removing GPU work moves the clock, redistributing
+it does not. RTX 3060: not measured; TensorRT and the second stream are not admitted there (policy table above).
