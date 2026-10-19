@@ -34,6 +34,10 @@ export default function InteractivePreview({
   personIds = [],
   selectedFaceIndex = null,
   onSelectFace,
+  // Per detected face: { role: 'target'|'swapped'|'bystander', excluded, canExclude,
+  // reason } (faceswap/faceRoles.js). `onToggleExclude(i)` flips "never swap".
+  faceRoles = [],
+  onToggleExclude,
   splitView = false,
   compare = false,
   onToggleCompare,
@@ -552,6 +556,16 @@ export default function InteractivePreview({
       const height = ((ey - sy) / imgDim.h) * 100;
       const personLabel = (personIds[i] ?? i) + 1;
       const selected = selectedFaceIndex === i;
+      const info = faceRoles[i] || null;
+      const roleLabel = !info ? null
+        : info.role === 'target' ? 'Target'
+          : info.role === 'swapped' ? 'Swapped'
+            : (info.excluded ? 'Excluded · never swapped' : 'Bystander · not swapped');
+      const roleClass = !info ? ''
+        : info.role === 'target' ? 'bg-emerald-600'
+          : info.role === 'swapped' ? 'bg-[var(--accent)]'
+            : 'bg-zinc-700';
+      const togglable = typeof onToggleExclude === 'function' && info && info.canExclude;
       return (
         <div
           key={i}
@@ -562,6 +576,7 @@ export default function InteractivePreview({
           }`}
           style={{ left: `${left}%`, top: `${top}%`, width: `${width}%`, height: `${height}%` }}
           data-face-index={i}
+          data-face-role={info ? info.role : undefined}
           aria-label={selectable ? `Use detected face ${i + 1} as the target person` : undefined}
           aria-pressed={selectable ? selected : undefined}
           title={selectable ? `Click to use Face ${i + 1} (Person ${personLabel}) as the target` : undefined}
@@ -571,15 +586,42 @@ export default function InteractivePreview({
           <span className="absolute -top-6 left-0 bg-[var(--accent)] text-white text-micro font-bold px-1.5 py-0.5 rounded whitespace-nowrap">
             Face {i + 1}
           </span>
+          {roleLabel && (
+            <span
+              data-face-role-label={i}
+              title={info.reason || undefined}
+              className={`absolute -top-6 left-14 ${roleClass} text-white text-micro font-bold px-1.5 py-0.5 rounded whitespace-nowrap pointer-events-none`}
+            >
+              {roleLabel}
+            </span>
+          )}
+          {togglable && (
+            <button
+              type="button"
+              data-face-exclude={i}
+              aria-pressed={!!info.excluded}
+              aria-label={info.excluded
+                ? `Include face ${i + 1} again`
+                : `Exclude face ${i + 1} (never swap)`}
+              title={info.excluded
+                ? 'Include this person again (back to the mode default)'
+                : 'Lock out: this person is never swapped'}
+              className="absolute left-1 -bottom-6 bg-black/80 backdrop-blur text-white text-nano font-bold px-1.5 py-0.5 rounded whitespace-nowrap pointer-events-auto cursor-pointer hover:bg-[var(--accent)]"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => { e.stopPropagation(); onToggleExclude(i); }}
+            >
+              {info.excluded ? 'Include again' : 'Exclude (never swap)'}
+            </button>
+          )}
           {selectable && (
-            <span className="absolute left-1/2 -translate-x-1/2 -bottom-6 opacity-0 group-hover/face:opacity-100 transition-opacity bg-black/80 backdrop-blur text-accent text-nano font-bold px-1.5 py-0.5 rounded whitespace-nowrap pointer-events-none">
+            <span className="absolute left-1/2 -translate-x-1/2 -bottom-12 opacity-0 group-hover/face:opacity-100 transition-opacity bg-black/80 backdrop-blur text-accent text-nano font-bold px-1.5 py-0.5 rounded whitespace-nowrap pointer-events-none">
               {selected ? 'Selected' : '＋ Use as target'}
             </span>
           )}
         </div>
       );
     });
-  }, [faces, imgDim, showBoxes, personIds, selectedFaceIndex, onSelectFace]);
+  }, [faces, imgDim, showBoxes, personIds, selectedFaceIndex, onSelectFace, faceRoles, onToggleExclude]);
 
   // ── Debug overlay: the geometry the pipeline actually saw ─────────────────
   //

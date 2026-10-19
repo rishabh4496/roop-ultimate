@@ -4,6 +4,7 @@ import { PERSON_COLORS } from './constants';
 import { confirmDialog } from './confirm';
 import { Icon } from '../icons';
 import { targetPersonRecords, normalizeSourceIndex, SKIP } from './faceswap/faceMapping';
+import { excludePerson } from './faceswap/faceRoles';
 import { applyTargetFacesPayload } from './faceswap/targetPayload';
 import { FocusedInput } from './ui';
 
@@ -354,8 +355,11 @@ export default function PersonGroups({
       const implicit = sourceIdentityAt(Number(selectedSource));
       if (implicit) next[selRank] = implicit;
     }
+    // Skip is an EXPLICIT entry, never a deleted key: an absent person falls back
+    // to the legacy rank default in every mode except "Selected face", so deleting
+    // the key left the "skipped" person swapped (see faceswap/faceRoles.js).
     if (sourceId) next[targetPersonId] = sourceId;
-    else delete next[targetPersonId];
+    else Object.assign(next, excludePerson(next, targetPersonId));
     setFaceMapping(next);
     // Two or more people bound to sources is a multi-person job. "Selected
     // face" swaps ONE person by definition, so leaving it there silently drops

@@ -19,6 +19,7 @@ import {
   remapSourceMappingAfterMove,
   targetPersonRecords,
 } from './faceswap/faceMapping';
+import { faceRole, excludePerson, includePerson } from './faceswap/faceRoles';
 import {
   buildProcessingSelection as buildCanonicalSelection,
   classifyPreviewResponse,
@@ -2014,6 +2015,48 @@ export default function FaceSwap({
   // below the captured count) selects that person instead of capturing it a
   // second time: every use_face creates a new person, and two people for one
   // face is exactly the duplicate this avoids.
+  // What the render will do with each detected box, and the one-click lock-out.
+  // `faceRole` shares its rule with the payload (stableTargetSourceMapping), so the
+  // badge can never say "bystander" for a face the job will swap.
+  const previewFaceRoles = previewFaces.map((_, faceIndex) => {
+    const records = targetPersonRecords({ targetGroups, targetPersonIds });
+    const rawRank = previewPersonIds[faceIndex];
+    // Number(null) is 0: a missing id must not read as person 0.
+    const rank = rawRank === null || rawRank === undefined || rawRank === '' ? NaN : Number(rawRank);
+    const personId = Number.isInteger(rank) && rank >= 0 && rank < records.length
+      ? records[rank].targetPersonId : null;
+    return {
+      personId,
+      ...faceRole({
+        personId,
+        faceSelection: p.face_detection_mode,
+        selectedTargetPersonId,
+        faceMapping,
+        targetGroups,
+        targetPersonIds,
+        sourceCount: sourceFaces.length,
+        sourceIdentityIds: sourceFacesInfo.map((info, index) => info?.id || `memory-slot-${index}`),
+        selectedSource: selSource,
+      }),
+    };
+  });
+
+  const onToggleFaceExclusion = (faceIndex) => {
+    const info = previewFaceRoles[faceIndex];
+    if (!info || !info.personId || !info.canExclude) return;
+    const next = info.excluded
+      ? includePerson(faceMapping, info.personId)
+      : excludePerson(faceMapping, info.personId);
+    setFaceMapping(next);
+    // Same write the Person Groups dropdown makes; the versioned path keeps a
+    // preview that was already in flight from landing on top of it.
+    commitTargetContext({ face_mapping: next, target_person_source_mapping: next });
+    clearPreviewCache();
+    notify(info.excluded
+      ? 'Person included again'
+      : 'Excluded: this person is never swapped', 'info');
+  };
+
   const onFaceBoxClick = async (faceIndex) => {
     if (!Number.isInteger(faceIndex) || faceIndex < 0 || faceIndex >= previewFaces.length) return;
     selectDetectedFace(faceIndex);
@@ -3953,6 +3996,8 @@ export default function FaceSwap({
                     personIds={previewPersonIds}
                     selectedFaceIndex={selectedDetectedFaceIndex}
                     onSelectFace={onFaceBoxClick}
+                    faceRoles={previewFaceRoles}
+                    onToggleExclude={onToggleFaceExclusion}
                     splitView={splitView}
                     compare={compare}
                     onToggleCompare={() => setCompare((v) => { const n = !v; if (n) { setComparingEnhancers(false); setComparingMasks(false); setComparingSwappers(false); setComparingUpscalers(false); } return n; })}

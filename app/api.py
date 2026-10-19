@@ -2982,7 +2982,12 @@ def _save_target_mapping_from_payload(payload):
                 str(key): value for key, value in mapping.items()
                 if str(key) in stable_ids and value not in (None, "", -1, "-1")
             }
-            if stable:
+            # An explicit null/-1 for a known person is "never swap" (the UI's Exclude).
+            # It has to reach the canonical mapping even when it leaves nothing else
+            # mapped; `if stable:` alone kept the person's old binding in that case.
+            excluded = any(str(key) in stable_ids and value in (None, "", -1, "-1")
+                           for key, value in mapping.items())
+            if stable or excluded:
                 state.active_target_person_source_mapping = stable
             # Keep the submitted object as the compatibility mirror so old
             # clients and Stage 11 callers can round-trip it unchanged.

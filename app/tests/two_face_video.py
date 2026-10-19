@@ -654,7 +654,18 @@ def iter_frame_pairs(plate_path, swapped_path):
 
 
 def trim(video, start, end, out_path, fps=None):
-    """Write frames [start, end) to a new clip (the bench's unit of work)."""
+    """Write frames [start, end) to a new clip (the bench's unit of work).
+
+    ROOP_BENCH_NO_TRIM=1 with the whole clip requested (start 0, end 0) COPIES the
+    file instead: the re-encode below is OpenCV's lossy MPEG-4 writer and its
+    noise depends on the whole frame's content, so two scenes with identical
+    pixels in one region come out ~7 MSE apart there. An exact pixel comparison
+    (tests/test_occlusion_interaction.py) needs the pipeline to read the clip it
+    was given.
+    """
+    if os.environ.get("ROOP_BENCH_NO_TRIM") == "1" and not start and not end:
+        shutil.copyfile(video, out_path)
+        return out_path
     cap = cv2.VideoCapture(video)
     src_fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
     w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
