@@ -1207,10 +1207,21 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             # per-chunk instance so the end-of-run line covers the render.
             _flow_warp = bool(getattr(roop.globals, 'mask_flow_warp', False))
             _flow_stats = {'applied': 0, 'declined': 0, 'reset': 0}
-            self._mask_stab_factory = lambda: MaskStabilizer(
-                strength=_mst, motion_beta=0.0,
-                fast_restore_alpha=_fast_restore,
-                flow_warp=_flow_warp, flow_stats=_flow_stats)
+            _fusion = os.environ.get('ROOP_MASK_FUSION', '0').strip().lower() in ('1', 'on', 'true', 'guided')
+            if _fusion:
+                from roop.mask_fusion import FusionMaskStabilizer
+                _guided = os.environ.get('ROOP_MASK_FUSION', '').strip().lower() == 'guided'
+                print('[Stabilize] mask fusion (flow-advected + hysteresis%s) replaces the mask EMA'
+                      % (' + guided matte' if _guided else ''), flush=True)
+                self._mask_stab_factory = lambda: FusionMaskStabilizer(
+                    strength=_mst, motion_beta=0.0,
+                    fast_restore_alpha=_fast_restore,
+                    flow_warp=_flow_warp, flow_stats=_flow_stats, guided=_guided)
+            else:
+                self._mask_stab_factory = lambda: MaskStabilizer(
+                    strength=_mst, motion_beta=0.0,
+                    fast_restore_alpha=_fast_restore,
+                    flow_warp=_flow_warp, flow_stats=_flow_stats)
             self.mask_stabilizer = self._mask_stab_factory()
         else:
             self.mask_stabilizer = None
