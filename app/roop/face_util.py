@@ -19,6 +19,7 @@ from roop.capturer import get_video_frame
 from roop.utilities import resolve_relative_path, conditional_download, get_onnx_session_options
 from roop.nms import bind_instance_nms
 from roop import face_contact
+from roop.face_sanity import sanitize_faces
 from roop.precision_policy import providers_for, bundle_member_providers
 from roop.backend_manager import build_session_with_fallback
 from roop import baseline_probe as _bp
@@ -1677,7 +1678,9 @@ def _enrich_detected_faces(frame, faces):
         _stash_recognition_crops(frame, faces)
         for f in faces:
             _refine_kps_from_68(f)
-    return faces or []
+    # Last: everything above can write kps / landmarks / embeddings, and this is the one
+    # exit every analyser path shares. See roop/face_sanity.py.
+    return sanitize_faces(faces) if faces else []
 
 
 def _bbox_iou_simple(a, b):

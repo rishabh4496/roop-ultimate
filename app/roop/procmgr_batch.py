@@ -207,6 +207,7 @@ class BatchProcessingMixin:
             or _temporal_state_enabled or _temporal_compositing_enabled
             or _temporal_quality_enabled)
         self._temporal_faces = None
+        self.stage2_frame_plan = {}
         self._temporal_covered = 0
         # A ProcessMgr instance can render more than one clip.  Never let a
         # completed clip's compact stabilization context seed the next one.
@@ -883,6 +884,7 @@ class BatchProcessingMixin:
                 print(f'[Temporal] detection pre-pass failed ({e}); using per-frame detection')
                 self._temporal_mode = False
                 self._temporal_faces = None
+                self.stage2_frame_plan = {}
                 self._temporal_covered = 0
                 self._log_memory_stage('phase3:temporal-prepass-fallback')
 
@@ -1065,6 +1067,7 @@ class BatchProcessingMixin:
             self._precomputed_kps = None
             self._temporal_mode = False
             self._temporal_faces = None
+            self.stage2_frame_plan = {}
             self._temporal_covered = 0
             self._track_assignments = None
             self._track_source_map = None

@@ -209,6 +209,11 @@ class FFmpegVideoReader:
         self.hwaccel = hwaccel
         self.proc = None
         self._start_frame = 0
+        # Index of the frame the NEXT read() returns, counted from what this
+        # reader has actually delivered since the last set(). get(POS_FRAMES)
+        # used to be a constant 0.0, so a caller that checked where a seek
+        # landed read "frame 0" after every seek.
+        self._pos = 0
         if str(pix_fmt).strip().lower() in ("", "auto", "default"):
             pix_fmt = os.environ.get("ROOP_NVDEC_PIXFMT", "auto")
         if str(pix_fmt).strip().lower() in ("", "auto", "default"):
@@ -241,11 +246,20 @@ class FFmpegVideoReader:
             if self.proc is not None:
                 self.release()
             self._start_frame = target
+            self._pos = target
 
     def get(self, prop):
         return {cv2.CAP_PROP_FRAME_WIDTH: float(self.width),
                 cv2.CAP_PROP_FRAME_HEIGHT: float(self.height),
-                cv2.CAP_PROP_FPS: self.fps}.get(prop, 0.0)
+                cv2.CAP_PROP_FPS: self.fps,
+                cv2.CAP_PROP_POS_FRAMES: float(self._pos)}.get(prop, 0.0)
+
+    def grab(self):
+        """Advance one frame without returning it (cv2.VideoCapture.grab()).
+        The pipe carries decoded frames, so this costs a read; it exists so a
+        caller can use one positioning loop for both capture types."""
+        ok, _ = self.read()
+        return ok
 
     def _spawn(self):
         self._stop_event.clear()
@@ -355,6 +369,12 @@ class FFmpegVideoReader:
             self._put_prefetched(_END_OF_STREAM)
 
     def read(self):
+        ok, frame = self._read_frame()
+        if ok:
+            self._pos += 1
+        return ok, frame
+
+    def _read_frame(self):
         if self.proc is None:
             self._spawn()
         if self._eof and (self._prefetch_queue is None or

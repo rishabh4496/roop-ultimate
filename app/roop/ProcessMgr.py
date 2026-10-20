@@ -779,6 +779,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         # cache is only authoritative below this index.
         self._temporal_mode = False
         self._temporal_faces = None
+        self.stage2_frame_plan = {}
         self._temporal_covered = 0
         self._track_scanned = 0
         # Per-faceset canvas masks: {faceset_idx (int): {'exclude_mask': arr, 'include_mask': arr,
@@ -7210,6 +7211,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         self.last_swapped_frame = None
         self.face_masks = {}
         self._temporal_faces = None
+        self.stage2_frame_plan = {}
         self._reset_dispatch_tracker()
         if getattr(self, '_temporal_identity', None) is not None:
             self._temporal_identity.reset()

@@ -1,0 +1,6 @@
+vfr_h264.mp4 cv2 frames 2953
+  landed-minus-wanted counts: {0: 26, 1: 14} of 40
+  unmatched: 0
+vfr_h264.mp4 pipe frames 2953
+  landed-minus-wanted counts: {0: 28, 1: 12} of 40
+  unmatched: 0

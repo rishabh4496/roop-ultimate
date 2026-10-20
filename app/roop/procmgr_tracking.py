@@ -82,6 +82,9 @@ from roop import recognizer_adaface as _ada
 from roop.utilities import compute_cosine_distance
 from roop.procmgr_runtime import _prof, _gpu_guard, pause_scope, wait_while_paused, PROGRESS_BAR_FORMAT, _TRACK_OVERLAP_FRAC, ChunkedProgress, bar_write, publish_eta, audit_detect_frame_begin, audit_detect_miss_here
 from roop.temporal_tracker import TemporalFaceTracker
+from roop.range_seek import seeker_for
+from roop.stage2_plan import (build_stage2_plan, check as stage2_check,
+                              summary as stage2_summary)
 
 
 class _DetectionResult(list):
@@ -605,8 +608,19 @@ class TrackingMixin:
                 return
             t.setdefault('flow', {})[f_idx] = r
 
+        no_embedding = [0]      # detections left out of tracking for want of an embedding
+
         def _consume(f_idx, faces):
             nonlocal active, retired, next_id, reid_refused, contam_seen, contam_reid
+            # A face the recogniser gave no usable embedding (or face_sanity nulled a NaN one)
+            # cannot be associated by anything below, which all start from `face.embedding`;
+            # None raised TypeError out of the whole pre-pass. Leave it out of tracking -
+            # the track it belongs to is bridged by gap-fill - and say how many.
+            if faces and any(getattr(f, 'embedding', None) is None for f in faces):
+                kept = [f for f in faces if getattr(f, 'embedding', None) is not None]
+                no_embedding[0] += len(faces) - len(kept)
+                faces = (_DetectionResult(kept, mode=getattr(faces, 'mode', 'full'))
+                         if isinstance(faces, _DetectionResult) else kept)
             # ── Shot boundary ────────────────────────────────────────────────
             # Everything below associates a detection to a track using
             # POSITION: IoU against the track's velocity-projected box, which
@@ -967,6 +981,13 @@ class TrackingMixin:
                                int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
                                int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
                                cap.get(cv2.CAP_PROP_FPS), tag='track decode')
+        # Positions the capture at each active range and counts what it delivered.
+        # A time seek is frame-exact on constant-frame-rate sources and one frame late
+        # on 30-35% of ranges on variable-frame-rate ones; see roop/range_seek.py.
+        seeker = None
+        if cap is not None and active_ranges:
+            seeker = seeker_for(cap, source_video, n_ranges=len(active_ranges),
+                                first_start=frame_start + active_ranges[0][0])
         # (frame_idx, Future) pairs, oldest-submitted first — bounded to pool_workers
         # and always drained in this order, so consumption stays in frame order.
         in_flight = _deque()
@@ -993,11 +1014,12 @@ class TrackingMixin:
                     for r_start, r_end in active_ranges:
                         if reader_stop or not roop.globals.processing:
                             break
-                        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_start + r_start)
+                        if not seeker.goto(frame_start + r_start):
+                            break
                         for cur_f in range(r_start, r_end + 1):
                             if reader_stop or not roop.globals.processing:
                                 break
-                            ret_, fr_ = cap.read()
+                            ret_, fr_ = seeker.read()
                             if not ret_ or fr_ is None:
                                 break
                             while not reader_stop and roop.globals.processing:
@@ -1038,12 +1060,13 @@ class TrackingMixin:
                     for r_start, r_end in active_ranges:
                         if not roop.globals.processing:
                             break
-                        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_start + r_start)
+                        if not seeker.goto(frame_start + r_start):
+                            break
                         for cur_f in range(r_start, r_end + 1):
                             if not roop.globals.processing:
                                 break
                             with _prof('track_decode'):
-                                ret, fr_ = cap.read()
+                                ret, fr_ = seeker.read()
                             if not ret or fr_ is None:
                                 break
                             yield cur_f, fr_
@@ -1335,6 +1358,15 @@ class TrackingMixin:
                       _ts.get('lost_tracks', 0),
                       _ts.get('recovered_tracks', 0)), flush=True)
 
+        if seeker is not None:
+            print(f'[Track] positioned {len(active_ranges)} active range(s): {seeker.stats["seeks"]} '
+                  f'seek(s), {seeker.stats["walks"]} walk(s) over {seeker.stats["walked"]} frame(s)'
+                  f'{" (variable frame rate: positioned by decoding)" if seeker.sequential else ""}.',
+                  flush=True)
+        if no_embedding[0]:
+            print(f'[Track] {no_embedding[0]} detection(s) had no usable embedding and were left '
+                  f'out of tracking; a track that continues past them is bridged by gap-fill.',
+                  flush=True)
         tracks = active + retired
         for _t in tracks:
             _t.pop('fc', None)                 # coasters are scan state, not an artefact
@@ -2434,6 +2466,21 @@ class TrackingMixin:
         print(f'[Temporal] {len(tracks or [])} track(s); faces on {n_frames} frames '
               f'({n_faces} total, {n_interp} gap-filled, gap limit {gap_max}'
               + (f', {n_refused} refused as unbridgeable' if n_refused else '') + ').')
+        # Index of the frames that hold a face matched to a source (see roop/stage2_plan.py:
+        # a view over the two structures above, not a second copy of the faces).
+        try:
+            _plan, _plan_stats = build_stage2_plan(
+                self._temporal_faces, getattr(self, '_track_source_map', None) or {})
+            _mask = getattr(self, '_active_ranges_mask', None)
+            _problems = stage2_check(_plan, _mask, int(getattr(self, '_track_scanned', 0) or 0))
+            self.stage2_frame_plan = _plan
+            print(stage2_summary(_plan_stats, _problems,
+                                 None if _mask is None else int(np.count_nonzero(_mask))),
+                  flush=True)
+        except Exception as _degrade_error:       # an audit index must not disable the pre-pass
+            self.stage2_frame_plan = {}
+            _swallowed("roop/procmgr_tracking.py:stage2_plan", _degrade_error,
+                       "the [Stage2] index was skipped; the pre-pass result is unaffected")
         # The shot structure the pre-pass found, and what it cost the gap-filler.
         # Printed whenever any cut was detected: a gap-filled face is invented
         # and then swapped unconditionally, so "how many of those did the shot
@@ -2482,6 +2529,7 @@ class TrackingMixin:
                   'per-frame detection for this clip.')
             self._temporal_mode = False
             self._temporal_faces = None
+            self.stage2_frame_plan = {}
 
     @staticmethod
     def _bridgeable(a, b, span):
@@ -3392,6 +3440,9 @@ class TrackingMixin:
             from roop import hdr_pipeline as _hdr_pipeline
             cap = _hdr_pipeline.video_capture(source_video)
             try:
+                if active_ranges:
+                    seeker = seeker_for(cap, source_video, n_ranges=len(active_ranges),
+                                        first_start=frame_start + active_ranges[0][0])
                 if active_ranges is not None:
                     prev_r_end = None
                     for r_start, r_end in active_ranges:
@@ -3400,12 +3451,13 @@ class TrackingMixin:
                         if prev_r_end is not None and r_start > prev_r_end + 1:
                             self.kps_stabilizer.reset()
                         prev_r_end = r_end
-                        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_start + r_start)
+                        if not seeker.goto(frame_start + r_start):
+                            break
                         for idx in range(r_start, r_end + 1):
                             wait_while_paused()
                             if not roop.globals.processing:
                                 break
-                            ret, frame = cap.read()
+                            ret, frame = seeker.read()
                             if not ret or frame is None:
                                 break
                             handle(idx, frame)
