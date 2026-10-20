@@ -432,6 +432,159 @@ MARGIN_SCALE_HI = 512.0
 SIGMOID_K = 8.0
 
 
+# ── zero-phase, per-track (Phase 7) ─────────────────────────────────────────────────────────────────────────
+
+def zero_phase_default():
+    """`ROOP_STAB_ZERO_PHASE` (default below). The tracking pre-pass is the only caller."""
+    return _env_flag('ROOP_STAB_ZERO_PHASE', ZERO_PHASE_DEFAULT)
+
+
+#: Whether the pre-pass smooths a track zero-phase (forward AND backward) instead of causally. See the class.
+ZERO_PHASE_DEFAULT = False
+
+
+class ZeroPhaseTrackSmoother:
+    """The shipped velocity-adaptive EMA, run over a COMPLETE track forward and backward and averaged.
+
+    WHY. `AdaptiveLandmarkSmoother` is causal: it can only look back, so on every fast head turn the smoothed
+    landmarks TRAIL the real ones (measured on real pre-pass tracks, `tests/probe_stage25_filters.py`: 1.3 to 6.9%
+    of the inter-ocular distance behind during fast motion, about 4 px on a 60 px face), and its velocity is read
+    against the previous SMOOTHED point, which under-reads exactly that motion. The tracking pre-pass has the whole
+    track in hand before the swap pass starts, so nothing forces causality: a forward pass plus a backward pass
+    with the same per-frame beta has no phase delay, and a still face gets the full smoothing from both sides.
+
+    WHAT IT KEEPS FROM THE SHIPPED FILTER, DELIBERATELY: the beta ramp (`beta_for`: smoothstep between
+    `beta_slow` and `beta_fast` across the velocity band), the face-extent normalisation (`_extent`), and ONE beta
+    per frame shared by the 5 keypoints, the 106 landmarks and the 68 3-D landmarks, so the crop and its own
+    outline still cannot disagree. The 68 3-D landmarks were never smoothed at all (their consumers, the lip
+    polygon and the frontalizer, saw raw detector noise); they ride the same beta now.
+
+    BOUNDED. A run ends at a shot cut, at a missing frame, and at a frame whose points are not finite: nothing is
+    averaged across them, so a scene cut or an occlusion gap can never bleed one side's coordinates into the
+    other. Runs shorter than 3 frames are returned unchanged.
+
+    VELOCITY is the central difference of the RAW keypoints (mean per-point displacement over two frames, halved),
+    divided by the keypoint extent - symmetric in time like the filter it drives.
+    """
+
+    def __init__(self, beta_slow=None, beta_fast=None, velocity_threshold=None, velocity_band=None):
+        self._ramp = AdaptiveLandmarkSmoother(beta_slow=beta_slow, beta_fast=beta_fast,
+                                              velocity_threshold=velocity_threshold,
+                                              velocity_band=velocity_band)
+
+    @classmethod
+    def from_env(cls):
+        base = AdaptiveLandmarkSmoother
+        return cls(
+            beta_slow=_env_float('ROOP_STAB_ZERO_PHASE_BETA', base.BETA_SLOW, 0.01, 1.0),
+            beta_fast=_env_float('ROOP_LANDMARK_BETA_FAST', base.BETA_FAST, 0.01, 1.0),
+            velocity_threshold=_env_float('ROOP_LANDMARK_VELOCITY', base.VELOCITY_THRESHOLD, 0.0005, 1.0))
+
+    @property
+    def beta_slow(self):
+        return self._ramp.beta_slow
+
+    # -- runs -----------------------------------------------------------------------------------------
+    @staticmethod
+    def runs(frames, valid, cuts=()):
+        """Index ranges [i, j) of consecutive, valid frames that do not cross a cut (a cut frame STARTS a run)."""
+        cuts = {int(c) for c in cuts}
+        out, start = [], None
+        for k, f in enumerate(frames):
+            if not valid[k]:
+                if start is not None:
+                    out.append((start, k))
+                    start = None
+                continue
+            if start is not None and (f != frames[k - 1] + 1 or int(f) in cuts):
+                out.append((start, k))
+                start = None
+            if start is None:
+                start = k
+        if start is not None:
+            out.append((start, len(frames)))
+        return out
+
+    def velocities(self, kps):
+        """Per-frame normalised speed of a run's raw keypoints, central difference."""
+        t = len(kps)
+        v = np.zeros(t)
+        if t >= 3:
+            disp = np.linalg.norm(kps[2:] - kps[:-2], axis=2).mean(axis=1) / 2.0
+            v[1:-1] = disp
+            v[0], v[-1] = v[1], v[-2]
+        elif t == 2:
+            v[:] = np.linalg.norm(kps[1] - kps[0], axis=1).mean()
+        ext = np.array([AdaptiveLandmarkSmoother._extent(k.astype(np.float32)) for k in kps])
+        return v / ext
+
+    @staticmethod
+    def _ema(x, beta):
+        out = np.empty_like(x)
+        out[0] = x[0]
+        for i in range(1, len(x)):
+            b = beta[i]
+            out[i] = b * x[i] + (1.0 - b) * out[i - 1]
+        return out
+
+    def smooth_run(self, kps, dense=()):
+        """(kps_smoothed, [dense_smoothed...]) for ONE run; float64 in, float64 out. `dense` are (T, K, C) arrays."""
+        t = len(kps)
+        if t < 3:
+            return kps, list(dense)
+        beta = np.array([self._ramp.beta_for(float(v)) for v in self.velocities(kps)])
+        flat = [kps.reshape(t, -1)] + [d.reshape(t, -1) for d in dense]
+        widths = np.cumsum([0] + [f.shape[1] for f in flat])
+        x = np.concatenate(flat, axis=1)
+        y = 0.5 * (self._ema(x, beta) + self._ema(x[::-1], beta[::-1])[::-1])
+        out = [y[:, widths[i]:widths[i + 1]].reshape((t,) + a.shape[1:])
+               for i, a in enumerate([kps] + list(dense))]
+        return out[0], out[1:]
+
+    def smooth_track(self, frames, kps, dense=None, cuts=()):
+        """Smooth one track.
+
+        frames: ascending frame numbers; kps: list of (5, 2) arrays or None; dense: {name: list of arrays or
+        None}. Returns ({'kps': [...]} plus each dense name) as lists aligned with `frames`, entries replaced
+        where a run was smoothed and passed through untouched elsewhere, and a stats dict.
+        """
+        dense = dense or {}
+        n = len(frames)
+        valid = [k is not None and np.shape(k) == (5, 2) and bool(np.all(np.isfinite(k))) for k in kps]
+        result = {'kps': list(kps)}
+        for name in dense:
+            result[name] = list(dense[name])
+        stats = {'runs': 0, 'frames': 0, 'beta_sum': 0.0}
+        for (i, j) in self.runs(frames, valid, cuts):
+            if j - i < 3:
+                continue
+            k_arr = np.stack([np.asarray(kps[m], np.float64) for m in range(i, j)])
+            names, arrays = [], []
+            for name, seq in dense.items():
+                part = seq[i:j]
+                if all(p is not None for p in part) and len({np.shape(p) for p in part}) == 1:
+                    block = np.stack([np.asarray(p, np.float64) for p in part])
+                    if np.all(np.isfinite(block)):
+                        names.append(name)
+                        arrays.append(block)
+            k_s, d_s = self.smooth_run(k_arr, arrays)
+            for m in range(i, j):
+                result['kps'][m] = k_s[m - i].astype(np.float32)
+            for name, arr in zip(names, d_s):
+                for m in range(i, j):
+                    result[name][m] = arr[m - i].astype(np.float32)
+            stats['runs'] += 1
+            stats['frames'] += j - i
+        return result, stats
+
+    def summary_line(self, stats):
+        if not stats['runs']:
+            return None
+        return ('zero-phase landmark smoothing: %d run(s), %d frame(s), beta %.2f -> %.2f '
+                '(forward + backward, bounded by cuts and gaps)'
+                % (stats['runs'], stats['frames'], self._ramp.beta_slow, self._ramp.beta_fast))
+
+
 def adaptive_margin_px(face_extent_px,
                        margin_min=MARGIN_MIN_PX, margin_max=MARGIN_MAX_PX):
     """Boundary ramp width for a face of this on-screen size, in pixels."""

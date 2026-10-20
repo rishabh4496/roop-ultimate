@@ -151,11 +151,80 @@ def _readahead_depth(cap, budget_mb=256.0, lo=4, hi=16):
 
 
 class TrackingMixin:
-    def _precompute_sam2(self, sam2_p, source_video, frame_start, frame_end, frame_count):
+    def _run_sam2_prepass(self, sam2_p, source_video, frame_start, frame_end, frame_count):
+        """SAM 2 over only the frames the earlier stages kept (roop/sam2_runs.py), or the whole clip when
+        they kept no information. Never raises: a SAM 2 failure leaves the swap unmasked, as it always did."""
+        from roop import sam2_runs
+        try:
+            runs, source = sam2_runs.choose(getattr(self, 'stage2_frame_plan', None),
+                                            getattr(self, '_active_ranges', None), int(frame_count or 0))
+            n, pct = sam2_runs.coverage(runs, int(frame_count or 0))
+            if source != 'clip':
+                print(f'[SAM2] gated to the {source}: {len(runs)} run(s) covering {n} of {frame_count} frame(s) '
+                      f'({pct:.1f}%); the memory bank is reset at each of the {max(len(runs) - 1, 0)} gap(s) and '
+                      f'the other {int(frame_count or 0) - n} frame(s) are neither decoded nor tracked.', flush=True)
+            self._precompute_sam2(sam2_p, source_video, frame_start, frame_end, frame_count,
+                                  runs=None if source == 'clip' else runs)
+        except Exception as e:
+            print(f'[SAM2] pre-pass failed ({e}); falling back to unmasked swap')
+            sam2_p.precomputed = {}
+
+    def _precompute_sam2_runs(self, sam2_p, source_video, frame_start, runs):
+        """The gated SAM 2 pass: seek to each run, buffer ONLY its frames, propagate on a fresh memory bank."""
+        from roop.face_util import get_all_faces
+        from roop import hdr_pipeline as _hdr_pipeline
+        cap = _hdr_pipeline.video_capture(source_video)
+        try:
+            seeker = seeker_for(cap, source_video, n_ranges=len(runs), first_start=frame_start + runs[0][0])
+            resolved = []
+            for first, last, boxes in runs:
+                if boxes is None:                          # Stage 1 ranges: detect on the range's first frame
+                    if not seeker.goto(frame_start + first):
+                        break
+                    ok, frame = seeker.read()
+                    if not ok or frame is None:
+                        continue
+                    with pause_scope(lambda: bool(roop.globals.processing)) as allowed:
+                        if not allowed:
+                            return
+                        with _gpu_guard(pooled=analysis_pooled(), owner='analysis'):
+                            faces = get_all_faces(frame) or []
+                    boxes = [f.bbox.astype(np.float32) for f in faces if getattr(f, 'bbox', None) is not None]
+                if boxes:
+                    resolved.append((first, last, boxes))
+            h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
+            w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
+            if not (h and w) and resolved:
+                if seeker.goto(frame_start + resolved[0][0]):
+                    ok, frame = seeker.read()
+                    if ok and frame is not None:
+                        h, w = frame.shape[:2]
+
+            def read_run(first, last):
+                if not seeker.goto(frame_start + first):
+                    return
+                for _ in range(last - first + 1):
+                    wait_while_paused()
+                    if not roop.globals.processing:
+                        return
+                    ok, frame = seeker.read()
+                    if not ok or frame is None:
+                        return
+                    yield frame
+
+            print(f'[SAM2] seeding the tracker on {len(resolved)} run(s)', flush=True)
+            sam2_p.precompute_runs(resolved, read_run, (h, w))
+        finally:
+            cap.release()
+
+    def _precompute_sam2(self, sam2_p, source_video, frame_start, frame_end, frame_count, runs=None):
         """SAM2 pre-pass: decode the trimmed frames straight into an in-RAM SAM2
         input buffer (0-based, matching the swap reader's frame_idx; nothing is
         written to disk), detect the faces on frame 0 to seed the tracker, and let
-        SAM2 propagate full-frame masks across the clip."""
+        SAM2 propagate full-frame masks across the clip. With `runs` (Phase 7) only those
+        frame runs are decoded and tracked, each on a fresh memory bank."""
+        if runs:
+            return self._precompute_sam2_runs(sam2_p, source_video, frame_start, runs)
         from roop.face_util import get_all_faces
 
         from roop import hdr_pipeline as _hdr_pipeline
@@ -3017,6 +3086,7 @@ class TrackingMixin:
                 # `bbox` deliberately keeps its own filter: it is a detection
                 # rectangle, not part of the alignment/hull pair.
                 coupled = None
+                zero_phase = None
                 # `stabilize_method == 'kalman'` replaces the coupled smoother for this
                 # track: a constant-velocity Kalman filter on the 5 keypoints, with the
                 # dense landmarks carried by the SAME displacement (the shift of the
@@ -3029,9 +3099,28 @@ class TrackingMixin:
                     from roop.one_euro import KalmanKpsStabilizer
                     kalman = KalmanKpsStabilizer()
                 elif bool(getattr(self.options, 'stabilize_landmarks', True)):
-                    from roop.temporal_smoother import AdaptiveLandmarkSmoother
-                    coupled = AdaptiveLandmarkSmoother.from_env()
+                    from roop.temporal_smoother import (AdaptiveLandmarkSmoother, ZeroPhaseTrackSmoother,
+                                                        zero_phase_default)
+                    if zero_phase_default():
+                        # Zero-phase (forward + backward) over the WHOLE track: this pass already holds every
+                        # frame of the track, so nothing requires the causal filter's lag. See the class.
+                        zero_phase = ZeroPhaseTrackSmoother.from_env()
+                    else:
+                        coupled = AdaptiveLandmarkSmoother.from_env()
                 cuts = getattr(self, '_shot_boundaries', None) or set()
+                zp_out, zp_pos = None, None
+                if zero_phase is not None:
+                    _ordered = sorted(merged)
+                    zp_pos = {fr: n for n, fr in enumerate(_ordered)}
+                    zp_out, zp_stats = zero_phase.smooth_track(
+                        _ordered,
+                        [getattr(merged[fr], 'kps', None) for fr in _ordered],
+                        {'landmark_2d_106': [getattr(merged[fr], 'landmark_2d_106', None) for fr in _ordered],
+                         'landmark_3d_68': [getattr(merged[fr], 'landmark_3d_68', None) for fr in _ordered]},
+                        cuts=cuts)
+                    _zp_line = zero_phase.summary_line(zp_stats)
+                    if _zp_line:
+                        self._landmark_smooth_lines.append('track %s %s' % (t['id'], _zp_line))
                 for i in sorted(merged):
                     if i in cuts:
                         if coupled is not None and hasattr(coupled, 'reset'):
@@ -3050,6 +3139,13 @@ class TrackingMixin:
                         if lm is not None:
                             shift = np.asarray(kps_s, np.float64).mean(axis=0) - raw_kps.mean(axis=0)
                             f['landmark_2d_106'] = (np.asarray(lm, np.float64) + shift).astype(np.float32)
+                    elif zp_out is not None and kps is not None:
+                        n_ = zp_pos[i]
+                        f['kps'] = zp_out['kps'][n_]
+                        if lm is not None and zp_out['landmark_2d_106'][n_] is not None:
+                            f['landmark_2d_106'] = zp_out['landmark_2d_106'][n_]
+                        if getattr(f, 'landmark_3d_68', None) is not None and zp_out['landmark_3d_68'][n_] is not None:
+                            f['landmark_3d_68'] = zp_out['landmark_3d_68'][n_]
                     elif coupled is not None and kps is not None:
                         # This pass IS contiguous and per-track by construction
                         # (`for i in sorted(merged)` on one thread), which is

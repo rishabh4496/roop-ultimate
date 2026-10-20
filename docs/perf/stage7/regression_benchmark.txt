@@ -1,0 +1,17 @@
+ REGRESSION BENCHMARK  300 frames  NVIDIA GeForce RTX 4070  threads=20
+==========================================================================
+ raw decode      186.2 fps     raw encode     701.6 fps (hevc_nvenc)
+ end-to-end       6.29 fps     wall 47.71 s
+ frame time   p50 394.1 ms  p99 597.2 ms  var 12047.5 ms^2   output p99 interval 9.5 ms
+ VRAM peak    11186.7 MB (before render 1272.8 MB)   GPU util mean 51.5% peak 92.0%
+ stage (in the render)   calls   busy s   ms/call   per-thread fps
+   decode              300   2.1825     7.275       137.46
+   detect              300   6.3065    21.022        47.57
+   swap                312  29.2483    93.744        10.67
+   mask                624  21.0198    33.686        29.69
+   enhance             312  26.4928    84.913        11.78
+   encode              300   1.1214     3.738       267.51
+ swap         decided 300/300 (100.0%)   changed 300/300 (100.0%)
+ quality      face SSIM mean 0.9906 min 0.9868   face PSNR 46.0662 dB   frame PSNR 61.8928 dB
+ RESULT       PASS (baseline 20261016-044541, fps 2.71 -> 6.29)
+exit=0

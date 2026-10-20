@@ -202,11 +202,47 @@ class Mask_SAM2():
         *frames* is a SAM2FrameBuffer (the frames already preprocessed in RAM, no
         files written) or, for callers that still have one, a directory of
         %06d.jpg frames numbered from 0."""
-        import torch
         self.precomputed = {}
         self._orig_hw = orig_hw
         if not boxes:
             return
+        self._propagate(frames, boxes, 0)
+        print(f'[SAM2] precomputed masks for {len(self.precomputed)} frames')
+
+    def precompute_runs(self, runs, read_run, orig_hw):
+        """SAM 2 over ONLY the frames in `runs`, each run on a FRESH memory bank.
+
+        runs: [(first, last, boxes)] - inclusive 0-based frame indices (the swap reader's `frame_idx`) and the
+        xyxy boxes that seed the tracker at `first`. read_run(first, last) -> the BGR frames of that run, in
+        order (fewer if the stream ends early). Nothing outside a run is decoded, propagated or kept; a run
+        starts with `init_state` and ends with `reset_state`, so no mask, memory frame or object pointer of one
+        run can drift into the next across the gap that separates them. self.precomputed ends up keyed by
+        absolute frame index, exactly as `precompute` leaves it, so `get_crop_mask` is unchanged.
+
+        Returns {'runs': n, 'frames': propagated, 'resets': n_resets}."""
+        self.precomputed = {}
+        self._orig_hw = orig_hw
+        stats = {'runs': 0, 'frames': 0, 'resets': 0}
+        for first, last, boxes in runs:
+            if not boxes:
+                continue
+            buffer = self.new_frame_buffer(int(last) - int(first) + 1)
+            for frame in read_run(int(first), int(last)):
+                buffer.add(frame)
+            if buffer.count == 0:
+                continue
+            self._propagate(buffer, boxes, int(first), quiet=True)
+            stats['runs'] += 1
+            stats['frames'] += buffer.count
+            stats['resets'] += 1
+        print(f'[SAM2] precomputed masks for {len(self.precomputed)} frames in {stats["runs"]} run(s); '
+              f'memory bank reset {stats["resets"]} time(s)')
+        return stats
+
+    def _propagate(self, frames, boxes, offset, quiet=False):
+        """Seed `boxes` at the first frame of `frames`, propagate through all of it, store each mask at
+        offset + its index. The tracker state is released afterwards (`reset_state`)."""
+        import torch
         in_memory = isinstance(frames, SAM2FrameBuffer)
         autocast = torch.autocast(self.device, dtype=torch.bfloat16) if self.device == 'cuda' \
             else _nullcontext()
@@ -230,11 +266,13 @@ class Mask_SAM2():
                 if scale < 1.0:
                     m = cv2.resize(m, (max(1, int(w * scale)), max(1, int(h * scale))),
                                    interpolation=cv2.INTER_NEAREST)
-                self.precomputed[int(fidx)] = m
-                if fidx % 50 == 0 or fidx == total_frames - 1:
+                self.precomputed[int(offset) + int(fidx)] = m
+                if not quiet and (fidx % 50 == 0 or fidx == total_frames - 1):
                     pct = (fidx + 1) / total_frames * 100 if total_frames > 0 else 0.0
                     print(f'[SAM2] mask propagation: frame {fidx + 1}/{total_frames} ({pct:.1f}%)')
-        print(f'[SAM2] precomputed masks for {len(self.precomputed)} frames')
+            reset = getattr(self.predictor, 'reset_state', None)
+            if callable(reset):
+                reset(state)
 
     def get_crop_mask(self, frame_idx, M, crop_shape):
         """Return the roop-convention mask (1.0 = keep ORIGINAL) for the aligned

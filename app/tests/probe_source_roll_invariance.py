@@ -59,7 +59,8 @@ def main() -> int:
     cfg = yaml.safe_load(open(os.path.join(APP, 'config.yaml'), encoding='utf-8')) or {}
     mask = {'RealityUX': 'mask_realityux', 'DFL XSeg': 'mask_xseg', 'None': 'None'}.get(
         cfg.get('mask_engine', 'RealityUX'), cfg.get('mask_engine'))
-    ab.init_pipeline('tensorrt', cfg.get('swap_model', 'realswap'), 'None', mask)
+    swap_model = cfg.get('swap_model', 'realswap')
+    ab.init_pipeline('tensorrt', swap_model, 'None', mask)
     from roop.face_util import get_all_faces, solve_pose_5pt
 
     rows, per_angle = [], {r: [] for r in LADDER}

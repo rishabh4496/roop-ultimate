@@ -884,12 +884,12 @@ class BatchProcessingMixin:
             _st.skip(_st.STAGE_2_ACTIVE_PREPASS)
         _prepass_failed = False
 
-        if sam2_p is not None and not is_awebp:
-            try:
-                self._precompute_sam2(sam2_p, source_video, frame_start, frame_end, frame_count)
-            except Exception as e:
-                print(f'[SAM2] pre-pass failed ({e}); falling back to unmasked swap')
-                sam2_p.precomputed = {}
+        # With temporal detection the Stage 2 plan decides which frames SAM 2 may look at, so the pass waits for
+        # it (below, right after the pre-pass); otherwise it runs here, gated by the Stage 1 ranges if there are any.
+        if sam2_p is not None:
+            sam2_p.precomputed = None            # "not run yet": a processor reused from an earlier clip keeps its masks
+        if sam2_p is not None and not is_awebp and not self._temporal_mode:
+            self._run_sam2_prepass(sam2_p, source_video, frame_start, frame_end, frame_count)
 
         # Identity-lock pre-pass: track each person across the clip and assign a
         # single source per track, so the per-frame embedding match can't flip
@@ -921,6 +921,11 @@ class BatchProcessingMixin:
                     if (_stage_cache is not None and sam2_p is None and not is_awebp
                             and self._temporal_mode and self._temporal_faces and roop.globals.processing):
                         _stage_cache.save_stage2(self, frame_start=frame_start, frame_count=frame_count)
+                # SAM 2 follows Stage 2 (the plan names the frames it may track) and runs BEFORE the analysis
+                # models are released below, since a run seeded by detection needs them. Its own failure is
+                # contained inside the helper; it must not read as a failed pre-pass.
+                if sam2_p is not None and not is_awebp:
+                    self._run_sam2_prepass(sam2_p, source_video, frame_start, frame_end, frame_count)
                 # `and self._temporal_mode`: the pre-pass turns itself off when it
                 # found nothing usable, and then its identity assignments are empty
                 # too — so fall through to the standalone track pass below rather
@@ -945,6 +950,9 @@ class BatchProcessingMixin:
                 self.stage2_frame_plan = {}
                 self._temporal_covered = 0
                 self._log_memory_stage('phase3:temporal-prepass-fallback')
+                if sam2_p is not None and not is_awebp and sam2_p.precomputed is None:
+                    # the pre-pass died before SAM 2's turn: no plan, so the Stage 1 ranges (or the clip) decide
+                    self._run_sam2_prepass(sam2_p, source_video, frame_start, frame_end, frame_count)
 
         if (not self._temporal_mode and roop.globals.track_identities and not is_awebp
                 and self.options.swap_mode in ("selected", "selected_multi")
