@@ -1,0 +1,3 @@
+REAL write: 477 faces on 210 frames -> 2.20 MB in 28 ms (4.7 KB/face, 0.06 ms/face)
+REAL restore (full window): {'frames': 210, 'faces': 477, 'plan_frames': 143, 'assignments': 240} in 29 ms; EXACT
+REAL restore (resumed at +97): {'frames': 119, 'faces': 241, 'plan_frames': 117, 'assignments': 143} in 18 ms; EXACT

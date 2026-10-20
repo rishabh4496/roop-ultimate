@@ -58,6 +58,7 @@ from roop import capture_seed
 from roop import segment_writer
 from roop import live_preview
 from roop import stage_telemetry as _stage_telemetry
+from roop import pipeline_status as _pipeline_status
 from roop import procmgr_runtime as _procmgr_runtime
 from roop import runtime_state as _runtime_state
 from roop.processing_request import (
@@ -88,6 +89,7 @@ from target_person_state import (
     new_target_reference_face_id,
 )
 import project_checkpoint as _project_checkpoint
+import stage_checkpoint as _stage_checkpoint
 from roop import project_io as _project_io
 import ui.globals as ui_globals
 import api_access as _api_access
@@ -5003,7 +5005,13 @@ def _run_swap(payload):
             roop_globals._checkpoint_segment_callback = (
                 lambda writer, frame_idx=None, manager=None: _checkpoint_segment(
                     project_id, writer, frame_idx, manager))
+            # Stage 1 / Stage 2 results are recorded under this project the moment each finishes, and a
+            # resumed run loads them instead of recomputing (roop/stage_cache.py, stage_checkpoint.py).
+            roop_globals._stage_cache = _stage_checkpoint.ProjectStageCache(
+                project_id, app_version=_get_git_version())
             _set_processing_project_state(project_id, "PROCESSING")
+        else:
+            roop_globals._stage_cache = None
         # Fresh terminal feed for this run.
         _log_lines.clear()
         _log_state.update({"last": "", "last_ts": 0.0, "seq": 0, "last_err": "",
@@ -5416,6 +5424,7 @@ def _run_swap(payload):
             _run_stats["duration_s"] = round(max(0.0, time.time() - _run_stats["start"]), 1)
         if project_id:
             roop_globals._checkpoint_segment_callback = None
+        roop_globals._stage_cache = None
         global _project_autosave
         if _project_autosave is not None and project_id:
             try:
@@ -6212,6 +6221,10 @@ def _telemetry_snapshot():
         'started_at': started,
         'live_seq': live_preview.seq(),
         **_stage_telemetry.snapshot(),
+        # "Compiling TensorRT Engine..." / canary state (roop/pipeline_status.py), flat and non-ticking
+        # so the change-only sampler stays quiet between stages. Present while idle too (engine_state
+        # IDLE): a client that missed the closing frame is corrected by the next one.
+        **_pipeline_status.telemetry_fields(),
     }
 
 

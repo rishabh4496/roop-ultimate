@@ -22,6 +22,7 @@ from roop import face_util
 from roop.processors.FaceSwapInsightFace import (verify_tol_for as _swap_verify_tol_for,
                                                   batch_swap_enabled as _batch_swap_enabled)
 from roop import orientation
+from roop import stage0_preflight as _stage0
 from roop import runtime_banner as _runtime_banner
 from roop import baseline_probe as _bp
 from roop import synthetic_label as _synthetic_label
@@ -782,6 +783,10 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         self.stage2_frame_plan = {}
         self._temporal_covered = 0
         self._track_scanned = 0
+        # Stage 0: the frozen source-identity table (roop/stage0_preflight.py), built by run_batch_inmem
+        # before the first frame is read. None everywhere else (preview, single image), where the live
+        # selection in process_face runs as it always did.
+        self._stage0 = None
         # Per-faceset canvas masks: {faceset_idx (int): {'exclude_mask': arr, 'include_mask': arr,
         #                                                  'ref_kps': arr, 'is_canonical': bool}}
         self.face_masks = {}
@@ -1078,6 +1083,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         # job's snapshot on options wins over the live global. Resolved once
         # here against this run's facesets and the gallery, by `_source_id`.
         self._identity_blend = None
+        self._stage0 = None          # a table from an earlier run belongs to that run's sources
         from roop.source_portfolio import RouteStats
         self._angle_route_stats = RouteStats()
         try:
@@ -5897,19 +5903,24 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             except Exception as e:
                 bar_write(f"[ProcessMgr] Pose-aware embedding failed: {e}")
 
+        # Stage 0 (roop/stage0_preflight.py): the source's identity for every head-pose cell was frozen
+        # before the first frame was read - pose-selected, blended and dial-offset - so for an armed
+        # source this is a three-comparison lookup and the two live blocks below do not run. The table
+        # answers only when the live path started from the very Face it was built from; anything that
+        # re-selected the source upstream falls through to the live path untouched.
+        _s0_face = None
+        _s0 = getattr(self, '_stage0', None)
+        if (_s0 is not None and not _swap_is_image and source_faceset is not None
+                and inputface is not None):
+            _s0_face = _s0.lookup(face_index, inputface, target_face)
+            if _s0_face is not None:
+                inputface = _s0_face
+
         # V2 holds identity vectors per yaw/pitch cell. Copy the selected source
         # before overriding its vector: source Face objects are shared by workers.
-        if not _swap_is_image and source_faceset is not None:
+        if _s0_face is None and not _swap_is_image and source_faceset is not None:
             try:
-                from roop.processors.FaceSwapInsightFace import pose_embedding_for_target
-                pose_embedding = pose_embedding_for_target(source_faceset, target_face)
-                if pose_embedding is not None:
-                    pose_input = type(inputface)(inputface)
-                    pose_input['embedding'] = pose_embedding
-                    for key in list(pose_input.keys()):
-                        if str(key).startswith('_latent_'):
-                            del pose_input[key]
-                    inputface = pose_input
+                inputface = _stage0.pose_conditioned_input(inputface, source_faceset, target_face)
             except Exception as e:
                 bar_write(f"[ProcessMgr] V2 pose embedding selection failed: {e}")
 
@@ -5946,13 +5957,10 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         # the magnitude they were trained on. cscs_dual reads its own
         # recognizers' vectors from a crop, a different space: skipped.
         _blend = getattr(self, '_identity_blend', None)
-        if (_blend is not None and not _swap_is_image and inputface is not None
+        if (_s0_face is None and _blend is not None and not _swap_is_image and inputface is not None
                 and getattr(swap_p, 'embedding_mode', '') != 'cscs_dual'):
             try:
-                _raw = inputface.get('embedding') if hasattr(inputface, 'get') else None
-                _new = _blend.transform(_raw, target_face, source_faceset)
-                if _new is not None:
-                    inputface = _with_unit_embedding(inputface, _new)
+                inputface = _stage0.blended_input(inputface, _blend, source_faceset, target_face)
             except Exception as e:
                 bar_write(f"[ProcessMgr] identity blend failed: {e}")
 
@@ -7227,6 +7235,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         self.face_masks = {}
         self._temporal_faces = None
         self.stage2_frame_plan = {}
+        self._stage0 = None
         self._reset_dispatch_tracker()
         if getattr(self, '_temporal_identity', None) is not None:
             self._temporal_identity.reset()

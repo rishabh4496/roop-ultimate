@@ -14,10 +14,16 @@ import os
 import platform
 import re
 import tempfile
+import threading
 import time
 import uuid
 from typing import Any, Callable, Mapping
 
+
+# A project record is read-modify-written from several threads: the render worker (state, runtime,
+# the Stage 1/2 records below) and the segment writer (a committed segment). Without one lock the
+# later `save` silently discards the earlier one's change. Re-entrant so a helper may call another.
+_RECORD_LOCK = threading.RLock()
 
 PROJECT_SCHEMA_VERSION = 1
 COMPATIBILITY = {
@@ -315,51 +321,59 @@ def list_projects() -> list[dict]:
 def update_state(project_id: str, state: str, error: str = "") -> dict | None:
     if state not in STATES:
         raise ValueError(f"unknown project state: {state}")
-    try:
-        record = load(project_id)
-    except (OSError, ValueError, json.JSONDecodeError):
-        return None
-    record["state"] = state
-    record["error"] = str(error or "")
-    return save(record)
+    with _RECORD_LOCK:
+        try:
+            record = load(project_id)
+        except (OSError, ValueError, json.JSONDecodeError):
+            return None
+        record["state"] = state
+        record["error"] = str(error or "")
+        saved = save(record)
+    if state == "COMPLETED":
+        # A finished project never resumes, so its Stage 1/2 cache can only waste disk.
+        discard_stage_cache(project_id)
+    return saved
 
 
 def update_runtime(project_id: str, runtime: Mapping[str, Any]) -> dict | None:
-    try:
-        record = load(project_id)
-    except (OSError, ValueError, json.JSONDecodeError):
-        return None
-    record["runtime"] = dict(runtime)
-    return save(record)
+    with _RECORD_LOCK:
+        try:
+            record = load(project_id)
+        except (OSError, ValueError, json.JSONDecodeError):
+            return None
+        record["runtime"] = dict(runtime)
+        return save(record)
 
 
 def update_checkpoint(project_id: str, *, safe_frame: int, next_frame: int,
                       segments: list[dict], manifest: str = "",
                       partial_files: list[dict] | None = None,
                       state: str | None = None) -> dict | None:
-    try:
-        record = load(project_id)
-    except (OSError, ValueError, json.JSONDecodeError):
-        return None
-    previous = record.get("checkpoint") or {}
-    record["checkpoint"] = {
-        "sequence": int(previous.get("sequence", 0) or 0) + 1,
-        "safe_frame": int(safe_frame),
-        "next_frame": int(next_frame),
-        "segments": json.loads(json.dumps(segments, default=_json_default)),
-        "manifest": os.path.abspath(manifest) if manifest else "",
-        "manifest_identity": (file_identity(manifest)
-                              if manifest and os.path.isfile(manifest) else None),
-        "written_at": time.time(),
-    }
-    if partial_files is not None:
-        record["partial_output"] = {
-            "files": json.loads(json.dumps(partial_files, default=_json_default)),
-            "integrity": "verified",
+    # The identity of the manifest is computed BEFORE the lock: it hashes a file.
+    manifest_identity = (file_identity(manifest) if manifest and os.path.isfile(manifest) else None)
+    with _RECORD_LOCK:
+        try:
+            record = load(project_id)
+        except (OSError, ValueError, json.JSONDecodeError):
+            return None
+        previous = record.get("checkpoint") or {}
+        record["checkpoint"] = {
+            "sequence": int(previous.get("sequence", 0) or 0) + 1,
+            "safe_frame": int(safe_frame),
+            "next_frame": int(next_frame),
+            "segments": json.loads(json.dumps(segments, default=_json_default)),
+            "manifest": os.path.abspath(manifest) if manifest else "",
+            "manifest_identity": manifest_identity,
+            "written_at": time.time(),
         }
-    if state:
-        record["state"] = state
-    return save(record)
+        if partial_files is not None:
+            record["partial_output"] = {
+                "files": json.loads(json.dumps(partial_files, default=_json_default)),
+                "integrity": "verified",
+            }
+        if state:
+            record["state"] = state
+        return save(record)
 
 
 def complete_hashes(project_id: str) -> dict | None:
@@ -377,6 +391,7 @@ def complete_hashes(project_id: str) -> dict | None:
                if item.get("sha256_pending")]
     if not pending:
         return record
+    digests = {}                      # path -> digest, hashed OUTSIDE the lock (whole-file reads)
     for item in pending:
         path = item.get("path")
         try:
@@ -384,11 +399,231 @@ def complete_hashes(project_id: str) -> dict | None:
             if (int(current.st_size) != item.get("size")
                     or int(current.st_mtime_ns) != item.get("mtime_ns")):
                 continue
-            item["sha256"] = file_sha256(path)
-            item.pop("sha256_pending", None)
+            digests[path] = file_sha256(path)
         except OSError:
             continue
-    return save(record)
+    with _RECORD_LOCK:
+        try:
+            record = load(project_id)          # a segment commit may have saved while we hashed
+        except (OSError, ValueError, json.JSONDecodeError):
+            return None
+        inputs = record.get("inputs") or {}
+        for item in list(inputs.get("sources") or []) + [inputs.get("target") or {}]:
+            if item.get("sha256_pending") and item.get("path") in digests:
+                item["sha256"] = digests[item["path"]]
+                item.pop("sha256_pending", None)
+        return save(record)
+
+
+# ── Stage 1 / Stage 2 cache (Phase 6) ─────────────────────────────────────────────────────────────────
+#
+# WHAT A RESUME REDID. A project resumes from its committed segments (`checkpoint.segments`), but the
+# two pre-passes that precede the swap pass - Stage 1 (the sparse presence scan) and Stage 2 (tracking
+# and temporal detection) - were re-run on the remaining range every time: minutes of detector work
+# whose answer the interrupted run already had. They are persisted here the moment each finishes:
+#
+#   stage1   small, in the project JSON: the active ranges (ABSOLUTE frames), the scan's stats, and the
+#            hash of what they were computed from
+#   stage2   the hand-off the swap pass consumes (`ProcessMgr._temporal_faces`, `_track_assignments`,
+#            `_track_source_map`, shot cuts) in a SIDECAR file beside the record (`<id>.stage2.npz`,
+#            written by `roop/stage_cache.py`), plus its digest and the serialized frame plan in the JSON
+#
+# The frame plan alone is NOT the hand-off (it holds no Face objects by design - see roop/stage2_plan.py),
+# so persisting only the plan, as the brief for this stage said, could not skip Stage 2.
+#
+# VALID ONLY UNDER ITS KEY. Everything the two stages' answers depend on is folded into one digest:
+# the target's SHA-256, the original trim, every source's SHA-256, the captured target faces, the
+# settings fingerprint and the model identity. A resume under any other key re-runs the stages. The
+# sidecar is additionally checked against its recorded size and SHA-256 before one byte of it is used.
+
+STAGE_CACHE_VERSION = 1
+STAGE_SIDECAR_SUFFIX = {"stage2": ".stage2.npz"}
+
+
+# What each component of the basis is called when it is the one that changed (for the printed reason).
+_BASIS_LABELS = {
+    "version": "the cache format version",
+    "target": "the target video (SHA-256 / size)",
+    "trim": "the trim points",
+    "sources": "a source file (SHA-256 / identity)",
+    "target_faces": "the captured target faces",
+    "target_context": "the target-to-source mapping",
+    "settings": "the processing settings",
+    "models": "the model configuration",
+    "provider": "the execution provider",
+    "precision": "the TensorRT precision",
+    "live": "the application version or a ROOP_* environment variable",
+}
+
+
+def stage_cache_basis(record: Mapping[str, Any], live: Mapping[str, Any] | None = None) -> dict:
+    """Everything the Stage 1 / Stage 2 results depend on, as small named digests. {} when an input digest is
+    unknown.
+
+    `live` is what the CURRENT process contributes and a record cannot know: the application version
+    (the pre-passes are code) and the ROOP_* environment (their gap limit, flow, coast, track knobs). A
+    cache written by other code or under other knobs is not the answer this run would compute.
+
+    A target or source whose SHA-256 is still pending (the worker has not finalized the project yet)
+    has no identity strong enough to key a cache on, so the basis is {} and nothing is stored or restored.
+    """
+    inputs = record.get("inputs") or {}
+    target = inputs.get("target") or {}
+    sources = list(inputs.get("sources") or [])
+    if not target.get("sha256") or any(not s.get("sha256") for s in sources):
+        return {}
+    runtime = record.get("runtime") or {}
+    return {
+        "version": STAGE_CACHE_VERSION,
+        "target": {"sha256": target.get("sha256"), "size": target.get("size")},
+        "trim": [int(inputs.get("frame_start", 0) or 0), int(inputs.get("frame_end", 0) or 0)],
+        "sources": [[s.get("sha256"), s.get("source_id", "")] for s in sources],
+        "target_faces": fingerprint(inputs.get("target_faces") or []),
+        "target_context": fingerprint({k: v for k, v in (inputs.get("target_context") or {}).items()
+                                       if k in ("face_mapping", "target_person_source_mapping",
+                                                "target_person_ids", "target_selected_source_id")}),
+        "settings": (record.get("settings") or {}).get("fingerprint"),
+        "models": runtime.get("models"),
+        "provider": normalize_provider(runtime.get("provider")),
+        "precision": runtime.get("precision"),
+        "live": dict(live or {}),
+    }
+
+
+def stage_cache_key(record: Mapping[str, Any], live: Mapping[str, Any] | None = None) -> str:
+    """The digest of `stage_cache_basis`; '' when an input digest is unknown."""
+    basis = stage_cache_basis(record, live)
+    return fingerprint(basis) if basis else ""
+
+
+def basis_differences(stored: Mapping[str, Any] | None, current: Mapping[str, Any]) -> list[str]:
+    """Which named components of the key changed, in words. [] when the stored basis is unknown."""
+    if not stored:
+        return []
+    return [_BASIS_LABELS.get(name, name) for name in current if stored.get(name) != current.get(name)]
+
+
+def stage_sidecar_path(project_id: str, stage: str) -> str:
+    base = os.path.splitext(project_path(project_id))[0]
+    return base + STAGE_SIDECAR_SUFFIX[stage]
+
+
+def record_stage(project_id: str, stage: str, data: Mapping[str, Any],
+                 live: Mapping[str, Any] | None = None) -> dict | None:
+    """Store one stage's result under the project's current cache key.
+
+    A stage already stored under a DIFFERENT key (the inputs changed between runs) is dropped first, so
+    a record never mixes two inputs' results. Returns None when the project cannot be read or has no
+    usable key (digests still pending): the caller then simply does not cache.
+    """
+    with _RECORD_LOCK:
+        try:
+            record = load(project_id)
+        except (OSError, ValueError, json.JSONDecodeError):
+            return None
+        basis = stage_cache_basis(record, live)
+        if not basis:
+            return None
+        key = fingerprint(basis)
+        cache = record.get("stage_cache") or {}
+        if cache.get("key") != key or cache.get("version") != STAGE_CACHE_VERSION:
+            # `basis` is kept beside the key so a later refusal can name WHAT changed, not just that
+            # something did. It holds digests and settings fingerprints only - no paths, no media.
+            cache = {"version": STAGE_CACHE_VERSION, "key": key, "basis": basis}
+            for name in STAGE_SIDECAR_SUFFIX:
+                # The stage being recorded wrote its sidecar BEFORE calling here, under this key; every other
+                # stage's file belongs to the key that just expired.
+                if name != stage:
+                    _remove_quietly(stage_sidecar_path(project_id, name))
+        entry = json.loads(json.dumps(dict(data), default=_json_default))
+        entry["written_at"] = time.time()
+        cache[stage] = entry
+        if stage == "stage1":
+            cache.pop("stage2", None)       # Stage 2 was computed against the PREVIOUS Stage 1 ranges
+            _remove_quietly(stage_sidecar_path(project_id, "stage2"))
+        record["stage_cache"] = cache
+        return save(record)
+
+
+def _remove_quietly(path: str) -> None:
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+
+
+def discard_stage_cache(project_id: str) -> None:
+    """Forget a project's Stage 1/2 cache: the record entry and every sidecar file."""
+    with _RECORD_LOCK:
+        for name in STAGE_SIDECAR_SUFFIX:
+            _remove_quietly(stage_sidecar_path(project_id, name))
+        try:
+            record = load(project_id)
+        except (OSError, ValueError, json.JSONDecodeError):
+            return
+        if record.pop("stage_cache", None) is not None:
+            save(record)
+
+
+def verify_sidecar(project_id: str, stage: str, info: Mapping[str, Any]) -> list[str]:
+    """Why the sidecar named by `info` must not be used (empty = it is the file that was written)."""
+    path = stage_sidecar_path(project_id, stage)
+    if not os.path.isfile(path):
+        return [f"{stage} cache file is missing"]
+    try:
+        size = os.path.getsize(path)
+    except OSError as exc:
+        return [f"{stage} cache file cannot be read: {exc}"]
+    if size != info.get("size"):
+        return [f"{stage} cache file size differs from the record"]
+    try:
+        digest = file_sha256(path)
+    except OSError as exc:
+        return [f"{stage} cache file cannot be read: {exc}"]
+    if digest != info.get("sha256"):
+        return [f"{stage} cache file digest differs from the record"]
+    return []
+
+
+def usable_stage_cache(project_id: str, live: Mapping[str, Any] | None = None) -> dict:
+    """What a resume may skip: ``{'stage1': dict|None, 'stage2': dict|None, 'reasons': [..]}``.
+
+    `reasons` says, for each stage that is NOT usable, why - it is printed by the caller, because a
+    cache that is silently ignored is indistinguishable from one that never existed. The sidecar is
+    hashed here (a whole-file read): call from the worker, never from a request thread.
+    """
+    out = {"stage1": None, "stage2": None, "reasons": []}
+    try:
+        record = load(project_id)
+    except (OSError, ValueError, json.JSONDecodeError):
+        out["reasons"].append("project record could not be read")
+        return out
+    cache = record.get("stage_cache")
+    if not cache:
+        out["reasons"].append("no Stage 1/2 result was recorded for this project")
+        return out
+    if cache.get("version") != STAGE_CACHE_VERSION:
+        out["reasons"].append("Stage 1/2 cache was written by another format version")
+        return out
+    basis = stage_cache_basis(record, live)
+    if not basis:
+        out["reasons"].append("input digests are not final, so the cache cannot be keyed")
+        return out
+    if cache.get("key") != fingerprint(basis):
+        changed = basis_differences(cache.get("basis"), basis)
+        out["reasons"].append("changed since the cache was written: " + (", ".join(changed) if changed else
+                                                                         "inputs, trim, sources or settings"))
+        return out
+    if cache.get("stage1"):
+        out["stage1"] = dict(cache["stage1"])
+    stage2 = cache.get("stage2")
+    if stage2:
+        problems = verify_sidecar(project_id, "stage2", stage2.get("sidecar") or {})
+        if problems:
+            out["reasons"].extend(problems)
+        else:
+            out["stage2"] = dict(stage2)
+    return out
 
 
 def _same_file(want: Mapping[str, Any], reasons: list[str], label: str, quick: bool = False) -> None:
@@ -546,5 +781,8 @@ __all__ = [
     "complete_hashes", "file_identity", "finalize_inputs", "file_sha256", "fingerprint", "list_projects", "load",
     "new_project", "normalize_provider", "project_path", "runtime_identity",
     "save", "summarize",
+    "STAGE_CACHE_VERSION", "basis_differences", "discard_stage_cache", "record_stage", "stage_cache_basis",
+    "stage_cache_key",
+    "stage_sidecar_path", "usable_stage_cache", "verify_sidecar",
     "update_checkpoint", "update_runtime", "update_state", "validate",
 ]

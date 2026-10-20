@@ -310,12 +310,14 @@ class WiringTests(unittest.TestCase):
     def test_process_mgr_resolves_and_applies_the_recipe(self):
         src = self._src("roop", "ProcessMgr.py")
         self.assertIn("resolve_recipe(", src)
-        self.assertIn("_blend.transform(", src)
+        # The two selection bodies moved to roop/stage0_preflight.py (Phase 6) so the swap pass and the Stage 0
+        # table run the SAME code; process_face calls them, and the recipe's transform lives in the second.
+        self.assertIn("_stage0.blended_input(", src)
+        self.assertIn("_blend.transform(", self._src("roop", "stage0_preflight.py").replace("blend.transform(", "_blend.transform("))
         # The hook must sit AFTER the V2 pose override so it sees the
         # pose-selected vector, and BEFORE the swap processors run.
-        self.assertLess(src.index("pose_embedding_for_target(source_faceset, target_face)"),
-                        src.index("_blend.transform("))
-        self.assertLess(src.index("_blend.transform("), src.index("for p in self.processors:\n            if p.type == 'swap':"))
+        self.assertLess(src.index("_stage0.pose_conditioned_input("), src.index("_stage0.blended_input("))
+        self.assertLess(src.index("_stage0.blended_input("), src.index("for p in self.processors:\n            if p.type == 'swap':"))
 
     def test_api_applies_payload_on_preview_and_swap(self):
         src = self._src("api.py")

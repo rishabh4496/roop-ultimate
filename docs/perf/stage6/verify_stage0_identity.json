@@ -1,0 +1,169 @@
+{
+ "script": "app/tests/verify_stage0_identity.py",
+ "workdir": "G:\\pinokio\\cache\\TEMP\\claude\\G--pinokio-api-roop-ultimate\\a58d48ff-5e06-42bf-82ae-281f7a2f3202\\scratchpad\\stage0_run",
+ "git_head": "f1dd73c",
+ "models": {
+  "enhancer": "UltraMax",
+  "swap_model": "realswap",
+  "mask_engine": "RealityUX",
+  "threads": 20,
+  "sparse_auto_range_cfg": true,
+  "no_face_action": "Use untouched original frame"
+ },
+ "source": {
+  "faces": 8,
+  "format_version": 2,
+  "pose_cells_filled": [
+   "center_center",
+   "left_center",
+   "right_center"
+  ]
+ },
+ "selection_cost_per_face": {
+  "no_recipe": {
+   "live_us_per_face": 19.74,
+   "table_us_per_face": 1.83,
+   "iterations": 20000
+  },
+  "with_recipe": {
+   "live_us_per_face": 87.35,
+   "table_us_per_face": 1.89,
+   "iterations": 20000
+  }
+ },
+ "frame_time_context_ms": 63.8,
+ "psnr_table_vs_live": {
+  "T0_vs_L0": [
+   99.0,
+   99.0,
+   99.0,
+   99.0,
+   99.0,
+   99.0,
+   99.0,
+   99.0,
+   99.0,
+   99.0
+  ],
+  "T1_vs_L1": [
+   99.0,
+   99.0,
+   99.0,
+   99.0,
+   99.0,
+   99.0,
+   99.0,
+   99.0,
+   99.0,
+   99.0
+  ]
+ },
+ "seconds": {
+  "L0_live": 38.28,
+  "T0_table": 40.98,
+  "L1_live_recipe": 42.62,
+  "T1_table_recipe": 43.16
+ },
+ "invariants": {
+  "S1_exact": {
+   "pass": true,
+   "face_frames": {
+    "L0_live": 166,
+    "T0_table": 166,
+    "L1_live_recipe": 166,
+    "T1_table_recipe": 166
+   },
+   "mismatches": {}
+  },
+  "S2_armed": {
+   "pass": true,
+   "hits": {
+    "T0_table": 166,
+    "T1_table_recipe": 166
+   },
+   "misses": {
+    "T0_table": 0,
+    "T1_table_recipe": 0
+   },
+   "stage0_lines": {
+    "L0_live": [
+     "[Stage0] disabled (ROOP_STAGE0=0): the swap pass selects the source per face"
+    ],
+    "T0_table": [
+     "[Stage0] source 0: 9 of 9 pose cells hold a vector other than the centroid; 9 distinct Face(s) behind the 27-cell yaw/pitch/roll grid"
+    ],
+    "L1_live_recipe": [
+     "[Stage0] disabled (ROOP_STAGE0=0): the swap pass selects the source per face"
+    ],
+    "T1_table_recipe": [
+     "[Stage0] source 0: 9 of 9 pose cells hold a vector other than the centroid, identity blend + dials pre-applied; 9 distinct Face(s) behind the 27-cell yaw/pitch/roll grid"
+    ]
+   }
+  },
+  "S3_not_rederived": {
+   "pass": true,
+   "pose_calls_stage3": {
+    "L0_live": 166,
+    "T0_table": 0,
+    "L1_live_recipe": 166,
+    "T1_table_recipe": 0
+   },
+   "blend_calls_stage3": {
+    "L0_live": 0,
+    "T0_table": 0,
+    "L1_live_recipe": 166,
+    "T1_table_recipe": 0
+   },
+   "pose_calls_before_stage3": {
+    "L0_live": 0,
+    "T0_table": 9,
+    "L1_live_recipe": 0,
+    "T1_table_recipe": 9
+   }
+  },
+  "S4_same_swaps": {
+   "pass": true,
+   "faces_swapped": {
+    "L0_live": 166,
+    "T0_table": 166,
+    "L1_live_recipe": 166,
+    "T1_table_recipe": 166
+   }
+  },
+  "S5_stage1_reads_no_source_vector": {
+   "pass": true,
+   "note": "`sparse_range_scan.scan_active_ranges` takes the captured TARGET faces only. Calls per phase (pre = Stage 0 build and before; prepass; stage3) are in the report.",
+   "pose_calls_by_phase": {
+    "L0_live": {
+     "stage3": 166
+    },
+    "T0_table": {
+     "pre": 9
+    },
+    "L1_live_recipe": {
+     "stage3": 166
+    },
+    "T1_table_recipe": {
+     "pre": 9
+    }
+   },
+   "blend_calls_by_phase": {
+    "L0_live": {},
+    "T0_table": {},
+    "L1_live_recipe": {
+     "stage3": 166
+    },
+    "T1_table_recipe": {
+     "pre": 9
+    }
+   }
+  },
+  "0_zero_runtime_exceptions": {
+   "pass": true,
+   "offending_runs": []
+  }
+ },
+ "all_invariants_hold": true,
+ "wall_seconds": 223.7,
+ "exit": 0
+}

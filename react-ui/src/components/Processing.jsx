@@ -13,7 +13,7 @@ import RunModelsPanel from './faceswap/RunModelsPanel';
 import LiveProcessingPeek from './faceswap/LiveProcessingPeek';
 import useTelemetry from './faceswap/useTelemetry';
 import { useThrottledSelector, shallowEqual } from '../store/liveSubscribe';
-import { UI_HZ, framesOf, etaMsOf } from '../store/telemetryStore';
+import { UI_HZ, framesOf, etaMsOf, engineTextOf } from '../store/telemetryStore';
 import { outputMediaUrl, outputSource } from './outputUrl';
 import useRenderLite from './faceswap/useRenderLite';
 import { lastPreview } from './faceswap/lastPreview';
@@ -324,6 +324,9 @@ const RUN_FIELDS = (s) => ({
   eta_s: s.run.eta_s,
   fps: s.run.fps,
   liveSeq: s.run.live_seq,
+  engine_label: s.run.engine_label,
+  engine_model: s.run.engine_model,
+  engine_precision: s.run.engine_precision,
 });
 
 function useLiveRun({ startedAtS, paused, pauseRequested, stopping, elapsedRef }) {
@@ -378,6 +381,10 @@ function useLiveRun({ startedAtS, paused, pauseRequested, stopping, elapsedRef }
   return {
     prog, frames, elapsedMs, etaMs, etaNote, now,
     desc: run.desc, statusLine: run.statusLine, fps: run.fps, liveSeq: run.liveSeq,
+    // "Compiling TensorRT Engine... <model> · <precision>" while the backend is building or verifying
+    // one; '' otherwise. Shown IN PLACE of the status text at the two headline sites, never merged
+    // into `desc`, which other readers parse for the stage ("encod", frame counters).
+    engineText: engineTextOf(run),
   };
 }
 
@@ -386,7 +393,7 @@ const circumference = radius * 2 * Math.PI;
 
 function RunBarLive({ startedAtS, paused, pauseRequested, stopping, error, controlBusy,
                       pause, resume, stop, elapsedRef }) {
-  const { prog, frames, elapsedMs, etaMs, etaNote, desc } = useLiveRun({
+  const { prog, frames, elapsedMs, etaMs, etaNote, desc, engineText } = useLiveRun({
     startedAtS, paused, pauseRequested, stopping, elapsedRef,
   });
   const strokeDashoffset = circumference - prog * circumference;
@@ -420,8 +427,9 @@ function RunBarLive({ startedAtS, paused, pauseRequested, stopping, error, contr
               {stopping ? 'Stopping' : paused ? 'Paused' : pauseRequested ? 'Pause Requested' : 'Processing'}
             </span>
           </div>
-          <div className="text-sm font-bold text-white truncate max-w-[340px]">
-            {desc || 'Swapping faces…'}
+          <div className="text-sm font-bold text-white truncate max-w-[340px]"
+               data-engine={engineText ? 'busy' : undefined}>
+            {engineText || desc || 'Swapping faces…'}
           </div>
           {error && <div className="text-xs text-red-400 font-semibold">{error}</div>}
         </div>
@@ -503,7 +511,7 @@ function RunBarLive({ startedAtS, paused, pauseRequested, stopping, error, contr
 }
 
 function RunHeadlineLive({ p, startedAtS, paused, pauseRequested, stopping, elapsedRef }) {
-  const { prog, frames, etaMs, etaNote, now, elapsedMs, desc } = useLiveRun({
+  const { prog, frames, etaMs, etaNote, now, elapsedMs, desc, engineText } = useLiveRun({
     startedAtS, paused, pauseRequested, stopping, elapsedRef,
   });
   return (
@@ -532,8 +540,9 @@ function RunHeadlineLive({ p, startedAtS, paused, pauseRequested, stopping, elap
                 <span className="text-white/25"> / {frames.total.toLocaleString()}</span>
               </span>
             )}
-            <span className="text-sm font-medium text-white/55 truncate max-w-[46ch]">
-              {desc || 'Swapping faces…'}
+            <span className="text-sm font-medium text-white/55 truncate max-w-[46ch]"
+                  data-engine={engineText ? 'busy' : undefined}>
+              {engineText || desc || 'Swapping faces…'}
             </span>
           </div>
         </div>

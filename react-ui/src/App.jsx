@@ -16,7 +16,7 @@ import useTelemetrySocket from './useTelemetrySocket';
 import CompileBanner from './components/CompileBanner';
 import { usePipelineStatusSocket } from './usePipelineStatus';
 import { useJobStore } from './store/jobStore';
-import { setRunTelemetry, selectProg, etaMsOf } from './store/telemetryStore';
+import { setRunTelemetry, selectProg, etaMsOf, clearEngineTelemetry } from './store/telemetryStore';
 import { LiveText, LiveBar } from './components/LiveTelemetry';
 import { themeByName, allThemes, applyThemeToDom } from './themes';
 import { SETTINGS_CATALOG, focusSetting } from './components/settingsCatalog';
@@ -447,6 +447,12 @@ export default function App() {
   }, [reportNet]);
 
   const { connected: telemetryLive } = useTelemetrySocket(onTelemetry, true);
+  // "Compiling TensorRT Engine..." is a claim about a backend we can hear. A dropped socket stops
+  // confirming it (a backend that died mid-build would otherwise leave it up forever); the first frame
+  // after the reconnect carries the current state again.
+  useEffect(() => {
+    if (!telemetryLive) clearEngineTelemetry();
+  }, [telemetryLive]);
   // The "backend is compiling TensorRT / running the canary" channel. Owned by the shell, not by a
   // tab, so a hash-route change never closes it; api.js reads it to suspend request deadlines.
   usePipelineStatusSocket();

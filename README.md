@@ -252,11 +252,53 @@ A render runs up to three stages: `STAGE_1_SPARSE_PRESCAN` (only with
 `sparse_auto_range`), `STAGE_2_ACTIVE_PREPASS` (tracking/detection over the
 active ranges) and `STAGE_3_MAIN_SWAP`. Every `/ws/telemetry` frame carries
 `stage` (the one running, or `null`) and `stages`, one object per stage:
-`state` (`PENDING|RUNNING|DONE|SKIPPED|FAILED`), `stage_progress_pct`,
+`state` (`PENDING|RUNNING|DONE|SKIPPED|FAILED|RESTORED`), `stage_progress_pct`,
 `active_ranges_count`, `verified_target_frames`, `skipped_frames_pct` and
 `eta_seconds` (each `null` until known; `active_ranges_count` and
 `skipped_frames_pct` are the Stage 1 verdict, `verified_target_frames` the frames
 of the Stage 2 plan). An idle backend sends nothing.
+
+`RESTORED` means the stage did not run this time: a resumed project loaded the
+answer its interrupted run had already computed (see "Resuming a project" below).
+
+While the backend builds a TensorRT engine or runs a startup canary (minutes on a
+cold cache, with no frame counter) the same frames also carry `engine_state`
+(`IDLE|COMPILING_TRT|RUNNING_CANARY`), `engine_label` (`"Compiling TensorRT
+Engine..."` / `"Verifying TensorRT Engine..."`, `""` when idle), `engine_model`,
+`engine_precision` and `engine_since` (epoch seconds; count up from it, nothing in
+the frame ticks). The canaries announced are the swapper's, the small models' and
+the restorers'. `WS /ws/v1/pipeline/status` carries the same stages with their
+event history.
+
+#### Resuming a project
+
+A project resumes from its committed output segments. Since Phase 6 it also resumes
+past Stage 1 and Stage 2: the moment each finishes, the project record stores the
+Stage 1 active ranges (absolute frames) and the Stage 2 hand-off the swap pass
+consumes (the gap-filled faces, track assignments, source map and shot cuts, in a
+`<project id>.stage2.npz` beside the record, with its SHA-256 in the record). A
+resumed job validates the cache against the target's SHA-256, the trim, every
+source's SHA-256, the captured target faces, the settings, the model identity, the
+application version and the `ROOP_*` environment; on any difference, or if the file
+fails its digest, the stage runs as before and the log says why
+(`[StageCache] not used: ...`). `/ws/telemetry` shows the skipped stages as
+`RESTORED`. A finished project deletes its cache.
+
+The cache is not used with the SAM 2 mask engine (its per-frame masks are not in
+it), for animated-WebP targets, or for a pre-pass that was stopped early.
+
+#### Source identity pre-flight (Stage 0)
+
+Before the first frame is read, each source's identity is frozen for every head-pose
+cell (the `.fsz` pose matrix's 3 x 3 yaw/pitch cells, with roll as a third key axis):
+the pose-selected vector, and with an Identity Blender recipe the blend and the
+tangent-plane dial offsets under the 0.80 identity guard. The swap pass then looks
+the face up (`[Stage0] ...` lines in the log). The table answers only where it
+equals the per-face selection exactly; otherwise it says why it declined and the
+per-face path runs unchanged: image/CSCS swappers, `use_source_bank` with several
+faces, an angle portfolio, the temporal quality engine, folder-upload banks, and
+V1 `.fsz` archives with no recipe (every archive shipped in `app/facesets` is V1).
+`ROOP_STAGE0=0` turns it off.
 
 While Stage 1 or 2 owns the GPU, `GET /api/target/preview`, `/preview_grid` and
 `/preview_seq` answer a frame that is not already cached with a fast

@@ -137,6 +137,43 @@ def segments_joined(group: str, ok: bool, **detail: Any) -> None:
         _emit(SEGMENTS_JOINED, group=str(group), ok=bool(ok), **detail)
 
 
+ENGINE_IDLE = "IDLE"
+ENGINE_COMPILING = "COMPILING_TRT"
+ENGINE_CANARY = "RUNNING_CANARY"
+ENGINE_LABELS = {
+    ENGINE_COMPILING: "Compiling TensorRT Engine...",
+    ENGINE_CANARY: "Verifying TensorRT Engine...",
+}
+_ENGINE_STATE_OF = {STAGE_COMPILING_TRT: ENGINE_COMPILING, STAGE_RUNNING_CANARY: ENGINE_CANARY}
+
+
+def telemetry_fields() -> Dict[str, Any]:
+    """The compile / canary state as FLAT, change-only fields for the `/ws/telemetry` frame.
+
+    `/ws/telemetry` is the socket the React shell already holds open for the whole session, and its
+    sampler only sends when a frame differs from the last one. So nothing here may tick: `elapsed_s`
+    is deliberately absent (the client counts from `engine_since`), and every value is a primitive,
+    so the client's shallow compare stays quiet between stages.
+
+    A compile outranks a canary (a canary's reference engine build is the slower of the two, but the
+    compile is what blocks the first frame); when both run, the compile is named and `engine_active`
+    counts both. `engine_label` is '' when idle so a client can use it as its own truth test.
+    """
+    with _lock:
+        rows = sorted((v for v in _active.values() if v["kind"] in _ENGINE_STATE_OF),
+                      key=lambda v: (v["kind"] != STAGE_COMPILING_TRT, v["since"]))
+        if not rows:
+            return {"engine_state": ENGINE_IDLE, "engine_label": "", "engine_model": "",
+                    "engine_precision": "", "engine_since": None, "engine_active": 0}
+        head = rows[0]
+        state = _ENGINE_STATE_OF[head["kind"]]
+        precision = str(head.get("precision") or "")
+        return {"engine_state": state, "engine_label": ENGINE_LABELS[state],
+                "engine_model": str(head.get("model") or ""),
+                "engine_precision": "" if precision == "n/a" else precision,
+                "engine_since": round(float(head["since"]), 3), "engine_active": len(rows)}
+
+
 def seq() -> int:
     with _lock:
         return _seq

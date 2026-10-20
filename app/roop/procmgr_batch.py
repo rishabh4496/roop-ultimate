@@ -782,6 +782,13 @@ class BatchProcessingMixin:
             self.frames_queue.append(Queue(qdepth))
             self.processed_queue.append(Queue(qdepth))
 
+        # Stage 0: the source identity, frozen for every head-pose cell BEFORE any frame is read. Stage 1
+        # consumes no source embedding at all (it matches the captured TARGET faces); Stage 2 and 3 read
+        # the table instead of re-deriving the vector per face.
+        print("\n[Pipeline] === Stage 0: Source Identity Pre-Flight ===", flush=True)
+        from roop import stage0_preflight as _stage0_preflight
+        self._stage0 = _stage0_preflight.freeze_for(self)
+
         # Sparse auto-range pre-scan: sample keyframes, detect target presence, and
         # determine active swap ranges so non-target frames pass through at full speed.
         self._active_ranges = None
@@ -792,44 +799,66 @@ class BatchProcessingMixin:
         _st.begin_run(frame_count)
         if not _sparse_active:
             _st.skip(_st.STAGE_1_SPARSE_PRESCAN)
+        # Phase 6: a project that was interrupted already knows its Stage 1 / Stage 2 answers. The adapter
+        # (app/stage_checkpoint.py) is installed by api._run_swap for the length of a PROJECT's run only;
+        # without one every stage below runs exactly as it always did.
+        _stage_cache = getattr(roop.globals, '_stage_cache', None)
+        _stage1_restored = False
         if _sparse_active:
             print("\n[Pipeline] === Stage 1/3: Sparse Auto-Range Pre-Scan ===", flush=True)
             _st.enter(_st.STAGE_1_SPARSE_PRESCAN)
             try:
-                from roop.sparse_range_scan import scan_active_ranges
-                target_faces = (
-                    getattr(self, 'target_face_datas', None)
-                    if (getattr(self, 'options', None) and getattr(self.options, 'swap_mode', '') in ('selected', 'selected_multi') and getattr(self, 'target_face_datas', None))
-                    else None
-                )
-                with ChunkedProgress(total=0, desc='Scanning keyframes', unit='samples',
-                                     dynamic_ncols=True, bar_format=PROGRESS_BAR_FORMAT) as pbar:
-                    def _scan_progress(done, total):
-                        if pbar.total != total:
-                            pbar.total = total
-                        delta = done - pbar.n
-                        if delta > 0:
-                            pbar.update(delta)
-                        _st.progress(_st.STAGE_1_SPARSE_PRESCAN, done, total)
-
-                    ranges, mask, stats = scan_active_ranges(
-                        source_video,
-                        target_faces=target_faces,
-                        frame_start=frame_start,
-                        frame_end=frame_end,
-                        frame_count=frame_count,
-                        fps=fps,
-                        swap_distance_threshold=getattr(self.options, 'face_distance_threshold', None),
-                        det_thresh=getattr(roop.globals, 'face_detector_threshold', None),
-                        progress_cb=_scan_progress,
-                        should_stop=lambda: not roop.globals.processing,
+                _restored_scan = (_stage_cache.restore_stage1(frame_start=frame_start, frame_count=frame_count)
+                                  if _stage_cache is not None else None)
+                if _restored_scan is not None:
+                    ranges, mask, stats = _restored_scan
+                    _stage1_restored = True
+                    print(f"[Pipeline] Stage 1/3 restored from the project checkpoint: "
+                          f"{len(ranges)} active range(s), {stats['active_frames']}/{stats['total_frames']} "
+                          f"frames - the pre-scan is skipped.", flush=True)
+                else:
+                    from roop.sparse_range_scan import scan_active_ranges
+                    target_faces = (
+                        getattr(self, 'target_face_datas', None)
+                        if (getattr(self, 'options', None) and getattr(self.options, 'swap_mode', '') in ('selected', 'selected_multi') and getattr(self, 'target_face_datas', None))
+                        else None
                     )
+                    with ChunkedProgress(total=0, desc='Scanning keyframes', unit='samples',
+                                         dynamic_ncols=True, bar_format=PROGRESS_BAR_FORMAT) as pbar:
+                        def _scan_progress(done, total):
+                            if pbar.total != total:
+                                pbar.total = total
+                            delta = done - pbar.n
+                            if delta > 0:
+                                pbar.update(delta)
+                            _st.progress(_st.STAGE_1_SPARSE_PRESCAN, done, total)
+
+                        ranges, mask, stats = scan_active_ranges(
+                            source_video,
+                            target_faces=target_faces,
+                            frame_start=frame_start,
+                            frame_end=frame_end,
+                            frame_count=frame_count,
+                            fps=fps,
+                            swap_distance_threshold=getattr(self.options, 'face_distance_threshold', None),
+                            det_thresh=getattr(roop.globals, 'face_detector_threshold', None),
+                            progress_cb=_scan_progress,
+                            should_stop=lambda: not roop.globals.processing,
+                        )
                 self._active_ranges = ranges
                 self._active_ranges_mask = mask
                 self._active_ranges_stats = stats
                 _st.set_ranges(len(ranges) if ranges is not None else None,
                                (stats or {}).get('active_frames'), (stats or {}).get('total_frames'))
-                _st.leave(_st.STAGE_1_SPARSE_PRESCAN)
+                if _stage1_restored:
+                    _st.restored(_st.STAGE_1_SPARSE_PRESCAN)
+                else:
+                    _st.leave(_st.STAGE_1_SPARSE_PRESCAN)
+                    # Flushed the moment the scan completes (not at the end of the job): an interruption
+                    # during Stage 2 or 3 must already find it. Never raises; a user Stop is not recorded.
+                    if _stage_cache is not None and roop.globals.processing:
+                        _stage_cache.save_stage1(frame_start=frame_start, frame_count=frame_count,
+                                                 ranges=ranges, stats=stats)
                 print("[Pipeline] Sparse Auto-Range Pre-Scan complete.\n", flush=True)
             except Exception as e:
                 print(f"[SparseScan] Pre-scan failed ({e}); falling back to full-frame processing")
@@ -875,10 +904,23 @@ class BatchProcessingMixin:
         # per frame instead of re-detecting, so the swap can't blink out on a
         # missed detection. The same scan yields the identity-lock assignments,
         # so no separate tracking pass is needed when both are enabled.
+        _stage2_restored = False
         if self._temporal_mode:
             try:
                 self._log_memory_stage('phase3:temporal-prepass-start')
-                self._precompute_temporal(source_video, awebp_frames, frame_start, frame_end, frame_count)
+                # A resumed project loads the hand-off its interrupted run sealed (faces, track
+                # assignments, source map, cuts) instead of re-detecting. Not with SAM2 (its per-frame
+                # masks are not part of the cache) and not for an animated-WebP target.
+                if _stage_cache is not None and sam2_p is None and not is_awebp:
+                    _stage2_restored = bool(_stage_cache.restore_stage2(
+                        self, frame_start=frame_start, frame_count=frame_count))
+                if not _stage2_restored:
+                    self._precompute_temporal(source_video, awebp_frames, frame_start, frame_end, frame_count)
+                    # Flushed the moment the pre-pass completes. Only a COMPLETE pre-pass is recorded: a
+                    # Stop ends the scan early (`processing` goes false) and a short scan is partial.
+                    if (_stage_cache is not None and sam2_p is None and not is_awebp
+                            and self._temporal_mode and self._temporal_faces and roop.globals.processing):
+                        _stage_cache.save_stage2(self, frame_start=frame_start, frame_count=frame_count)
                 # `and self._temporal_mode`: the pre-pass turns itself off when it
                 # found nothing usable, and then its identity assignments are empty
                 # too — so fall through to the standalone track pass below rather
@@ -921,7 +963,10 @@ class BatchProcessingMixin:
             _plan = getattr(self, 'stage2_frame_plan', None)
             # 0 is a finding (the pre-pass ran and verified no frame); unknown is only a failed pre-pass.
             _st.set_verified(None if _prepass_failed else len(_plan or {}))
-            _st.leave(_st.STAGE_2_ACTIVE_PREPASS, ok=not _prepass_failed)
+            if _stage2_restored and not _prepass_failed:
+                _st.restored(_st.STAGE_2_ACTIVE_PREPASS)
+            else:
+                _st.leave(_st.STAGE_2_ACTIVE_PREPASS, ok=not _prepass_failed)
             print("[Pipeline] Pre-Pass complete.\n", flush=True)
 
         self._log_memory_stage('phase4:before-main-processing')
@@ -1086,6 +1131,7 @@ class BatchProcessingMixin:
             self.frames_queue.clear()
             self.processed_queue.clear()
             self._precomputed_mode = False
+            self._stage0 = None
             self._precomputed_kps = None
             self._temporal_mode = False
             self._temporal_faces = None

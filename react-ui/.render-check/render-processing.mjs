@@ -398,6 +398,45 @@ console.log('\n── DiagnosticsPanel in isolation ─────────�
   }
 }
 
+console.log('\n── engine compile / canary state (pushed on /ws/telemetry) ─');
+{
+  const { engineTextOf } = await import('../src/store/telemetryStore.js');
+  ok('engineTextOf is empty while idle', engineTextOf({ engine_label: '' }) === '' && engineTextOf(null) === '');
+  ok('engineTextOf names model and precision',
+     engineTextOf({ engine_label: 'Compiling TensorRT Engine...', engine_model: 'gpen_256_pro', engine_precision: 'FP16' })
+       === 'Compiling TensorRT Engine... gpen_256_pro · FP16');
+  ok('engineTextOf drops a missing precision without a dangling separator',
+     engineTextOf({ engine_label: 'Verifying TensorRT Engine...', engine_model: 'swapper:hyperswap', engine_precision: '' })
+       === 'Verifying TensorRT Engine... swapper:hyperswap');
+
+  const STARTING = { ...MID, desc: 'Starting…', status_line: 'Starting…', current_frame: 0, total_frames: 0, progress: 0 };
+  const compiling = {
+    ...STARTING,
+    engine_state: 'COMPILING_TRT', engine_label: 'Compiling TensorRT Engine...',
+    engine_model: 'gpen_256_pro', engine_precision: 'FP16', engine_since: 1760000000.5,
+  };
+  const { html: busy } = render('engine: compiling', tab(compiling));
+  if (busy) {
+    // TWO sites show the status text (the sticky run bar and the headline). A substring check passes
+    // with either one wrong, so count: reverting one site to `desc` alone was not caught by `includes`.
+    const said = busy.split('Compiling TensorRT Engine... gpen_256_pro · FP16').length - 1;
+    ok('the run bar AND the headline say "Compiling TensorRT Engine..." instead of a frozen "Starting…"',
+       said === 2, `occurrences=${said}`);
+    ok('and both are marked so a test (or a screen reader rule) can find them',
+       busy.split('data-engine="busy"').length - 1 === 2);
+    ok('no NaN leaked while no frame counter exists', !busy.includes('NaN'));
+  }
+  const { html: idle } = render('engine: idle', tab(STARTING));
+  if (idle) {
+    ok('idle shows the status text, not an engine line',
+       !idle.includes('Compiling TensorRT') && !idle.includes('data-engine'));
+  }
+  const { html: done } = render('engine: finished mid-run', tab({ ...MID, engine_state: 'IDLE', engine_label: '', engine_model: '', engine_precision: '', engine_since: null }));
+  if (done) {
+    ok('once the stage ends the frame counter text returns', !done.includes('Compiling TensorRT') && done.includes('52,450'));
+  }
+}
+
 console.log(`\n${failures === 0 ? 'ALL GREEN' : 'FAILURES'}: ${checks - failures}/${checks} checks passed\n`);
 // Reported through a global rather than process.exit(): this module is executed
 // by Vite's SSR runner, which swallows the exit and would report success for a

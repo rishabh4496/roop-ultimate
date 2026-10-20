@@ -231,7 +231,23 @@ def check_engine(session: Any,
     The reference is created, used and dropped inside this call so its CUDA
     arena does not outlive the check.  Never raises: a canary that cannot run
     is reported as skipped, not as a failure.
+
+    Announced on the pipeline status channel (STAGE_RUNNING_CANARY) while it runs, exactly as
+    ``aux_canary.check_session`` is: this was the one startup canary that was not, so a cold
+    swapper check (a reference session plus two runs of each engine, before frame 0) read as a
+    frozen "Starting..." on ``/ws/telemetry``.
     """
+    from roop import pipeline_status
+    with pipeline_status.stage(pipeline_status.STAGE_RUNNING_CANARY, model=tag,
+                               precision=pipeline_status.session_precision(session)):
+        return _check_engine(session, reference_factory, tag, emap, floor)
+
+
+def _check_engine(session: Any,
+                  reference_factory: Callable[[], Any],
+                  tag: str,
+                  emap: Optional[np.ndarray] = None,
+                  floor: float = SSIM_FLOOR) -> CanaryResult:
     import time
     started = time.perf_counter()
     feeds = build_feeds(session, emap)

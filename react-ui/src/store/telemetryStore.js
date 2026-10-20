@@ -34,6 +34,14 @@ const EMPTY_RUN = {
   eta_s: null,
   live_seq: 0,
   started_at: 0,
+  // The backend compiling a TensorRT engine / running a startup canary (pipeline_status.telemetry_fields).
+  // Flat primitives on purpose: this store compares fields with `!==`, and the sampler only sends a
+  // frame that changed, so a stage that takes 15 minutes is silent apart from the 15 s heartbeat.
+  engine_state: 'IDLE',
+  engine_label: '',
+  engine_model: '',
+  engine_precision: '',
+  engine_since: null,
 };
 
 /** The fields a telemetry frame carries that change every tick. */
@@ -63,6 +71,28 @@ export function setRunTelemetry(patch) {
 export function resetRunTelemetry() {
   useTelemetryStore.setState({ run: EMPTY_RUN });
 }
+
+/**
+ * Forget the engine claim. "Compiling..." is a statement about a backend we can currently hear; once
+ * the socket is down it is a statement nobody is confirming, and a backend that died mid-build would
+ * otherwise show it forever. The next frame after a reconnect restores the truth.
+ */
+export function clearEngineTelemetry() {
+  setRunTelemetry({
+    engine_state: EMPTY_RUN.engine_state, engine_label: '', engine_model: '',
+    engine_precision: '', engine_since: null,
+  });
+}
+
+/**
+ * The line to show while the backend is building / verifying an engine: "Compiling TensorRT Engine...
+ * gpen_256_pro · FP16", or '' when it is not. Pure so it can be checked without a render.
+ */
+export const engineTextOf = (run) => {
+  if (!run || !run.engine_label) return '';
+  const parts = [run.engine_model, run.engine_precision].filter(Boolean).join(' · ');
+  return parts ? `${run.engine_label} ${parts}` : run.engine_label;
+};
 
 export function setSystemTelemetry(system) {
   useTelemetryStore.setState({ system });

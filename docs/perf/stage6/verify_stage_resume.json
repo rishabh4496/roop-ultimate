@@ -1,0 +1,177 @@
+{
+ "script": "app/tests/verify_stage_resume.py",
+ "workdir": "G:\\pinokio\\cache\\TEMP\\claude\\G--pinokio-api-roop-ultimate\\a58d48ff-5e06-42bf-82ae-281f7a2f3202\\scratchpad\\resume_run",
+ "git_head": "f1dd73c",
+ "stop_at": 435,
+ "chunk": "100",
+ "stab_chunk_mb": "150",
+ "models": {
+  "enhancer": "UltraMax",
+  "swap_model": "realswap",
+  "mask_engine": "RealityUX",
+  "threads": 20,
+  "sparse_auto_range_cfg": true,
+  "no_face_action": "Use untouched original frame"
+ },
+ "project_id": "aa20ec5a0f0942e2",
+ "b1_stopped_after_swapped_frame": 443,
+ "psnr_b2_vs_reference_after_resume_point": [
+  51.22,
+  51.11,
+  50.78,
+  48.92,
+  47.93,
+  49.14,
+  49.49,
+  49.49,
+  84.46,
+  99.0,
+  99.0,
+  75.52
+ ],
+ "timing_seconds": {
+  "reference_uninterrupted": 42.25,
+  "b1_until_stopped": 41.05,
+  "b2_resumed_with_cache": 36.0,
+  "b3_resumed_cache_refused": 45.31,
+  "b4_resumed_cache_refused": 48.92
+ },
+ "cache": {
+  "faces": 229,
+  "frames": 162,
+  "plan_frames": 156,
+  "sidecar": {
+   "sha256": "9785e21e2ec12be331de0f1bc414416dc5af0e42ab34c1865260b7bbf1976360",
+   "size": 1121214
+  }
+ },
+ "invariants": {
+  "R1_recorded": {
+   "pass": true,
+   "stage1_ranges": [
+    [
+     194,
+     214
+    ],
+    [
+     290,
+     460
+    ]
+   ],
+   "stage2": {
+    "faces": 229,
+    "frames": 162,
+    "plan_frames": 156,
+    "sidecar": {
+     "sha256": "9785e21e2ec12be331de0f1bc414416dc5af0e42ab34c1865260b7bbf1976360",
+     "size": 1121214
+    }
+   },
+   "reasons": [],
+   "b1_error": null
+  },
+  "R2_restored": {
+   "pass": true,
+   "resumed_at_frame": 288,
+   "telemetry_states_seen": [
+    {
+     "1": "DONE",
+     "2": "DONE",
+     "3": "DONE"
+    },
+    {
+     "1": "RESTORED",
+     "2": "RESTORED",
+     "3": "RUNNING"
+    },
+    {
+     "1": "RESTORED",
+     "2": "RESTORED",
+     "3": "DONE"
+    }
+   ],
+   "log_lines": [
+    "[Pipeline] Stage 1/3 restored from the project checkpoint: 1 active range(s), 171/312 frames - the pre-scan is skipped.",
+    "[StageCache] Stage 2 restored from the checkpoint: 218 face(s) on 151 frame(s), 151 plan frame(s) - the pre-pass is skipped."
+   ]
+  },
+  "R3_no_detector_calls": {
+   "pass": true,
+   "resumed_run_pipeline_calls": 0,
+   "reference_pipeline_calls": 862,
+   "resumed_run_raw": {
+    "pre": 5,
+    "stage3": 0
+   },
+   "reference_raw": {
+    "pre": 867,
+    "stage3": 0
+   },
+   "harness_ingest_calls_before_stage0": {
+    "reference": 5,
+    "resumed": 5
+   }
+  },
+  "R4_same_swaps": {
+   "pass": true,
+   "reference": 156,
+   "b1_plus_b2": 156,
+   "only_in_reference": [],
+   "only_in_resumed": []
+  },
+  "R5_same_plan": {
+   "pass": true,
+   "resumed": 151,
+   "expected": 151,
+   "only_resumed": [],
+   "only_expected": []
+  },
+  "R6_complete": {
+   "pass": true,
+   "frames": 600,
+   "error": null
+  },
+  "R7_refuses": {
+   "pass": true,
+   "arms": {
+    "B3_tampered": {
+     "resumed_at_frame": 288,
+     "seconds": 45.31,
+     "detector_calls": {
+      "pre": 387,
+      "stage3": 0
+     },
+     "pipeline_calls": 382,
+     "reasons_printed": [
+      "[StageCache] not used: stage2 cache file digest differs from the record"
+     ],
+     "output_frames": 600,
+     "error": null,
+     "same_swaps_as_reference": true
+    },
+    "B4_rekeyed": {
+     "resumed_at_frame": 288,
+     "seconds": 48.92,
+     "detector_calls": {
+      "pre": 529,
+      "stage3": 0
+     },
+     "pipeline_calls": 524,
+     "reasons_printed": [
+      "[StageCache] not used: changed since the cache was written: the application version or a ROOP_* environment variable"
+     ],
+     "output_frames": 600,
+     "error": null,
+     "same_swaps_as_reference": true
+    }
+   }
+  },
+  "0_zero_runtime_exceptions": {
+   "pass": true,
+   "offending_runs": []
+  }
+ },
+ "all_invariants_hold": true,
+ "wall_seconds": 317.3,
+ "exit": 0
+}

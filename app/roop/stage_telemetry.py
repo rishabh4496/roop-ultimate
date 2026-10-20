@@ -37,6 +37,9 @@ STAGE_3_MAIN_SWAP = "STAGE_3_MAIN_SWAP"
 STAGES = (STAGE_1_SPARSE_PRESCAN, STAGE_2_ACTIVE_PREPASS, STAGE_3_MAIN_SWAP)
 
 PENDING, RUNNING, DONE, SKIPPED, FAILED = "PENDING", "RUNNING", "DONE", "SKIPPED", "FAILED"
+# The stage did not run THIS time because a resumed job loaded the answer its interrupted run had already
+# computed (roop/stage_cache.py). Distinct from SKIPPED (the stage does not apply) and from DONE (it ran).
+RESTORED = "RESTORED"
 
 _lock = threading.RLock()
 _run: Dict[str, Any] = {}
@@ -56,7 +59,7 @@ def _pct(done: float, total: float) -> Optional[float]:
 def _eta(stage: Dict[str, Any], now: float) -> Optional[float]:
     """Seconds left at this stage's own average rate; None until it has measured one."""
     since, done, total = stage.get("since"), stage.get("done") or 0, stage.get("total") or 0
-    if stage.get("state") == DONE:
+    if stage.get("state") in (DONE, RESTORED):
         return 0.0
     if stage.get("state") != RUNNING or since is None or done <= 0 or total <= 0:
         return None
@@ -125,6 +128,15 @@ def skip(stage: str) -> None:
         s["state"] = SKIPPED
 
 
+def restored(stage: str) -> None:
+    """The stage's result was loaded from the project checkpoint instead of being recomputed."""
+    with _lock:
+        s = _stages.setdefault(stage, _blank())
+        s.update(state=RESTORED, ended=time.time())
+        if s.get("total"):
+            s["done"] = s["total"]
+
+
 def set_ranges(count: Optional[int], active_frames: Optional[int], total_frames: Optional[int] = None) -> None:
     """Stage 1's verdict: how many ranges, and how many frames they cover."""
     with _lock:
@@ -174,7 +186,7 @@ def snapshot() -> Dict[str, Any]:
                 else _eta(s, now)
             out[name] = {
                 "state": s["state"],
-                "stage_progress_pct": 100.0 if s["state"] == DONE else (_pct(s["done"], s["total"])
+                "stage_progress_pct": 100.0 if s["state"] in (DONE, RESTORED) else (_pct(s["done"], s["total"])
                                                                        if s["state"] == RUNNING else 0.0
                                                                        if s["state"] == PENDING else None),
                 "active_ranges_count": _run.get("active_ranges_count"),
