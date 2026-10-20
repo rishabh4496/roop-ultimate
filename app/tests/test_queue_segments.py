@@ -37,6 +37,54 @@ class Markers(unittest.TestCase):
             self.assertIsNone(q._clean_segment(bad), bad)
 
 
+class _E:
+    def __init__(self, total):
+        self.total_frames = total
+        self.startframe = 0
+        self.endframe = total
+
+
+class UiRangesTileTheClip(unittest.TestCase):
+    """A job's range is the UI's (1-based, inclusive); the entry's is the pipeline's (0-based start,
+    exclusive end). `_apply_segment` used to pass the start through, so every job lost its first frame
+    and a 3-way split of 600 frames rendered 597 (frames 0, 200 and 400 in nobody's slice) -
+    found by `tests/verify_three_stage_pipeline.py`, invariant 5, with a real render."""
+
+    def _slices(self, total, count):
+        step = -(-total // count)                              # ceil, as stageSegments does
+        out = []
+        for i in range(count):
+            fs, fe = i * step + 1, min((i + 1) * step, total)
+            if fs > total:
+                break
+            entry = _E(total)
+            q._apply_segment(entry, {"frame_start": fs, "frame_end": fe})
+            out.append((entry.startframe, entry.endframe))
+        return out
+
+    def test_three_way_split_of_600_is_contiguous_and_complete(self):
+        self.assertEqual(self._slices(600, 3), [(0, 200), (200, 400), (400, 600)])
+
+    def test_any_split_covers_every_frame_exactly_once(self):
+        for total in (600, 599, 601, 30, 7, 1000):
+            for count in (2, 3, 4, 7):
+                covered = []
+                for a, b in self._slices(total, count):
+                    covered.extend(range(a, b))
+                self.assertEqual(covered, list(range(total)), (total, count))
+
+    def test_a_whole_file_job_from_the_ui_starts_on_frame_zero(self):
+        entry = _E(500)
+        q._apply_segment(entry, {"frame_start": 1, "frame_end": 500})
+        self.assertEqual((entry.startframe, entry.endframe), (0, 500))
+
+    def test_a_job_with_no_range_leaves_the_entry_alone(self):
+        entry = _E(500)
+        entry.startframe = 40
+        q._apply_segment(entry, {})
+        self.assertEqual((entry.startframe, entry.endframe), (40, 500))
+
+
 class SpecAndPersistence(QueueTestBase):
     def test_marked_job_uses_its_marker(self):
         self._add("a.mp4", frame_start=1, frame_end=50,

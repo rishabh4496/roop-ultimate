@@ -1,0 +1,2686 @@
+{
+ "script": "app/tests/verify_three_stage_pipeline.py",
+ "workdir": "<workdir>",
+ "git_head": "de4a8ff",
+ "invariants": {
+  "4_type_nan_safety": {
+   "pass": true,
+   "type_errors": [],
+   "steps": {
+    "sanitize_face_attributes": true,
+    "det_score_comparable": true,
+    "pose_readable": true,
+    "occluded_frac_reader": 0.0,
+    "sanitize_faces_batch": 2,
+    "sorted_by_det_score": "[0.0, 0.0]"
+   }
+  },
+  "1_recall_cfr": {
+   "pass": true,
+   "truth_frames": 156,
+   "in_plan": 156,
+   "recall_pct": 100.0,
+   "missing": [],
+   "missing_but_single_frame_detectable": [],
+   "missing_flash": [],
+   "plan_frames": 156
+  },
+  "2_rejection_cfr": {
+   "pass": true,
+   "leaked": [],
+   "leaked_count": 0
+  },
+  "3_no_stage3_redetect_cfr": {
+   "pass": true,
+   "detector_calls_in_stage3": 0,
+   "FaceAnalysis.get_in_stage3": 0,
+   "detector_calls_in_prepass (must be > 0)": 867,
+   "FaceAnalysis.get_in_prepass": 0,
+   "get_all_faces_in_stage3": 0,
+   "retry_rotated_in_stage3": 0
+  },
+  "1_recall_vfr": {
+   "pass": true,
+   "truth_frames": 156,
+   "in_plan": 156,
+   "recall_pct": 100.0,
+   "missing": [],
+   "missing_but_single_frame_detectable": [],
+   "missing_flash": [],
+   "plan_frames": 156
+  },
+  "2_rejection_vfr": {
+   "pass": true,
+   "leaked": [],
+   "leaked_count": 0
+  },
+  "3_no_stage3_redetect_vfr": {
+   "pass": true,
+   "detector_calls_in_stage3": 0,
+   "FaceAnalysis.get_in_stage3": 0,
+   "detector_calls_in_prepass (must be > 0)": 866,
+   "FaceAnalysis.get_in_prepass": 0,
+   "get_all_faces_in_stage3": 0,
+   "retry_rotated_in_stage3": 0
+  },
+  "5_segments": {
+   "pass": true,
+   "cleared": [
+    false,
+    false,
+    false
+   ],
+   "ui_ranges_1based_inclusive": [
+    [
+     1,
+     200
+    ],
+    [
+     201,
+     400
+    ],
+    [
+     401,
+     600
+    ]
+   ],
+   "entry_ranges_as_the_pipeline_sees_them": [
+    [
+     0,
+     200
+    ],
+    [
+     200,
+     400
+    ],
+    [
+     400,
+     600
+    ]
+   ],
+   "segment_files": [
+    "three_stage_cfr_segment0001_000001_000200.mp4",
+    "three_stage_cfr_segment0002_000201_000400.mp4",
+    "three_stage_cfr_segment0003_000401_000600.mp4"
+   ],
+   "all_three_on_disk_before_join": true,
+   "earlier_slices_present_when_each_later_slice_started": [
+    [],
+    [
+     true
+    ],
+    [
+     true,
+     true
+    ]
+   ],
+   "segment_frames": [
+    200,
+    200,
+    200
+   ],
+   "joined": "three_stage_cfr_joined.mp4",
+   "joined_frames": 600,
+   "join_error": null,
+   "renders": [
+    {
+     "tag": "segment1",
+     "seconds": 30.96,
+     "error": null,
+     "output_frames": 200,
+     "failure_signatures": {
+      "traceback": 0,
+      "prescan_failed": 0,
+      "prepass_failed": 0,
+      "writer_failed": 0
+     }
+    },
+    {
+     "tag": "segment2",
+     "seconds": 43.04,
+     "error": null,
+     "output_frames": 200,
+     "failure_signatures": {
+      "traceback": 0,
+      "prescan_failed": 0,
+      "prepass_failed": 0,
+      "writer_failed": 0
+     }
+    },
+    {
+     "tag": "segment3",
+     "seconds": 40.73,
+     "error": null,
+     "output_frames": 200,
+     "failure_signatures": {
+      "traceback": 0,
+      "prescan_failed": 0,
+      "prepass_failed": 0,
+      "writer_failed": 0
+     }
+    }
+   ],
+   "segments_still_on_disk_after_join": true
+  },
+  "0_zero_runtime_exceptions": {
+   "pass": true,
+   "offending_runs": [],
+   "runs_checked": 6
+  }
+ },
+ "max_target_covered_frac_gating_scene": 0.462,
+ "clips": {
+  "cfr": {
+   "path": "three_stage_cfr.mp4",
+   "frames": 600,
+   "width": 960,
+   "height": 540,
+   "r_frame_rate": "30/1",
+   "avg_frame_rate": "30/1",
+   "cfr_by_timestamps": true
+  },
+  "vfr": {
+   "path": "three_stage_vfr.mp4",
+   "frames": 600,
+   "width": 960,
+   "height": 540,
+   "r_frame_rate": "30/1",
+   "avg_frame_rate": "6000/203",
+   "cfr_by_timestamps": false
+  }
+ },
+ "truth_regions": {
+  "empty_head": [
+   0,
+   99
+  ],
+  "distractor": [
+   100,
+   199
+  ],
+  "flash": [
+   200,
+   204
+  ],
+  "gap": [
+   205,
+   299
+  ],
+  "target": [
+   300,
+   450
+  ],
+  "outro": [
+   451,
+   599
+  ],
+  "distractor_crossing_in_front": [
+   345,
+   410
+  ],
+  "profile_source_frames_angle_mp4": [
+   322,
+   360
+  ],
+  "peak_sprite_iou": 0.3
+ },
+ "models": {
+  "enhancer": "UltraMax",
+  "swap_model": "realswap",
+  "mask_engine": "RealityUX",
+  "threads": 20,
+  "sparse_auto_range_cfg": true,
+  "no_face_action": "Use untouched original frame"
+ },
+ "scene_audit": {
+  "empty_frames_with_a_detection": [],
+  "valid_scene": true,
+  "target_frames": 156,
+  "target_detected_frames": [
+   200,
+   201,
+   202,
+   203,
+   204,
+   300,
+   301,
+   302,
+   303,
+   304,
+   305,
+   306,
+   307,
+   308,
+   309,
+   310,
+   311,
+   312,
+   313,
+   314,
+   315,
+   316,
+   317,
+   318,
+   319,
+   320,
+   321,
+   322,
+   323,
+   324,
+   325,
+   326,
+   327,
+   328,
+   329,
+   330,
+   331,
+   332,
+   333,
+   334,
+   335,
+   336,
+   337,
+   338,
+   339,
+   340,
+   341,
+   342,
+   343,
+   344,
+   345,
+   346,
+   347,
+   348,
+   349,
+   350,
+   351,
+   352,
+   353,
+   354,
+   355,
+   356,
+   357,
+   358,
+   359,
+   360,
+   361,
+   362,
+   363,
+   364,
+   365,
+   366,
+   367,
+   368,
+   369,
+   370,
+   371,
+   372,
+   373,
+   374,
+   375,
+   376,
+   377,
+   378,
+   379,
+   380,
+   381,
+   382,
+   383,
+   384,
+   385,
+   386,
+   387,
+   388,
+   389,
+   390,
+   391,
+   392,
+   393,
+   394,
+   395,
+   396,
+   397,
+   398,
+   399,
+   400,
+   401,
+   402,
+   403,
+   404,
+   405,
+   406,
+   407,
+   408,
+   409,
+   410,
+   411,
+   412,
+   413,
+   414,
+   415,
+   416,
+   417,
+   418,
+   419,
+   420,
+   421,
+   422,
+   423,
+   424,
+   425,
+   426,
+   427,
+   428,
+   429,
+   430,
+   431,
+   432,
+   433,
+   434,
+   435,
+   436,
+   437,
+   438,
+   439,
+   440,
+   441,
+   442,
+   443,
+   444,
+   445,
+   446,
+   447,
+   448,
+   449,
+   450
+  ],
+  "target_detected_count": 156,
+  "target_undetectable_by_single_frame_detector": [],
+  "distractor_frames_without_detection": [],
+  "yaw_samples_deg": {
+   "300": -72.5,
+   "322": -58.0,
+   "340": -40.8,
+   "380": -12.3,
+   "450": -2.4
+  }
+ },
+ "renders": [
+  {
+   "tag": "cfr_3stage_A",
+   "clip": "three_stage_cfr.mp4",
+   "overrides": {
+    "sparse_auto_range": true
+   },
+   "range": [
+    0,
+    0
+   ],
+   "seconds": 53.35,
+   "fps": 11.25,
+   "output": "<workdir>/out/three_stage_cfr_20-34-04.mp4",
+   "output_frames": 600,
+   "error": null,
+   "log": "<workdir>/out/cfr_3stage_A.log",
+   "failure_signatures": {
+    "traceback": 0,
+    "prescan_failed": 0,
+    "prepass_failed": 0,
+    "writer_failed": 0
+   },
+   "info_signatures": {
+    "face_sanity_lines": 0,
+    "swallowed_lines": 0
+   },
+   "plan": [
+    200,
+    201,
+    202,
+    203,
+    204,
+    300,
+    301,
+    302,
+    303,
+    304,
+    305,
+    306,
+    307,
+    308,
+    309,
+    310,
+    311,
+    312,
+    313,
+    314,
+    315,
+    316,
+    317,
+    318,
+    319,
+    320,
+    321,
+    322,
+    323,
+    324,
+    325,
+    326,
+    327,
+    328,
+    329,
+    330,
+    331,
+    332,
+    333,
+    334,
+    335,
+    336,
+    337,
+    338,
+    339,
+    340,
+    341,
+    342,
+    343,
+    344,
+    345,
+    346,
+    347,
+    348,
+    349,
+    350,
+    351,
+    352,
+    353,
+    354,
+    355,
+    356,
+    357,
+    358,
+    359,
+    360,
+    361,
+    362,
+    363,
+    364,
+    365,
+    366,
+    367,
+    368,
+    369,
+    370,
+    371,
+    372,
+    373,
+    374,
+    375,
+    376,
+    377,
+    378,
+    379,
+    380,
+    381,
+    382,
+    383,
+    384,
+    385,
+    386,
+    387,
+    388,
+    389,
+    390,
+    391,
+    392,
+    393,
+    394,
+    395,
+    396,
+    397,
+    398,
+    399,
+    400,
+    401,
+    402,
+    403,
+    404,
+    405,
+    406,
+    407,
+    408,
+    409,
+    410,
+    411,
+    412,
+    413,
+    414,
+    415,
+    416,
+    417,
+    418,
+    419,
+    420,
+    421,
+    422,
+    423,
+    424,
+    425,
+    426,
+    427,
+    428,
+    429,
+    430,
+    431,
+    432,
+    433,
+    434,
+    435,
+    436,
+    437,
+    438,
+    439,
+    440,
+    441,
+    442,
+    443,
+    444,
+    445,
+    446,
+    447,
+    448,
+    449,
+    450
+   ],
+   "active_ranges": [
+    [
+     194,
+     214
+    ],
+    [
+     290,
+     460
+    ]
+   ],
+   "active_stats": {
+    "active_frames": 192,
+    "total_frames": 600,
+    "skipped_frames": 408,
+    "percentage": 32.0,
+    "mode": "sparse_auto_range"
+   },
+   "detector_calls": {
+    "pre": 867,
+    "stage3": 0
+   },
+   "fa_get": {
+    "pre": 0,
+    "stage3": 0
+   },
+   "get_all_faces": {
+    "pre": 212,
+    "stage3": 0
+   },
+   "retry_rotated_stage3": 0,
+   "swapped_frames": [
+    200,
+    201,
+    202,
+    203,
+    204,
+    300,
+    301,
+    302,
+    303,
+    304,
+    305,
+    306,
+    307,
+    308,
+    309,
+    310,
+    311,
+    312,
+    313,
+    314,
+    315,
+    316,
+    317,
+    318,
+    319,
+    320,
+    321,
+    322,
+    323,
+    324,
+    325,
+    326,
+    327,
+    328,
+    329,
+    330,
+    331,
+    332,
+    333,
+    334,
+    335,
+    336,
+    337,
+    338,
+    339,
+    340,
+    341,
+    342,
+    343,
+    344,
+    345,
+    346,
+    347,
+    348,
+    349,
+    350,
+    351,
+    352,
+    353,
+    354,
+    355,
+    356,
+    357,
+    358,
+    359,
+    360,
+    361,
+    362,
+    363,
+    364,
+    365,
+    366,
+    367,
+    368,
+    369,
+    370,
+    371,
+    372,
+    373,
+    374,
+    375,
+    376,
+    377,
+    378,
+    379,
+    380,
+    381,
+    382,
+    383,
+    384,
+    385,
+    386,
+    387,
+    388,
+    389,
+    390,
+    391,
+    392,
+    393,
+    394,
+    395,
+    396,
+    397,
+    398,
+    399,
+    400,
+    401,
+    402,
+    403,
+    404,
+    405,
+    406,
+    407,
+    408,
+    409,
+    410,
+    411,
+    412,
+    413,
+    414,
+    415,
+    416,
+    417,
+    418,
+    419,
+    420,
+    421,
+    422,
+    423,
+    424,
+    425,
+    426,
+    427,
+    428,
+    429,
+    430,
+    431,
+    432,
+    433,
+    434,
+    435,
+    436,
+    437,
+    438,
+    439,
+    440,
+    441,
+    442,
+    443,
+    444,
+    445,
+    446,
+    447,
+    448,
+    449,
+    450
+   ],
+   "faces_swapped": 162,
+   "stage_trace": [
+    {
+     "t": 0.0,
+     "stage": null,
+     "states": {
+      "1": "SKIPPED",
+      "2": "SKIPPED",
+      "3": "DONE"
+     }
+    },
+    {
+     "t": 40.39,
+     "stage": "STAGE_1_SPARSE_PRESCAN",
+     "states": {
+      "1": "RUNNING",
+      "2": "PENDING",
+      "3": "PENDING"
+     }
+    },
+    {
+     "t": 45.7,
+     "stage": "STAGE_1_SPARSE_PRESCAN",
+     "states": {
+      "1": "RUNNING",
+      "2": "PENDING",
+      "3": "PENDING"
+     }
+    },
+    {
+     "t": 46.21,
+     "stage": "STAGE_1_SPARSE_PRESCAN",
+     "states": {
+      "1": "RUNNING",
+      "2": "PENDING",
+      "3": "PENDING"
+     }
+    },
+    {
+     "t": 46.73,
+     "stage": "STAGE_1_SPARSE_PRESCAN",
+     "states": {
+      "1": "RUNNING",
+      "2": "PENDING",
+      "3": "PENDING"
+     }
+    },
+    {
+     "t": 46.99,
+     "stage": "STAGE_1_SPARSE_PRESCAN",
+     "states": {
+      "1": "RUNNING",
+      "2": "PENDING",
+      "3": "PENDING"
+     }
+    },
+    {
+     "t": 47.52,
+     "stage": "STAGE_2_ACTIVE_PREPASS",
+     "states": {
+      "1": "DONE",
+      "2": "RUNNING",
+      "3": "PENDING"
+     }
+    },
+    {
+     "t": 47.77,
+     "stage": "STAGE_2_ACTIVE_PREPASS",
+     "states": {
+      "1": "DONE",
+      "2": "RUNNING",
+      "3": "PENDING"
+     }
+    },
+    {
+     "t": 49.55,
+     "stage": "STAGE_2_ACTIVE_PREPASS",
+     "states": {
+      "1": "DONE",
+      "2": "RUNNING",
+      "3": "PENDING"
+     }
+    },
+    {
+     "t": 50.07,
+     "stage": "STAGE_2_ACTIVE_PREPASS",
+     "states": {
+      "1": "DONE",
+      "2": "RUNNING",
+      "3": "PENDING"
+     }
+    },
+    {
+     "t": 50.59,
+     "stage": "STAGE_2_ACTIVE_PREPASS",
+     "states": {
+      "1": "DONE",
+      "2": "RUNNING",
+      "3": "PENDING"
+     }
+    },
+    {
+     "t": 51.1,
+     "stage": "STAGE_2_ACTIVE_PREPASS",
+     "states": {
+      "1": "DONE",
+      "2": "RUNNING",
+      "3": "PENDING"
+     }
+    },
+    {
+     "t": 52.44,
+     "stage": "STAGE_3_MAIN_SWAP",
+     "states": {
+      "1": "DONE",
+      "2": "DONE",
+      "3": "RUNNING"
+     }
+    },
+    {
+     "t": 64.39,
+     "stage": null,
+     "states": {
+      "1": "DONE",
+      "2": "DONE",
+      "3": "DONE"
+     }
+    }
+   ]
+  },
+  {
+   "tag": "cfr_1stage_A",
+   "clip": "three_stage_cfr.mp4",
+   "overrides": {
+    "sparse_auto_range": false,
+    "temporal_detection": false,
+    "track_identities": false
+   },
+   "range": [
+    0,
+    0
+   ],
+   "seconds": 135.74,
+   "fps": 4.42,
+   "output": "<workdir>/out/three_stage_cfr_20-36-28.mp4",
+   "output_frames": 600,
+   "error": null,
+   "log": "<workdir>/out/cfr_1stage_A.log",
+   "failure_signatures": {
+    "traceback": 0,
+    "prescan_failed": 0,
+    "prepass_failed": 0,
+    "writer_failed": 0
+   },
+   "info_signatures": {
+    "face_sanity_lines": 0,
+    "swallowed_lines": 0
+   },
+   "active_ranges": null,
+   "active_stats": null,
+   "detector_calls": {
+    "pre": 2713,
+    "stage3": 0
+   },
+   "fa_get": {
+    "pre": 0,
+    "stage3": 0
+   },
+   "get_all_faces": {
+    "pre": 678,
+    "stage3": 0
+   },
+   "retry_rotated_stage3": 0,
+   "swapped_frames": [
+    200,
+    201,
+    202,
+    203,
+    204,
+    205,
+    206,
+    207,
+    208,
+    209,
+    210,
+    211,
+    212,
+    213,
+    214,
+    215,
+    300,
+    301,
+    302,
+    303,
+    304,
+    305,
+    306,
+    307,
+    308,
+    309,
+    310,
+    311,
+    312,
+    313,
+    314,
+    315,
+    316,
+    317,
+    318,
+    319,
+    320,
+    321,
+    322,
+    323,
+    324,
+    325,
+    326,
+    327,
+    328,
+    329,
+    330,
+    331,
+    332,
+    333,
+    334,
+    335,
+    336,
+    337,
+    338,
+    339,
+    340,
+    341,
+    342,
+    343,
+    344,
+    345,
+    346,
+    347,
+    348,
+    349,
+    350,
+    351,
+    352,
+    353,
+    354,
+    355,
+    356,
+    357,
+    358,
+    359,
+    360,
+    361,
+    362,
+    363,
+    364,
+    365,
+    366,
+    367,
+    368,
+    369,
+    370,
+    371,
+    372,
+    373,
+    374,
+    375,
+    376,
+    377,
+    378,
+    379,
+    380,
+    381,
+    382,
+    383,
+    384,
+    385,
+    386,
+    387,
+    388,
+    389,
+    390,
+    391,
+    392,
+    393,
+    394,
+    395,
+    396,
+    397,
+    398,
+    399,
+    400,
+    401,
+    402,
+    403,
+    404,
+    405,
+    406,
+    407,
+    408,
+    409,
+    410,
+    411,
+    412,
+    413,
+    414,
+    415,
+    416,
+    417,
+    418,
+    419,
+    420,
+    421,
+    422,
+    423,
+    424,
+    425,
+    426,
+    427,
+    428,
+    429,
+    430,
+    431,
+    432,
+    433,
+    434,
+    435,
+    436,
+    437,
+    438,
+    439,
+    440,
+    441,
+    442,
+    443,
+    444,
+    445,
+    446,
+    447,
+    448,
+    449,
+    450,
+    451,
+    452,
+    453,
+    454,
+    455
+   ],
+   "faces_swapped": 178,
+   "stage_trace": [
+    {
+     "t": 0.0,
+     "stage": null,
+     "states": {
+      "1": "DONE",
+      "2": "DONE",
+      "3": "DONE"
+     }
+    },
+    {
+     "t": 27.25,
+     "stage": "STAGE_3_MAIN_SWAP",
+     "states": {
+      "1": "SKIPPED",
+      "2": "SKIPPED",
+      "3": "RUNNING"
+     }
+    },
+    {
+     "t": 140.62,
+     "stage": null,
+     "states": {
+      "1": "SKIPPED",
+      "2": "SKIPPED",
+      "3": "DONE"
+     }
+    }
+   ]
+  },
+  {
+   "tag": "cfr_1stage_B",
+   "clip": "three_stage_cfr.mp4",
+   "overrides": {
+    "sparse_auto_range": false,
+    "temporal_detection": false,
+    "track_identities": false
+   },
+   "range": [
+    0,
+    0
+   ],
+   "seconds": 118.53,
+   "fps": 5.06,
+   "output": "<workdir>/out/three_stage_cfr_20-38-36.mp4",
+   "output_frames": 600,
+   "error": null,
+   "log": "<workdir>/out/cfr_1stage_B.log",
+   "failure_signatures": {
+    "traceback": 0,
+    "prescan_failed": 0,
+    "prepass_failed": 0,
+    "writer_failed": 0
+   },
+   "info_signatures": {
+    "face_sanity_lines": 0,
+    "swallowed_lines": 0
+   },
+   "active_ranges": null,
+   "active_stats": null,
+   "detector_calls": {
+    "pre": 2713,
+    "stage3": 0
+   },
+   "fa_get": {
+    "pre": 0,
+    "stage3": 0
+   },
+   "get_all_faces": {
+    "pre": 678,
+    "stage3": 0
+   },
+   "retry_rotated_stage3": 0,
+   "swapped_frames": [
+    200,
+    201,
+    202,
+    203,
+    204,
+    205,
+    206,
+    207,
+    208,
+    209,
+    210,
+    211,
+    212,
+    213,
+    214,
+    215,
+    300,
+    301,
+    302,
+    303,
+    304,
+    305,
+    306,
+    307,
+    308,
+    309,
+    310,
+    311,
+    312,
+    313,
+    314,
+    315,
+    316,
+    317,
+    318,
+    319,
+    320,
+    321,
+    322,
+    323,
+    324,
+    325,
+    326,
+    327,
+    328,
+    329,
+    330,
+    331,
+    332,
+    333,
+    334,
+    335,
+    336,
+    337,
+    338,
+    339,
+    340,
+    341,
+    342,
+    343,
+    344,
+    345,
+    346,
+    347,
+    348,
+    349,
+    350,
+    351,
+    352,
+    353,
+    354,
+    355,
+    356,
+    357,
+    358,
+    359,
+    360,
+    361,
+    362,
+    363,
+    364,
+    365,
+    366,
+    367,
+    368,
+    369,
+    370,
+    371,
+    372,
+    373,
+    374,
+    375,
+    376,
+    377,
+    378,
+    379,
+    380,
+    381,
+    382,
+    383,
+    384,
+    385,
+    386,
+    387,
+    388,
+    389,
+    390,
+    391,
+    392,
+    393,
+    394,
+    395,
+    396,
+    397,
+    398,
+    399,
+    400,
+    401,
+    402,
+    403,
+    404,
+    405,
+    406,
+    407,
+    408,
+    409,
+    410,
+    411,
+    412,
+    413,
+    414,
+    415,
+    416,
+    417,
+    418,
+    419,
+    420,
+    421,
+    422,
+    423,
+    424,
+    425,
+    426,
+    427,
+    428,
+    429,
+    430,
+    431,
+    432,
+    433,
+    434,
+    435,
+    436,
+    437,
+    438,
+    439,
+    440,
+    441,
+    442,
+    443,
+    444,
+    445,
+    446,
+    447,
+    448,
+    449,
+    450,
+    451,
+    452,
+    453,
+    454,
+    455
+   ],
+   "faces_swapped": 178,
+   "stage_trace": [
+    {
+     "t": 0.0,
+     "stage": null,
+     "states": {
+      "1": "SKIPPED",
+      "2": "SKIPPED",
+      "3": "DONE"
+     }
+    },
+    {
+     "t": 28.87,
+     "stage": "STAGE_3_MAIN_SWAP",
+     "states": {
+      "1": "SKIPPED",
+      "2": "SKIPPED",
+      "3": "RUNNING"
+     }
+    },
+    {
+     "t": 123.78,
+     "stage": null,
+     "states": {
+      "1": "SKIPPED",
+      "2": "SKIPPED",
+      "3": "DONE"
+     }
+    }
+   ]
+  },
+  {
+   "tag": "cfr_3stage_B",
+   "clip": "three_stage_cfr.mp4",
+   "overrides": {
+    "sparse_auto_range": true
+   },
+   "range": [
+    0,
+    0
+   ],
+   "seconds": 46.85,
+   "fps": 12.81,
+   "output": "<workdir>/out/three_stage_cfr_20-39-34.mp4",
+   "output_frames": 600,
+   "error": null,
+   "log": "<workdir>/out/cfr_3stage_B.log",
+   "failure_signatures": {
+    "traceback": 0,
+    "prescan_failed": 0,
+    "prepass_failed": 0,
+    "writer_failed": 0
+   },
+   "info_signatures": {
+    "face_sanity_lines": 0,
+    "swallowed_lines": 0
+   },
+   "active_ranges": [
+    [
+     194,
+     214
+    ],
+    [
+     290,
+     460
+    ]
+   ],
+   "active_stats": {
+    "active_frames": 192,
+    "total_frames": 600,
+    "skipped_frames": 408,
+    "percentage": 32.0,
+    "mode": "sparse_auto_range"
+   },
+   "detector_calls": {
+    "pre": 867,
+    "stage3": 0
+   },
+   "fa_get": {
+    "pre": 0,
+    "stage3": 0
+   },
+   "get_all_faces": {
+    "pre": 212,
+    "stage3": 0
+   },
+   "retry_rotated_stage3": 0,
+   "swapped_frames": [
+    200,
+    201,
+    202,
+    203,
+    204,
+    300,
+    301,
+    302,
+    303,
+    304,
+    305,
+    306,
+    307,
+    308,
+    309,
+    310,
+    311,
+    312,
+    313,
+    314,
+    315,
+    316,
+    317,
+    318,
+    319,
+    320,
+    321,
+    322,
+    323,
+    324,
+    325,
+    326,
+    327,
+    328,
+    329,
+    330,
+    331,
+    332,
+    333,
+    334,
+    335,
+    336,
+    337,
+    338,
+    339,
+    340,
+    341,
+    342,
+    343,
+    344,
+    345,
+    346,
+    347,
+    348,
+    349,
+    350,
+    351,
+    352,
+    353,
+    354,
+    355,
+    356,
+    357,
+    358,
+    359,
+    360,
+    361,
+    362,
+    363,
+    364,
+    365,
+    366,
+    367,
+    368,
+    369,
+    370,
+    371,
+    372,
+    373,
+    374,
+    375,
+    376,
+    377,
+    378,
+    379,
+    380,
+    381,
+    382,
+    383,
+    384,
+    385,
+    386,
+    387,
+    388,
+    389,
+    390,
+    391,
+    392,
+    393,
+    394,
+    395,
+    396,
+    397,
+    398,
+    399,
+    400,
+    401,
+    402,
+    403,
+    404,
+    405,
+    406,
+    407,
+    408,
+    409,
+    410,
+    411,
+    412,
+    413,
+    414,
+    415,
+    416,
+    417,
+    418,
+    419,
+    420,
+    421,
+    422,
+    423,
+    424,
+    425,
+    426,
+    427,
+    428,
+    429,
+    430,
+    431,
+    432,
+    433,
+    434,
+    435,
+    436,
+    437,
+    438,
+    439,
+    440,
+    441,
+    442,
+    443,
+    444,
+    445,
+    446,
+    447,
+    448,
+    449,
+    450
+   ],
+   "faces_swapped": 162,
+   "stage_trace": [
+    {
+     "t": 0.0,
+     "stage": null,
+     "states": {
+      "1": "SKIPPED",
+      "2": "SKIPPED",
+      "3": "DONE"
+     }
+    },
+    {
+     "t": 29.94,
+     "stage": "STAGE_1_SPARSE_PRESCAN",
+     "states": {
+      "1": "RUNNING",
+      "2": "PENDING",
+      "3": "PENDING"
+     }
+    },
+    {
+     "t": 34.36,
+     "stage": "STAGE_1_SPARSE_PRESCAN",
+     "states": {
+      "1": "RUNNING",
+      "2": "PENDING",
+      "3": "PENDING"
+     }
+    },
+    {
+     "t": 34.86,
+     "stage": "STAGE_1_SPARSE_PRESCAN",
+     "states": {
+      "1": "RUNNING",
+      "2": "PENDING",
+      "3": "PENDING"
+     }
+    },
+    {
+     "t": 35.38,
+     "stage": "STAGE_1_SPARSE_PRESCAN",
+     "states": {
+      "1": "RUNNING",
+      "2": "PENDING",
+      "3": "PENDING"
+     }
+    },
+    {
+     "t": 35.63,
+     "stage": "STAGE_1_SPARSE_PRESCAN",
+     "states": {
+      "1": "RUNNING",
+      "2": "PENDING",
+      "3": "PENDING"
+     }
+    },
+    {
+     "t": 36.15,
+     "stage": "STAGE_2_ACTIVE_PREPASS",
+     "states": {
+      "1": "DONE",
+      "2": "RUNNING",
+      "3": "PENDING"
+     }
+    },
+    {
+     "t": 36.41,
+     "stage": "STAGE_2_ACTIVE_PREPASS",
+     "states": {
+      "1": "DONE",
+      "2": "RUNNING",
+      "3": "PENDING"
+     }
+    },
+    {
+     "t": 37.95,
+     "stage": "STAGE_2_ACTIVE_PREPASS",
+     "states": {
+      "1": "DONE",
+      "2": "RUNNING",
+      "3": "PENDING"
+     }
+    },
+    {
+     "t": 38.2,
+     "stage": "STAGE_2_ACTIVE_PREPASS",
+     "states": {
+      "1": "DONE",
+      "2": "RUNNING",
+      "3": "PENDING"
+     }
+    },
+    {
+     "t": 38.7,
+     "stage": "STAGE_2_ACTIVE_PREPASS",
+     "states": {
+      "1": "DONE",
+      "2": "RUNNING",
+      "3": "PENDING"
+     }
+    },
+    {
+     "t": 39.27,
+     "stage": "STAGE_2_ACTIVE_PREPASS",
+     "states": {
+      "1": "DONE",
+      "2": "RUNNING",
+      "3": "PENDING"
+     }
+    },
+    {
+     "t": 40.59,
+     "stage": "STAGE_3_MAIN_SWAP",
+     "states": {
+      "1": "DONE",
+      "2": "DONE",
+      "3": "RUNNING"
+     }
+    },
+    {
+     "t": 52.81,
+     "stage": null,
+     "states": {
+      "1": "DONE",
+      "2": "DONE",
+      "3": "DONE"
+     }
+    }
+   ]
+  },
+  {
+   "tag": "vfr_3stage",
+   "clip": "three_stage_vfr.mp4",
+   "overrides": {
+    "sparse_auto_range": true
+   },
+   "range": [
+    0,
+    0
+   ],
+   "seconds": 47.74,
+   "fps": 12.57,
+   "output": "<workdir>/out/three_stage_vfr_20-40-32.mp4",
+   "output_frames": 600,
+   "error": null,
+   "log": "<workdir>/out/vfr_3stage.log",
+   "failure_signatures": {
+    "traceback": 0,
+    "prescan_failed": 0,
+    "prepass_failed": 0,
+    "writer_failed": 0
+   },
+   "info_signatures": {
+    "face_sanity_lines": 0,
+    "swallowed_lines": 0
+   },
+   "plan": [
+    200,
+    201,
+    202,
+    203,
+    204,
+    300,
+    301,
+    302,
+    303,
+    304,
+    305,
+    306,
+    307,
+    308,
+    309,
+    310,
+    311,
+    312,
+    313,
+    314,
+    315,
+    316,
+    317,
+    318,
+    319,
+    320,
+    321,
+    322,
+    323,
+    324,
+    325,
+    326,
+    327,
+    328,
+    329,
+    330,
+    331,
+    332,
+    333,
+    334,
+    335,
+    336,
+    337,
+    338,
+    339,
+    340,
+    341,
+    342,
+    343,
+    344,
+    345,
+    346,
+    347,
+    348,
+    349,
+    350,
+    351,
+    352,
+    353,
+    354,
+    355,
+    356,
+    357,
+    358,
+    359,
+    360,
+    361,
+    362,
+    363,
+    364,
+    365,
+    366,
+    367,
+    368,
+    369,
+    370,
+    371,
+    372,
+    373,
+    374,
+    375,
+    376,
+    377,
+    378,
+    379,
+    380,
+    381,
+    382,
+    383,
+    384,
+    385,
+    386,
+    387,
+    388,
+    389,
+    390,
+    391,
+    392,
+    393,
+    394,
+    395,
+    396,
+    397,
+    398,
+    399,
+    400,
+    401,
+    402,
+    403,
+    404,
+    405,
+    406,
+    407,
+    408,
+    409,
+    410,
+    411,
+    412,
+    413,
+    414,
+    415,
+    416,
+    417,
+    418,
+    419,
+    420,
+    421,
+    422,
+    423,
+    424,
+    425,
+    426,
+    427,
+    428,
+    429,
+    430,
+    431,
+    432,
+    433,
+    434,
+    435,
+    436,
+    437,
+    438,
+    439,
+    440,
+    441,
+    442,
+    443,
+    444,
+    445,
+    446,
+    447,
+    448,
+    449,
+    450
+   ],
+   "active_ranges": [
+    [
+     191,
+     209
+    ],
+    [
+     291,
+     459
+    ]
+   ],
+   "active_stats": {
+    "active_frames": 188,
+    "total_frames": 600,
+    "skipped_frames": 412,
+    "percentage": 31.3,
+    "mode": "sparse_auto_range"
+   },
+   "detector_calls": {
+    "pre": 866,
+    "stage3": 0
+   },
+   "fa_get": {
+    "pre": 0,
+    "stage3": 0
+   },
+   "get_all_faces": {
+    "pre": 207,
+    "stage3": 0
+   },
+   "retry_rotated_stage3": 0,
+   "swapped_frames": [
+    200,
+    201,
+    202,
+    203,
+    204,
+    300,
+    301,
+    302,
+    303,
+    304,
+    305,
+    306,
+    307,
+    308,
+    309,
+    310,
+    311,
+    312,
+    313,
+    314,
+    315,
+    316,
+    317,
+    318,
+    319,
+    320,
+    321,
+    322,
+    323,
+    324,
+    325,
+    326,
+    327,
+    328,
+    329,
+    330,
+    331,
+    332,
+    333,
+    334,
+    335,
+    336,
+    337,
+    338,
+    339,
+    340,
+    341,
+    342,
+    343,
+    344,
+    345,
+    346,
+    347,
+    348,
+    349,
+    350,
+    351,
+    352,
+    353,
+    354,
+    355,
+    356,
+    357,
+    358,
+    359,
+    360,
+    361,
+    362,
+    363,
+    364,
+    365,
+    366,
+    367,
+    368,
+    369,
+    370,
+    371,
+    372,
+    373,
+    374,
+    375,
+    376,
+    377,
+    378,
+    379,
+    380,
+    381,
+    382,
+    383,
+    384,
+    385,
+    386,
+    387,
+    388,
+    389,
+    390,
+    391,
+    392,
+    393,
+    394,
+    395,
+    396,
+    397,
+    398,
+    399,
+    400,
+    401,
+    402,
+    403,
+    404,
+    405,
+    406,
+    407,
+    408,
+    409,
+    410,
+    411,
+    412,
+    413,
+    414,
+    415,
+    416,
+    417,
+    418,
+    419,
+    420,
+    421,
+    422,
+    423,
+    424,
+    425,
+    426,
+    427,
+    428,
+    429,
+    430,
+    431,
+    432,
+    433,
+    434,
+    435,
+    436,
+    437,
+    438,
+    439,
+    440,
+    441,
+    442,
+    443,
+    444,
+    445,
+    446,
+    447,
+    448,
+    449,
+    450
+   ],
+   "faces_swapped": 162,
+   "stage_trace": [
+    {
+     "t": 0.0,
+     "stage": null,
+     "states": {
+      "1": "DONE",
+      "2": "DONE",
+      "3": "DONE"
+     }
+    },
+    {
+     "t": 30.75,
+     "stage": "STAGE_1_SPARSE_PRESCAN",
+     "states": {
+      "1": "RUNNING",
+      "2": "PENDING",
+      "3": "PENDING"
+     }
+    },
+    {
+     "t": 35.19,
+     "stage": "STAGE_1_SPARSE_PRESCAN",
+     "states": {
+      "1": "RUNNING",
+      "2": "PENDING",
+      "3": "PENDING"
+     }
+    },
+    {
+     "t": 35.97,
+     "stage": "STAGE_1_SPARSE_PRESCAN",
+     "states": {
+      "1": "RUNNING",
+      "2": "PENDING",
+      "3": "PENDING"
+     }
+    },
+    {
+     "t": 36.22,
+     "stage": "STAGE_1_SPARSE_PRESCAN",
+     "states": {
+      "1": "RUNNING",
+      "2": "PENDING",
+      "3": "PENDING"
+     }
+    },
+    {
+     "t": 36.75,
+     "stage": "STAGE_1_SPARSE_PRESCAN",
+     "states": {
+      "1": "RUNNING",
+      "2": "PENDING",
+      "3": "PENDING"
+     }
+    },
+    {
+     "t": 37.28,
+     "stage": "STAGE_2_ACTIVE_PREPASS",
+     "states": {
+      "1": "DONE",
+      "2": "RUNNING",
+      "3": "PENDING"
+     }
+    },
+    {
+     "t": 37.79,
+     "stage": "STAGE_2_ACTIVE_PREPASS",
+     "states": {
+      "1": "DONE",
+      "2": "RUNNING",
+      "3": "PENDING"
+     }
+    },
+    {
+     "t": 39.1,
+     "stage": "STAGE_2_ACTIVE_PREPASS",
+     "states": {
+      "1": "DONE",
+      "2": "RUNNING",
+      "3": "PENDING"
+     }
+    },
+    {
+     "t": 39.62,
+     "stage": "STAGE_2_ACTIVE_PREPASS",
+     "states": {
+      "1": "DONE",
+      "2": "RUNNING",
+      "3": "PENDING"
+     }
+    },
+    {
+     "t": 40.13,
+     "stage": "STAGE_2_ACTIVE_PREPASS",
+     "states": {
+      "1": "DONE",
+      "2": "RUNNING",
+      "3": "PENDING"
+     }
+    },
+    {
+     "t": 40.65,
+     "stage": "STAGE_2_ACTIVE_PREPASS",
+     "states": {
+      "1": "DONE",
+      "2": "RUNNING",
+      "3": "PENDING"
+     }
+    },
+    {
+     "t": 41.74,
+     "stage": "STAGE_3_MAIN_SWAP",
+     "states": {
+      "1": "DONE",
+      "2": "DONE",
+      "3": "RUNNING"
+     }
+    },
+    {
+     "t": 53.67,
+     "stage": null,
+     "states": {
+      "1": "DONE",
+      "2": "DONE",
+      "3": "DONE"
+     }
+    }
+   ]
+  },
+  {
+   "tag": "stress_occlusion_3stage",
+   "clip": "three_stage_occlusion_stress.mp4",
+   "overrides": {
+    "sparse_auto_range": true
+   },
+   "range": [
+    0,
+    0
+   ],
+   "seconds": 48.2,
+   "fps": 12.45,
+   "output": "<workdir>/out/three_stage_occlusion_stress_20-41-31.mp4",
+   "output_frames": 600,
+   "error": null,
+   "log": "<workdir>/out/stress_occlusion_3stage.log",
+   "failure_signatures": {
+    "traceback": 0,
+    "prescan_failed": 0,
+    "prepass_failed": 0,
+    "writer_failed": 0
+   },
+   "info_signatures": {
+    "face_sanity_lines": 0,
+    "swallowed_lines": 0
+   },
+   "active_ranges": [
+    [
+     194,
+     214
+    ],
+    [
+     290,
+     460
+    ]
+   ],
+   "active_stats": {
+    "active_frames": 192,
+    "total_frames": 600,
+    "skipped_frames": 408,
+    "percentage": 32.0,
+    "mode": "sparse_auto_range"
+   },
+   "detector_calls": {
+    "pre": 867,
+    "stage3": 0
+   },
+   "fa_get": {
+    "pre": 0,
+    "stage3": 0
+   },
+   "get_all_faces": {
+    "pre": 211,
+    "stage3": 0
+   },
+   "retry_rotated_stage3": 0,
+   "swapped_frames": [
+    200,
+    201,
+    202,
+    203,
+    204,
+    300,
+    301,
+    302,
+    303,
+    304,
+    305,
+    306,
+    307,
+    308,
+    309,
+    310,
+    311,
+    312,
+    313,
+    314,
+    315,
+    316,
+    317,
+    318,
+    319,
+    320,
+    321,
+    322,
+    323,
+    324,
+    325,
+    326,
+    327,
+    328,
+    329,
+    330,
+    331,
+    332,
+    333,
+    334,
+    335,
+    336,
+    337,
+    338,
+    339,
+    340,
+    341,
+    342,
+    343,
+    344,
+    345,
+    346,
+    347,
+    348,
+    349,
+    350,
+    351,
+    352,
+    353,
+    354,
+    355,
+    356,
+    357,
+    358,
+    359,
+    360,
+    361,
+    362,
+    363,
+    364,
+    365,
+    366,
+    367,
+    368,
+    369,
+    370,
+    371,
+    372,
+    380,
+    381,
+    382,
+    383,
+    384,
+    385,
+    386,
+    387,
+    388,
+    389,
+    390,
+    391,
+    392,
+    393,
+    394,
+    395,
+    396,
+    397,
+    398,
+    399,
+    400,
+    401,
+    402,
+    403,
+    404,
+    405,
+    406,
+    407,
+    408,
+    409,
+    410,
+    411,
+    412,
+    413,
+    414,
+    415,
+    416,
+    417,
+    418,
+    419,
+    420,
+    421,
+    422,
+    423,
+    424,
+    425,
+    426,
+    427,
+    428,
+    429,
+    430,
+    431,
+    432,
+    433,
+    434,
+    435,
+    436,
+    437,
+    438,
+    439,
+    440,
+    441,
+    442,
+    443,
+    444,
+    445,
+    446,
+    447,
+    448,
+    449,
+    450
+   ],
+   "faces_swapped": 155,
+   "stage_trace": [
+    {
+     "t": 0.0,
+     "stage": null,
+     "states": {
+      "1": "DONE",
+      "2": "DONE",
+      "3": "DONE"
+     }
+    },
+    {
+     "t": 31.57,
+     "stage": "STAGE_1_SPARSE_PRESCAN",
+     "states": {
+      "1": "RUNNING",
+      "2": "PENDING",
+      "3": "PENDING"
+     }
+    },
+    {
+     "t": 36.06,
+     "stage": "STAGE_1_SPARSE_PRESCAN",
+     "states": {
+      "1": "RUNNING",
+      "2": "PENDING",
+      "3": "PENDING"
+     }
+    },
+    {
+     "t": 36.57,
+     "stage": "STAGE_1_SPARSE_PRESCAN",
+     "states": {
+      "1": "RUNNING",
+      "2": "PENDING",
+      "3": "PENDING"
+     }
+    },
+    {
+     "t": 37.1,
+     "stage": "STAGE_1_SPARSE_PRESCAN",
+     "states": {
+      "1": "RUNNING",
+      "2": "PENDING",
+      "3": "PENDING"
+     }
+    },
+    {
+     "t": 37.35,
+     "stage": "STAGE_1_SPARSE_PRESCAN",
+     "states": {
+      "1": "RUNNING",
+      "2": "PENDING",
+      "3": "PENDING"
+     }
+    },
+    {
+     "t": 37.88,
+     "stage": "STAGE_2_ACTIVE_PREPASS",
+     "states": {
+      "1": "DONE",
+      "2": "RUNNING",
+      "3": "PENDING"
+     }
+    },
+    {
+     "t": 39.67,
+     "stage": "STAGE_2_ACTIVE_PREPASS",
+     "states": {
+      "1": "DONE",
+      "2": "RUNNING",
+      "3": "PENDING"
+     }
+    },
+    {
+     "t": 39.93,
+     "stage": "STAGE_2_ACTIVE_PREPASS",
+     "states": {
+      "1": "DONE",
+      "2": "RUNNING",
+      "3": "PENDING"
+     }
+    },
+    {
+     "t": 40.72,
+     "stage": "STAGE_2_ACTIVE_PREPASS",
+     "states": {
+      "1": "DONE",
+      "2": "RUNNING",
+      "3": "PENDING"
+     }
+    },
+    {
+     "t": 41.23,
+     "stage": "STAGE_2_ACTIVE_PREPASS",
+     "states": {
+      "1": "DONE",
+      "2": "RUNNING",
+      "3": "PENDING"
+     }
+    },
+    {
+     "t": 42.57,
+     "stage": "STAGE_3_MAIN_SWAP",
+     "states": {
+      "1": "DONE",
+      "2": "DONE",
+      "3": "RUNNING"
+     }
+    },
+    {
+     "t": 54.25,
+     "stage": null,
+     "states": {
+      "1": "DONE",
+      "2": "DONE",
+      "3": "DONE"
+     }
+    }
+   ]
+  }
+ ],
+ "warmup": {
+  "warmup_3stage_first90": {
+   "seconds": 49.48,
+   "error": null,
+   "failure_signatures": {
+    "traceback": 0,
+    "prescan_failed": 0,
+    "prepass_failed": 0,
+    "writer_failed": 0
+   }
+  },
+  "warmup_1stage_first90": {
+   "seconds": 44.0,
+   "error": null,
+   "failure_signatures": {
+    "traceback": 0,
+    "prescan_failed": 0,
+    "prepass_failed": 0,
+    "writer_failed": 0
+   }
+  }
+ },
+ "occlusion_stress_informational": {
+  "peak_sprite_iou": 0.6,
+  "max_covered_frac": 0.747,
+  "missing_from_plan": [
+   "373-379"
+  ],
+  "of_which_physically_hidden_ge_55pct": [
+   "373-379"
+  ],
+  "of_which_visible_enough_but_missed": [],
+  "leaked_into_plan": [],
+  "detector_calls_in_stage3": 0,
+  "note": "NOT gated. Frames refused here are ones where the invented target face lies under the distractor face (procmgr_tracking._interp_collides): painting a swap there would land on the distractor.",
+  "history": "The gating scene was first built at peak IoU 0.6; its first run missed 373-379 for this reason, so the gating scene was moved to 0.30 (target <= ~46% covered) and 0.6 kept as this stress arm."
+ },
+ "benchmark": {
+  "order": [
+   "3-stage (A)",
+   "1-stage",
+   "1-stage",
+   "3-stage"
+  ],
+  "frames": 600,
+  "one_stage": {
+   "definition": "sparse_auto_range off, temporal_detection off, track_identities off (single swap pass)",
+   "seconds": [
+    135.74,
+    118.53
+   ],
+   "mean_s": 127.14,
+   "fps": 4.72
+  },
+  "three_stage": {
+   "definition": "sparse_auto_range on, temporal_detection on, track_identities on (the shipped path)",
+   "seconds": [
+    53.35,
+    46.85
+   ],
+   "mean_s": 50.1,
+   "fps": 11.98
+  },
+  "speedup_x": 2.538,
+  "same_config_spread": 0.135,
+  "resolvable": true,
+  "faces_swapped": {
+   "one_stage": [
+    178,
+    178
+   ],
+   "three_stage": [
+    162,
+    162
+   ]
+  },
+  "note": "The arm that finds fewer faces has not got faster: read faces_swapped beside seconds.",
+  "swap_set_difference": {
+   "frames_swapped_only_by_1stage": [
+    "205-215",
+    "451-455"
+   ],
+   "of_which": {
+    "target_frame": 0,
+    "distractor_only_frame": 0,
+    "empty_frame": 16
+   },
+   "frames_swapped_only_by_3stage": [],
+   "of_which_3stage": {
+    "target_frame": 0,
+    "distractor_only_frame": 0,
+    "empty_frame": 0
+   },
+   "target_frames_swapped": {
+    "one_stage": 156,
+    "three_stage": 156,
+    "of": 156
+   }
+  }
+ },
+ "plan_identical_across_3stage_runs": true,
+ "all_invariants_hold": true,
+ "wall_seconds": 834.7,
+ "exit": 0
+}

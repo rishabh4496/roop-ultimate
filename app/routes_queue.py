@@ -563,8 +563,14 @@ def _apply_segment(entry, job):
     if fs is None and fe is None:
         return
     total = getattr(entry, "total_frames", 0) or entry.endframe or 0
+    # A job's range is in the UI's numbering: 1-based, both ends inclusive (`stageSegments` writes
+    # (1,200), (201,400), (401,600); `get_video_frame` maps UI frame n to index n-1). A ProcessEntry's
+    # is the pipeline's: 0-based start, EXCLUSIVE end. The end already agrees (UI 200 = index 199
+    # inclusive = 200 exclusive); the start did not - it was passed through, so every job queued from
+    # the UI dropped its first frame and a 3-way split of 600 frames joined to 597 (0, 200 and 400 never
+    # rendered; `tests/verify_three_stage_pipeline.py`, invariant 5).
     if fs is not None:
-        entry.startframe = max(0, int(fs))
+        entry.startframe = max(0, int(fs) - 1)
     if fe is not None:
         entry.endframe = min(int(fe), total) if total else int(fe)
     if entry.endframe and entry.startframe > entry.endframe:

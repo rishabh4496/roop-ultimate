@@ -240,7 +240,8 @@ class Runner(QueueTestBase):
         self._add("a.mp4", frame_start=100, frame_end=200)
         self._add("a.mp4", frame_start=300, frame_end=9999)   # clamped to total
         self._drain()
-        self.assertEqual(seen, [(100, 200), (300, 500)])
+        # UI numbering (1-based, inclusive) -> the entry's (0-based start, exclusive end)
+        self.assertEqual(seen, [(99, 200), (299, 500)])
 
     def test_finished_jobs_are_skipped_so_a_restart_resumes(self):
         self.entries.append(_Entry("/media/a.mp4"))

@@ -1,0 +1,16 @@
+Detection of a 2-D perspective-warped frontal faceset photo (anushree.png, 220 px sprite on the
+synthetic landscape, app/env python, tensorrt/realswap, 2026-10-20). A warp is NOT a 3-D head turn;
+this is why the verification clip uses real head footage (angle.mp4) for its steep-profile entry.
+
+  yaw  0   detected  det_score 0.92
+  yaw 30   detected  det_score 0.89
+  yaw 45   detected  det_score 0.70
+  yaw 55   NOT detected
+  yaw 65   NOT detected
+  yaw 70   NOT detected
+  yaw 75   NOT detected
+
+Real head, angle.mp4 (CGI head, 1280x720), yaw from head_pose.head_pose_from_kps, detector det_score ~1.0:
+  frame 304 -90.4   308 -88.6   316 -80.9   320 -75.0   322 -69.7   326 -62.3   330 -53.6
+  frame 340 -24.6   350  -7.6   360  -0.8   (frames 224-296 are the back of the head: undetected)
+The clip's profile sweep is source frames 322 (-69.7 deg) -> 360 (-0.8 deg).

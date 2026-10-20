@@ -322,7 +322,7 @@ class BatchMatrixQueue(QueueTestBase):
                                  self._fake_run(p))
         self._drain()
         self.assertEqual(seen, [
-            (0, 5, 50, [1, 0], [BOB, ALICE]),
+            (0, 4, 50, [1, 0], [BOB, ALICE]),            # UI frames 5-50 = entry [4, 50)
             (2, 0, 600, [0], [ALICE]),
         ])
         self.assertEqual([j["state"] for j in q._snapshot()["jobs"]], ["COMPLETED"] * 2)
@@ -552,7 +552,7 @@ class BatchMatrixEndToEnd(_EndToEndBase):
         # (primary) source -- bob sits at slot 0 of [bob, alice].
         self._assert_run(self.ran[0], target=0, gallery_indices=[1, 0], facesets=[BOB, ALICE],
                          person_ranks=[0, 1], source_index=0)
-        self.assertEqual(self.ran[0]["entry_range"], (5, 50))
+        self.assertEqual(self.ran[0]["entry_range"], (4, 50))        # UI frames 5-50 = entry [4, 50)
         self.assertEqual(self.ran[0]["request"]["swap_mode"], "selected_multi")
         self._assert_run(self.ran[1], target=2, gallery_indices=[0], facesets=[ALICE],
                          person_ranks=[0], source_index=0)
@@ -758,7 +758,7 @@ class BatchMatrixStagingJSThroughTheQueue(_EndToEndBase):
         self.assertEqual(self._states(), [("COMPLETED", "")] * 2)
         self._assert_run(self.ran[0], target=0, gallery_indices=[1, 0],
                          facesets=[self.bob, self.alice], person_ranks=[0, 1], source_index=0)
-        self.assertEqual(self.ran[0]["entry_range"], (5, 50))
+        self.assertEqual(self.ran[0]["entry_range"], (4, 50))        # UI frames 5-50 = entry [4, 50)
         self._assert_run(self.ran[1], target=2, gallery_indices=[0], facesets=[self.alice],
                          person_ranks=[0], source_index=0)
 
