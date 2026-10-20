@@ -1,0 +1,608 @@
+{
+ "trace": [
+  {
+   "t": 0.0,
+   "stage": null,
+   "stages": {}
+  },
+  {
+   "t": 68.2,
+   "stage": "STAGE_1_SPARSE_PRESCAN",
+   "stages": {
+    "STAGE_1_SPARSE_PRESCAN": {
+     "state": "RUNNING",
+     "stage_progress_pct": null,
+     "active_ranges_count": null,
+     "verified_target_frames": null,
+     "skipped_frames_pct": null,
+     "eta_seconds": null
+    },
+    "STAGE_2_ACTIVE_PREPASS": {
+     "state": "PENDING",
+     "stage_progress_pct": 0.0,
+     "active_ranges_count": null,
+     "verified_target_frames": null,
+     "skipped_frames_pct": null,
+     "eta_seconds": null
+    },
+    "STAGE_3_MAIN_SWAP": {
+     "state": "PENDING",
+     "stage_progress_pct": 0.0,
+     "active_ranges_count": null,
+     "verified_target_frames": null,
+     "skipped_frames_pct": null,
+     "eta_seconds": null
+    }
+   }
+  },
+  {
+   "t": 73.16,
+   "stage": "STAGE_1_SPARSE_PRESCAN",
+   "stages": {
+    "STAGE_1_SPARSE_PRESCAN": {
+     "state": "RUNNING",
+     "stage_progress_pct": 6.6,
+     "active_ranges_count": null,
+     "verified_target_frames": null,
+     "skipped_frames_pct": null,
+     "eta_seconds": 72.0
+    },
+    "STAGE_2_ACTIVE_PREPASS": {
+     "state": "PENDING",
+     "stage_progress_pct": 0.0,
+     "active_ranges_count": null,
+     "verified_target_frames": null,
+     "skipped_frames_pct": null,
+     "eta_seconds": null
+    },
+    "STAGE_3_MAIN_SWAP": {
+     "state": "PENDING",
+     "stage_progress_pct": 0.0,
+     "active_ranges_count": null,
+     "verified_target_frames": null,
+     "skipped_frames_pct": null,
+     "eta_seconds": null
+    }
+   }
+  },
+  {
+   "t": 73.41,
+   "stage": "STAGE_1_SPARSE_PRESCAN",
+   "stages": {
+    "STAGE_1_SPARSE_PRESCAN": {
+     "state": "RUNNING",
+     "stage_progress_pct": 19.7,
+     "active_ranges_count": null,
+     "verified_target_frames": null,
+     "skipped_frames_pct": null,
+     "eta_seconds": 21.7
+    },
+    "STAGE_2_ACTIVE_PREPASS": {
+     "state": "PENDING",
+     "stage_progress_pct": 0.0,
+     "active_ranges_count": null,
+     "verified_target_frames": null,
+     "skipped_frames_pct": null,
+     "eta_seconds": null
+    },
+    "STAGE_3_MAIN_SWAP": {
+     "state": "PENDING",
+     "stage_progress_pct": 0.0,
+     "active_ranges_count": null,
+     "verified_target_frames": null,
+     "skipped_frames_pct": null,
+     "eta_seconds": null
+    }
+   }
+  },
+  {
+   "t": 73.67,
+   "stage": "STAGE_1_SPARSE_PRESCAN",
+   "stages": {
+    "STAGE_1_SPARSE_PRESCAN": {
+     "state": "RUNNING",
+     "stage_progress_pct": 36.1,
+     "active_ranges_count": null,
+     "verified_target_frames": null,
+     "skipped_frames_pct": null,
+     "eta_seconds": 9.8
+    },
+    "STAGE_2_ACTIVE_PREPASS": {
+     "state": "PENDING",
+     "stage_progress_pct": 0.0,
+     "active_ranges_count": null,
+     "verified_target_frames": null,
+     "skipped_frames_pct": null,
+     "eta_seconds": null
+    },
+    "STAGE_3_MAIN_SWAP": {
+     "state": "PENDING",
+     "stage_progress_pct": 0.0,
+     "active_ranges_count": null,
+     "verified_target_frames": null,
+     "skipped_frames_pct": null,
+     "eta_seconds": null
+    }
+   }
+  },
+  {
+   "t": 73.92,
+   "stage": "STAGE_1_SPARSE_PRESCAN",
+   "stages": {
+    "STAGE_1_SPARSE_PRESCAN": {
+     "state": "RUNNING",
+     "stage_progress_pct": 52.5,
+     "active_ranges_count": null,
+     "verified_target_frames": null,
+     "skipped_frames_pct": null,
+     "eta_seconds": 5.3
+    },
+    "STAGE_2_ACTIVE_PREPASS": {
+     "state": "PENDING",
+     "stage_progress_pct": 0.0,
+     "active_ranges_count": null,
+     "verified_target_frames": null,
+     "skipped_frames_pct": null,
+     "eta_seconds": null
+    },
+    "STAGE_3_MAIN_SWAP": {
+     "state": "PENDING",
+     "stage_progress_pct": 0.0,
+     "active_ranges_count": null,
+     "verified_target_frames": null,
+     "skipped_frames_pct": null,
+     "eta_seconds": null
+    }
+   }
+  },
+  {
+   "t": 74.17,
+   "stage": "STAGE_1_SPARSE_PRESCAN",
+   "stages": {
+    "STAGE_1_SPARSE_PRESCAN": {
+     "state": "RUNNING",
+     "stage_progress_pct": 77.0,
+     "active_ranges_count": null,
+     "verified_target_frames": null,
+     "skipped_frames_pct": null,
+     "eta_seconds": 1.8
+    },
+    "STAGE_2_ACTIVE_PREPASS": {
+     "state": "PENDING",
+     "stage_progress_pct": 0.0,
+     "active_ranges_count": null,
+     "verified_target_frames": null,
+     "skipped_frames_pct": null,
+     "eta_seconds": null
+    },
+    "STAGE_3_MAIN_SWAP": {
+     "state": "PENDING",
+     "stage_progress_pct": 0.0,
+     "active_ranges_count": null,
+     "verified_target_frames": null,
+     "skipped_frames_pct": null,
+     "eta_seconds": null
+    }
+   }
+  },
+  {
+   "t": 74.42,
+   "stage": "STAGE_1_SPARSE_PRESCAN",
+   "stages": {
+    "STAGE_1_SPARSE_PRESCAN": {
+     "state": "RUNNING",
+     "stage_progress_pct": 91.8,
+     "active_ranges_count": null,
+     "verified_target_frames": null,
+     "skipped_frames_pct": null,
+     "eta_seconds": 0.6
+    },
+    "STAGE_2_ACTIVE_PREPASS": {
+     "state": "PENDING",
+     "stage_progress_pct": 0.0,
+     "active_ranges_count": null,
+     "verified_target_frames": null,
+     "skipped_frames_pct": null,
+     "eta_seconds": null
+    },
+    "STAGE_3_MAIN_SWAP": {
+     "state": "PENDING",
+     "stage_progress_pct": 0.0,
+     "active_ranges_count": null,
+     "verified_target_frames": null,
+     "skipped_frames_pct": null,
+     "eta_seconds": null
+    }
+   }
+  },
+  {
+   "t": 74.68,
+   "stage": "STAGE_2_ACTIVE_PREPASS",
+   "stages": {
+    "STAGE_1_SPARSE_PRESCAN": {
+     "state": "DONE",
+     "stage_progress_pct": 100.0,
+     "active_ranges_count": 1,
+     "verified_target_frames": null,
+     "skipped_frames_pct": 37.1,
+     "eta_seconds": 0.0
+    },
+    "STAGE_2_ACTIVE_PREPASS": {
+     "state": "RUNNING",
+     "stage_progress_pct": null,
+     "active_ranges_count": 1,
+     "verified_target_frames": null,
+     "skipped_frames_pct": 37.1,
+     "eta_seconds": null
+    },
+    "STAGE_3_MAIN_SWAP": {
+     "state": "PENDING",
+     "stage_progress_pct": 0.0,
+     "active_ranges_count": 1,
+     "verified_target_frames": null,
+     "skipped_frames_pct": 37.1,
+     "eta_seconds": null
+    }
+   }
+  },
+  {
+   "t": 75.18,
+   "stage": "STAGE_2_ACTIVE_PREPASS",
+   "stages": {
+    "STAGE_1_SPARSE_PRESCAN": {
+     "state": "DONE",
+     "stage_progress_pct": 100.0,
+     "active_ranges_count": 1,
+     "verified_target_frames": null,
+     "skipped_frames_pct": 37.1,
+     "eta_seconds": 0.0
+    },
+    "STAGE_2_ACTIVE_PREPASS": {
+     "state": "RUNNING",
+     "stage_progress_pct": 0.7,
+     "active_ranges_count": 1,
+     "verified_target_frames": null,
+     "skipped_frames_pct": 37.1,
+     "eta_seconds": 94.3
+    },
+    "STAGE_3_MAIN_SWAP": {
+     "state": "PENDING",
+     "stage_progress_pct": 0.0,
+     "active_ranges_count": 1,
+     "verified_target_frames": null,
+     "skipped_frames_pct": 37.1,
+     "eta_seconds": null
+    }
+   }
+  },
+  {
+   "t": 75.69,
+   "stage": "STAGE_2_ACTIVE_PREPASS",
+   "stages": {
+    "STAGE_1_SPARSE_PRESCAN": {
+     "state": "DONE",
+     "stage_progress_pct": 100.0,
+     "active_ranges_count": 1,
+     "verified_target_frames": null,
+     "skipped_frames_pct": 37.1,
+     "eta_seconds": 0.0
+    },
+    "STAGE_2_ACTIVE_PREPASS": {
+     "state": "RUNNING",
+     "stage_progress_pct": 19.9,
+     "active_ranges_count": 1,
+     "verified_target_frames": null,
+     "skipped_frames_pct": 37.1,
+     "eta_seconds": 4.6
+    },
+    "STAGE_3_MAIN_SWAP": {
+     "state": "PENDING",
+     "stage_progress_pct": 0.0,
+     "active_ranges_count": 1,
+     "verified_target_frames": null,
+     "skipped_frames_pct": 37.1,
+     "eta_seconds": null
+    }
+   }
+  },
+  {
+   "t": 75.94,
+   "stage": "STAGE_2_ACTIVE_PREPASS",
+   "stages": {
+    "STAGE_1_SPARSE_PRESCAN": {
+     "state": "DONE",
+     "stage_progress_pct": 100.0,
+     "active_ranges_count": 1,
+     "verified_target_frames": null,
+     "skipped_frames_pct": 37.1,
+     "eta_seconds": 0.0
+    },
+    "STAGE_2_ACTIVE_PREPASS": {
+     "state": "RUNNING",
+     "stage_progress_pct": 33.1,
+     "active_ranges_count": 1,
+     "verified_target_frames": null,
+     "skipped_frames_pct": 37.1,
+     "eta_seconds": 2.8
+    },
+    "STAGE_3_MAIN_SWAP": {
+     "state": "PENDING",
+     "stage_progress_pct": 0.0,
+     "active_ranges_count": 1,
+     "verified_target_frames": null,
+     "skipped_frames_pct": 37.1,
+     "eta_seconds": null
+    }
+   }
+  },
+  {
+   "t": 76.19,
+   "stage": "STAGE_2_ACTIVE_PREPASS",
+   "stages": {
+    "STAGE_1_SPARSE_PRESCAN": {
+     "state": "DONE",
+     "stage_progress_pct": 100.0,
+     "active_ranges_count": 1,
+     "verified_target_frames": null,
+     "skipped_frames_pct": 37.1,
+     "eta_seconds": 0.0
+    },
+    "STAGE_2_ACTIVE_PREPASS": {
+     "state": "RUNNING",
+     "stage_progress_pct": 46.4,
+     "active_ranges_count": 1,
+     "verified_target_frames": null,
+     "skipped_frames_pct": 37.1,
+     "eta_seconds": 1.9
+    },
+    "STAGE_3_MAIN_SWAP": {
+     "state": "PENDING",
+     "stage_progress_pct": 0.0,
+     "active_ranges_count": 1,
+     "verified_target_frames": null,
+     "skipped_frames_pct": 37.1,
+     "eta_seconds": null
+    }
+   }
+  },
+  {
+   "t": 76.44,
+   "stage": "STAGE_2_ACTIVE_PREPASS",
+   "stages": {
+    "STAGE_1_SPARSE_PRESCAN": {
+     "state": "DONE",
+     "stage_progress_pct": 100.0,
+     "active_ranges_count": 1,
+     "verified_target_frames": null,
+     "skipped_frames_pct": 37.1,
+     "eta_seconds": 0.0
+    },
+    "STAGE_2_ACTIVE_PREPASS": {
+     "state": "RUNNING",
+     "stage_progress_pct": 53.0,
+     "active_ranges_count": 1,
+     "verified_target_frames": null,
+     "skipped_frames_pct": 37.1,
+     "eta_seconds": 1.7
+    },
+    "STAGE_3_MAIN_SWAP": {
+     "state": "PENDING",
+     "stage_progress_pct": 0.0,
+     "active_ranges_count": 1,
+     "verified_target_frames": null,
+     "skipped_frames_pct": 37.1,
+     "eta_seconds": null
+    }
+   }
+  },
+  {
+   "t": 76.7,
+   "stage": "STAGE_2_ACTIVE_PREPASS",
+   "stages": {
+    "STAGE_1_SPARSE_PRESCAN": {
+     "state": "DONE",
+     "stage_progress_pct": 100.0,
+     "active_ranges_count": 1,
+     "verified_target_frames": null,
+     "skipped_frames_pct": 37.1,
+     "eta_seconds": 0.0
+    },
+    "STAGE_2_ACTIVE_PREPASS": {
+     "state": "RUNNING",
+     "stage_progress_pct": 66.2,
+     "active_ranges_count": 1,
+     "verified_target_frames": null,
+     "skipped_frames_pct": 37.1,
+     "eta_seconds": 1.1
+    },
+    "STAGE_3_MAIN_SWAP": {
+     "state": "PENDING",
+     "stage_progress_pct": 0.0,
+     "active_ranges_count": 1,
+     "verified_target_frames": null,
+     "skipped_frames_pct": 37.1,
+     "eta_seconds": null
+    }
+   }
+  },
+  {
+   "t": 76.95,
+   "stage": "STAGE_2_ACTIVE_PREPASS",
+   "stages": {
+    "STAGE_1_SPARSE_PRESCAN": {
+     "state": "DONE",
+     "stage_progress_pct": 100.0,
+     "active_ranges_count": 1,
+     "verified_target_frames": null,
+     "skipped_frames_pct": 37.1,
+     "eta_seconds": 0.0
+    },
+    "STAGE_2_ACTIVE_PREPASS": {
+     "state": "RUNNING",
+     "stage_progress_pct": 72.8,
+     "active_ranges_count": 1,
+     "verified_target_frames": null,
+     "skipped_frames_pct": 37.1,
+     "eta_seconds": 0.9
+    },
+    "STAGE_3_MAIN_SWAP": {
+     "state": "PENDING",
+     "stage_progress_pct": 0.0,
+     "active_ranges_count": 1,
+     "verified_target_frames": null,
+     "skipped_frames_pct": 37.1,
+     "eta_seconds": null
+    }
+   }
+  },
+  {
+   "t": 77.21,
+   "stage": "STAGE_2_ACTIVE_PREPASS",
+   "stages": {
+    "STAGE_1_SPARSE_PRESCAN": {
+     "state": "DONE",
+     "stage_progress_pct": 100.0,
+     "active_ranges_count": 1,
+     "verified_target_frames": null,
+     "skipped_frames_pct": 37.1,
+     "eta_seconds": 0.0
+    },
+    "STAGE_2_ACTIVE_PREPASS": {
+     "state": "RUNNING",
+     "stage_progress_pct": 86.1,
+     "active_ranges_count": 1,
+     "verified_target_frames": null,
+     "skipped_frames_pct": 37.1,
+     "eta_seconds": 0.4
+    },
+    "STAGE_3_MAIN_SWAP": {
+     "state": "PENDING",
+     "stage_progress_pct": 0.0,
+     "active_ranges_count": 1,
+     "verified_target_frames": null,
+     "skipped_frames_pct": 37.1,
+     "eta_seconds": null
+    }
+   }
+  },
+  {
+   "t": 77.48,
+   "stage": "STAGE_2_ACTIVE_PREPASS",
+   "stages": {
+    "STAGE_1_SPARSE_PRESCAN": {
+     "state": "DONE",
+     "stage_progress_pct": 100.0,
+     "active_ranges_count": 1,
+     "verified_target_frames": null,
+     "skipped_frames_pct": 37.1,
+     "eta_seconds": 0.0
+    },
+    "STAGE_2_ACTIVE_PREPASS": {
+     "state": "RUNNING",
+     "stage_progress_pct": 99.3,
+     "active_ranges_count": 1,
+     "verified_target_frames": null,
+     "skipped_frames_pct": 37.1,
+     "eta_seconds": 0.0
+    },
+    "STAGE_3_MAIN_SWAP": {
+     "state": "PENDING",
+     "stage_progress_pct": 0.0,
+     "active_ranges_count": 1,
+     "verified_target_frames": null,
+     "skipped_frames_pct": 37.1,
+     "eta_seconds": null
+    }
+   }
+  },
+  {
+   "t": 78.01,
+   "stage": "STAGE_3_MAIN_SWAP",
+   "stages": {
+    "STAGE_1_SPARSE_PRESCAN": {
+     "state": "DONE",
+     "stage_progress_pct": 100.0,
+     "active_ranges_count": 1,
+     "verified_target_frames": 23,
+     "skipped_frames_pct": 37.1,
+     "eta_seconds": 0.0
+    },
+    "STAGE_2_ACTIVE_PREPASS": {
+     "state": "DONE",
+     "stage_progress_pct": 100.0,
+     "active_ranges_count": 1,
+     "verified_target_frames": 23,
+     "skipped_frames_pct": 37.1,
+     "eta_seconds": 0.0
+    },
+    "STAGE_3_MAIN_SWAP": {
+     "state": "RUNNING",
+     "stage_progress_pct": 0.0,
+     "active_ranges_count": 1,
+     "verified_target_frames": 23,
+     "skipped_frames_pct": 37.1,
+     "eta_seconds": null
+    }
+   }
+  },
+  {
+   "t": 83.63,
+   "stage": null,
+   "stages": {
+    "STAGE_1_SPARSE_PRESCAN": {
+     "state": "DONE",
+     "stage_progress_pct": 100.0,
+     "active_ranges_count": 1,
+     "verified_target_frames": 23,
+     "skipped_frames_pct": 37.1,
+     "eta_seconds": 0.0
+    },
+    "STAGE_2_ACTIVE_PREPASS": {
+     "state": "DONE",
+     "stage_progress_pct": 100.0,
+     "active_ranges_count": 1,
+     "verified_target_frames": 23,
+     "skipped_frames_pct": 37.1,
+     "eta_seconds": 0.0
+    },
+    "STAGE_3_MAIN_SWAP": {
+     "state": "DONE",
+     "stage_progress_pct": 100.0,
+     "active_ranges_count": 1,
+     "verified_target_frames": 23,
+     "skipped_frames_pct": 37.1,
+     "eta_seconds": 0.0
+    }
+   }
+  }
+ ],
+ "final": {
+  "stage": null,
+  "stages": {
+   "STAGE_1_SPARSE_PRESCAN": {
+    "state": "DONE",
+    "stage_progress_pct": 100.0,
+    "active_ranges_count": 1,
+    "verified_target_frames": 23,
+    "skipped_frames_pct": 37.1,
+    "eta_seconds": 0.0
+   },
+   "STAGE_2_ACTIVE_PREPASS": {
+    "state": "DONE",
+    "stage_progress_pct": 100.0,
+    "active_ranges_count": 1,
+    "verified_target_frames": 23,
+    "skipped_frames_pct": 37.1,
+    "eta_seconds": 0.0
+   },
+   "STAGE_3_MAIN_SWAP": {
+    "state": "DONE",
+    "stage_progress_pct": 100.0,
+    "active_ranges_count": 1,
+    "verified_target_frames": 23,
+    "skipped_frames_pct": 37.1,
+    "eta_seconds": 0.0
+   }
+  }
+ }
+}

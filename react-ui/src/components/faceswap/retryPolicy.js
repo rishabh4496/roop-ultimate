@@ -63,3 +63,45 @@ export function createFailureTracker({ maxFailures = MAX_FAILURES } = {}) {
     reset() { key = null; count = 0; },
   };
 }
+
+// ── A busy backend is not a failing one ───────────────────────────────────
+//
+// While the pipeline's pre-pass (Stage 1 sparse pre-scan, Stage 2 active-range pre-pass) has the GPU
+// flat out, `/api/target/preview*` answers an UNCACHED frame with a fast
+// `503 {busy: true, stage, retry_after_ms}` + `Retry-After` instead of queueing a seek behind the
+// detectors (api._preview_busy_response). That is the backend saying "ask again in N ms", so it must
+// not spend the failure budget above: three of those would exhaust it in 1.75 s and put "Frame
+// unavailable" over a perfectly healthy render. A busy refusal waits as long as it was told to
+// (clamped, so a bad hint can neither hammer nor park the requester) and costs nothing.
+export const BUSY_MIN_MS = 250;
+export const BUSY_MAX_MS = 5000;
+export const BUSY_DEFAULT_MS = 1000;
+
+const clampBusy = (ms) => Math.min(BUSY_MAX_MS, Math.max(BUSY_MIN_MS, ms));
+
+/**
+ * The wait a 503 asked for: the body's `retry_after_ms`, else the `Retry-After` header (seconds),
+ * else a default, clamped to [BUSY_MIN_MS, BUSY_MAX_MS]. Never NaN.
+ */
+export function busyRetryMs(bodyMs, headerSeconds) {
+  const fromBody = Number(bodyMs);
+  if (Number.isFinite(fromBody) && fromBody > 0) return clampBusy(fromBody);
+  const fromHeader = Number(headerSeconds);
+  if (Number.isFinite(fromHeader) && fromHeader > 0) return clampBusy(fromHeader * 1000);
+  return BUSY_DEFAULT_MS;
+}
+
+/** The Error a frame request rejects with for a non-2xx answer; `busy` marks "retry later". */
+export function httpFailure(status, { busy = false, retryAfterMs = null } = {}) {
+  return Object.assign(new Error(`HTTP ${status}`), {
+    status, busy: !!busy, retryAfterMs: busy ? busyRetryMs(retryAfterMs) : null,
+  });
+}
+
+/** True for a refusal that asked the client to come back later (not a failure). */
+export const isBusy = (err) => !!err && err.busy === true;
+
+/** How long to wait before asking again after a busy refusal, or null when `err` is not one. */
+export function busyDelay(err) {
+  return isBusy(err) ? busyRetryMs(err.retryAfterMs) : null;
+}

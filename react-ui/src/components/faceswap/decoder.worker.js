@@ -31,7 +31,19 @@ self.onmessage = async (e) => {
   inFlight.set(id, ctrl);
   try {
     const res = await fetch(url, { signal: ctrl.signal, credentials: 'same-origin' });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (!res.ok) {
+      // A 503 that carries a retry hint is the backend being busy (pre-pass burst) or still starting:
+      // pass the hint on so the requester can wait as told instead of counting a failure.
+      let body = null;
+      if (res.status === 503) { try { body = await res.json(); } catch { body = null; } }
+      const header = res.headers.get('retry-after');
+      throw Object.assign(new Error(`HTTP ${res.status}`), {
+        status: res.status,
+        busy: res.status === 503 && !!(body?.busy || body?.retry_after_ms || header),
+        retryAfterMs: body?.retry_after_ms ?? null,
+        retryAfterHeader: header,
+      });
+    }
     const blob = await res.blob();
     if (ctrl.signal.aborted) throw new DOMException('aborted', 'AbortError');
     const bitmap = await createImageBitmap(blob);
@@ -45,6 +57,10 @@ self.onmessage = async (e) => {
       ok: false,
       aborted: err?.name === 'AbortError',
       message: String(err?.message || err),
+      status: err?.status ?? null,
+      busy: err?.busy === true,
+      retryAfterMs: err?.retryAfterMs ?? null,
+      retryAfterHeader: err?.retryAfterHeader ?? null,
     });
   } finally {
     inFlight.delete(id);

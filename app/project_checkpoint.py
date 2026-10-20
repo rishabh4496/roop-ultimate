@@ -120,17 +120,30 @@ def file_sha256(path: str, chunk_size: int = 1024 * 1024) -> str:
     return digest.hexdigest()
 
 
-def file_identity(path: str, precomputed_sha256: str = "") -> dict:
-    """Return an identity that detects replacement, edits, and truncation."""
+def file_identity(path: str, precomputed_sha256: str = "", defer_hash: bool = False) -> dict:
+    """Return an identity that detects replacement, edits, and truncation.
+
+    `defer_hash` is for a caller on an HTTP request thread: SHA-256 of a multi-GB target costs
+    seconds (0.63 ms/MB warm on the dev SSD: 1.3 s for 2 GB, the React client's deadline is 15 s
+    and the stage budget for the response is 200 ms). The identity is returned with
+    `sha256_pending: True` and size + mtime_ns - enough to catch a replaced or truncated file - and
+    `complete_hashes` fills the digest in on the worker thread before the render starts."""
     absolute = os.path.abspath(os.path.expanduser(str(path)))
     stat = os.stat(absolute)
-    return {
+    identity = {
         "path": absolute,
         "name": os.path.basename(absolute),
         "size": int(stat.st_size),
         "mtime_ns": int(stat.st_mtime_ns),
-        "sha256": str(precomputed_sha256).strip() if precomputed_sha256 else file_sha256(absolute),
     }
+    if precomputed_sha256:
+        identity["sha256"] = str(precomputed_sha256).strip()
+    elif defer_hash:
+        identity["sha256"] = ""
+        identity["sha256_pending"] = True
+    else:
+        identity["sha256"] = file_sha256(absolute)
+    return identity
 
 
 def _canonical(value: Any) -> str:
@@ -349,24 +362,110 @@ def update_checkpoint(project_id: str, *, safe_frame: int, next_frame: int,
     return save(record)
 
 
-def _same_file(want: Mapping[str, Any], reasons: list[str], label: str) -> None:
+def complete_hashes(project_id: str) -> dict | None:
+    """Fill in every `sha256_pending` digest of a project. Worker thread only (it reads whole files).
+
+    A file that changed since the identity was taken (size or mtime_ns differs) is NOT hashed into the
+    record: the record keeps the old size/mtime, so `validate` reports it as changed instead of
+    blessing the new bytes."""
+    try:
+        record = load(project_id)
+    except (OSError, ValueError, json.JSONDecodeError):
+        return None
+    inputs = record.get("inputs") or {}
+    pending = [item for item in list(inputs.get("sources") or []) + [inputs.get("target") or {}]
+               if item.get("sha256_pending")]
+    if not pending:
+        return record
+    for item in pending:
+        path = item.get("path")
+        try:
+            current = os.stat(path)
+            if (int(current.st_size) != item.get("size")
+                    or int(current.st_mtime_ns) != item.get("mtime_ns")):
+                continue
+            item["sha256"] = file_sha256(path)
+            item.pop("sha256_pending", None)
+        except OSError:
+            continue
+    return save(record)
+
+
+def _same_file(want: Mapping[str, Any], reasons: list[str], label: str, quick: bool = False) -> None:
+    """Compare a recorded file identity with the file on disk.
+
+    `quick` is for a caller on an HTTP request thread: the SHA-256 of a multi-GB target or partial
+    output is seconds of disk reads (the React client's deadline is 15 s; the budget for a start/resume
+    response is 200 ms), so it compares the SIZE only. The digests are then re-checked by
+    `finalize_inputs` on the worker before the render touches the files, so a same-size edit is still
+    refused - just by the job, with the reason, instead of by the request."""
     path = want.get("path")
     if not path or not os.path.isfile(path):
         reasons.append(f"{label} is missing: {path or 'no path recorded'}")
         return
     try:
-        actual = file_identity(path)
+        if quick:
+            stat = os.stat(path)
+            actual = {"size": int(stat.st_size), "mtime_ns": int(stat.st_mtime_ns)}
+        else:
+            actual = file_identity(path)
     except OSError as exc:
         reasons.append(f"{label} cannot be read: {exc}")
         return
-    for key in ("size", "sha256"):
+    # A digest still pending (the process died between the response and the worker's first step) is
+    # judged on size + mtime_ns: weaker than a digest, but it is all that was ever recorded.
+    if want.get("sha256_pending"):
+        keys = ("size", "mtime_ns")
+    else:
+        keys = ("size",) if quick else ("size", "sha256")
+    for key in keys:
         if actual.get(key) != want.get(key):
             reasons.append(f"{label} changed ({key} mismatch)")
             break
 
 
+def _input_files(record: Mapping[str, Any]):
+    inputs = record.get("inputs") or {}
+    for index, source in enumerate(inputs.get("sources") or []):
+        yield f"source {index + 1}", source
+    yield "target", inputs.get("target") or {}
+
+
+def _partial_files(record: Mapping[str, Any]):
+    manifest_identity = (record.get("checkpoint") or {}).get("manifest_identity")
+    if manifest_identity:
+        yield "checkpoint manifest", manifest_identity
+    for item in (record.get("partial_output") or {}).get("files") or []:
+        yield f"checkpoint output {item.get('name') or item.get('path')}", item
+
+
+def _labelled_files(record: Mapping[str, Any]):
+    yield from _input_files(record)
+    yield from _partial_files(record)
+
+
+def finalize_inputs(project_id: str) -> list[str]:
+    """Worker-thread step before a render touches its files: fill pending digests, verify the rest.
+
+    Pairs with `validate(..., quick=True)` on the request thread. Files whose digest was just computed
+    are not hashed a second time. Returns the reasons a recorded file no longer matches (empty = fine)."""
+    try:
+        record = load(project_id)
+    except (OSError, ValueError, json.JSONDecodeError):
+        return [f"project {project_id} could not be read"]
+    pending = {item.get("path") for _, item in _labelled_files(record) if item.get("sha256_pending")}
+    if pending:
+        complete_hashes(project_id)
+    reasons: list[str] = []
+    for label, item in _labelled_files(record):
+        if item.get("sha256_pending") or item.get("path") in pending:
+            continue
+        _same_file(item, reasons, label)
+    return reasons
+
+
 def validate(record: Mapping[str, Any], cfg: Any, current_payload: Mapping[str, Any] | None = None,
-             check_partial: bool = True) -> list[str]:
+             check_partial: bool = True, quick: bool = False) -> list[str]:
     reasons = []
     if record.get("schema_version") != PROJECT_SCHEMA_VERSION:
         reasons.append("project checkpoint schema is not supported by this application")
@@ -375,10 +474,8 @@ def validate(record: Mapping[str, Any], cfg: Any, current_payload: Mapping[str, 
         if compatibility.get(key) != value:
             reasons.append(f"incompatible checkpoint {key}")
 
-    inputs = record.get("inputs") or {}
-    for index, source in enumerate(inputs.get("sources") or []):
-        _same_file(source, reasons, f"source {index + 1}")
-    _same_file(inputs.get("target") or {}, reasons, "target")
+    for label, item in _input_files(record):
+        _same_file(item, reasons, label, quick=quick)
 
     saved_payload = (record.get("settings") or {}).get("payload") or {}
     payload = current_payload if current_payload is not None else saved_payload
@@ -420,12 +517,8 @@ def validate(record: Mapping[str, Any], cfg: Any, current_payload: Mapping[str, 
             reasons.append(f"output configuration '{key}' differs from the checkpoint")
 
     if check_partial:
-        manifest_identity = (record.get("checkpoint") or {}).get("manifest_identity")
-        if manifest_identity:
-            _same_file(manifest_identity, reasons, "checkpoint manifest")
-        partial = record.get("partial_output") or {}
-        for item in partial.get("files") or []:
-            _same_file(item, reasons, f"checkpoint output {item.get('name') or item.get('path')}")
+        for label, item in _partial_files(record):
+            _same_file(item, reasons, label, quick=quick)
     return reasons
 
 
@@ -450,7 +543,7 @@ def summarize(record: Mapping[str, Any], validation: list[str] | None = None) ->
 
 __all__ = [
     "COMPATIBILITY", "PROJECT_SCHEMA_VERSION", "PROJECTS_DIR", "STATES",
-    "file_identity", "file_sha256", "fingerprint", "list_projects", "load",
+    "complete_hashes", "file_identity", "finalize_inputs", "file_sha256", "fingerprint", "list_projects", "load",
     "new_project", "normalize_provider", "project_path", "runtime_identity",
     "save", "summarize",
     "update_checkpoint", "update_runtime", "update_state", "validate",

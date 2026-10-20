@@ -3,7 +3,7 @@ import { API } from '../../api';
 import { frameSocket } from '../../transport/frameSocket';
 import { UI_HZ } from '../../store/telemetryStore';
 import { nextNeededFrame } from './playbackWindow';
-import { createFailureTracker, isAbort } from './retryPolicy';
+import { busyDelay, createFailureTracker, httpFailure, isAbort } from './retryPolicy';
 
 // The whole playback surface of the Face Swap timeline: the play/loop/rate
 // controls' state, the rolling frame buffer behind them, and the rAF clock that
@@ -268,7 +268,11 @@ export default function usePlaybackBuffer({ frame, setFrame, selTarget, maxFrame
       };
       fetch(`${API}/api/target/preview_seq?index=${idx}&start=${fr}&count=${n}&width=960`,
         { signal: ctrl.signal })
-        .then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error('seq failed'))))
+        .then((r) => (r.ok ? r.arrayBuffer() : r.json().catch(() => null).then((body) => Promise.reject(
+          httpFailure(r.status, {
+            busy: r.status === 503 && !!(body?.busy || body?.retry_after_ms || r.headers.get('retry-after')),
+            retryAfterMs: body?.retry_after_ms ?? (Number(r.headers.get('retry-after')) * 1000 || null),
+          })))))
         .then((buf) => {
           if (cancelled) return;
           const parts = splitChunk(buf);
@@ -288,6 +292,9 @@ export default function usePlaybackBuffer({ frame, setFrame, selTarget, maxFrame
           // re-requested by pump() -- but only after the backoff, and only three
           // times.
           if (cancelled || ctrl.signal.aborted || isAbort(err)) return;
+          // A busy refusal (pre-pass burst) waits as told and is not a failure.
+          const busyMs = busyDelay(err);
+          if (busyMs !== null) { chunkNotBefore = performance.now() + busyMs; return; }
           const f = chunkFailures.fail('chunk');
           if (f.exhausted) {
             setPlayError(Object.assign(new Error('Playback frames unavailable'), {

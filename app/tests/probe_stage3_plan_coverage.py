@@ -106,7 +106,9 @@ def main():
                swap_frames_in_plan=len(in_plan), swap_frames_NOT_in_plan=len(lost),
                faces_on_frames_not_in_plan=sum(swapped[k] for k in lost),
                plan_frames_without_a_swap=len(set(plan) - set(swapped)),
-               lost_frames_sample=lost[:40], detector_calls_after_plan=CALLS)
+               lost_frames_sample=lost[:40], detector_calls_after_plan=CALLS,
+               # full sets, so a coarser unit (a GOP slice) can be scored offline
+               plan_frame_list=sorted(plan), swapped_frame_list=sorted(swapped))
     print('PROBE', json.dumps(res))
     if args.out:
         json.dump(res, open(args.out, 'w'), indent=1)

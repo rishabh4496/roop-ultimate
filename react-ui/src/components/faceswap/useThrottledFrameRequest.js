@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { decodeFrame, releaseFrame } from './frameDecoder';
-import { createFailureTracker, isAbort } from './retryPolicy';
+import { busyDelay, createFailureTracker, isAbort } from './retryPolicy';
 
 // ── One frame request at a time, throttled, and cancelled the moment it is
 //    superseded ────────────────────────────────────────────────────────────
@@ -113,6 +113,13 @@ export default function useThrottledFrameRequest(url, {
       // frame up rather than blanking, and schedules the next attempt later.
       if (isAbort(err) || ctrl.signal.aborted || !aliveRef.current) return;
       if (wantedRef.current !== src) return;      // the user has moved on
+      // "Busy" (the pre-pass has the GPU) is the backend asking for time, not a failure: wait as long
+      // as it said, keep the frame on screen and keep the failure budget for real errors.
+      const busyMs = busyDelay(err);
+      if (busyMs !== null) {
+        notBeforeRef.current = performance.now() + busyMs;
+        return;
+      }
       const f = failuresRef.current.fail(src);
       if (f.exhausted) {
         setError(Object.assign(new Error('Frame unavailable'), {

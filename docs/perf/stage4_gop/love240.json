@@ -1,0 +1,70 @@
+{
+ "clip": "love240.mp4",
+ "coverage": {
+  "frames": 240,
+  "gops": 3,
+  "plan_frames": 38,
+  "swap_frames": 27,
+  "swap_frames_not_in_plan": 2,
+  "zero_plan_gops": 1,
+  "zero_plan_frames": 26,
+  "swaps_inside_zero_plan_gops": 0,
+  "per_gop": [
+   {
+    "start": 0,
+    "frames": 156,
+    "plan": 12,
+    "swapped": 14
+   },
+   {
+    "start": 156,
+    "frames": 58,
+    "plan": 26,
+    "swapped": 13
+   },
+   {
+    "start": 214,
+    "frames": 26,
+    "plan": 0,
+    "swapped": 0
+   }
+  ]
+ },
+ "splice": {
+  "source_codec": "h264",
+  "copied_frames": 156,
+  "reencoded_frames": 58,
+  "rows": [
+   {
+    "encoder": "h264_nvenc",
+    "concat_rc": 0,
+    "concat_stderr": "",
+    "joined_frames": 214,
+    "wanted_frames": 214,
+    "copied_half_identical": true,
+    "reencoded_half_identical": true,
+    "decode_stderr": ""
+   },
+   {
+    "encoder": "hevc_nvenc",
+    "concat_rc": 0,
+    "concat_stderr": "",
+    "joined_frames": 156,
+    "wanted_frames": 214,
+    "copied_half_identical": true,
+    "reencoded_half_identical": false,
+    "decode_stderr": ""
+   },
+   {
+    "encoder": "libx264",
+    "concat_rc": 0,
+    "concat_stderr": "",
+    "joined_frames": 214,
+    "wanted_frames": 214,
+    "copied_half_identical": true,
+    "reencoded_half_identical": true,
+    "decode_stderr": ""
+   }
+  ]
+ }
+}

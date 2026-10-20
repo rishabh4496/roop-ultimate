@@ -246,6 +246,58 @@ is `POST /api/settings/benchmark_threads` with `{"profile":"quick"}` or
 Benchmark reporting rules and the Python-only telemetry probe are in
 [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md).
 
+#### Three-stage progress and busy previews
+
+A render runs up to three stages: `STAGE_1_SPARSE_PRESCAN` (only with
+`sparse_auto_range`), `STAGE_2_ACTIVE_PREPASS` (tracking/detection over the
+active ranges) and `STAGE_3_MAIN_SWAP`. Every `/ws/telemetry` frame carries
+`stage` (the one running, or `null`) and `stages`, one object per stage:
+`state` (`PENDING|RUNNING|DONE|SKIPPED|FAILED`), `stage_progress_pct`,
+`active_ranges_count`, `verified_target_frames`, `skipped_frames_pct` and
+`eta_seconds` (each `null` until known; `active_ranges_count` and
+`skipped_frames_pct` are the Stage 1 verdict, `verified_target_frames` the frames
+of the Stage 2 plan). An idle backend sends nothing.
+
+While Stage 1 or 2 owns the GPU, `GET /api/target/preview`, `/preview_grid` and
+`/preview_seq` answer a frame that is not already cached with a fast
+`503 {"busy": true, "stage": "...", "retry_after_ms": 1000}` plus `Retry-After`.
+Wait that long and ask again; a cached frame is still served. Starting or
+resuming a render (`POST /api/swap`, `/api/queue/start`, `/api/queue/resume`,
+`/api/projects/{id}/resume`) returns without reading the target file: checkpoint
+file checks on the request are size-only and the SHA-256 is completed or
+verified by the job itself before it touches the files.
+
+```javascript
+const ws = new WebSocket(`${baseUrl.replace('http', 'ws')}/ws/telemetry`)
+ws.onmessage = (e) => {
+  const t = JSON.parse(e.data)
+  const s = t.stage && t.stages[t.stage]
+  if (s) console.log(t.stage, s.stage_progress_pct, s.eta_seconds, s.skipped_frames_pct)
+}
+const r = await fetch(`${baseUrl}/api/target/preview?index=0&frame=120`)
+if (r.status === 503) setTimeout(retry, (await r.json()).retry_after_ms)
+```
+
+```python
+import json, websockets, requests   # pip install websockets requests
+
+async def watch(base_url):
+    async with websockets.connect(base_url.replace("http", "ws") + "/ws/telemetry") as ws:
+        async for message in ws:
+            t = json.loads(message)
+            if t.get("stage"):
+                print(t["stage"], t["stages"][t["stage"]])
+
+r = requests.get(f"{base_url}/api/target/preview", params={"index": 0, "frame": 120}, timeout=10)
+if r.status_code == 503:
+    print("busy:", r.json()["stage"], "retry in", r.json()["retry_after_ms"], "ms")
+```
+
+```bash
+curl -i "$BASE_URL/api/target/preview?index=0&frame=120"   # 503 + Retry-After while a pre-pass runs
+websocat "${BASE_URL/http/ws}/ws/telemetry"                 # frames with "stage" / "stages"
+```
+
 #### Multi-angle sources and timestamp-safe video
 
 Use **Build one multi-angle faceset from a folder** in the React source panel,

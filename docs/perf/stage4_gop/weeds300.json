@@ -1,0 +1,82 @@
+{
+ "clip": "weeds300.mp4",
+ "coverage": {
+  "frames": 300,
+  "gops": 5,
+  "plan_frames": 163,
+  "swap_frames": 160,
+  "swap_frames_not_in_plan": 0,
+  "zero_plan_gops": 2,
+  "zero_plan_frames": 107,
+  "swaps_inside_zero_plan_gops": 0,
+  "per_gop": [
+   {
+    "start": 0,
+    "frames": 55,
+    "plan": 55,
+    "swapped": 55
+   },
+   {
+    "start": 55,
+    "frames": 97,
+    "plan": 0,
+    "swapped": 0
+   },
+   {
+    "start": 152,
+    "frames": 74,
+    "plan": 44,
+    "swapped": 41
+   },
+   {
+    "start": 226,
+    "frames": 64,
+    "plan": 64,
+    "swapped": 64
+   },
+   {
+    "start": 290,
+    "frames": 10,
+    "plan": 0,
+    "swapped": 0
+   }
+  ]
+ },
+ "splice": {
+  "source_codec": "h264",
+  "copied_frames": 55,
+  "reencoded_frames": 97,
+  "rows": [
+   {
+    "encoder": "h264_nvenc",
+    "concat_rc": 0,
+    "concat_stderr": "",
+    "joined_frames": 152,
+    "wanted_frames": 152,
+    "copied_half_identical": true,
+    "reencoded_half_identical": true,
+    "decode_stderr": ""
+   },
+   {
+    "encoder": "hevc_nvenc",
+    "concat_rc": 0,
+    "concat_stderr": "",
+    "joined_frames": 55,
+    "wanted_frames": 152,
+    "copied_half_identical": true,
+    "reencoded_half_identical": false,
+    "decode_stderr": ""
+   },
+   {
+    "encoder": "libx264",
+    "concat_rc": 0,
+    "concat_stderr": "",
+    "joined_frames": 152,
+    "wanted_frames": 152,
+    "copied_half_identical": true,
+    "reencoded_half_identical": true,
+    "decode_stderr": ""
+   }
+  ]
+ }
+}

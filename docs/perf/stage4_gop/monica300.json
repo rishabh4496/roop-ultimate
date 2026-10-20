@@ -1,0 +1,64 @@
+{
+ "clip": "monica300.mp4",
+ "coverage": {
+  "frames": 300,
+  "gops": 2,
+  "plan_frames": 300,
+  "swap_frames": 300,
+  "swap_frames_not_in_plan": 0,
+  "zero_plan_gops": 0,
+  "zero_plan_frames": 0,
+  "swaps_inside_zero_plan_gops": 0,
+  "per_gop": [
+   {
+    "start": 0,
+    "frames": 176,
+    "plan": 176,
+    "swapped": 176
+   },
+   {
+    "start": 176,
+    "frames": 124,
+    "plan": 124,
+    "swapped": 124
+   }
+  ]
+ },
+ "splice": {
+  "source_codec": "h264",
+  "copied_frames": 176,
+  "reencoded_frames": 124,
+  "rows": [
+   {
+    "encoder": "h264_nvenc",
+    "concat_rc": 0,
+    "concat_stderr": "",
+    "joined_frames": 300,
+    "wanted_frames": 300,
+    "copied_half_identical": true,
+    "reencoded_half_identical": true,
+    "decode_stderr": ""
+   },
+   {
+    "encoder": "hevc_nvenc",
+    "concat_rc": 0,
+    "concat_stderr": "",
+    "joined_frames": 176,
+    "wanted_frames": 300,
+    "copied_half_identical": true,
+    "reencoded_half_identical": false,
+    "decode_stderr": "[h264 @ 0000021CFCC8AC40] missing picture in access unit with size 481\n[h264 @ 0000021CFCC8AC40] Invalid NAL unit size ("
+   },
+   {
+    "encoder": "libx264",
+    "concat_rc": 0,
+    "concat_stderr": "",
+    "joined_frames": 300,
+    "wanted_frames": 300,
+    "copied_half_identical": true,
+    "reencoded_half_identical": true,
+    "decode_stderr": ""
+   }
+  ]
+ }
+}

@@ -20,6 +20,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import {
   RETRY_DELAYS_MS, MAX_RETRIES, MAX_FAILURES, backoffDelay, createFailureTracker, isAbort,
+  BUSY_MIN_MS, BUSY_MAX_MS, BUSY_DEFAULT_MS, busyRetryMs, httpFailure, isBusy, busyDelay,
 } from '../src/components/faceswap/retryPolicy.js';
 
 let failures = 0;
@@ -91,6 +92,35 @@ console.log('── AbortError ────────────────�
     !isAbort(new Error('HTTP 500')) && !isAbort(new Error('decode failed')) && !isAbort(null) && !isAbort(undefined));
 }
 
+console.log('── busy backend (pre-pass burst) ──────────────────────────');
+{
+  ok('a 503 hint in the body wins and is used as given',
+    busyRetryMs(1500, 9) === 1500);
+  ok('without a body hint the Retry-After header (seconds) is used', busyRetryMs(undefined, 2) === 2000);
+  ok('no hint at all gets the default', busyRetryMs(null, null) === BUSY_DEFAULT_MS && busyRetryMs() === BUSY_DEFAULT_MS);
+  ok('a hint is clamped: a tiny one cannot hammer, a huge one cannot park the requester',
+    busyRetryMs(1) === BUSY_MIN_MS && busyRetryMs(10 * 60_000) === BUSY_MAX_MS && busyRetryMs(0, 600) === BUSY_MAX_MS);
+  ok('garbage hints never produce NaN', [NaN, 'x', -5, Infinity].every((v) => Number.isFinite(busyRetryMs(v, v))));
+  const busy = httpFailure(503, { busy: true, retryAfterMs: 1000 });
+  ok('a busy refusal is recognised and carries its wait',
+    isBusy(busy) && busy.status === 503 && busyDelay(busy) === 1000);
+  const real = httpFailure(500);
+  ok('a real HTTP error is NOT busy and has no wait', !isBusy(real) && busyDelay(real) === null && real.retryAfterMs === null);
+  ok('plain errors, aborts and null are not busy',
+    [new Error('decode failed'), new DOMException('aborted', 'AbortError'), null, undefined].every((e) => busyDelay(e) === null));
+  // The point of it: a backend that stays busy for a minute must not burn the failure budget.
+  const t = createFailureTracker();
+  let waited = 0;
+  for (let i = 0; i < 60; i++) {
+    const wait = busyDelay(busy);
+    if (wait === null) t.fail('frame');         // what the hook does for a real failure
+    else waited += wait;                        // ...and for a busy one: wait, count nothing
+  }
+  ok('60 consecutive busy refusals leave the failure budget untouched', t.count('frame') === 0 && !t.exhausted('frame'));
+  ok('...and the requester waited its told 1 s each time (about one request a second)', waited === 60_000);
+  ok('BUSY bounds are ordered', BUSY_MIN_MS < BUSY_DEFAULT_MS && BUSY_DEFAULT_MS < BUSY_MAX_MS);
+}
+
 console.log('── wiring ─────────────────────────────────────────────────');
 {
   const hook = src('useThrottledFrameRequest.js');
@@ -103,6 +133,8 @@ console.log('── wiring ─────────────────�
   ok('...waits out the backoff in drain()', hook.includes('notBeforeRef.current - now'));
   ok('...resets on a URL change and clears the backoff timer for the old URL',
     /wanted !== wantedRef\.current[\s\S]{0,400}failuresRef\.current\.reset\(\)[\s\S]{0,200}clearTimeout\(timerRef\.current\)/.test(hook));
+  ok('...a busy refusal waits as told and is not counted as a failure',
+    /busyDelay\(err\)[\s\S]{0,200}notBeforeRef\.current = performance\.now\(\) \+ busyMs;[\s\S]{0,40}return;[\s\S]{0,200}failuresRef\.current\.fail\(src\)/.test(hook));
   ok('...returns error and retry', /\berror,\n\s+\/\*\*[^]*?\bretry,\n\s*\};/.test(hook));
 
   const play = src('usePlaybackBuffer.js');
@@ -113,6 +145,14 @@ console.log('── wiring ─────────────────�
   ok('...the last failure stops playback and reports it',
     /f\.exhausted[\s\S]{0,300}setPlayError\([\s\S]{0,200}setIsPlaying\(false\)/.test(play));
   ok('...an aborted chunk is not a failure', play.includes('cancelled || ctrl.signal.aborted || isAbort(err)'));
+  ok('...a busy refusal sets the same backoff gate and is not counted',
+    /busyDelay\(err\)[\s\S]{0,160}chunkNotBefore = performance\.now\(\) \+ busyMs; return;[\s\S]{0,120}chunkFailures\.fail\('chunk'\)/.test(play));
+  ok('...the 503 body is parsed so the hint reaches the policy', play.includes('httpFailure(r.status'));
+  const worker = src('decoder.worker.js');
+  const facade = src('frameDecoder.js');
+  ok('the decoder worker forwards status, busy and the retry hint', /busy: res\.status === 503/.test(worker) && worker.includes('retryAfterMs: err?.retryAfterMs'));
+  ok('the facade rebuilds a typed busy error (worker and main-thread paths)',
+    facade.includes('httpFailure(status') && facade.includes('httpFailure(res.status'));
   ok('...a chunk that lands clears the streak', /chunkFailures\.reset\(\);\n\s+chunkNotBefore = 0;/.test(play));
 }
 

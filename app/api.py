@@ -57,6 +57,7 @@ from roop.ProcessEntry import ProcessEntry
 from roop import capture_seed
 from roop import segment_writer
 from roop import live_preview
+from roop import stage_telemetry as _stage_telemetry
 from roop import procmgr_runtime as _procmgr_runtime
 from roop import runtime_state as _runtime_state
 from roop.processing_request import (
@@ -191,6 +192,25 @@ def _render_active_response():
                    "share the GPU with it. The live view shows the render's own frames.",
         "render_active": True,
     })
+
+
+def _preview_busy_response(cached: bool = False):
+    """503 Busy for a frame request that would decode while Stage 1/2 owns the GPU burst.
+
+    Fast on purpose (no decode, no lock): the React frame requester (a786b33) reads `retry_after_ms`
+    and `Retry-After` and waits, instead of queueing a seek behind detectors running flat out. A frame
+    already in the encoded cache is served as usual (`cached=True` skips the refusal), so scrubbing back
+    over frames already shown keeps working through a pre-pass."""
+    if cached:
+        return None
+    stage = _stage_telemetry.busy_stage()
+    if stage is None:
+        return None
+    return JSONResponse(status_code=503, headers={"Retry-After": "1", "Cache-Control": "no-store"},
+                        content={"status": "busy", "busy": True, "stage": stage,
+                                 "retry_after_ms": 1000,
+                                 "message": "The pipeline is in its pre-pass (" + stage +
+                                            "); uncached frames resume when it ends."})
 
 
 def _configuration_initializing():
@@ -724,7 +744,7 @@ def _project_sources():
         if not path:
             raise ValueError(
                 f"source faceset {index + 1} has no reloadable file; save it to the faceset library first")
-        identity = _project_checkpoint.file_identity(path)
+        identity = _project_checkpoint.file_identity(path, defer_hash=True)
         # The person->source mapping is keyed by this id.  Restoring a
         # multi-face image without it re-created ids as the bare path, so the
         # saved mapping matched nothing and every person silently skipped.
@@ -810,7 +830,9 @@ def _create_processing_project(payload, job_id=None):
         raise ValueError("target is no longer loaded")
     entry = list_files_process[target_index]
     face_bank = _project_face_bank(entry.filename)
-    target = _project_checkpoint.file_identity(entry.filename)
+    # Digests are deferred: this runs on the /api/swap request thread, and SHA-256 of a long target is
+    # seconds of disk reads against a 200 ms response budget. `_run_swap` completes them first thing.
+    target = _project_checkpoint.file_identity(entry.filename, defer_hash=True)
     target["target_media_id"] = _ensure_target_media_id(entry)
     cfg = roop_globals.CFG
     start = int(getattr(entry, "startframe", 0) or 0)
@@ -962,11 +984,12 @@ def _checkpoint_segment(project_id, writer=None, frame_idx=None, manager=None):
         print(f"[Resume] project checkpoint failed: {exc}", flush=True)
 
 
-def _validate_processing_project(project_id, payload=None):
+def _validate_processing_project(project_id, payload=None, quick=False):
+    """`quick=True` for a request thread (size-only file checks); the worker re-verifies the digests."""
     record = _project_checkpoint.load(project_id)
     return _project_checkpoint.validate(
         record, roop_globals.CFG, current_payload=_checkpoint_payload(payload)
-        if payload is not None else None)
+        if payload is not None else None, quick=quick)
 
 
 def _set_processing_project_state(project_id, state_value, error=""):
@@ -2667,6 +2690,9 @@ def target_preview(request: Request, index: int = 0, frame: int = 1, width: int 
     if request.headers.get("if-none-match") == etag:
         return Response(status_code=304, headers=headers)
 
+    busy = _preview_busy_response(cached=_encoded_get(etag) is not None)
+    if busy is not None:
+        return busy
     _, data, media = _still(filename, frame, width, fmt, quality)
     if data is None:
         return JSONResponse(status_code=404, content={"message": "no frame"})
@@ -2713,6 +2739,10 @@ def target_preview_grid(index: int = 0, frames: str = "", width: int = 200,
         return JSONResponse(status_code=400, content={"message": "no frames"})
     wanted = wanted[:64]
     quality = max(30, min(int(quality), 95))
+    busy = _preview_busy_response(cached=all(
+        _encoded_get(_frame_etag(filename, f, width, "jpg", quality)) is not None for f in set(wanted)))
+    if busy is not None:
+        return busy
 
     encoded = {}
     for f in sorted(set(wanted)):
@@ -2756,6 +2786,9 @@ def target_preview_seq(index: int = 0, start: int = 1, count: int = 16,
 
     count = max(1, min(int(count), 64))
     quality = max(30, min(int(quality), 95))
+    busy = _preview_busy_response()
+    if busy is not None:
+        return busy
     parts = []
     for i in range(count):
         frame_img = get_video_frame(filename, start + i)
@@ -4957,6 +4990,16 @@ def _run_swap(payload):
         global _active_project_id
         _active_project_id = project_id
         if project_id:
+            # The request that started (or resumed) this run only compared sizes; the digests are
+            # filled in / verified here, on the worker, before any file is touched.
+            try:
+                changed = _project_checkpoint.finalize_inputs(project_id)
+            except Exception as exc:
+                _swallowed("api.py:finalize_inputs", exc, "project keeps size+mtime identity")
+                changed = []
+            if changed:
+                raise ValueError("project inputs changed since the checkpoint: " + "; ".join(changed))
+        if project_id:
             roop_globals._checkpoint_segment_callback = (
                 lambda writer, frame_idx=None, manager=None: _checkpoint_segment(
                     project_id, writer, frame_idx, manager))
@@ -4974,6 +5017,7 @@ def _run_swap(payload):
         # And the previous run's "time left", so this one's opening seconds fall back
         # to the UI's own estimate rather than inheriting a finished run's figure.
         _procmgr_runtime.reset_eta()
+        _stage_telemetry.reset()     # last run's stage report must not read as this run's
         _last_output.update({"path": "", "kind": ""})
         _last_output.update({"version": "", "source": None})
         _routes_output._output_source["path"] = ""
@@ -5362,6 +5406,7 @@ def _run_swap(payload):
         # raised before reaching it, clear here so a later terminal Ctrl-C doesn't
         # block in destroy() waiting on a batch that's no longer running.
         roop_globals.batch_active = False
+        _stage_telemetry.end_run(ok=not _progress.get("error"))
         _progress["processing"] = False
         _progress["paused"] = False
         _progress["pause_requested"] = False
@@ -6142,6 +6187,12 @@ def _telemetry_snapshot():
             fps = _avg_r
         if _now_r and not _progress.get('paused'):
             fps_now = _now_r
+    # The three-stage view (roop/stage_telemetry.py). Stage 3's counter is the one above, folded in
+    # here so the frame loop never writes it; constant while idle, so the change-only sampler stays quiet.
+    # Only the swap pass's own line ("Processing frame n / total ...") counts as Stage 3: the stage
+    # before it writes other text, and the fallback counters above are the previous stage's.
+    if processing and desc.startswith('Processing frame'):
+        _stage_telemetry.set_main_progress(done, total, eta)
     return {
         'processing': processing,
         'paused': bool(_progress.get('paused')),
@@ -6160,6 +6211,7 @@ def _telemetry_snapshot():
         'eta_s': eta,
         'started_at': started,
         'live_seq': live_preview.seq(),
+        **_stage_telemetry.snapshot(),
     }
 
 

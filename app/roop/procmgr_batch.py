@@ -787,8 +787,14 @@ class BatchProcessingMixin:
         self._active_ranges = None
         self._active_ranges_mask = None
         _sparse_active = bool(getattr(roop.globals, 'sparse_auto_range', False) and not is_awebp and source_video and os.path.isfile(source_video))
+        # Per-stage progress for /ws/telemetry (roop/stage_telemetry.py): written here, sampled by the web side.
+        from roop import stage_telemetry as _st
+        _st.begin_run(frame_count)
+        if not _sparse_active:
+            _st.skip(_st.STAGE_1_SPARSE_PRESCAN)
         if _sparse_active:
             print("\n[Pipeline] === Stage 1/3: Sparse Auto-Range Pre-Scan ===", flush=True)
+            _st.enter(_st.STAGE_1_SPARSE_PRESCAN)
             try:
                 from roop.sparse_range_scan import scan_active_ranges
                 target_faces = (
@@ -804,6 +810,7 @@ class BatchProcessingMixin:
                         delta = done - pbar.n
                         if delta > 0:
                             pbar.update(delta)
+                        _st.progress(_st.STAGE_1_SPARSE_PRESCAN, done, total)
 
                     ranges, mask, stats = scan_active_ranges(
                         source_video,
@@ -820,9 +827,13 @@ class BatchProcessingMixin:
                 self._active_ranges = ranges
                 self._active_ranges_mask = mask
                 self._active_ranges_stats = stats
+                _st.set_ranges(len(ranges) if ranges is not None else None,
+                               (stats or {}).get('active_frames'), (stats or {}).get('total_frames'))
+                _st.leave(_st.STAGE_1_SPARSE_PRESCAN)
                 print("[Pipeline] Sparse Auto-Range Pre-Scan complete.\n", flush=True)
             except Exception as e:
                 print(f"[SparseScan] Pre-scan failed ({e}); falling back to full-frame processing")
+                _st.leave(_st.STAGE_1_SPARSE_PRESCAN, ok=False)
                 self._active_ranges = None
                 self._active_ranges_mask = None
 
@@ -839,6 +850,10 @@ class BatchProcessingMixin:
         if _prepass_active:
             _stage_lbl = "2/3" if _sparse_active else "1/2"
             print(f"[Pipeline] === Stage {_stage_lbl}: Pre-Pass (Tracking & Detection) ===", flush=True)
+            _st.enter(_st.STAGE_2_ACTIVE_PREPASS)
+        else:
+            _st.skip(_st.STAGE_2_ACTIVE_PREPASS)
+        _prepass_failed = False
 
         if sam2_p is not None and not is_awebp:
             try:
@@ -882,6 +897,7 @@ class BatchProcessingMixin:
                 self._release_replayed_analysis(frame_count)
             except Exception as e:
                 print(f'[Temporal] detection pre-pass failed ({e}); using per-frame detection')
+                _prepass_failed = True
                 self._temporal_mode = False
                 self._temporal_faces = None
                 self.stage2_frame_plan = {}
@@ -897,16 +913,22 @@ class BatchProcessingMixin:
                 self._log_memory_stage('phase3:tracking-prepass-complete')
             except Exception as e:
                 print(f'[Track] identity pre-pass failed ({e}); using per-frame matching')
+                _prepass_failed = True
                 self._track_mode = False
                 self._log_memory_stage('phase3:tracking-prepass-fallback')
 
         if _prepass_active:
+            _plan = getattr(self, 'stage2_frame_plan', None)
+            # 0 is a finding (the pre-pass ran and verified no frame); unknown is only a failed pre-pass.
+            _st.set_verified(None if _prepass_failed else len(_plan or {}))
+            _st.leave(_st.STAGE_2_ACTIVE_PREPASS, ok=not _prepass_failed)
             print("[Pipeline] Pre-Pass complete.\n", flush=True)
 
         self._log_memory_stage('phase4:before-main-processing')
         _bp.set_phase('main')
         _main_lbl = "3/3" if (_sparse_active and _prepass_active) else ("2/2" if (_sparse_active or _prepass_active) else "Main")
         print(f"[Pipeline] === Stage {_main_lbl}: Main Processing ===", flush=True)
+        _st.enter(_st.STAGE_3_MAIN_SWAP, self.total_frames)
         # Live FPS + queue monitor (ROOP_PIPELINE_LOG_EVERY, default 100, 0 = off).
         # `_runtime_read/write_queue` are only (re)bound by the parallel-stab path
         # and survive between runs, so clear them or a threaded render following a
@@ -1072,6 +1094,7 @@ class BatchProcessingMixin:
             self._track_assignments = None
             self._track_source_map = None
             self._lipsync_audio = None
+            _st.leave(_st.STAGE_3_MAIN_SWAP, ok=sys.exc_info()[1] is None and self._writer_error is None)
             # release_face_analyser_aux() intentionally leaves a detector-only
             # object for the main pass. Do not let that reduced object escape
             # into post-run callers: clear the pool so the next analysis call

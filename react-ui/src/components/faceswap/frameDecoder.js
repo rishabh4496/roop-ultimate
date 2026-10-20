@@ -12,6 +12,8 @@
 // that a request the user has already moved past must stop costing anything —
 // including the decode, which is the expensive half on 4K footage.
 
+import { httpFailure, busyRetryMs } from './retryPolicy';
+
 let worker = null;
 let workerBroken = false;
 let seq = 0;
@@ -27,14 +29,16 @@ function getWorker() {
   try {
     worker = new Worker(new URL('./decoder.worker.js', import.meta.url), { type: 'module' });
     worker.onmessage = (e) => {
-      const { id, ok, bitmap, aborted, message } = e.data || {};
+      const { id, ok, bitmap, aborted, message, status, busy, retryAfterMs, retryAfterHeader } = e.data || {};
       const entry = pending.get(id);
       if (!entry) { if (bitmap) bitmap.close(); return; }   // aborted after send
       pending.delete(id);
       if (ok) entry.resolve(bitmap);
       else entry.reject(aborted
         ? new DOMException('aborted', 'AbortError')
-        : new Error(message || 'decode failed'));
+        : (status
+          ? httpFailure(status, { busy, retryAfterMs: busy ? busyRetryMs(retryAfterMs, retryAfterHeader) : null })
+          : new Error(message || 'decode failed')));
     };
     worker.onerror = () => {
       // A worker that fails to boot (a webview with no module-worker support)
@@ -62,7 +66,13 @@ function abortable(signal, onAbort) {
 async function decodeOnMainThread(url, signal) {
   if (typeof createImageBitmap === 'function') {
     const res = await fetch(url, { signal, credentials: 'same-origin' });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (!res.ok) {
+      let body = null;
+      if (res.status === 503) { try { body = await res.json(); } catch { body = null; } }
+      const header = res.headers.get('retry-after');
+      const busy = res.status === 503 && !!(body?.busy || body?.retry_after_ms || header);
+      throw httpFailure(res.status, { busy, retryAfterMs: busy ? busyRetryMs(body?.retry_after_ms, header) : null });
+    }
     const blob = await res.blob();
     if (signal?.aborted) throw new DOMException('aborted', 'AbortError');
     return createImageBitmap(blob);

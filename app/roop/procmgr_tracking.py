@@ -83,6 +83,7 @@ from roop.utilities import compute_cosine_distance
 from roop.procmgr_runtime import _prof, _gpu_guard, pause_scope, wait_while_paused, PROGRESS_BAR_FORMAT, _TRACK_OVERLAP_FRAC, ChunkedProgress, bar_write, publish_eta, audit_detect_frame_begin, audit_detect_miss_here
 from roop.temporal_tracker import TemporalFaceTracker
 from roop.range_seek import seeker_for
+from roop import stage_telemetry as _stage_telemetry
 from roop.stage2_plan import (build_stage2_plan, check as stage2_check,
                               summary as stage2_summary)
 
@@ -1278,6 +1279,9 @@ class TrackingMixin:
                     del frame
                     scanned_count += 1
                     pbar.update(1)   # terminal bar
+                    if scanned_count % 10 == 0 or scanned_count == 1:
+                        _stage_telemetry.progress(_stage_telemetry.STAGE_2_ACTIVE_PREPASS,
+                                                  scanned_count, total_scan_frames or scanned_count)
                     # Drive the UI progress bar so the pre-pass isn't a silent black box.
                     if self.progress_gradio is not None and (scanned_count % 10 == 0 or scanned_count == 1):
                         tot = total_scan_frames or scanned_count

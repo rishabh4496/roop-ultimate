@@ -1029,7 +1029,8 @@ def queue_resume(payload: dict | None = Body(default=None)):
             return JSONResponse(status_code=404, content={"message": "no such job"})
         if selected_state == "RECOVERABLE" and project_id and _validate_project is not None:
             try:
-                reasons = list(_validate_project(project_id, selected.get("payload") or {}) or [])
+                reasons = list(_validate_project(project_id, selected.get("payload") or {},
+                                                quick=True) or [])
             except Exception as exc:
                 _swallowed("routes_queue.py:713", exc, "fallback continued")
                 reasons = [f"checkpoint validation failed: {exc}"]

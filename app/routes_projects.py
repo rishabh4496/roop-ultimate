@@ -187,7 +187,8 @@ def _load_into_runtime(record):
 
 def _validated(record):
     api = _api()
-    reasons = checkpoints.validate(record, api.roop_globals.CFG)
+    # Request thread: size-only file checks (the worker re-verifies the digests before touching files).
+    reasons = checkpoints.validate(record, api.roop_globals.CFG, quick=True)
     return reasons
 
 
@@ -197,7 +198,7 @@ def projects_list():
     result = []
     for record in checkpoints.list_projects():
         record = _recover_stale(record)
-        reasons = checkpoints.validate(record, api.roop_globals.CFG)
+        reasons = checkpoints.validate(record, api.roop_globals.CFG, quick=True)
         result.append(checkpoints.summarize(record, reasons))
     return {"projects": result}
 
