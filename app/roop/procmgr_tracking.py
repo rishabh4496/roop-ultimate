@@ -2383,6 +2383,16 @@ class TrackingMixin:
         obs = t.get('obs') or {}
         return set(obs.keys()) if obs else None
 
+    def _prepass_scanned(self, frame_idx):
+        """True when the temporal pre-pass looked at this frame, i.e. `swap_faces` read its
+        faces from the cache instead of detecting. The same test `swap_faces` applies before
+        trusting the cache: temporal mode on, a cache, and the frame inside what was scanned
+        (past that the frame was never looked at and is detected normally)."""
+        return bool(getattr(self, '_temporal_mode', False)
+                    and frame_idx is not None
+                    and getattr(self, '_temporal_faces', None) is not None
+                    and frame_idx < int(getattr(self, '_temporal_covered', 0) or 0))
+
     def _precompute_temporal(self, source_video, awebp_frames, frame_start, frame_end, frame_count):
         """Temporal detection pre-pass (anti-flicker).
 

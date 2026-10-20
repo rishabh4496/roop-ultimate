@@ -3412,6 +3412,21 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         if roop.globals.no_face_action in (eNoFaceAction.SKIP_FRAME,
                                            eNoFaceAction.SKIP_FRAME_IF_DISSIMILAR):
             return None
+        if self._prepass_scanned(frame_idx):
+            # The temporal pre-pass already detected this frame - upright, with its
+            # roll-aware ROI and rescue ladder - and found nothing it could swap.
+            # Retrying rotated would run up to two more full detections plus swap
+            # attempts on a frame that has been looked at. Measured with "Retry
+            # rotated" on (docs/perf/stage3_plan): 221 of 240 Love frames and 217 of
+            # 300 Monica frames took this retry and none recovered a swap; swapped
+            # frame counts were identical with it off on Love, Monica, Weeds, angle and
+            # angle_inverted. Frames past the scan still retry.
+            self._retry_skipped_prepass = getattr(self, '_retry_skipped_prepass', 0) + 1
+            if self._retry_skipped_prepass == 1:
+                print('[Stage3] "Retry rotated" is skipped for frames the temporal pre-pass '
+                      'already scanned (it would repeat that detection).', flush=True)
+            self._publish_live(frame)
+            return frame
         ret = self.retry_rotated(frame)
         self._publish_live(ret)
         return ret

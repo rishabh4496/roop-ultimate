@@ -1,0 +1,78 @@
+{
+ "frame_wh": [
+  404,
+  720
+ ],
+ "frames": 240,
+ "cached_frames": 74,
+ "temporal_frame_shape": [
+  720,
+  404,
+  3
+ ],
+ "dtypes": {
+  "detected": {
+   "bbox": {
+    "float32": 78
+   },
+   "kps": {
+    "float32": 78
+   },
+   "landmark_2d_106": {
+    "float32": 78
+   },
+   "landmark_3d_68": {
+    "float32": 78
+   },
+   "pose": {
+    "float32": 78
+   },
+   "embedding": {
+    "float32": 78
+   }
+  },
+  "gap_filled": {
+   "bbox": {
+    "float32": 12
+   },
+   "kps": {
+    "float32": 12
+   },
+   "landmark_2d_106": {
+    "float32": 12
+   },
+   "landmark_3d_68": {
+    "float32": 12
+   },
+   "pose": {
+    "float32": 12
+   },
+   "embedding": {
+    "float32": 12
+   }
+  }
+ },
+ "mean_px_error_vs_fresh_detection": {
+  "kps": [
+   2.843,
+   27.996,
+   25
+  ],
+  "landmark_2d_106": [
+   0.915,
+   3.589,
+   25
+  ],
+  "landmark_3d_68": [
+   0.918,
+   7.134,
+   25
+  ],
+  "bbox": [
+   4.351,
+   47.276,
+   25
+  ]
+ },
+ "points_far_outside_frame": 0
+}

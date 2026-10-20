@@ -1,0 +1,11 @@
+{
+ "frames_through_swap_faces": 300,
+ "plan_frames": 255,
+ "frames_with_a_swap": 251,
+ "faces_swapped": 262,
+ "swap_frames_in_plan": 251,
+ "swap_frames_NOT_in_plan": 0,
+ "faces_on_frames_not_in_plan": 0,
+ "plan_frames_without_a_swap": 4,
+ "lost_frames_sample": []
+}
