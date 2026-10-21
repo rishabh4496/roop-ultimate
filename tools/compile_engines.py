@@ -40,7 +40,7 @@ def parse_size(text: str) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--precision", choices=("fp16", "fp32"), default="fp16")
+    ap.add_argument("--precision", choices=("fp16", "fp32", "fp8"), default="fp16")
     ap.add_argument("--device-id", type=int, default=0)
     ap.add_argument("--workspace-size", type=parse_size, default=parse_size("4GB"),
                     help="builder workspace limit, e.g. 4GB (default) or 1.5GB")

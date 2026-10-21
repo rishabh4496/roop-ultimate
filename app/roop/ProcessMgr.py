@@ -6423,21 +6423,33 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 _enh_excl = getattr(p, 'self_excluding', None)
                 if _enh_excl is None:
                     _enh_excl = getattr(p, 'pool', None) is not None
-                with _prof('enhance'), _gpu_guard(pooled=_enh_excl, owner='enhance'):
-                    _fs = self.input_face_datas[face_index] if (0 <= face_index < len(self.input_face_datas)) else (self.input_face_datas[0] if self.input_face_datas else None)
-                    if target_face is not None:
-                        try:
-                            _use_ctx = bool(_realign and '_ctx' in locals() and _ctx is not None)
-                            target_face.aligned_img = _ctx if _use_ctx else aligned_img
-                            # The frame->aligned_img similarity: landmarks on this face are
-                            # FRAME pixels, so any enhancer-side mouth/occlusion work needs it.
-                            target_face._aligned_M = _M_e if _use_ctx else M
-                        except Exception as _aligned_err:
-                            _swallowed("roop/ProcessMgr.py:aligned_img", _aligned_err)
-                    enhanced_frame, scale_factor = p.Run(_fs, target_face, enh_input)
-                    if target_face is not None and hasattr(target_face, 'aligned_img'):
-                        target_face.aligned_img = None
-                        target_face._aligned_M = None
+
+                from roop.smart_restorer_bypass import should_bypass_restorer, apply_dog_unsharp_mask
+                _swap_proc = next((proc for proc in self.processors if getattr(proc, 'type', None) == 'swap'), None)
+                _swap_m = getattr(self.options, 'swap_model', None) or getattr(_swap_proc, 'loaded_model_key', None)
+                _bypass_toggle = getattr(self.options, 'auto_bypass_restorer_native_swap', False) or (
+                    getattr(getattr(roop.globals, "CFG", None), "auto_bypass_restorer_native_swap", False)
+                )
+                if should_bypass_restorer(target_face, _swap_m, p, enabled=_bypass_toggle, max_height_px=320.0):
+                    enhanced_frame = apply_dog_unsharp_mask(enh_input)
+                    scale_factor = 1.0
+                    self._restorer_bypasses = getattr(self, '_restorer_bypasses', 0) + 1
+                else:
+                    with _prof('enhance'), _gpu_guard(pooled=_enh_excl, owner='enhance'):
+                        _fs = self.input_face_datas[face_index] if (0 <= face_index < len(self.input_face_datas)) else (self.input_face_datas[0] if self.input_face_datas else None)
+                        if target_face is not None:
+                            try:
+                                _use_ctx = bool(_realign and '_ctx' in locals() and _ctx is not None)
+                                target_face.aligned_img = _ctx if _use_ctx else aligned_img
+                                # The frame->aligned_img similarity: landmarks on this face are
+                                # FRAME pixels, so any enhancer-side mouth/occlusion work needs it.
+                                target_face._aligned_M = _M_e if _use_ctx else M
+                            except Exception as _aligned_err:
+                                _swallowed("roop/ProcessMgr.py:aligned_img", _aligned_err)
+                        enhanced_frame, scale_factor = p.Run(_fs, target_face, enh_input)
+                        if target_face is not None and hasattr(target_face, 'aligned_img'):
+                            target_face.aligned_img = None
+                            target_face._aligned_M = None
 
                 if _A is not None and enhanced_frame is not None:
                     # Back to swap-crop space. The enhancer may have returned a

@@ -38,6 +38,7 @@ export const FACESWAP_DEFAULTS = {
   rescue_small_faces: true,
   num_swap_steps: 1,
   selected_enhancer: 'UltraMax',
+  auto_bypass_restorer_native_swap: false,
   adaptive_enhancer_profile: 'BALANCED',
   codeformer_fidelity: 0.55,
   restoration_mode: 'balanced',

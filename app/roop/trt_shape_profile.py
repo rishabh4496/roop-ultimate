@@ -76,7 +76,7 @@ _SPATIAL_BANDS: Dict[str, Tuple[int, int, int]] = {
 
 # Batch is opened separately: this pipeline batches the swapper across frames
 # (``perf_batch_swap``) but never batches a detector.
-_BATCH_BAND: Tuple[int, int, int] = (1, 1, 8)
+_BATCH_BAND: Tuple[int, int, int] = (1, 8, 16)
 
 _DEFAULT_SPATIAL_BAND: Tuple[int, int, int] = (128, 256, 512)
 

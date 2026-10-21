@@ -170,7 +170,7 @@ ADDED_AFTER_REGISTRY = ('perf_batch_max', 'perf_nvenc_preset', 'perf_gpu_affine'
                         'hf_flow_cycle_sigma', 'hf_flow_bilateral_sigma',
                         'hdr_pipeline', 'hdr_source_transfer', 'hdr_source_primaries',
                         'hdr_output_codec',
-                        'prepass_detect_interval', 'prepass_landmark_filter')
+                        'prepass_detect_interval', 'prepass_landmark_filter', 'auto_bypass_restorer_native_swap')
 
 
 class EnvMappingMatchesTheOldRunPy(unittest.TestCase):
@@ -181,7 +181,7 @@ class EnvMappingMatchesTheOldRunPy(unittest.TestCase):
 
     def test_new_keys_behave_like_their_kind(self):
         rows = {k: (var, kind) for k, var, kind in settings.ENV_SETTINGS}
-        reference = {'value': 'perf_trt_pool', 'tristate': 'perf_nvdec'}
+        reference = {'value': 'perf_trt_pool', 'tristate': 'perf_nvdec', 'bool': 'trt_cuda_graph'}
         for key in ADDED_AFTER_REGISTRY:
             var, kind = rows[key]
             ref_key = reference[kind]

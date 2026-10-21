@@ -90,13 +90,30 @@ SWAP_MODELS: dict[str, SwapModelSpec] = {
     **{f"hyperswap_{v}_256": SwapModelSpec(f"hyperswap_{v}_256", 256, "arcface_128",
                                            (0.5, 0.5, 0.5), (0.5, 0.5, 0.5), True, "normed")
        for v in ("1a", "1b", "1c")},
+    "hyperswap_256": SwapModelSpec("hyperswap_1a_256", 256, "arcface_128",
+                                   (0.5, 0.5, 0.5), (0.5, 0.5, 0.5), True, "normed"),
+    **{f"hyperswap_{v}_512": SwapModelSpec(f"hyperswap_{v}_512", 512, "arcface_128",
+                                           (0.5, 0.5, 0.5), (0.5, 0.5, 0.5), True, "normed")
+       for v in ("1a", "1b", "1c")},
+    "hyperswap_512": SwapModelSpec("hyperswap_1a_512", 512, "arcface_128",
+                                   (0.5, 0.5, 0.5), (0.5, 0.5, 0.5), True, "normed"),
+    "alpha_256": SwapModelSpec("alpha_256", 256, "arcface_128", (0.5, 0.5, 0.5),
+                               (0.5, 0.5, 0.5), True, "normed", available=True),
+    "alphaface_256": SwapModelSpec("alpha_256", 256, "arcface_128", (0.5, 0.5, 0.5),
+                                   (0.5, 0.5, 0.5), True, "normed", available=True),
+    "reswapper_128": SwapModelSpec("reswapper_128", 128, "arcface_128", (0.0, 0.0, 0.0),
+                                   (1.0, 1.0, 1.0), False, "normed_emap", available=True),
+    "reswapper_256": SwapModelSpec("reswapper_256", 256, "arcface_128", (0.0, 0.0, 0.0),
+                                   (1.0, 1.0, 1.0), False, "normed_emap", available=True),
+    "reswapper": SwapModelSpec("reswapper_256", 256, "arcface_128", (0.0, 0.0, 0.0),
+                               (1.0, 1.0, 1.0), False, "normed_emap", available=True),
     "inswapper_128": SwapModelSpec("inswapper_128", 128, "arcface_128", (0.0, 0.0, 0.0),
                                    (1.0, 1.0, 1.0), False, "normed_emap"),
     # FaceFusion's FP16-weight export: FP32 inputs/outputs, FP32 emap.
     "inswapper_128_fp16": SwapModelSpec("inswapper_128_fp16", 128, "arcface_128",
                                         (0.0, 0.0, 0.0), (1.0, 1.0, 1.0), False, "normed_emap"),
-    "alphaface_256": SwapModelSpec("alphaface_256", 256, "arcface_128", (0.5, 0.5, 0.5),
-                                   (0.5, 0.5, 0.5), True, "normed", available=False),
+    "hififace_256": SwapModelSpec("hififace_256", 256, "mtcnn_512", (0.5, 0.5, 0.5),
+                                  (0.5, 0.5, 0.5), True, "converted_norm", available=True),
 }
 
 # Default precision of the batched GPU swapper (TensorRT engines), per model.
@@ -118,7 +135,10 @@ SWAP_MODELS: dict[str, SwapModelSpec] = {
 # real-clip swaps (0.5874 vs 0.5875), and starts without an engine build. An
 # explicit precision="fp32" gets a true FP32 engine (exact, ~1.6x slower batched).
 SWAP_PRECISION: dict[str, str] = {name: "fp32" for name in SWAP_MODELS}
-SWAP_PRECISION.update({f"hyperswap_{v}_256": "auto" for v in ("1a", "1b", "1c")})
+# Enable FP16 for Alpha 256, HyperSwap, and ReSwapper
+for k in list(SWAP_MODELS.keys()):
+    if any(m in k for m in ("hyperswap", "alpha", "reswapper")):
+        SWAP_PRECISION[k] = "fp16"
 SWAP_PRECISION["inswapper_128"] = "fp16"
 
 
@@ -378,7 +398,7 @@ class FaceSwapper:
 
 
 # ---------------------------------------------------------------------------- CUDA, batched
-MAX_BATCH = 8
+MAX_BATCH = 16
 
 
 def implode_pixel_boost_cuda(crops: torch.Tensor, model_size: int, factor: int) -> torch.Tensor:

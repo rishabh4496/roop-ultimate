@@ -147,6 +147,18 @@ DEFAULT_REGISTRY.register("hyperswap_1b_256", f"{_SWAPPERS}:HyperSwapSwapper", "
                           aliases=("hyperswap_1b",))
 DEFAULT_REGISTRY.register("hyperswap_1c_256", f"{_SWAPPERS}:HyperSwapSwapper", "hyperswap_1c",
                           aliases=("hyperswap_1c",))
+DEFAULT_REGISTRY.register("hyperswap_1a_512", f"{_SWAPPERS}:HyperSwapSwapper", "hyperswap_1a_512",
+                          aliases=("hyperswap_512", "hyperswap_512_1a"))
+DEFAULT_REGISTRY.register("hyperswap_1b_512", f"{_SWAPPERS}:HyperSwapSwapper", "hyperswap_1b_512",
+                          aliases=("hyperswap_512_1b",))
+DEFAULT_REGISTRY.register("hyperswap_1c_512", f"{_SWAPPERS}:HyperSwapSwapper", "hyperswap_1c_512",
+                          aliases=("hyperswap_512_1c",))
+DEFAULT_REGISTRY.register("alpha_256", f"{_SWAPPERS}:HyperSwapSwapper", "alpha_256",
+                          aliases=("alphaface_256", "alpha"))
+DEFAULT_REGISTRY.register("reswapper_128", f"{_SWAPPERS}:OnnxSpecSwapper", "reswapper_128",
+                          aliases=())
+DEFAULT_REGISTRY.register("reswapper_256", f"{_SWAPPERS}:OnnxSpecSwapper", "reswapper_256",
+                          aliases=("reswapper",))
 
 
 def get_registry() -> ModelRegistry:

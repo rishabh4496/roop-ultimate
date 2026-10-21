@@ -364,6 +364,9 @@ def test_zoo_declarations_are_complete() -> None:
                 # the BiSeNet-34 parser.
                 "hififace_256", "crossface_hififace", "hyperswap_256", "dfl_xseg_v2",
                 "face_occluder_v3", "face_parser_bisenet34", "sam2_hiera_tiny",
+                "alpha_256", "hyperswap_1a_512", "hyperswap_1b_512", "hyperswap_1c_512",
+                "hyperswap_512", "reswapper_128", "reswapper_256", "reswapper",
+                "1k3d68", "2d106det", "codeformer_fp16",
                 *(f"liveportrait_{k}" for k in ("appearance", "motion", "warping", "stitching",
                                                 "eye", "landmark"))}
     assert set(MODEL_ZOO) == expected
@@ -391,7 +394,7 @@ def test_unavailable_model_fails_clearly(tmp_path: Path) -> None:
     with pytest.raises(ModelUnavailableError, match="hrffa"):
         registry.ensure("hrffa", show_progress=False)
     # hyperswap 1a/1b/1c/256, inswapper 128 (+fp16), alphaface, hififace
-    assert len(registry.by_task(ModelTask.SWAP)) == 8
+    assert len(registry.by_task(ModelTask.SWAP)) == 16
 
 
 class _FakeResponse:

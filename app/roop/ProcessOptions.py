@@ -25,7 +25,7 @@ class ProcessOptions:
                  stabilize_landmarks=True, stabilize_hf_texture=True,
                  stabilize_hf_texture_weight=0.15, selection_state=None,
                  processing_request=None, identity_confidence_threshold=None,
-                 live_mode=False):
+                 live_mode=False, auto_bypass_restorer_native_swap=None):
         self.processors = processordefines
         self.face_distance_threshold = face_distance
         self.blend_ratio = blend_ratio
@@ -115,3 +115,13 @@ class ProcessOptions:
         # protect the thing the reference exists to leave unprotected, quietly
         # collapsing the metric toward "no difference".
         self.disable_occlusion_injection = False
+        if auto_bypass_restorer_native_swap is not None:
+            self.auto_bypass_restorer_native_swap = bool(auto_bypass_restorer_native_swap)
+        elif self.processing_request and "auto_bypass_restorer_native_swap" in self.processing_request:
+            self.auto_bypass_restorer_native_swap = bool(self.processing_request["auto_bypass_restorer_native_swap"])
+        else:
+            try:
+                env_b = os.environ.get("ROOP_AUTO_BYPASS_RESTORER_NATIVE_SWAP", "").strip().lower()
+                self.auto_bypass_restorer_native_swap = env_b in ("1", "true", "yes", "on")
+            except Exception:
+                self.auto_bypass_restorer_native_swap = False

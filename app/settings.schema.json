@@ -44,6 +44,7 @@
     "temporal_step",
     "prepass_detect_interval",
     "enhance_min_face_px",
+    "auto_bypass_restorer_native_swap",
     "recognizer",
     "identity_confidence_threshold",
     "face_demarcate",
@@ -1316,6 +1317,18 @@
       "env": {
         "var": "ROOP_ENHANCE_MIN_FACE_PX",
         "kind": "value"
+      }
+    },
+    "auto_bypass_restorer_native_swap": {
+      "default": false,
+      "type": "bool",
+      "ui": {
+        "label": "Auto-Bypass Restorer on >=256px Native Swap",
+        "section": "Advanced performance"
+      },
+      "env": {
+        "var": "ROOP_AUTO_BYPASS_RESTORER_NATIVE_SWAP",
+        "kind": "bool"
       }
     },
     "vram_safety_margin_gb": {

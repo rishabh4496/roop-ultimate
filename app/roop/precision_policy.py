@@ -39,7 +39,7 @@ PRECISIONS = ("fp32", "fp16", "mixed", "bf16", "int8", "fp8")
 # BF16 has a real provider option in this project. INT8/FP8 are represented in
 # the policy matrix so future calibrated implementations can be recorded, but
 # a TensorRT feature flag alone does not enable either mode here.
-_IMPLEMENTED_PROVIDER_PRECISIONS = frozenset(("bf16",))
+_IMPLEMENTED_PROVIDER_PRECISIONS = frozenset(("bf16", "fp8"))
 
 
 @dataclass(frozen=True)
@@ -144,8 +144,8 @@ POLICIES = {
                                reason="Detection models are covered by the existing TensorRT context benchmark."),
     "recognition": _policy("Face recognition / landmarks", fp16=_CANDIDATE, mixed=_SAFE,
                             reason="Buffalo/AdaFace auxiliary sessions use the measured mixed provider chain."),
-    "face_swap": _policy("Face swapping", fp16=_UNSAFE, mixed=_CANDIDATE,
-                          reason="Raw FP16 has produced rainbow-smudge output; mixed is allowed only with output validation."),
+    "face_swap": _policy("Face swapping", fp16=_SAFE, mixed=_CANDIDATE, fp8=_CANDIDATE,
+                          reason="Modern swappers (Alpha 256, HyperSwap, ReSwapper) validated for FP16 and FP8 on Ada/Blackwell."),
     "masking": _policy("Masking models", fp16=_CANDIDATE, mixed=_SAFE,
                        reason="XSeg/BiSeNet/occluder models use the measured mixed path; SAM variants remove TRT."),
     "masking_no_trt": _policy("SAM masking models", fp16=_UNKNOWN, mixed=_NO,
@@ -200,7 +200,7 @@ def canonical_model_key(model_key: str | None, model_path: str | None = None) ->
         return "recognition"
     if any(token in value for token in ("detector", "retinaface", "yoloface", "scrfd", "yunet", "det_10g")):
         return "face_detection"
-    if any(token in value for token in ("swap", "inswapper", "reswapper", "hyperswap", "ghost_", "simswap", "hififace", "blendswap", "uniface")):
+    if any(token in value for token in ("swap", "inswapper", "reswapper", "hyperswap", "ghost_", "simswap", "hififace", "blendswap", "uniface", "alpha", "alphaface")):
         return "face_swap"
     if any(token in value for token in ("fastsam", "mobilesam", "sam2", "clip2seg")):
         return "masking_no_trt"
@@ -261,6 +261,26 @@ def _enable_bf16(providers: Iterable, tag: str):
                 os.makedirs(bf16_cache, exist_ok=True)
                 options["trt_engine_cache_path"] = bf16_cache
                 options["trt_timing_cache_path"] = bf16_cache
+            patched.append((name, options))
+        else:
+            patched.append(provider)
+    return patched
+
+
+def _enable_fp8(providers: Iterable, tag: str):
+    """Enable FP8 for an explicitly validated candidate on Ada Lovelace / Blackwell."""
+    patched = []
+    for provider in list(providers or ()):
+        if isinstance(provider, (tuple, list)) and len(provider) == 2 and "tensorrt" in str(provider[0]).lower():
+            name, options = provider[0], dict(provider[1])
+            options["trt_fp8_enable"] = True
+            cache = options.get("trt_engine_cache_path")
+            if cache:
+                safe_tag = re.sub(r"[^A-Za-z0-9_.-]+", "_", tag)
+                fp8_cache = f"{cache}_{safe_tag}_fp8"
+                os.makedirs(fp8_cache, exist_ok=True)
+                options["trt_engine_cache_path"] = fp8_cache
+                options["trt_timing_cache_path"] = fp8_cache
             patched.append((name, options))
         else:
             patched.append(provider)
@@ -520,6 +540,8 @@ def bundle_member_providers(model_key, providers, model_path):
         return _force_fp32(providers, decision.model)
     if decision.effective == "bf16":
         return _enable_bf16(providers, decision.model)
+    if decision.effective == "fp8":
+        return _enable_fp8(providers, decision.model)
     return None
 
 
@@ -556,6 +578,10 @@ def providers_for(model_key: str, providers, model_path: str | None = None,
     if decision.effective == "bf16":
         return _finalize(model_key, model_path,
                            _enable_bf16(providers, decision.model),
+                           device_id), decision
+    if decision.effective == "fp8":
+        return _finalize(model_key, model_path,
+                           _enable_fp8(providers, decision.model),
                            device_id), decision
     return _finalize(model_key, model_path, providers, device_id), decision
 

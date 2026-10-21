@@ -847,6 +847,16 @@ export default function BatchSwap({ settings = {}, notify }) {
           />
           <span>🛡️ Auto-Fallback Enhancer (Retry with 'None' if GPU Out-Of-Memory Error)</span>
         </label>
+        {/* Auto-Bypass Restorer on >=256px Native Swap */}
+        <label className="flex items-center gap-2 text-micro cursor-pointer text-white/70 hover:text-white">
+          <input
+            type="checkbox"
+            checked={!!(settings?.auto_bypass_restorer_native_swap ?? false)}
+            onChange={(e) => onUpdateSetting?.('auto_bypass_restorer_native_swap', e.target.checked)}
+            className="rounded border-white/20 bg-black/40 text-accent focus:ring-0"
+          />
+          <span>⚡ Auto-Bypass Restorer on &gt;=256px Native Swap</span>
+        </label>
       </div>
 
       {/* ── Persistent Faceset Library Panel (Full-Width) ── */}

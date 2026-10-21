@@ -106,8 +106,13 @@ class EngineSpec:
 
 ENGINE_SPECS: dict[str, EngineSpec] = {s.model: s for s in (
     *(EngineSpec(f"hyperswap_{v}_256", "swapper",
-                 {"source": (512,), "target": (3, 256, 256)}) for v in ("1a", "1b", "1c")),
-    EngineSpec("inswapper_128", "swapper", {"target": (3, 128, 128), "source": (512,)}),
+                 {"source": (512,), "target": (3, 256, 256)}, (1, 8, 16)) for v in ("1a", "1b", "1c")),
+    *(EngineSpec(f"hyperswap_{v}_512", "swapper",
+                 {"source": (512,), "target": (3, 512, 512)}, (1, 8, 16)) for v in ("1a", "1b", "1c")),
+    EngineSpec("alpha_256", "swapper", {"source": (512,), "target": (3, 256, 256)}, (1, 8, 16)),
+    EngineSpec("reswapper_128", "swapper", {"target": (3, 128, 128), "source": (512,)}, (1, 8, 16)),
+    EngineSpec("reswapper_256", "swapper", {"target": (3, 256, 256), "source": (512,)}, (1, 8, 16)),
+    EngineSpec("inswapper_128", "swapper", {"target": (3, 128, 128), "source": (512,)}, (1, 8, 16)),
     # GPEN-512 has the same two blocks (14 layers by name); unpinned its FP16
     # engine failed fidelity (0.035 of range). Same pins as 1024 (2026-09-28).
     EngineSpec("gpen_bfr_512", "enhancer", {"input": (3, 512, 512)}, (1, 1, 1), False,
@@ -119,7 +124,8 @@ ENGINE_SPECS: dict[str, EngineSpec] = {s.model: s for s in (
     # below FP16's smallest normal). Those two blocks run FP32.
     EngineSpec("gpen_bfr_1024", "enhancer", {"input": (3, 1024, 1024)}, (1, 1, 1), False,
                fp32_layers=("/final_linear/", "/generator/style/style.0/")),
-    EngineSpec("xseg_3", "masker", {"input": (256, 256, 3)}, (1, 2, 8), False),
+    EngineSpec("xseg_3", "masker", {"input": (256, 256, 3)}, (1, 8, 16), False),
+    EngineSpec("xseg", "masker", {"xseg_input:0": (256, 256, 3)}, (1, 8, 16), False),
     # The boosted pipeline's detector (face_engine/boosted): fixed 640, batch <= 2.
     EngineSpec("retinaface_r50", "detector", {"input": (3, 640, 640)}, (1, 1, 2), False),
     # GPUSCRFDDetector: aspect-preserving canvas (long side 640, sides padded to
@@ -258,8 +264,12 @@ def build_engine(spec: EngineSpec, source: Path, precision: str, gpu: GpuInfo, *
     from face_engine.utils.onnx_batch import batched_model
 
     trt = _trt()
-    if precision not in ("fp16", "fp32"):
-        raise ValueError("precision must be fp16 or fp32")
+    # Lock xseg, 2d106det, and 1k3d68 to FP32 to prevent NaN/mask corruption
+    if any(stem in spec.model.lower() for stem in ("xseg", "2d106det", "1k3d68")) and precision != "fp32":
+        logger.warning("Model %s is locked to FP32 per precision policy; forcing FP32", spec.model)
+        precision = "fp32"
+    if precision not in ("fp16", "fp32", "fp8"):
+        raise ValueError("precision must be fp16, fp32, or fp8")
     root.mkdir(parents=True, exist_ok=True)
     torch.cuda.set_device(gpu.device_id)
     graph = source
@@ -289,6 +299,20 @@ def build_engine(spec: EngineSpec, source: Path, precision: str, gpu: GpuInfo, *
     pinned = 0
     if precision == "fp16":
         config.set_flag(trt.BuilderFlag.FP16)
+        pinned = pin_decomposed_norms(network, spec.fp32_layers) if pin_norms else 0
+        if pinned:
+            config.set_flag(trt.BuilderFlag.OBEY_PRECISION_CONSTRAINTS)
+    elif precision == "fp8":
+        major_trt = int(trt.__version__.split(".")[0])
+        sm_num = int(gpu.sm)
+        if major_trt < 10 or sm_num < 89 or not hasattr(trt.BuilderFlag, "FP8"):
+            raise RuntimeError(
+                f"FP8 quantization requires TensorRT 10+ and Ada Lovelace (SM89) / Blackwell (SM100+) GPU; "
+                f"detected TRT {trt.__version__} on SM{gpu.sm}"
+            )
+        config.set_flag(trt.BuilderFlag.FP8)
+        if hasattr(trt.BuilderFlag, "FP16"):
+            config.set_flag(trt.BuilderFlag.FP16)
         pinned = pin_decomposed_norms(network, spec.fp32_layers) if pin_norms else 0
         if pinned:
             config.set_flag(trt.BuilderFlag.OBEY_PRECISION_CONSTRAINTS)
@@ -403,9 +427,12 @@ def _torch_dtype(trt_dtype: Any) -> Any:
     import torch
 
     trt = _trt()
-    return {trt.float32: torch.float32, trt.float16: torch.float16, trt.int32: torch.int32,
-            trt.int64: torch.int64, trt.int8: torch.int8, trt.bool: torch.bool,
-            trt.uint8: torch.uint8}[trt_dtype]
+    mapping = {trt.float32: torch.float32, trt.float16: torch.float16, trt.int32: torch.int32,
+               trt.int64: torch.int64, trt.int8: torch.int8, trt.bool: torch.bool,
+               trt.uint8: torch.uint8}
+    if hasattr(trt.DataType, "FP8"):
+        mapping[trt.DataType.FP8] = getattr(torch, "float8_e4m3fn", torch.float16)
+    return mapping[trt_dtype]
 
 
 # ---------------------------------------------------------------------------- verification
@@ -446,16 +473,22 @@ def sample_inputs(spec: EngineSpec, batch: int) -> dict[str, np.ndarray]:
         return np.stack(out)  # (B, S, S, 3) uint8 BGR
 
     name = spec.model
-    if name.startswith(("hyperswap", "inswapper")):
-        size = 256 if name.startswith("hyperswap") else 128
+    if name.startswith(("hyperswap", "inswapper", "reswapper", "alpha")):
+        if "512" in name:
+            size = 512
+        elif "128" in name:
+            size = 128
+        else:
+            size = 256
         rgb = crops(size, "arcface_128")[..., ::-1].astype(np.float32) / 255.0
-        target = rgb if name.startswith("inswapper") else (rgb - 0.5) / 0.5
+        target = rgb if name.startswith(("inswapper", "reswapper")) else (rgb - 0.5) / 0.5
         rng = np.random.default_rng(0)
         src = rng.standard_normal((batch, 512)).astype(np.float32)
         src /= np.linalg.norm(src, axis=1, keepdims=True)
         return {"target": np.ascontiguousarray(target.transpose(0, 3, 1, 2)), "source": src}
-    if name == "xseg_3":
-        return {"input": np.ascontiguousarray(crops(256, "arcface_128").astype(np.float32) / 255.0)}
+    if name in ("xseg_3", "xseg"):
+        input_key = "input" if name == "xseg_3" else "xseg_input:0"
+        return {input_key: np.ascontiguousarray(crops(256, "arcface_128").astype(np.float32) / 255.0)}
     if name == "bisenet_resnet34":
         rgb = crops(512, "ffhq_512")[..., ::-1].astype(np.float32) / 255.0
         norm = (rgb - np.array([0.485, 0.456, 0.406], np.float32)) / np.array(
@@ -550,7 +583,7 @@ def verify(result: BuildResult, source: Path,
     result.latency_ms = {"b1": measure_latency(engine, spec, 1)}
     if batch > 1:
         result.latency_ms[f"b{batch}"] = measure_latency(engine, spec, batch)
-    if spec.model.startswith("hyperswap") and result.latency_ms["b1"] >= HYPERSWAP_LATENCY_GATE_MS:
+    if spec.model.startswith("hyperswap") and "256" in spec.model and result.latency_ms["b1"] >= HYPERSWAP_LATENCY_GATE_MS:
         result.ok = False
         result.problems.append(f"HyperSwap batch-1 latency {result.latency_ms['b1']:.2f} ms "
                                f">= {HYPERSWAP_LATENCY_GATE_MS} ms")

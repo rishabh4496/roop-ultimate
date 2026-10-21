@@ -76,6 +76,7 @@ UI_SETTINGS = (
     ('temporal_step', 'Face tracking interval (frames)', 'Advanced performance'),
     ('prepass_detect_interval', 'Pre-pass detection interval (frames)', 'Advanced performance'),
     ('enhance_min_face_px', 'Skip restorer below face size (px)', 'Advanced performance'),
+    ('auto_bypass_restorer_native_swap', 'Auto-Bypass Restorer on >=256px Native Swap', 'Advanced performance'),
     # Identity & tracking
     ('recognizer', 'Recognition model', 'Identity & tracking'),
     ('identity_confidence_threshold', 'Identity confidence threshold', 'Identity & tracking'),
@@ -157,6 +158,7 @@ ENV_SETTINGS = (
     ('prepass_landmark_filter', 'ROOP_PREPASS_FILTER', 'value'),
     # Read at USE time (ProcessMgr.initialize, once per render) -- see LIVE_ENV_SETTINGS.
     ('enhance_min_face_px', 'ROOP_ENHANCE_MIN_FACE_PX', 'value'),
+    ('auto_bypass_restorer_native_swap', 'ROOP_AUTO_BYPASS_RESTORER_NATIVE_SWAP', 'bool'),
     # Flow-texture locking.  These are config-only performance knobs: the
     # visible Face Swap control intentionally remains the on/off + carry weight
     # pair, while backend selection and local RAFT weights are deployment facts.
@@ -190,7 +192,7 @@ ENV_SETTINGS = (
 # key here whose variable IS read at import would make the panel lie: it would
 # re-export a value nothing reads again.
 LIVE_ENV_SETTINGS = ('perf_batch_max', 'perf_nvenc_preset', 'perf_gpu_affine',
-                     'perf_pinned_buffers', 'temporal_step', 'enhance_min_face_px',
+                     'perf_pinned_buffers', 'temporal_step', 'enhance_min_face_px', 'auto_bypass_restorer_native_swap',
                      'prepass_detect_interval', 'prepass_landmark_filter',
                      'identity_confidence_threshold',
                      'hdr_pipeline', 'hdr_source_transfer', 'hdr_source_primaries',
@@ -1384,6 +1386,7 @@ class Settings:
         # are pasted from the swap crop without running the restorer. 0 = off:
         # it changes how small faces look, so it is the user's opt-in.
         self.enhance_min_face_px = self.default_get(data, 'enhance_min_face_px', 0)
+        self.auto_bypass_restorer_native_swap = self.default_get(data, 'auto_bypass_restorer_native_swap', False)
         # Free VRAM the governor keeps in reserve when it plans a render (GB,
         # 0.5-4.0). Below it, it lowers the swap batch, then GPEN's resolution.
         self.vram_safety_margin_gb = self.default_get(data, 'vram_safety_margin_gb', 1.5)
@@ -1655,6 +1658,7 @@ class Settings:
             'prepass_detect_interval': self.prepass_detect_interval,
             'prepass_landmark_filter': self.prepass_landmark_filter,
             'enhance_min_face_px': self.enhance_min_face_px,
+            'auto_bypass_restorer_native_swap': self.auto_bypass_restorer_native_swap,
             'vram_safety_margin_gb': self.vram_safety_margin_gb,
             'recognizer': self.recognizer,
             'face_demarcate': self.face_demarcate,

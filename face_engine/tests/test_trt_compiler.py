@@ -42,7 +42,7 @@ def test_cli_parses_sizes_and_groups() -> None:
     assert compile_engines.parse_size("1.5GiB") == int(1.5 * (1 << 30))
     assert compile_engines.parse_size("512MB") == 512 << 20
     assert {s.model for s in tc.select_specs("swapper")} == {
-        "hyperswap_1a_256", "hyperswap_1b_256", "hyperswap_1c_256", "inswapper_128"}
+        "hyperswap_1a_256", "hyperswap_1b_256", "hyperswap_1c_256", "hyperswap_1a_512", "hyperswap_1b_512", "hyperswap_1c_512", "alpha_256", "reswapper_128", "reswapper_256", "inswapper_128"}
     assert {s.group for s in tc.select_specs("all")} == {"swapper", "enhancer", "masker",
                                                            "detector"}
     assert [s.model for s in tc.select_specs("xseg_3")] == ["xseg_3"]
@@ -53,7 +53,7 @@ def test_cli_parses_sizes_and_groups() -> None:
 def test_specs_use_the_models_real_inputs() -> None:
     """Names / layouts are the graphs', not the brief's (source, NHWC XSeg, GPEN batch 1)."""
     hs = tc.ENGINE_SPECS["hyperswap_1a_256"]
-    assert hs.inputs == {"source": (512,), "target": (3, 256, 256)} and hs.batch == (1, 2, 8)
+    assert hs.inputs == {"source": (512,), "target": (3, 256, 256)} and hs.batch == (1, 8, 16)
     assert tc.ENGINE_SPECS["xseg_3"].inputs == {"input": (256, 256, 3)}
     assert tc.ENGINE_SPECS["gpen_bfr_512"].batch == (1, 1, 1)
     assert tc.ENGINE_SPECS["gpen_bfr_1024"].inputs == {"input": (3, 1024, 1024)}
@@ -64,7 +64,7 @@ def test_gpu_discovery_matches_cuda() -> None:
     major, minor = torch.cuda.get_device_capability(0)
     assert gpu.sm == f"{major}{minor}" and gpu.total_vram_mb > 1000
     path = tc.engine_path(tc.ENGINE_SPECS["hyperswap_1a_256"], gpu, "fp16", Path("x"))
-    assert path.name == f"hyperswap_1a_256_sm{gpu.sm}_fp16_b8.engine"
+    assert path.name == f"hyperswap_1a_256_sm{gpu.sm}_fp16_b16.engine"
 
 
 # ------------------------------------------------------------------ tiny builds
