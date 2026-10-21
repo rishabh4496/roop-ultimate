@@ -427,6 +427,9 @@ def complete_hashes(project_id: str) -> dict | None:
 #   stage2   the hand-off the swap pass consumes (`ProcessMgr._temporal_faces`, `_track_assignments`,
 #            `_track_source_map`, shot cuts) in a SIDECAR file beside the record (`<id>.stage2.npz`,
 #            written by `roop/stage_cache.py`), plus its digest and the serialized frame plan in the JSON
+#   trajectory  the smoothed per-face alignment matrices and head pose of that same Stage 2, as one
+#            memory-mappable array (`<id>.trajectory.npy`, written by `roop/trajectory_cache.py`). It is
+#            DERIVED from stage2: re-recording stage1 or stage2 drops it, and it expires under the same key.
 #
 # The frame plan alone is NOT the hand-off (it holds no Face objects by design - see roop/stage2_plan.py),
 # so persisting only the plan, as the brief for this stage said, could not skip Stage 2.
@@ -437,7 +440,7 @@ def complete_hashes(project_id: str) -> dict | None:
 # sidecar is additionally checked against its recorded size and SHA-256 before one byte of it is used.
 
 STAGE_CACHE_VERSION = 1
-STAGE_SIDECAR_SUFFIX = {"stage2": ".stage2.npz"}
+STAGE_SIDECAR_SUFFIX = {"stage2": ".stage2.npz", "trajectory": ".trajectory.npy"}
 
 
 # What each component of the basis is called when it is the one that changed (for the printed reason).
@@ -541,6 +544,11 @@ def record_stage(project_id: str, stage: str, data: Mapping[str, Any],
         if stage == "stage1":
             cache.pop("stage2", None)       # Stage 2 was computed against the PREVIOUS Stage 1 ranges
             _remove_quietly(stage_sidecar_path(project_id, "stage2"))
+        if stage in ("stage1", "stage2"):
+            # The trajectory is derived from Stage 2's faces; a new Stage 2 (or the Stage 1 it was built on)
+            # makes the old one describe different heads. Its writer records it again right after.
+            cache.pop("trajectory", None)
+            _remove_quietly(stage_sidecar_path(project_id, "trajectory"))
         record["stage_cache"] = cache
         return save(record)
 
@@ -592,7 +600,7 @@ def usable_stage_cache(project_id: str, live: Mapping[str, Any] | None = None) -
     cache that is silently ignored is indistinguishable from one that never existed. The sidecar is
     hashed here (a whole-file read): call from the worker, never from a request thread.
     """
-    out = {"stage1": None, "stage2": None, "reasons": []}
+    out = {"stage1": None, "stage2": None, "trajectory": None, "reasons": []}
     try:
         record = load(project_id)
     except (OSError, ValueError, json.JSONDecodeError):
@@ -623,6 +631,13 @@ def usable_stage_cache(project_id: str, live: Mapping[str, Any] | None = None) -
             out["reasons"].extend(problems)
         else:
             out["stage2"] = dict(stage2)
+    trajectory = cache.get("trajectory")
+    if trajectory and out["stage2"] is not None:
+        problems = verify_sidecar(project_id, "trajectory", trajectory.get("sidecar") or {})
+        if problems:
+            out["reasons"].extend(problems)
+        else:
+            out["trajectory"] = dict(trajectory)
     return out
 
 

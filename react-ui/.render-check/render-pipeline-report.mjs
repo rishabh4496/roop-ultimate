@@ -63,6 +63,8 @@ ok('Stage 2 cap.set / cap.grab counts',
   rowOf(S.STAGE_2, 'cap.set() seeks') === helpers.fmtCount(st[S.STAGE_2].set_calls)
   && rowOf(S.STAGE_2, 'cap.grab() frames walked') === helpers.fmtCount(st[S.STAGE_2].grab_calls));
 ok('Stage 2 verified target frames', rowOf(S.STAGE_2, 'Verified target frames') === helpers.fmtCount(st[S.STAGE_2].verified_target_frames));
+ok('Stage 2 says how often the detector ran, and at what interval',
+  rowOf(S.STAGE_2, 'Detector calls') === '233 of 900 frames (every 4th)', rowOf(S.STAGE_2, 'Detector calls'));
 ok('Stage 3 passthrough and GPU frames',
   rowOf(S.STAGE_3, 'Zero-GPU passthrough frames') === helpers.fmtCount(st[S.STAGE_3].passthrough_frames)
   && rowOf(S.STAGE_3, 'GPU frames (swap / enhance)') === helpers.fmtCount(st[S.STAGE_3].gpu_frames));
@@ -80,6 +82,16 @@ ok('a skipped stage shows dashes, not zeros',
   sparseSections[S.STAGE_1].rows.filter((r) => r.label !== 'Active ranges' && r.label !== 'Frames skipped (no target)')
     .every((r) => r.value === '—'), JSON.stringify(sparseSections[S.STAGE_1].rows));
 ok('a missing counter is a dash', sparseSections[S.STAGE_2].rows.find((r) => r.label === 'cap.grab() frames walked').value === '—');
+{
+  const restored = JSON.parse(JSON.stringify(report));
+  Object.assign(restored.stages[S.STAGE_2], { detect_interval: null, detector_calls: null, scan_frames: null });
+  const row = helpers.reportSections(restored).find((s) => s.key === S.STAGE_2).rows.find((r) => r.label === 'Detector calls');
+  ok('a Stage 2 restored from a checkpoint (it did not run) shows a dash, not a count', row.value === '—', row.value);
+  const every = JSON.parse(JSON.stringify(report));
+  Object.assign(every.stages[S.STAGE_2], { detect_interval: 1, detector_calls: 900, scan_frames: 900 });
+  const plain = helpers.reportSections(every).find((s) => s.key === S.STAGE_2).rows.find((r) => r.label === 'Detector calls');
+  ok('at interval 1 the row does not claim an interval', plain.value === '900 of 900 frames', plain.value);
+}
 
 // ── a failed Stage 4 ─────────────────────────────────────────────────────────
 const failed = JSON.parse(JSON.stringify(report));

@@ -1,0 +1,318 @@
+{
+ "clip": "G:\\pinokio\\roop-keep\\Love.mp4",
+ "frames": 900,
+ "runs": [
+  {
+   "run": 0,
+   "k": 1,
+   "wall_s": 23.22947180000483,
+   "schedule": {
+    "interval": 1,
+    "frames": 900,
+    "detector_calls": 900,
+    "coast": 0,
+    "stage1_cut_hints": 0
+   },
+   "tracker": {
+    "frames": 900,
+    "full_detections": 192,
+    "roi_detections": 708,
+    "roi_fallback_full": 17,
+    "coast_frames": 0,
+    "matched": 1388,
+    "new_tracks": 59,
+    "lost_tracks": 62,
+    "recovered_tracks": 5
+   },
+   "flow": {
+    "anchored": 1338,
+    "steps": 337,
+    "refused": 18,
+    "closed": 32,
+    "aligned": 0,
+    "occ_steps": 0,
+    "occ_failed": 0
+   },
+   "tracks": 44,
+   "plan_frames": 621,
+   "compare": {
+    "matched": 0,
+    "no_reference": 221,
+    "bridged": null,
+    "by_flow": null,
+    "not_flow": null,
+    "linear_baseline": null,
+    "ref_frames": 826,
+    "run_frames": 826,
+    "faces": 1667,
+    "ref_faces": 1667,
+    "interpolated": 221,
+    "flow_bridged": 30
+   }
+  },
+  {
+   "run": 1,
+   "k": 1,
+   "wall_s": 23.847889100004977,
+   "schedule": {
+    "interval": 1,
+    "frames": 900,
+    "detector_calls": 900,
+    "coast": 0,
+    "stage1_cut_hints": 0
+   },
+   "tracker": {
+    "frames": 900,
+    "full_detections": 192,
+    "roi_detections": 708,
+    "roi_fallback_full": 17,
+    "coast_frames": 0,
+    "matched": 1388,
+    "new_tracks": 59,
+    "lost_tracks": 62,
+    "recovered_tracks": 5
+   },
+   "flow": {
+    "anchored": 1338,
+    "steps": 337,
+    "refused": 18,
+    "closed": 32,
+    "aligned": 0,
+    "occ_steps": 0,
+    "occ_failed": 0
+   },
+   "tracks": 44,
+   "plan_frames": 621,
+   "compare": {
+    "matched": 0,
+    "no_reference": 221,
+    "bridged": null,
+    "by_flow": null,
+    "not_flow": null,
+    "linear_baseline": null,
+    "ref_frames": 826,
+    "run_frames": 826,
+    "faces": 1667,
+    "ref_faces": 1667,
+    "interpolated": 221,
+    "flow_bridged": 30
+   }
+  },
+  {
+   "run": 2,
+   "k": 2,
+   "wall_s": 21.109469199996965,
+   "schedule": {
+    "interval": 2,
+    "frames": 900,
+    "detector_calls": 485,
+    "coast": 415,
+    "stage1_cut_hints": 0
+   },
+   "tracker": {
+    "frames": 900,
+    "full_detections": 185,
+    "roi_detections": 300,
+    "roi_fallback_full": 6,
+    "coast_frames": 415,
+    "matched": 667,
+    "new_tracks": 63,
+    "lost_tracks": 65,
+    "recovered_tracks": 4
+   },
+   "flow": {
+    "anchored": 730,
+    "steps": 1180,
+    "refused": 67,
+    "closed": 604,
+    "aligned": 0,
+    "occ_steps": 0,
+    "occ_failed": 0
+   },
+   "tracks": 36,
+   "plan_frames": 603,
+   "compare": {
+    "matched": 672,
+    "no_reference": 181,
+    "bridged": {
+     "n": 672,
+     "median": 2.638109538539803,
+     "p95": 53.58071587257272,
+     "max": 164.73243615087515,
+     "mean": 11.82865731649724
+    },
+    "by_flow": {
+     "n": 479,
+     "median": 1.220394932355692,
+     "p95": 11.119442235136876,
+     "max": 52.86446198666794,
+     "mean": 3.105015572900231
+    },
+    "not_flow": {
+     "n": 193,
+     "median": 25.72590192262362,
+     "p95": 89.06898939291905,
+     "max": 164.73243615087515,
+     "mean": 33.479560918481525
+    },
+    "linear_baseline": {
+     "n": 658,
+     "median": 3.943176008347195,
+     "p95": 47.56344208785219,
+     "max": 900.9809863622371,
+     "mean": 17.16523440937368
+    },
+    "ref_frames": 826,
+    "run_frames": 819,
+    "faces": 1583,
+    "ref_faces": 1667,
+    "interpolated": 853,
+    "flow_bridged": 491
+   }
+  },
+  {
+   "run": 3,
+   "k": 4,
+   "wall_s": 18.310836199998448,
+   "schedule": {
+    "interval": 4,
+    "frames": 900,
+    "detector_calls": 277,
+    "coast": 623,
+    "stage1_cut_hints": 0
+   },
+   "tracker": {
+    "frames": 900,
+    "full_detections": 178,
+    "roi_detections": 99,
+    "roi_fallback_full": 2,
+    "coast_frames": 623,
+    "matched": 337,
+    "new_tracks": 44,
+    "lost_tracks": 45,
+    "recovered_tracks": 3
+   },
+   "flow": {
+    "anchored": 381,
+    "steps": 1328,
+    "refused": 47,
+    "closed": 283,
+    "aligned": 0,
+    "occ_steps": 0,
+    "occ_failed": 0
+   },
+   "tracks": 36,
+   "plan_frames": 571,
+   "compare": {
+    "matched": 916,
+    "no_reference": 200,
+    "bridged": {
+     "n": 916,
+     "median": 2.871395153599035,
+     "p95": 63.58491465278476,
+     "max": 258.76275656757,
+     "mean": 14.11291064740873
+    },
+    "by_flow": {
+     "n": 601,
+     "median": 1.1480251990757946,
+     "p95": 9.23353543080277,
+     "max": 45.05945440135566,
+     "mean": 2.6235529479206856
+    },
+    "not_flow": {
+     "n": 315,
+     "median": 28.860873002312054,
+     "p95": 91.60498066490557,
+     "max": 258.76275656757,
+     "mean": 36.03387565500338
+    },
+    "linear_baseline": {
+     "n": 884,
+     "median": 6.505997037121581,
+     "p95": 51.72381569286857,
+     "max": 1878.4107020885688,
+     "mean": 19.59820188391528
+    },
+    "ref_frames": 826,
+    "run_frames": 802,
+    "faces": 1497,
+    "ref_faces": 1667,
+    "interpolated": 1116,
+    "flow_bridged": 609
+   }
+  },
+  {
+   "run": 4,
+   "k": 8,
+   "wall_s": 16.969942799994897,
+   "schedule": {
+    "interval": 8,
+    "frames": 900,
+    "detector_calls": 170,
+    "coast": 730,
+    "stage1_cut_hints": 0
+   },
+   "tracker": {
+    "frames": 900,
+    "full_detections": 170,
+    "roi_detections": 0,
+    "roi_fallback_full": 0,
+    "coast_frames": 730,
+    "matched": 172,
+    "new_tracks": 37,
+    "lost_tracks": 37,
+    "recovered_tracks": 2
+   },
+   "flow": {
+    "anchored": 209,
+    "steps": 1324,
+    "refused": 33,
+    "closed": 127,
+    "aligned": 0,
+    "occ_steps": 0,
+    "occ_failed": 0
+   },
+   "tracks": 34,
+   "plan_frames": 431,
+   "compare": {
+    "matched": 887,
+    "no_reference": 245,
+    "bridged": {
+     "n": 887,
+     "median": 3.1663914770039994,
+     "p95": 79.52397568722452,
+     "max": 124.80042121590834,
+     "mean": 17.116069018161554
+    },
+    "by_flow": {
+     "n": 581,
+     "median": 1.2811884854959932,
+     "p95": 9.765587084498097,
+     "max": 50.83131668895397,
+     "mean": 2.995299399656595
+    },
+    "not_flow": {
+     "n": 306,
+     "median": 39.51869397202921,
+     "p95": 99.7832584068557,
+     "max": 124.80042121590834,
+     "mean": 43.92707277094384
+    },
+    "linear_baseline": {
+     "n": 816,
+     "median": 12.673956530117923,
+     "p95": 71.14399257622628,
+     "max": 1878.4107020885688,
+     "mean": 24.63962706703657
+    },
+    "ref_frames": 826,
+    "run_frames": 755,
+    "faces": 1341,
+    "ref_faces": 1667,
+    "interpolated": 1132,
+    "flow_bridged": 588
+   }
+  }
+ ]
+}

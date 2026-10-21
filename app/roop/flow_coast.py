@@ -136,12 +136,16 @@ class FlowCoaster:
     """
 
     def __init__(self, max_side: int = 192, win: int = 15, levels: int = 3,
-                 max_features: int = 60, roi_scale: float = 1.7):
+                 max_features: int = 60, roi_scale: float = 1.7, tracker: Any = None):
         self.max_side = int(max_side)
         self.win = int(win)
         self.levels = int(levels)
         self.max_features = int(max_features)
         self.roi_scale = float(roi_scale)
+        # Where the points go between two crops is the only pixel work a step does; a back end supplies it
+        # (roop/flow_backend.py). The default is the CPU call this class always made, so a coaster built
+        # without one behaves exactly as before.
+        self._tracker = tracker
         # Only a CROP of the last frame is kept (never the frame): a coaster per
         # track on 4K footage would otherwise pin tens of MB each.
         self._crop: Optional[np.ndarray] = None
@@ -263,8 +267,9 @@ class FlowCoaster:
         inside = (xs >= 0) & (xs < w) & (ys >= 0) & (ys < h)
         if int(inside.sum()) < MIN_INLIERS:
             return self._fail('cloud left the frame')
-        lk = dict(winSize=(self.win, self.win), maxLevel=self.levels,
-                  criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 20, 0.01))
+        if self._tracker is None:
+            from roop.flow_backend import CvLK
+            self._tracker = CvLK(win=self.win, levels=self.levels)
         # Track inside the stored crop, not the whole frame: LK builds an image
         # pyramid per call, and on 4K that would cost more than the dropout it
         # repairs. The current frame is cut at the SAME bounds.
@@ -279,10 +284,12 @@ class FlowCoaster:
         if gray_c.shape != prev_c.shape:
             return self._fail('crop shape changed')
         p0 = ((pts - off) * sc).reshape(-1, 1, 2)
-        p1, st, err = cv2.calcOpticalFlowPyrLK(prev_c, gray_c, p0, None, **lk)
+        p1, st, err = self._tracker.track(prev_c, gray_c, p0)
         if p1 is None:
             return self._fail('lk failed')
-        back, stb, _ = cv2.calcOpticalFlowPyrLK(gray_c, prev_c, p1, None, **lk)
+        back, stb, _ = self._tracker.track(gray_c, prev_c, p1)
+        if back is None:
+            return self._fail('lk failed')
         # back to full-resolution coordinates
         p1 = p1 / sc + off.reshape(1, 1, 2)
         p0 = p0 / sc + off.reshape(1, 1, 2)

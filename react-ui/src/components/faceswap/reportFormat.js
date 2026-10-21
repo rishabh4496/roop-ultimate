@@ -88,6 +88,10 @@ export function reportSections(report) {
       row('cap.set() seeks', fmtCount(s2.set_calls)),
       row('cap.grab() frames walked', fmtCount(s2.grab_calls)),
       row('Verified target frames', fmtCount(s2.verified_target_frames)),
+      // What the pre-pass actually ran: absent (a dash) when Stage 2 was restored from a checkpoint.
+      row('Detector calls', isNum(s2.detector_calls) && isNum(s2.scan_frames)
+        ? `${fmtCount(s2.detector_calls)} of ${fmtCount(s2.scan_frames)} frames${isNum(s2.detect_interval) && s2.detect_interval > 1 ? ` (every ${s2.detect_interval}th)` : ''}`
+        : '—'),
     ],
   });
 

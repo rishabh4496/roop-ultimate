@@ -56,6 +56,7 @@ export const SETTINGS_CATALOG = [
   { key: 'perf_gpu_affine', label: 'CUDA affine warp', section: 'Advanced performance' },
   { key: 'perf_pinned_buffers', label: 'Pinned host buffers (zero-copy)', section: 'Advanced performance' },
   { key: 'temporal_step', label: 'Face tracking interval (frames)', section: 'Advanced performance' },
+  { key: 'prepass_detect_interval', label: 'Pre-pass detection interval (frames)', section: 'Advanced performance' },
   { key: 'enhance_min_face_px', label: 'Skip restorer below face size (px)', section: 'Advanced performance' },
 
   // Identity & tracking
@@ -65,6 +66,7 @@ export const SETTINGS_CATALOG = [
   { key: 'track_stitch', label: 'Track stitching', section: 'Identity & tracking' },
   { key: 'verify_swap', label: 'Swap outcome guard', section: 'Identity & tracking' },
   { key: 'upright_remeasure', label: 'Upright re-measure (rolled faces)', section: 'Identity & tracking' },
+  { key: 'prepass_landmark_filter', label: 'Pre-pass landmark filter', section: 'Identity & tracking' },
   { key: 'process_priority', label: 'Process priority', section: 'Identity & tracking' },
 
   // Output

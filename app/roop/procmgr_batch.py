@@ -101,6 +101,8 @@ class BatchProcessingMixin:
         # needs it alongside self._tls.frame_idx to map a frame to a timestamp
         # in the driving audio (see roop.lipsync_audio.frame_time).
         self._lipsync_fps = fps
+        # The pre-pass's 1-euro filter states its cutoffs in Hz, so it needs the clip's frame rate too.
+        self._video_fps = fps
         self._lipsync_frame_start = frame_start
         self._lipsync_audio = None
         self._memory_stage_log = []
@@ -797,10 +799,19 @@ class BatchProcessingMixin:
         # determine active swap ranges so non-target frames pass through at full speed.
         self._active_ranges = None
         self._active_ranges_mask = None
+        self._active_ranges_stats = None      # a previous job's Stage 1 answer must not seed this job's Stage 2
         _sparse_active = bool(getattr(roop.globals, 'sparse_auto_range', False) and not is_awebp and source_video and os.path.isfile(source_video))
         # Per-stage progress for /ws/telemetry (roop/stage_telemetry.py): written here, sampled by the web side.
         from roop import stage_telemetry as _st
         _st.begin_run(frame_count)
+        # The head-pose HUD reads the ACTIVE trajectory: the previous job's heads must not outlive its job.
+        from roop import trajectory_cache as _trajectory_cache
+        _trajectory_cache.clear_active()
+        self._trajectory = None
+        # What the pre-pass reports about itself is this job's, never the previous job's.
+        self._prepass_schedule = {}
+        self._flow_backend_name = None
+        self._prepass_filter = None
         if not _sparse_active:
             _st.skip(_st.STAGE_1_SPARSE_PRESCAN)
         # Phase 6: a project that was interrupted already knows its Stage 1 / Stage 2 answers. The adapter
@@ -926,13 +937,19 @@ class BatchProcessingMixin:
                 if _stage_cache is not None and sam2_p is None and not is_awebp:
                     _stage2_restored = bool(_stage_cache.restore_stage2(
                         self, frame_start=frame_start, frame_count=frame_count))
+                if _stage2_restored:
+                    # The pre-pass did not run, so nothing sealed this job's trajectory: map the checkpointed
+                    # one (when it matches the restored faces exactly) or rebuild it from them.
+                    self._seal_trajectory(frame_start, frame_count, restored=True)
                 if not _stage2_restored:
                     self._precompute_temporal(source_video, awebp_frames, frame_start, frame_end, frame_count)
                     # Flushed the moment the pre-pass completes. Only a COMPLETE pre-pass is recorded: a
                     # Stop ends the scan early (`processing` goes false) and a short scan is partial.
                     if (_stage_cache is not None and sam2_p is None and not is_awebp
                             and self._temporal_mode and self._temporal_faces and roop.globals.processing):
-                        _stage_cache.save_stage2(self, frame_start=frame_start, frame_count=frame_count)
+                        if _stage_cache.save_stage2(self, frame_start=frame_start, frame_count=frame_count):
+                            # Recorded AFTER stage2 (recording stage2 drops a trajectory; this puts the new one in).
+                            _stage_cache.save_trajectory(getattr(self, '_trajectory', None))
                 # SAM 2 follows Stage 2 (the plan names the frames it may track) and runs BEFORE the analysis
                 # models are released below, since a run seeded by detection needs them. Its own failure is
                 # contained inside the helper; it must not read as a failed pre-pass.
@@ -984,6 +1001,15 @@ class BatchProcessingMixin:
             # 0 is a finding (the pre-pass ran and verified no frame); unknown is only a failed pre-pass.
             _st.set_verified(None if _prepass_failed else len(_plan or {}))
             _st.put(_st.STAGE_2_ACTIVE_PREPASS, **_range_seek.counts())
+            # What the pre-pass scheduled and ran (roop/prepass_policy.py). Nothing when Stage 2 was restored from a
+            # checkpoint: it did not run, and a number from another run would be a fabricated one.
+            _sched = {} if _stage2_restored else dict(getattr(self, '_prepass_schedule', None) or {})
+            _st.put(_st.STAGE_2_ACTIVE_PREPASS, detect_interval=_sched.get('interval'),
+                    detector_calls=_sched.get('detector_calls'), scan_frames=_sched.get('frames'),
+                    coast_frames=_sched.get('coast'),
+                    flow_backend=None if _stage2_restored else getattr(self, '_flow_backend_name', None),
+                    landmark_filter=None if _stage2_restored else getattr(self, '_prepass_filter', None),
+                    trajectory_faces=len(getattr(self, '_trajectory', None) or ()) or None)
             if _stage2_restored and not _prepass_failed:
                 _st.restored(_st.STAGE_2_ACTIVE_PREPASS)
             else:

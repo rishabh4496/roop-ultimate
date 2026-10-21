@@ -1,0 +1,354 @@
+{
+ "clip": "G:\\pinokio\\roop-keep\\Weeds.mp4",
+ "frames": 900,
+ "runs": [
+  {
+   "run": 0,
+   "k": 1,
+   "wall_s": 16.74622359999921,
+   "schedule": {
+    "interval": 1,
+    "frames": 900,
+    "detector_calls": 900,
+    "coast": 0,
+    "stage1_cut_hints": 0
+   },
+   "tracker": {
+    "frames": 900,
+    "full_detections": 129,
+    "roi_detections": 771,
+    "roi_fallback_full": 8,
+    "coast_frames": 0,
+    "matched": 1137,
+    "new_tracks": 21,
+    "lost_tracks": 23,
+    "recovered_tracks": 4
+   },
+   "flow": {
+    "anchored": 1126,
+    "steps": 56,
+    "refused": 4,
+    "closed": 6,
+    "aligned": 0,
+    "occ_steps": 0,
+    "occ_failed": 0
+   },
+   "tracks": 9,
+   "plan_frames": 719,
+   "compare": {
+    "matched": 1,
+    "no_reference": 62,
+    "bridged": {
+     "n": 1,
+     "median": 97.22976832691161,
+     "p95": 97.22976832691161,
+     "max": 97.22976832691161,
+     "mean": 97.22976832691161
+    },
+    "by_flow": null,
+    "not_flow": {
+     "n": 1,
+     "median": 97.22976832691161,
+     "p95": 97.22976832691161,
+     "max": 97.22976832691161,
+     "mean": 97.22976832691161
+    },
+    "linear_baseline": {
+     "n": 1,
+     "median": 97.22990255169137,
+     "p95": 97.22990255169137,
+     "max": 97.22990255169137,
+     "mean": 97.22990255169137
+    },
+    "ref_frames": 900,
+    "run_frames": 900,
+    "faces": 1221,
+    "ref_faces": 1221,
+    "interpolated": 63,
+    "flow_bridged": 9
+   }
+  },
+  {
+   "run": 1,
+   "k": 1,
+   "wall_s": 17.143713299999945,
+   "schedule": {
+    "interval": 1,
+    "frames": 900,
+    "detector_calls": 900,
+    "coast": 0,
+    "stage1_cut_hints": 0
+   },
+   "tracker": {
+    "frames": 900,
+    "full_detections": 129,
+    "roi_detections": 771,
+    "roi_fallback_full": 8,
+    "coast_frames": 0,
+    "matched": 1137,
+    "new_tracks": 21,
+    "lost_tracks": 23,
+    "recovered_tracks": 4
+   },
+   "flow": {
+    "anchored": 1126,
+    "steps": 56,
+    "refused": 4,
+    "closed": 6,
+    "aligned": 0,
+    "occ_steps": 0,
+    "occ_failed": 0
+   },
+   "tracks": 9,
+   "plan_frames": 719,
+   "compare": {
+    "matched": 1,
+    "no_reference": 62,
+    "bridged": {
+     "n": 1,
+     "median": 97.22976832691161,
+     "p95": 97.22976832691161,
+     "max": 97.22976832691161,
+     "mean": 97.22976832691161
+    },
+    "by_flow": null,
+    "not_flow": {
+     "n": 1,
+     "median": 97.22976832691161,
+     "p95": 97.22976832691161,
+     "max": 97.22976832691161,
+     "mean": 97.22976832691161
+    },
+    "linear_baseline": {
+     "n": 1,
+     "median": 97.22990255169137,
+     "p95": 97.22990255169137,
+     "max": 97.22990255169137,
+     "mean": 97.22990255169137
+    },
+    "ref_frames": 900,
+    "run_frames": 900,
+    "faces": 1221,
+    "ref_faces": 1221,
+    "interpolated": 63,
+    "flow_bridged": 9
+   }
+  },
+  {
+   "run": 2,
+   "k": 2,
+   "wall_s": 15.053215099993395,
+   "schedule": {
+    "interval": 2,
+    "frames": 900,
+    "detector_calls": 458,
+    "coast": 442,
+    "stage1_cut_hints": 0
+   },
+   "tracker": {
+    "frames": 900,
+    "full_detections": 128,
+    "roi_detections": 330,
+    "roi_fallback_full": 3,
+    "coast_frames": 442,
+    "matched": 570,
+    "new_tracks": 21,
+    "lost_tracks": 23,
+    "recovered_tracks": 4
+   },
+   "flow": {
+    "anchored": 591,
+    "steps": 701,
+    "refused": 18,
+    "closed": 546,
+    "aligned": 0,
+    "occ_steps": 0,
+    "occ_failed": 0
+   },
+   "tracks": 8,
+   "plan_frames": 680,
+   "compare": {
+    "matched": 603,
+    "no_reference": 31,
+    "bridged": {
+     "n": 603,
+     "median": 1.0134249609117696,
+     "p95": 37.47742539823237,
+     "max": 88.63791265483987,
+     "mean": 7.476861541677246
+    },
+    "by_flow": {
+     "n": 515,
+     "median": 0.795334840786847,
+     "p95": 13.14730547347775,
+     "max": 84.96906799918663,
+     "mean": 3.19825456444364
+    },
+    "not_flow": {
+     "n": 88,
+     "median": 20.061766199217715,
+     "p95": 86.62634063819233,
+     "max": 88.63791265483987,
+     "mean": 32.516436465260284
+    },
+    "linear_baseline": {
+     "n": 600,
+     "median": 1.2154987993339987,
+     "p95": 20.095971836803418,
+     "max": 3104.546535165519,
+     "mean": 15.992174350221504
+    },
+    "ref_frames": 900,
+    "run_frames": 888,
+    "faces": 1225,
+    "ref_faces": 1221,
+    "interpolated": 634,
+    "flow_bridged": 523
+   }
+  },
+  {
+   "run": 3,
+   "k": 4,
+   "wall_s": 13.561205600002722,
+   "schedule": {
+    "interval": 4,
+    "frames": 900,
+    "detector_calls": 233,
+    "coast": 667,
+    "stage1_cut_hints": 0
+   },
+   "tracker": {
+    "frames": 900,
+    "full_detections": 123,
+    "roi_detections": 110,
+    "roi_fallback_full": 2,
+    "coast_frames": 667,
+    "matched": 290,
+    "new_tracks": 13,
+    "lost_tracks": 12,
+    "recovered_tracks": 0
+   },
+   "flow": {
+    "anchored": 303,
+    "steps": 930,
+    "refused": 12,
+    "closed": 264,
+    "aligned": 0,
+    "occ_steps": 0,
+    "occ_failed": 0
+   },
+   "tracks": 8,
+   "plan_frames": 541,
+   "compare": {
+    "matched": 842,
+    "no_reference": 42,
+    "bridged": {
+     "n": 842,
+     "median": 1.0818341875586328,
+     "p95": 21.05351119880724,
+     "max": 90.74387354619687,
+     "mean": 5.448972081306024
+    },
+    "by_flow": {
+     "n": 717,
+     "median": 0.8921681431430603,
+     "p95": 14.764284355823293,
+     "max": 90.74387354619687,
+     "mean": 3.203888312064583
+    },
+    "not_flow": {
+     "n": 125,
+     "median": 14.64863353858837,
+     "p95": 60.2426566968198,
+     "max": 90.68639751812738,
+     "mean": 18.32677258167493
+    },
+    "linear_baseline": {
+     "n": 833,
+     "median": 1.803309122300342,
+     "p95": 19.804277532411483,
+     "max": 3106.930563924675,
+     "mean": 10.31518173051431
+    },
+    "ref_frames": 900,
+    "run_frames": 880,
+    "faces": 1187,
+    "ref_faces": 1221,
+    "interpolated": 884,
+    "flow_bridged": 720
+   }
+  },
+  {
+   "run": 4,
+   "k": 8,
+   "wall_s": 11.744698299997253,
+   "schedule": {
+    "interval": 8,
+    "frames": 900,
+    "detector_calls": 120,
+    "coast": 780,
+    "stage1_cut_hints": 0
+   },
+   "tracker": {
+    "frames": 900,
+    "full_detections": 120,
+    "roi_detections": 0,
+    "roi_fallback_full": 0,
+    "coast_frames": 780,
+    "matched": 148,
+    "new_tracks": 8,
+    "lost_tracks": 7,
+    "recovered_tracks": 0
+   },
+   "flow": {
+    "anchored": 156,
+    "steps": 998,
+    "refused": 8,
+    "closed": 128,
+    "aligned": 0,
+    "occ_steps": 0,
+    "occ_failed": 0
+   },
+   "tracks": 7,
+   "plan_frames": 718,
+   "compare": {
+    "matched": 944,
+    "no_reference": 15,
+    "bridged": {
+     "n": 944,
+     "median": 1.3871186076357822,
+     "p95": 25.966941863271465,
+     "max": 83.32812678063334,
+     "mean": 5.887876371863256
+    },
+    "by_flow": {
+     "n": 779,
+     "median": 1.138520921956122,
+     "p95": 17.793514248121365,
+     "max": 83.32812678063334,
+     "mean": 3.692458900253212
+    },
+    "not_flow": {
+     "n": 165,
+     "median": 13.104819453173203,
+     "p95": 44.62077320050789,
+     "max": 71.16981166060584,
+     "mean": 16.252907949949474
+    },
+    "linear_baseline": {
+     "n": 920,
+     "median": 3.6361641101428432,
+     "p95": 23.68040073158041,
+     "max": 84.57092937426452,
+     "mean": 7.328338040519407
+    },
+    "ref_frames": 900,
+    "run_frames": 868,
+    "faces": 1115,
+    "ref_faces": 1221,
+    "interpolated": 959,
+    "flow_bridged": 779
+   }
+  }
+ ]
+}

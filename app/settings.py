@@ -74,6 +74,7 @@ UI_SETTINGS = (
     ('perf_gpu_affine', 'CUDA affine warp', 'Advanced performance'),
     ('perf_pinned_buffers', 'Pinned host buffers (zero-copy)', 'Advanced performance'),
     ('temporal_step', 'Face tracking interval (frames)', 'Advanced performance'),
+    ('prepass_detect_interval', 'Pre-pass detection interval (frames)', 'Advanced performance'),
     ('enhance_min_face_px', 'Skip restorer below face size (px)', 'Advanced performance'),
     # Identity & tracking
     ('recognizer', 'Recognition model', 'Identity & tracking'),
@@ -82,6 +83,7 @@ UI_SETTINGS = (
     ('track_stitch', 'Track stitching', 'Identity & tracking'),
     ('verify_swap', 'Swap outcome guard', 'Identity & tracking'),
     ('upright_remeasure', 'Upright re-measure (rolled faces)', 'Identity & tracking'),
+    ('prepass_landmark_filter', 'Pre-pass landmark filter', 'Identity & tracking'),
     ('process_priority', 'Process priority', 'Identity & tracking'),
     # Output
     ('output_image_format', 'Image format', 'Output'),
@@ -150,6 +152,9 @@ ENV_SETTINGS = (
     ('perf_gpu_affine', 'ROOP_GPU_AFFINE', 'tristate'),
     ('perf_pinned_buffers', 'ROOP_PINNED_BUFFERS', 'tristate'),
     ('temporal_step', 'ROOP_TEMPORAL_STEP', 'value'),
+    # Both read at USE time, once per pre-pass (TemporalFaceTracker.from_env, _build_temporal_faces).
+    ('prepass_detect_interval', 'ROOP_PREPASS_DETECT_INTERVAL', 'value'),
+    ('prepass_landmark_filter', 'ROOP_PREPASS_FILTER', 'value'),
     # Read at USE time (ProcessMgr.initialize, once per render) -- see LIVE_ENV_SETTINGS.
     ('enhance_min_face_px', 'ROOP_ENHANCE_MIN_FACE_PX', 'value'),
     # Flow-texture locking.  These are config-only performance knobs: the
@@ -186,6 +191,7 @@ ENV_SETTINGS = (
 # re-export a value nothing reads again.
 LIVE_ENV_SETTINGS = ('perf_batch_max', 'perf_nvenc_preset', 'perf_gpu_affine',
                      'perf_pinned_buffers', 'temporal_step', 'enhance_min_face_px',
+                     'prepass_detect_interval', 'prepass_landmark_filter',
                      'identity_confidence_threshold',
                      'hdr_pipeline', 'hdr_source_transfer', 'hdr_source_primaries',
                      'hdr_output_codec')
@@ -1364,6 +1370,16 @@ class Settings:
         # interocular distance p95), and interpolated faces bypass the identity
         # gates. Keep 1 unless the footage is near-frontal and static.
         self.temporal_step = self.default_get(data, 'temporal_step', 1)
+        # Tracking pre-pass DETECTION interval K (ROOP_PREPASS_DETECT_INTERVAL, 1-8): the face detector runs
+        # on frame 0, K, 2K ... and on a shot cut; the frames between are carried by optical flow and the
+        # holes bridged between two real detections. Unlike `temporal_step` it still looks at every frame's
+        # pixels. roop/prepass_policy.py holds the clamp and `roop/procmgr_tracking.py` the consumer. The
+        # default here is pinned to prepass_policy.DETECT_INTERVAL_DEFAULT by test_prepass_interval.
+        self.prepass_detect_interval = self.default_get(data, 'prepass_detect_interval', 1)
+        # Which smoother the tracking pre-pass runs over each track (ROOP_PREPASS_FILTER): adaptive (causal
+        # velocity-ramped EMA), zero_phase (the same, forward + backward) or one_euro (roop/one_euro_vec.py,
+        # a zero-phase adaptive-cutoff 1-euro filter run over the whole track at once).
+        self.prepass_landmark_filter = self.default_get(data, 'prepass_landmark_filter', 'adaptive')
         # Faces whose shorter detected-box side is under this many frame pixels
         # are pasted from the swap crop without running the restorer. 0 = off:
         # it changes how small faces look, so it is the user's opt-in.
@@ -1636,6 +1652,8 @@ class Settings:
             'perf_gpu_affine': self.perf_gpu_affine,
             'perf_pinned_buffers': self.perf_pinned_buffers,
             'temporal_step': self.temporal_step,
+            'prepass_detect_interval': self.prepass_detect_interval,
+            'prepass_landmark_filter': self.prepass_landmark_filter,
             'enhance_min_face_px': self.enhance_min_face_px,
             'vram_safety_margin_gb': self.vram_safety_margin_gb,
             'recognizer': self.recognizer,

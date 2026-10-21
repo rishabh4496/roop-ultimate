@@ -1,7 +1,7 @@
 import OutputVideoPlayer from './OutputVideoPlayer';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { postJSON, API } from '../api';
-import { AnimatedNumber, Button } from './ui';
+import { AnimatedNumber, Button, Section } from './ui';
 import { Icon } from '../icons';
 import { motion, spring } from '../motion';
 import { confirmDialog } from './confirm';
@@ -10,6 +10,7 @@ import ProcessingDock from './faceswap/ProcessingDock';
 import ProcessingTerminal from './faceswap/ProcessingTerminal';
 import DiagnosticsPanel from './faceswap/DiagnosticsPanel';
 import RunModelsPanel from './faceswap/RunModelsPanel';
+import HeadPoseHud from './faceswap/HeadPoseHud';
 import PipelineHud from './faceswap/PipelineReport';
 import PipelinePill from './faceswap/PipelinePill';
 import LiveProcessingPeek from './faceswap/LiveProcessingPeek';
@@ -705,6 +706,11 @@ function RunPanelsLive({ settings, runtime, telemetry, runConfigSummary, started
           settings={settings}
           telemetry={telemetry}
         />
+        {/* The pose of the heads in the frame being rendered: the Stage 2 pre-pass's smoothed trajectory, the same
+            keypoints the swap aligns with (GET /api/trajectory/pose). Mounted, and polling, only while open. */}
+        <Section title="Head pose" collapsible defaultOpen>
+          <HeadPoseHud />
+        </Section>
       </div>
       <div className="lg:col-span-2 min-w-0">
         <DiagnosticsPanel

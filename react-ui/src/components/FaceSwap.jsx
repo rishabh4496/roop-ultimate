@@ -53,6 +53,7 @@ import { num, fmtTime } from './faceswap/utils';
 import useProfiles from './faceswap/useProfiles';
 import { useSystemTelemetryPoller } from './faceswap/useTelemetry';
 import SystemTelemetryHud from './faceswap/SystemTelemetryHud';
+import HeadPoseHud from './faceswap/HeadPoseHud';
 import useThrottledFrameRequest from './faceswap/useThrottledFrameRequest';
 import FrameUnavailable from './faceswap/FrameUnavailable';
 import {
@@ -3433,6 +3434,7 @@ export default function FaceSwap({
         <div>
           <Section title="Live Telemetry & Diagnostics" collapsible defaultOpen={false}>
             <SystemTelemetryHud />
+            <div className="mt-3"><HeadPoseHud /></div>
             <div className="mt-3 flex justify-between items-center">
               <Button size="sm" variant="secondary" onClick={() => setShowShortcutHUD(true)}>Keyboard Shortcuts Info</Button>
             </div>

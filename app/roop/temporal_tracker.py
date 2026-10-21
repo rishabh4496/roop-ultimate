@@ -231,6 +231,8 @@ class TemporalFaceTracker:
         # the legacy cadence by default because its single-context path is
         # already memory constrained.
         self.roi_interval = max(1, int(roi_interval))
+        #: K of `prepass_detect_interval` as read by `from_env` (1 when built directly); reporting only.
+        self.detect_interval = 1
         self.tracks = []
         self._next_id = 0
         self._last_full_frame = -self.full_interval
@@ -285,16 +287,26 @@ class TemporalFaceTracker:
         except (TypeError, ValueError):
             roi_interval = 1
 
-        return cls(
+        # `prepass_detect_interval` (K): one detector call per K frames, flow-carried faces between (see
+        # roop/prepass_policy.py). It is the same cadence as the opt-in ROI interval above, so the larger
+        # of the two wins, and the loss threshold grows with it or every track of K >= 5 would be declared
+        # lost between two key frames.
+        from roop import prepass_policy
+        interval = prepass_policy.detect_interval()
+        roi_interval = max(roi_interval, interval)
+
+        tracker = cls(
             full_interval=_int("ROOP_TEMPORAL_FULL_DETECT_INTERVAL", 8),
             stable_hits=_int("ROOP_TEMPORAL_STABLE_HITS", 2),
-            max_misses=_int("ROOP_TEMPORAL_MAX_MISSES", 3),
+            max_misses=prepass_policy.max_misses_for(interval, _int("ROOP_TEMPORAL_MAX_MISSES", 3)),
             reid_age=_int("ROOP_TEMPORAL_REID_AGE", 45),
             stable_pad=_float("ROOP_TEMPORAL_STABLE_ROI_PAD", 0.55),
             uncertain_pad=_float("ROOP_TEMPORAL_UNCERTAIN_ROI_PAD", 1.35),
             min_roi=_int("ROOP_TEMPORAL_MIN_ROI", 160),
             roi_interval=roi_interval,
         )
+        tracker.detect_interval = interval
+        return tracker
 
     @staticmethod
     def _predict(track, frame_index):
@@ -607,6 +619,27 @@ class TemporalFaceTracker:
         else:
             track.status = "uncertain"
 
+    # The cadence is decided at PLAN time (the frame is dispatched), but a result is consumed up to
+    # pool_workers + 2 frames later. With a detection every frame (K = 1) the late write is harmless and is
+    # kept exactly as it always was. With K > 1 it is not: consuming frame t - 4 would move "the last
+    # detection" BACK to t - 4, the next plan would see a gap of K and detect again, and an interval of 4 ran
+    # 900 detector calls over 900 frames (measured 2026-10-21, Weeds.mp4, 0 coast frames). Under an interval the
+    # marks only ever move forward.
+    def _note_requested(self, frame_index):
+        f = int(frame_index)
+        self._last_requested_frame = max(self._last_requested_frame, f) if self.detect_interval > 1 else f
+
+    def _note_full(self, frame_index):
+        f = int(frame_index)
+        if self.detect_interval > 1:
+            self._last_full_frame = max(self._last_full_frame, f)
+            if self._full_pending_frame is None or f >= self._full_pending_frame:
+                self._full_pending_frame = None
+        else:
+            self._last_full_frame = f
+            self._full_pending_frame = None
+        self._note_requested(f)
+
     def update(self, detections, frame_index, frame_shape=None, detection_mode="full"):
         """Consume one detector result and return frame assignments/events."""
         detections = [d for d in (detections or []) if _bbox(d) is not None]
@@ -616,18 +649,14 @@ class TemporalFaceTracker:
         self.stats["frames"] += 1
         if detection_mode == "full":
             self.stats["full_detections"] += 1
-            self._last_full_frame = int(frame_index)
-            self._full_pending_frame = None
-            self._last_requested_frame = int(frame_index)
+            self._note_full(frame_index)
         elif detection_mode == "roi":
             self.stats["roi_detections"] += 1
-            self._last_requested_frame = int(frame_index)
+            self._note_requested(frame_index)
         elif detection_mode == "roi_fallback_full":
             self.stats["roi_fallback_full"] += 1
             self.stats["full_detections"] += 1
-            self._last_full_frame = int(frame_index)
-            self._full_pending_frame = None
-            self._last_requested_frame = int(frame_index)
+            self._note_full(frame_index)
         elif detection_mode in ("coast", "skip"):
             self.stats["coast_frames"] += 1
 

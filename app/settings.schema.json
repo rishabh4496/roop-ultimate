@@ -42,6 +42,7 @@
     "perf_gpu_affine",
     "perf_pinned_buffers",
     "temporal_step",
+    "prepass_detect_interval",
     "enhance_min_face_px",
     "recognizer",
     "identity_confidence_threshold",
@@ -49,6 +50,7 @@
     "track_stitch",
     "verify_swap",
     "upright_remeasure",
+    "prepass_landmark_filter",
     "process_priority",
     "output_image_format",
     "output_video_format",
@@ -1277,6 +1279,30 @@
       },
       "env": {
         "var": "ROOP_TEMPORAL_STEP",
+        "kind": "value"
+      }
+    },
+    "prepass_detect_interval": {
+      "default": 1,
+      "type": "int",
+      "ui": {
+        "label": "Pre-pass detection interval (frames)",
+        "section": "Advanced performance"
+      },
+      "env": {
+        "var": "ROOP_PREPASS_DETECT_INTERVAL",
+        "kind": "value"
+      }
+    },
+    "prepass_landmark_filter": {
+      "default": "adaptive",
+      "type": "str",
+      "ui": {
+        "label": "Pre-pass landmark filter",
+        "section": "Identity & tracking"
+      },
+      "env": {
+        "var": "ROOP_PREPASS_FILTER",
         "kind": "value"
       }
     },

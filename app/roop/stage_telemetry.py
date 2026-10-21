@@ -31,7 +31,9 @@ job history stores (`api._record_run_history`) and the UI shows:
 
     stage 1   wall_s, sampled_frames, workers + worker_utilization_pct, active_ranges_count
     stage 2   wall_s, active_ranges_count, grab_calls (cap.grab / read frames walked), set_calls (cap.set
-              seeks), seek_walks, verified_target_frames
+              seeks), seek_walks, verified_target_frames, and what the pre-pass scheduled (None when Stage 2 was
+              restored from a checkpoint): detect_interval, detector_calls, scan_frames, coast_frames,
+              flow_backend, landmark_filter, trajectory_faces
     stage 3   wall_s, passthrough_frames (zero GPU work), gpu_frames (past the active-range gate),
               swapped_frames (>= 1 face swapped), faces_swapped, peak_vram_gb (device-wide, sampled)
     stage 4   the `finalize_output` result (verification, colour tags, A/V alignment, orphans)
@@ -326,7 +328,11 @@ def build_summary(ok: bool = True, now: Optional[float] = None) -> Dict[str, Any
                   "active_ranges_count": run.get("active_ranges_count"),
                   "grab_calls": c2.get("grab_calls"), "set_calls": c2.get("set_calls"),
                   "seek_walks": c2.get("seek_walks"),
-                  "verified_target_frames": run.get("verified_target_frames")}
+                  "verified_target_frames": run.get("verified_target_frames"),
+                  "detect_interval": c2.get("detect_interval"), "detector_calls": c2.get("detector_calls"),
+                  "scan_frames": c2.get("scan_frames"), "coast_frames": c2.get("coast_frames"),
+                  "flow_backend": c2.get("flow_backend"), "landmark_filter": c2.get("landmark_filter"),
+                  "trajectory_faces": c2.get("trajectory_faces")}
         stage3 = {"state": st[STAGE_3_MAIN_SWAP]["state"], "wall_s": s3,
                   "frames": run.get("total_frames"),
                   "passthrough_frames": c3.get("passthrough_frames"), "gpu_frames": c3.get("gpu_frames"),

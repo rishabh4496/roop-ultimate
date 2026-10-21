@@ -377,6 +377,20 @@ class TrackingMixin:
         temporal_tracker = TemporalFaceTracker.from_env() if collect_obs else None
         self._temporal_tracker = temporal_tracker
         self._temporal_frame_shape = None
+        # `prepass_detect_interval` K (roop/prepass_policy.py): the detector runs on every K-th frame and the
+        # frames between are carried by optical flow. 1 = every frame, the behaviour before the setting.
+        detect_k = int(getattr(temporal_tracker, 'detect_interval', 1) or 1) if temporal_tracker is not None else 1
+        # Stage 1's bitstream scene cuts (frames relative to frame_start). A HINT, not a verdict: it forces a
+        # full-frame detection on that frame so no key frame is spent on a stale ROI, but it is NOT recorded as a
+        # shot boundary - a heuristic's false positive must not forbid gap-filling across a real continuous shot.
+        cut_hints = set(getattr(self, '_stage1_cut_hints', None) or ()) if temporal_tracker is not None else set()
+        self._stage1_cut_hints_used = 0
+        # A track's flow chain starts once it has this many clean observations. 3 at K = 1: the detector sees
+        # every frame, so a track that cannot even collect three is not worth a chain. With a detection every K
+        # frames three observations is 2K frames, and the first 2K frames of every track (a whole shot of a short
+        # one) would be bridged by geometry alone; the chain's own checks (forward-backward, rigid fit, arrival
+        # at the closing detection) are what keep a bad one out, not the count.
+        flow_min_obs = 3 if detect_k == 1 else 1
         # Optical-flow landmark propagation (roop/flow_coast.py). Only where a
         # gap-fill consumer exists (collect_obs) and every frame is scanned: a
         # flow chain needs consecutive frames, and with a stride the frames in
@@ -387,6 +401,14 @@ class TrackingMixin:
                       'aligned': 0, 'occ_steps': 0, 'occ_failed': 0}
         align_on = bool(flow_on and _FLOW_ALIGN)
         self._flow_stats = flow_stats
+        # Which tracker moves the flow chain's points between crops (roop/flow_backend.py: nvof when it is really
+        # there, else the CPU Lucas-Kanade call this chain always used). One per scan, used from this thread only.
+        flow_tracker = None
+        self._flow_backend_name = None
+        if flow_on:
+            from roop import flow_backend as _flow_backend
+            flow_tracker = _flow_backend.select(log=lambda m: print(m, flush=True))
+            self._flow_backend_name = flow_tracker.name
         # Detections the appearance-only fallback was not allowed to claim.
         reid_refused = 0
         # Observations whose embedding was disbelieved because the recognition
@@ -412,10 +434,17 @@ class TrackingMixin:
             """Project a track's last bbox forward by its linear velocity to
             estimate where it should be at f_idx. Shared by _consume's
             detection-to-track association and (opt-in) ROI-crop detection."""
-            predicted_bbox = t['bbox']
-            dt = f_idx - t['last_seen']
-            if 0 < dt <= 6 and t['vel'] is not None and np.any(t['vel']):
-                proj = t['bbox'] + t['vel'] * dt
+            base_box, base_f = t['bbox'], t['last_seen']
+            # With a detection only every K frames the last DETECTED box is K-1 frames stale. The box the
+            # flow chain measured on a later frame is a better prior than extrapolating the old one, and the
+            # horizon stretches with K (6 frames is the K = 1 value and stays exactly that there).
+            fb = t.get('flow_bbox') if detect_k > 1 else None
+            if fb is not None and fb[0] > base_f:
+                base_box, base_f = fb[1], fb[0]
+            predicted_bbox = base_box
+            dt = f_idx - base_f
+            if 0 < dt <= max(6, detect_k) and t['vel'] is not None and np.any(t['vel']):
+                proj = base_box + t['vel'] * dt
                 if proj[2] > proj[0] and proj[3] > proj[1]:
                     predicted_bbox = proj
             return predicted_bbox
@@ -620,7 +649,7 @@ class TrackingMixin:
             t['oc_sub'] = 0
             if action in (REFRESH, REANCHOR):
                 if oc is None:
-                    oc = t['oc'] = FlowCoaster()
+                    oc = t['oc'] = FlowCoaster(tracker=flow_tracker)
                 if oc.anchor(g, face.bbox, getattr(face, 'landmark_2d_106', None),
                              getattr(face, 'kps', None)):
                     t['oc_age'] = 0
@@ -642,7 +671,7 @@ class TrackingMixin:
         def _flow_observe(t, face, f_idx):
             """A real detection: close any open flow chain, then re-anchor."""
             g = gray_ring.get(f_idx)
-            if g is None or int(t.get('emb_n') or 0) < 3:
+            if g is None or int(t.get('emb_n') or 0) < flow_min_obs:
                 t['fc'] = None
                 return
             fc = t.get('fc')
@@ -654,7 +683,7 @@ class TrackingMixin:
             lm = getattr(face, 'landmark_2d_106', None)
             kp = getattr(face, 'kps', None)
             if fc is None:
-                fc = t['fc'] = FlowCoaster()
+                fc = t['fc'] = FlowCoaster(tracker=flow_tracker)
             if fc.anchor(g, face.bbox, lm, kp):
                 flow_stats['anchored'] += 1
             t['flow_gap'] = 0
@@ -677,6 +706,8 @@ class TrackingMixin:
                 t['fc'] = None                       # a failed chain is over
                 return
             t.setdefault('flow', {})[f_idx] = r
+            if detect_k > 1 and r.bbox is not None:
+                t['flow_bbox'] = (f_idx, np.asarray(r.bbox, np.float32).copy())
 
         no_embedding = [0]      # detections left out of tracking for want of an embedding
 
@@ -1267,8 +1298,10 @@ class TrackingMixin:
                     # decoded frames. Several existing unit tests feed symbolic
                     # frame tokens to this pre-pass and must retain their exact
                     # full-frame detector contract.
+                    hinted = idx in cut_hints and idx not in shot_boundaries
+                    self._stage1_cut_hints_used += int(hinted)
                     detect_plan = temporal_tracker.plan(
-                        idx, frame.shape, force_full=(idx in shot_boundaries))
+                        idx, frame.shape, force_full=(idx in shot_boundaries or hinted))
                     crop_bbox = (detect_plan.roi if detect_plan.mode == 'roi'
                                  else None)
                     skip_detection = detect_plan.mode == 'coast'
@@ -2506,6 +2539,12 @@ class TrackingMixin:
         if scan_step > 1:
             print(f'[Temporal] scanning every {scan_step} frames; the rest are interpolated.')
         self._track_scanned = 0
+        # Stage 1's bitstream scene cuts, as frames relative to this scan's first frame (see the hint in
+        # `_precompute_tracks`). Only a Stage 1 that ran in THIS job leaves any.
+        _s1 = getattr(self, '_active_ranges_stats', None) or {}
+        _origin = int(frame_start or 0)
+        self._stage1_cut_hints = sorted({int(c) - _origin for c in (_s1.get('scene_cuts') or ())
+                                         if isinstance(c, (int, np.integer)) and int(c) - _origin > 0})
         tracks = self._precompute_tracks(source_video, frame_start, frame_end, frame_count,
                                          awebp_frames=awebp_frames, step=scan_step, collect_obs=True,
                                          desc='Analyzing faces')
@@ -2529,9 +2568,15 @@ class TrackingMixin:
                   f'had their keypoints replaced by optical-flow-carried ones (face partly covered, '
                   f'survival < 0.70); {_fs.get("occ_failed", 0)} chain step(s) refused. '
                   f'ROOP_FLOW_ALIGN=0 disables.', flush=True)
+        n_tail = int(getattr(self, '_flow_tail', 0) or 0)
+        if n_tail:
+            print(f'[Flow] {n_tail} face(s) carried past the last detection of their track by optical flow '
+                  f'(at most {max(0, int(getattr(getattr(self, "_temporal_tracker", None), "detect_interval", 1) or 1) - 1)}'
+                  f' frame(s), never past a cut).', flush=True)
         if _FLOW_COAST and (_fs.get('steps') or n_flow or n_flow_refused):
             print(f'[Flow] {_fs.get("steps", 0)} dropout frame(s) followed by optical flow '
-                  f'({_fs.get("refused", 0)} chain(s) ended inconsistent); '
+                  f'({getattr(self, "_flow_backend_name", None) or "cv"} points; '
+                  f'{_fs.get("refused", 0)} chain(s) ended inconsistent); '
                   f'{n_flow} gap-filled face(s) placed by flow'
                   + (f', {n_flow_refused} refused because flow missed the closing detection'
                      if n_flow_refused else '')
@@ -2546,6 +2591,17 @@ class TrackingMixin:
               f'{schedule.get("coast_frames", 0)} coast '
               f'(ROI cadence {getattr(tracker_state, "roi_interval", 1)}).',
               flush=True)
+        _k = int(getattr(tracker_state, 'detect_interval', 1) or 1)
+        _frames_sched = int(schedule.get('frames', 0) or 0)
+        _calls = int(schedule.get('full_detections', 0) or 0) + int(schedule.get('roi_detections', 0) or 0)
+        self._prepass_schedule = dict(interval=_k, frames=_frames_sched, detector_calls=_calls,
+                                      coast=int(schedule.get('coast_frames', 0) or 0),
+                                      stage1_cut_hints=int(getattr(self, '_stage1_cut_hints_used', 0) or 0))
+        if _k > 1 or self._prepass_schedule['stage1_cut_hints']:
+            print(f'[Temporal] prepass_detect_interval {_k}: {_calls} detector call(s) over {_frames_sched} frame(s) '
+                  f'({(_calls / _frames_sched) if _frames_sched else 0.0:.2f} per frame); '
+                  f'{self._prepass_schedule["stage1_cut_hints"]} full detection(s) forced by a Stage 1 cut hint.',
+                  flush=True)
         print(f'[Temporal] {len(tracks or [])} track(s); faces on {n_frames} frames '
               f'({n_faces} total, {n_interp} gap-filled, gap limit {gap_max}'
               + (f', {n_refused} refused as unbridgeable' if n_refused else '') + ').')
@@ -2613,6 +2669,46 @@ class TrackingMixin:
             self._temporal_mode = False
             self._temporal_faces = None
             self.stage2_frame_plan = {}
+        self._seal_trajectory(frame_start, frame_count)
+
+    def _seal_trajectory(self, frame_start, frame_count=None, restored=False):
+        """The smoothed trajectory of this job's faces: build it (or map the project's checkpointed one when
+        Stage 2 was restored and it matches exactly), make it the active cache the HUD reads
+        (`GET /api/trajectory/pose`) and keep it on the manager for the checkpoint writer. Never raises: it
+        is a view of the pre-pass, and a failure here must not cost the render (the reason is printed)."""
+        import time as _time
+        from roop import trajectory_cache as _tc
+        self._trajectory = None
+        try:
+            faces = getattr(self, '_temporal_faces', None)
+            if not faces:
+                _tc.clear_active()
+                return None
+            t0 = _time.perf_counter()
+            origin = int(frame_start or 0)
+            stage_cache = getattr(roop.globals, '_stage_cache', None)
+            cache, source = None, 'built'
+            if restored and stage_cache is not None:
+                cache = stage_cache.restore_trajectory(faces, frame_start=origin)
+                source = 'mapped from the project checkpoint' if cache is not None else 'built'
+            if cache is None:
+                cache = _tc.TrajectoryCache.build(
+                    faces, frame_start=origin, sar=float(getattr(roop.globals, 'video_sar', 1.0) or 1.0),
+                    fps=getattr(self, '_video_fps', None), total_frames=frame_count)
+            self._trajectory = cache
+            _tc.set_active(cache, getattr(stage_cache, 'project_id', None))
+            meta = cache.meta
+            print(f'[Trajectory] {len(cache)} face(s) on {meta.get("frames", 0)} frame(s), '
+                  f'{meta.get("tracks", 0)} track(s): smoothed alignment M / M_inv and head pose yaw/pitch/roll '
+                  f'{source} in {(_time.perf_counter() - t0) * 1000.0:.0f} ms ({cache.nbytes / 1048576.0:.1f} MB).',
+                  flush=True)
+            return cache
+        except Exception as _degrade_error:
+            self._trajectory = None
+            _tc.clear_active()
+            _swallowed("roop/procmgr_tracking.py:trajectory", _degrade_error,
+                       "the trajectory cache was skipped; the pre-pass result is unaffected")
+            return None
 
     @staticmethod
     def _bridgeable(a, b, span):
@@ -2901,6 +2997,14 @@ class TrackingMixin:
         self._coast_refused = 0
         self._flow_bridged = 0
         self._flow_refused = 0
+        self._flow_tail = 0
+        # With a detection every K frames the K - 1 frames after a track's LAST detection have no closing
+        # detection to be bridged to, so nothing would fill them (K = 1 has no such frames). Optical flow, which
+        # kept stepping after the last detection, may carry the face that far and no farther: the next key frame
+        # saw nothing, so the face left somewhere in those K - 1 frames and the flow chain is the only evidence of
+        # when.
+        _tracker_state = getattr(self, '_temporal_tracker', None)
+        tail_max = max(0, int(getattr(_tracker_state, 'detect_interval', 1) or 1) - 1)
         # Gaps that were refused specifically because a shot boundary falls
         # inside them, reported separately so the effect of the cut-aware guard
         # is visible rather than folded into the geometric refusals.
@@ -3026,6 +3130,28 @@ class TrackingMixin:
                             self._flow_bridged = getattr(self, '_flow_bridged', 0) + 1
                 prev = i
 
+            # ── Tail: optical flow past the last detection (detect interval K > 1 only) ──
+            if tail_max and _FLOW_COAST and t.get('flow') and idxs:
+                from roop.flow_coast import face_from_flow
+                last, base = idxs[-1], obs[idxs[-1]]
+                for g in range(last + 1, last + 1 + tail_max):
+                    r = t['flow'].get(g)
+                    if r is None or not r.consistent or g in merged or _spans_cut(last, g):
+                        break                  # the chain ended, or the shot did: nothing vouches for what follows
+                    cand = face_from_flow(base, r, coast_age=g - last)
+                    if cand is None or self._interp_collides(cand, t['id'], g, other_real):
+                        break
+                    lm68 = getattr(cand, 'landmark_3d_68', None)
+                    if lm68 is not None and r.kps is not None and getattr(base, 'kps', None) is not None:
+                        # the 68 3-D landmarks ride the keypoint centroid's displacement
+                        shift = np.asarray(r.kps, np.float32).mean(0) - np.asarray(base.kps, np.float32).mean(0)
+                        moved = np.array(lm68, np.float32, copy=True)
+                        moved[:, :2] += shift
+                        cand['landmark_3d_68'] = moved
+                    cand['_flow_tail'] = True
+                    merged[g] = cand
+                    self._flow_tail += 1
+
             # ── Kalman coasting over what interpolation could not reach ──────
             # Interpolation is strictly BETTER than prediction here — it has the
             # closing anchor, so it knows where the face actually went — which is
@@ -3101,7 +3227,19 @@ class TrackingMixin:
                 elif bool(getattr(self.options, 'stabilize_landmarks', True)):
                     from roop.temporal_smoother import (AdaptiveLandmarkSmoother, ZeroPhaseTrackSmoother,
                                                         zero_phase_default)
-                    if zero_phase_default():
+                    from roop import prepass_policy
+                    _kind = prepass_policy.filter_kind()
+                    if _kind == 'adaptive' and zero_phase_default():
+                        _kind = 'zero_phase'                  # the legacy ROOP_STAB_ZERO_PHASE switch
+                    self._prepass_filter = _kind
+                    if _kind == 'one_euro':
+                        # Vectorized zero-phase 1-euro over the whole track (roop/one_euro_vec.py): the same
+                        # smooth_track / summary_line contract as ZeroPhaseTrackSmoother, so it takes the
+                        # zero-phase branch below.
+                        from roop.one_euro_vec import OneEuroTrackSmoother
+                        zero_phase = OneEuroTrackSmoother.from_env(
+                            fps=getattr(self, '_video_fps', None))
+                    elif _kind == 'zero_phase':
                         # Zero-phase (forward + backward) over the WHOLE track: this pass already holds every
                         # frame of the track, so nothing requires the causal filter's lag. See the class.
                         zero_phase = ZeroPhaseTrackSmoother.from_env()

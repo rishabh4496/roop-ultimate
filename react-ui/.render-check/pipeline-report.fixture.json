@@ -38,7 +38,14 @@
    "grab_calls": 0,
    "set_calls": 2,
    "seek_walks": 0,
-   "verified_target_frames": 156
+   "verified_target_frames": 156,
+   "detect_interval": 4,
+   "detector_calls": 233,
+   "scan_frames": 900,
+   "coast_frames": 667,
+   "flow_backend": "cv",
+   "landmark_filter": "adaptive",
+   "trajectory_faces": 1177
   },
   "STAGE_3_MAIN_SWAP": {
    "state": "DONE",

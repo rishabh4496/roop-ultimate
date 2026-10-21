@@ -1068,6 +1068,25 @@ async function startServer() {
     res.json(getHardwareTelemetry());
   });
 
+  // Head-pose HUD (roop/trajectory_cache.py): one head that turns deterministically with the frame number, and a
+  // second that is gap-filled on every 5th frame, so the HUD shows both a detection and a flagged face.
+  app.get('/api/trajectory/pose', (req, res) => {
+    const frame = Math.max(0, Number(req.query.frame) || 0);
+    res.json({
+      available: true,
+      frame,
+      requested: frame,
+      frame_start: 0,
+      first_frame: 0,
+      last_frame: 359,
+      pose_convention: "solve_pose_5pt: +yaw nose toward the viewer's right, +pitch tilted down, +roll clockwise (degrees)",
+      faces: [
+        { track: 0, yaw: Math.round(40 * Math.sin(frame / 12) * 100) / 100, pitch: -8.5, roll: 2.25, flags: 0, bbox: [10, 10, 110, 130], scale: 1.02 },
+        { track: 1, yaw: -22.5, pitch: 12, roll: -4, flags: frame % 5 === 0 ? 1 : 0, bbox: [200, 20, 300, 140], scale: 0.98 },
+      ],
+    });
+  });
+
   // ── Faceset & Face Manager ──────────────────────────────────────────
   app.get('/api/faceset/library', (req, res) => {
     res.json({

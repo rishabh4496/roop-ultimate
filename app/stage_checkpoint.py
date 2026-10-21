@@ -179,3 +179,54 @@ class ProjectStageCache:
         self._log(f"[StageCache] Stage 2 restored from the checkpoint: {report['faces']} face(s) on "
                   f"{report['frames']} frame(s), {report['plan_frames']} plan frame(s) - the pre-pass is skipped.")
         return True
+
+    # -- trajectory (derived from Stage 2: roop/trajectory_cache.py) ----------------------------
+    def save_trajectory(self, cache: Any) -> bool:
+        """Record the smoothed-trajectory cache beside Stage 2's. Never raises; what failed is printed."""
+        if cache is None or not len(cache):
+            return False
+        path = _pc.stage_sidecar_path(self.project_id, "trajectory")
+        try:
+            entry = cache.save(path)
+        except Exception as exc:
+            _swallowed("stage_checkpoint.py:save_trajectory", exc, "this run's trajectory is not cached")
+            self._log(f"[StageCache] Trajectory not recorded ({type(exc).__name__}: {exc})")
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+            return False
+        try:
+            saved = _pc.record_stage(self.project_id, "trajectory", entry, live=self._live)
+        except Exception as exc:
+            _swallowed("stage_checkpoint.py:record_trajectory", exc, "this run's trajectory is not cached")
+            self._log(f"[StageCache] Trajectory could not be recorded: {exc}")
+            saved = None
+        if saved is None:
+            self._log("[StageCache] Trajectory not recorded (the project's input digests are not final).")
+            return False
+        self._log(f"[StageCache] Trajectory recorded: {entry['faces']} face(s) on {entry['frames']} frame(s), "
+                  f"{entry['sidecar']['size'] / 1048576.0:.1f} MB (memory-mapped on resume).")
+        return True
+
+    def restore_trajectory(self, faces_by_frame: Any, *, frame_start: int) -> Optional[Any]:
+        """The recorded trajectory, memory-mapped, when it matches the faces Stage 2 just restored exactly
+        (same frames, tracks and keypoints inside this run's window); None otherwise (the caller rebuilds)."""
+        entry = self.usable().get("trajectory")
+        if not entry:
+            return None
+        from roop.trajectory_cache import TrajectoryCache
+        path = _pc.stage_sidecar_path(self.project_id, "trajectory")
+        try:
+            meta = {k: v for k, v in entry.items() if k not in ("sidecar", "written_at")}
+            cache = TrajectoryCache.open(path, meta=meta)
+            window = cache.window_for(faces_by_frame, frame_start=frame_start)
+        except Exception as exc:
+            _swallowed("stage_checkpoint.py:restore_trajectory", exc, "the trajectory is rebuilt from the faces")
+            self._log(f"[StageCache] Trajectory not used ({type(exc).__name__}: {exc}); rebuilding it.")
+            return None
+        if window is None:
+            self._log("[StageCache] Trajectory does not match the restored faces; rebuilding it.")
+            return None
+        self._log(f"[StageCache] Trajectory restored: {len(window)} face(s), memory-mapped.")
+        return window
