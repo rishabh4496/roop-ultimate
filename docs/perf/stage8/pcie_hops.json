@@ -1,0 +1,46 @@
+{
+ "rows": [
+  {
+   "hop": "swapper in  128x128x3 + latent 512",
+   "mb": 0.188,
+   "pageable_ms": 0.041,
+   "pinned_ms": 0.0361
+  },
+  {
+   "hop": "swapper out 128x128x3",
+   "mb": 0.188,
+   "pageable_ms": 0.0381,
+   "pinned_ms": 0.0172
+  },
+  {
+   "hop": "xseg in     256x256x3 NHWC",
+   "mb": 0.75,
+   "pageable_ms": 0.0743,
+   "pinned_ms": 0.0463
+  },
+  {
+   "hop": "xseg out    256x256x1",
+   "mb": 0.25,
+   "pageable_ms": 0.0527,
+   "pinned_ms": 0.0186
+  },
+  {
+   "hop": "restorer in 512x512x3",
+   "mb": 3.0,
+   "pageable_ms": 0.1858,
+   "pinned_ms": 0.1427
+  },
+  {
+   "hop": "restorer out 512x512x3",
+   "mb": 3.0,
+   "pageable_ms": 0.261,
+   "pinned_ms": 0.1313
+  }
+ ],
+ "face_stage_ms": 246.029,
+ "pageable_total_ms": 0.6529086666826818,
+ "pinned_total_ms": 0.39222999998552643,
+ "pageable_pct": 0.26537874262086253,
+ "pinned_pct": 0.15942429550399606,
+ "gpu": "NVIDIA GeForce RTX 4070"
+}

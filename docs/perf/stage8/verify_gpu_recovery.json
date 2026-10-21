@@ -1,0 +1,87 @@
+{
+ "report": {
+  "CLEAN": {
+   "frames_out": 240,
+   "faults_injected": [],
+   "stats": {
+    "recovered": 0,
+    "failed_after_retry": 0,
+    "oom_seen": 0,
+    "shape_seen": 0,
+    "flushes": 0,
+    "wait_s": 0.0,
+    "first": {}
+   },
+   "render_s": 45.6
+  },
+  "ON": {
+   "frames_out": 240,
+   "faults_injected": [
+    12,
+    40,
+    75,
+    130
+   ],
+   "stats": {
+    "recovered": 4,
+    "failed_after_retry": 0,
+    "oom_seen": 4,
+    "shape_seen": 0,
+    "flushes": 4,
+    "wait_s": 2.108,
+    "first": {
+     "oom": "RuntimeError: onnxruntime: [ONNXRuntimeError] : 1 : FAIL : CUDA failure 2: out of memory ; GPU=0 ; hostname=x ; expr=cudaMalloc",
+     "recovered": "RuntimeError: onnxruntime: [ONNXRuntimeError] : 1 : FAIL : CUDA failure 2: out of memory ; GPU=0 ; hostname=x ; expr=cudaMalloc"
+    }
+   },
+   "render_s": 45.4
+  },
+  "OFF": {
+   "frames_out": 240,
+   "faults_injected": [
+    12,
+    40,
+    75,
+    130
+   ],
+   "stats": {
+    "recovered": 0,
+    "failed_after_retry": 0,
+    "oom_seen": 0,
+    "shape_seen": 0,
+    "flushes": 0,
+    "wait_s": 0.0,
+    "first": {}
+   },
+   "render_s": 46.7
+  }
+ },
+ "verdict": {
+  "ON": {
+   "faulted_frame_diff_vs_clean": {
+    "12": 0.0,
+    "40": 0.0,
+    "75": 0.0,
+    "130": 0.0
+   },
+   "frames_differing_from_clean": 0,
+   "first_differing": [],
+   "mean_diff_all_frames": 0.0,
+   "max_diff": 0.0
+  },
+  "OFF": {
+   "faulted_frame_diff_vs_clean": {
+    "12": 0.2684,
+    "40": 0.4554,
+    "75": 0.8353,
+    "130": 0.3986
+   },
+   "frames_differing_from_clean": 231,
+   "first_differing": [
+    9
+   ],
+   "mean_diff_all_frames": 0.4929,
+   "max_diff": 0.8632
+  }
+ }
+}

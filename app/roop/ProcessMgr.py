@@ -1,4 +1,5 @@
 from roop.degrade import swallowed as _swallowed
+from roop import gpu_recovery as _gpu_recovery
 import gc
 import os
 import cv2
@@ -1909,8 +1910,16 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                         else:
                             # process_frame serialises only its GPU primitives (under
                             # TensorRT), so CPU work overlaps across threads.
-                            resimg = self.process_frame(frame, frame_idx=frame_idx,
-                                                         output_pending=True)
+                            # A device out-of-memory error reruns the frame ALONE after the caches
+                            # are flushed (roop/gpu_recovery.py); the retry gets a fresh copy because
+                            # the failed attempt may have mutated `frame` in place.
+                            resimg = _gpu_recovery.run_frame(
+                                lambda: self.process_frame(frame, frame_idx=frame_idx,
+                                                           output_pending=True),
+                                lambda: self.process_frame(fallback_frame.copy(), frame_idx=frame_idx,
+                                                           output_pending=True),
+                                site='process_videoframes',
+                                abort=lambda: not roop.globals.processing)
                 except Exception as exc:
                     # A bad frame must not discard the rest of a long video.  The
                     # processor may have mutated `frame` before failing, so use
@@ -2102,8 +2111,11 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                                 return result
                         finally:
                             pause_controller.end()
-                    result = self.process_frame(frame, frame_idx=frame_idx,
-                                                output_pending=True)
+                    result = _gpu_recovery.run_frame(
+                        lambda: self.process_frame(frame, frame_idx=frame_idx, output_pending=True),
+                        lambda: self.process_frame(fallback_frame.copy(), frame_idx=frame_idx,
+                                                   output_pending=True),
+                        site='scheduler', abort=lambda: not roop.globals.processing)
                     if result is not None:
                         return result
                     bar_write('[ProcessMgr] scheduler frame %s produced no output — '
@@ -2644,7 +2656,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         _chunk_no = 0
         current_results = None
 
-        def _process_stab_frame(frame, frame_idx, output_pending=False):
+        def _process_stab_frame(frame, frame_idx, output_pending=False, pristine=None, before_wait=None):
             """Run one stabilized frame without parking a chunk worker.
 
             The normal ``process_frame`` wrapper waits for a requested pause.
@@ -2659,11 +2671,24 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     return False, None
                 frame_fn = self.process_frame
                 implementation = getattr(frame_fn, '__wrapped__', None)
-                if implementation is not None:
-                    result = implementation(self, frame, frame_idx=frame_idx)
+
+                def _once(src):
+                    if implementation is not None:
+                        return implementation(self, src, frame_idx=frame_idx)
+                    return frame_fn(src, frame_idx=frame_idx, output_pending=output_pending)
+                if pristine is None:
+                    result = _once(frame)          # warm-up priming: its frames are discarded, nothing to rescue
                 else:
-                    result = frame_fn(frame, frame_idx=frame_idx,
-                                      output_pending=output_pending)
+                    # A device out-of-memory error reruns the frame alone after the caches are flushed
+                    # (roop/gpu_recovery.py). `pristine` is the caller's untouched snapshot - the failed
+                    # attempt may have mutated `frame` in place. The retry can advance this block's temporal
+                    # filters a second time on that one frame; without it the frame is written untouched
+                    # AND the filters were left half-advanced anyway. `before_wait` releases the warm-up
+                    # dedup slot this thread holds so its neighbour is not made to wait for a frame that
+                    # is about to be redone.
+                    result = _gpu_recovery.run_frame(
+                        lambda: _once(frame), lambda: _once(pristine.copy()), site='stabilization',
+                        abort=lambda: not roop.globals.processing, before_wait=before_wait)
                 if output_pending and result is not None:
                     pause_controller.pending_output(1)
                 return True, result
@@ -3073,7 +3098,9 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                             # deflate ms/frame on exactly the path production uses.
                             with _prof('frame_total'):
                                 allowed, out = _process_stab_frame(
-                                    _combined[ci], frame_idx=gi, output_pending=True)
+                                    _combined[ci], frame_idx=gi, output_pending=True,
+                                    pristine=fallback_frame,
+                                    before_wait=_dedup.abandon if _dedup is not None else None)
                             if not allowed:
                                 _pause_interrupted.set()
                                 return
