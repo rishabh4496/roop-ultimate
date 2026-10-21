@@ -444,6 +444,15 @@ class FFmpegVideoReader:
         return self.prefetch_depth
 
 
+def _io_register(tag, backend):
+    """Tell the video-I/O telemetry which decoder this stage really got (roop/video_io_hw.py)."""
+    try:
+        from roop import video_io_hw
+        video_io_hw.telemetry.register_decoder(tag, backend)
+    except Exception as _degrade_error:
+        _swallowed("roop/nvdec_reader.py:_io_register", _degrade_error, "telemetry label skipped")
+
+
 def wrap_capture(cap, video_path, width, height, fps, tag="decode",
                  prefetch_depth=None):
     """Swap a cv2.VideoCapture for the NVDEC pipe reader when enabled and the
@@ -458,9 +467,11 @@ def wrap_capture(cap, video_path, width, height, fps, tag="decode",
             cap.release()
         except Exception as _degrade_error:
             _swallowed("roop/nvdec_reader.py:wrap_capture-hdr", _degrade_error, "fallback continued")
+        _io_register(tag, "HDR-Pipe")
         return hdr_pipeline.HdrFrameReader(video_path, hdr_spec, fps=fps,
                                            prefetch=max(1, int(prefetch_depth or 2)))
     if not nvdec_wanted() or width <= 0 or height <= 0:
+        _io_register(tag, "CPU-Fallback")
         return cap
     hwaccel = "cuda"
     if not _probe(video_path, "cuda"):
@@ -489,6 +500,7 @@ def wrap_capture(cap, video_path, width, height, fps, tag="decode",
         else:
             print(f"[NVDEC] ffmpeg cannot decode {os.path.basename(video_path)} "
                   f"— falling back to cv2 for {tag}")
+            _io_register(tag, "CPU-Fallback")
             return cap
     try:
         cap.release()
@@ -497,6 +509,7 @@ def wrap_capture(cap, video_path, width, height, fps, tag="decode",
         pass
     reader = FFmpegVideoReader(video_path, width, height, fps, hwaccel=hwaccel,
                                prefetch_depth=prefetch_depth)
+    _io_register(tag, "NVDEC-Pipe" if hwaccel else "CPU-Fallback")
     print(f"[NVDEC] {'GPU' if hwaccel else 'software'} decode active for {tag} "
           f"({os.path.basename(video_path)}); "
           f"host_format={reader.pix_fmt}, prefetch_depth={reader.prefetch_depth}")

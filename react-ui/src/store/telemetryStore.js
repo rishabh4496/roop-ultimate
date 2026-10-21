@@ -42,6 +42,14 @@ const EMPTY_RUN = {
   engine_model: '',
   engine_precision: '',
   engine_since: null,
+  // Video I/O (roop/video_io_hw.py): the decode / encode backend this job really got ('NVDEC-DLPack',
+  // 'NVDEC-Pipe', 'QSV-oneVPL', 'NVENC-Direct', 'NVENC-Pipe', 'CPU-Fallback'), PCIe traffic avoided versus a
+  // host-staged pipeline in whole MB (an ESTIMATE), and the share of decoder reads served without waiting (%).
+  // Kept after the run ends, like the report; reset by the next job's first frame.
+  io_decode: '',
+  io_encode: '',
+  io_pcie_saved_mb: 0,
+  io_queue_sat: null,
 };
 
 /** The fields a telemetry frame carries that change every tick. */
@@ -112,6 +120,19 @@ export const engineTextOf = (run) => {
   if (!run || !run.engine_label) return '';
   const parts = [run.engine_model, run.engine_precision].filter(Boolean).join(' · ');
   return parts ? `${run.engine_label} ${parts}` : run.engine_label;
+};
+
+/**
+ * "Video I/O: NVDEC-DLPack -> NVENC-Direct · PCIe saved ~2480 MB (est.) · decode queue 74%", or '' before a job
+ * has registered a backend. Pure so it can be checked without a render.
+ */
+export const videoIoTextOf = (run) => {
+  if (!run || (!run.io_decode && !run.io_encode)) return '';
+  const path = [run.io_decode || '—', run.io_encode || '—'].join(' → ');
+  const parts = [`Video I/O: ${path}`];
+  if (run.io_pcie_saved_mb > 0) parts.push(`PCIe saved ~${run.io_pcie_saved_mb} MB (est.)`);
+  if (run.io_queue_sat != null) parts.push(`decode queue ${run.io_queue_sat}%`);
+  return parts.join(' · ');
 };
 
 export function setSystemTelemetry(system) {

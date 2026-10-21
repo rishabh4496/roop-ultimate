@@ -45,10 +45,12 @@ Counters are only written while their stage is RUNNING, so a live-preview swap b
 """
 from __future__ import annotations
 
+import sys
 import threading
 import time
 from typing import Any, Dict, Optional
 
+from roop.degrade import swallowed as _swallowed
 from roop.vram_peak import PeakSampler
 
 STAGE_1_SPARSE_PRESCAN = "STAGE_1_SPARSE_PRESCAN"
@@ -282,6 +284,19 @@ def estimate_speedup(s1: Optional[float], s2: Optional[float], s3: Optional[floa
     return out
 
 
+def _video_io_snapshot() -> Optional[Dict[str, Any]]:
+    """Decode/encode backend, PCIe bytes saved (an estimate) and decode queue saturation for this job, or None
+    when roop/video_io_hw.py was never loaded (never a made-up zero)."""
+    mod = sys.modules.get("roop.video_io_hw")
+    if mod is None:
+        return None
+    try:
+        return mod.snapshot()
+    except Exception as exc:
+        _swallowed("roop/stage_telemetry.py:video_io", exc, "video I/O block left out of the report")
+        return None
+
+
 def build_summary(ok: bool = True, now: Optional[float] = None) -> Dict[str, Any]:
     """The per-job report. JSON-safe; every metric that was not measured is None, never a fabricated 0."""
     with _lock:
@@ -338,6 +353,7 @@ def build_summary(ok: bool = True, now: Optional[float] = None) -> Dict[str, Any
         eff_fps = round(total / (pipeline_s + s4), 2) if total and (pipeline_s + s4) > 0 else None
         speedup = estimate_speedup(s1, s2, s3, total, active, restored=restored)
         return {"schema": 1, "ok": bool(ok) and (stage4 is None or stage4["ok"]), "finished_at": now,
+                "video_io": _video_io_snapshot(),
                 "total_frames": total, "videos_in_job": videos, "total_wall_s": total_wall,
                 "effective_fps": eff_fps, "speedup": speedup,
                 "vram": {"peak_gb": vram.get("peak_gb"), "base_gb": vram.get("base_gb"),

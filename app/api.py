@@ -5033,6 +5033,7 @@ def _run_swap(payload):
         # to the UI's own estimate rather than inheriting a finished run's figure.
         _procmgr_runtime.reset_eta()
         _stage_telemetry.reset()     # last run's stage report must not read as this run's
+        _video_io_reset()            # ...and its decode/encode backends and PCIe counters
         _last_output.update({"path": "", "kind": ""})
         _last_output.update({"version": "", "source": None})
         _routes_output._output_source["path"] = ""
@@ -6244,11 +6245,27 @@ def _telemetry_snapshot():
         'started_at': started,
         'live_seq': live_preview.seq(),
         **_stage_telemetry.snapshot(),
+        **_video_io_flat(),
         # "Compiling TensorRT Engine..." / canary state (roop/pipeline_status.py), flat and non-ticking
         # so the change-only sampler stays quiet between stages. Present while idle too (engine_state
         # IDLE): a client that missed the closing frame is corrected by the next one.
         **_pipeline_status.telemetry_fields(),
     }
+
+
+def _video_io_flat() -> dict:
+    """io_decode / io_encode / io_pcie_saved_mb / io_queue_sat for the telemetry frame. Constant (empty) until a
+    job registers a backend, so the change-only sampler stays quiet while idle."""
+    mod = sys.modules.get('roop.video_io_hw')
+    if mod is None:
+        return {'io_decode': '', 'io_encode': '', 'io_pcie_saved_mb': 0, 'io_queue_sat': None}
+    return mod.telemetry.flat()
+
+
+def _video_io_reset() -> None:
+    mod = sys.modules.get('roop.video_io_hw')
+    if mod is not None:
+        mod.telemetry.reset()
 
 
 _telemetry_rate = _routes_telemetry.RateWindow(30.0)

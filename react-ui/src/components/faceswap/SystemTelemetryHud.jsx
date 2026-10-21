@@ -2,6 +2,7 @@ import React from 'react';
 import { Skeleton } from '../ui';
 import useTelemetry from './useTelemetry';
 import { LiveText } from '../LiveTelemetry';
+import { videoIoTextOf } from '../../store/telemetryStore';
 
 // The GPU / VRAM / CPU / RAM strip in Face Swap's "Live Telemetry" section.
 //
@@ -87,6 +88,11 @@ export default function SystemTelemetryHud() {
           <div className="text-micro text-muted italic text-center">Connecting to hardware diagnostics…</div>
         </div>
       )}
+      <LiveText
+        as="div"
+        className="mt-2 text-micro font-mono text-white/55 empty:hidden"
+        select={(s) => videoIoTextOf(s.run)}
+      />
       <LiveText
         as="div"
         className="mt-3 text-micro font-mono text-white/55 empty:hidden"

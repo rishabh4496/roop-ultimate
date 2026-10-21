@@ -102,6 +102,21 @@ def _provider_name(value: Any) -> str:
     }.get(lowered, lowered or UNKNOWN)
 
 
+def _video_io() -> dict:
+    """Active decode/encode backend, PCIe bytes saved vs a host-staged pipeline (an estimate) and decode queue
+    saturation (roop/video_io_hw.py). Read only if the module is already loaded: a poll must not import torch."""
+    mod = sys.modules.get("roop.video_io_hw")
+    if mod is None:
+        return {"state": NOT_AVAILABLE}
+    try:
+        value = mod.snapshot()
+        value["capabilities"] = mod.capabilities(probe=False)
+        return value
+    except Exception as _degrade_error:
+        _swallowed("roop/runtime_state.py:_video_io", _degrade_error, "video I/O telemetry skipped")
+        return {"state": UNKNOWN}
+
+
 def _manager():
     # A telemetry poll must not import the processing graph or initialize the
     # ML stack just to answer an idle request.  `run.py` imports `core` before
@@ -678,7 +693,8 @@ def snapshot(progress: Optional[Mapping[str, Any]] = None,
         }, "host runtime"),
         "HARDWARE": _section("AVAILABLE" if available(resources) else "UNKNOWN",
                               {"gpu": resources["gpu"], "vram": resources["vram"],
-                               "cpu": resources["cpu"], "memory": resources["memory"]},
+                               "cpu": resources["cpu"], "memory": resources["memory"],
+                               "video_io": _video_io()},
                               "runtime resource probe"),
         "PROVIDER": _section("AVAILABLE" if available(effective_provider) else "UNKNOWN", {
             "requested": requested_provider,

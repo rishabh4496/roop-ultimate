@@ -38,6 +38,7 @@ import threading
 
 import roop.globals
 from roop.ffmpeg_writer import FFMPEG_VideoWriter, FFMPEG_BINARY
+from roop import video_io_hw as _video_io_hw
 from roop.video_stream import NVHardwareVideoWriter, hardware_stream_enabled
 # These lines are emitted from INSIDE the encode thread, where a raised
 # exception is not a bad log line but a dead writer — and a dead writer leaves
@@ -322,7 +323,9 @@ class SegmentedVideoWriter:
                 crf=self.crf,
                 **self._writer_options,
             )
+            _video_io_hw.telemetry.register_encoder("encode", _video_io_hw.BACKEND_NVENC_PIPE)
         else:
+            _video_io_hw.telemetry.register_encoder("encode", _video_io_hw.encoder_label(active_codec))
             self._writer = FFMPEG_VideoWriter(path, self.size, self.fps,
                                               codec=active_codec, crf=self.crf,
                                               audiofile=None,

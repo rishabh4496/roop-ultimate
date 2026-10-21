@@ -77,6 +77,7 @@ class BatchProcessingMixin:
         )
         from roop import face_util
         from roop import hdr_pipeline as _hdr_pipeline
+        from roop import video_io_hw as _video_io_hw
         from roop import runtime_banner as _runtime_banner
         import roop.util_ffmpeg as util_ffmpeg
         from roop.degrade import swallowed as _swallowed
@@ -703,6 +704,7 @@ class BatchProcessingMixin:
                         target_video, width, height, fps, _hdr_spec, source_video,
                         start_frame=frame_start, codec=codec,
                         quality=roop.globals.video_quality)
+                    _video_io_hw.telemetry.register_encoder("encode", "HDR-Pipe")
                 elif (hardware_stream_enabled() and
                         codec in {'h264_nvenc', 'hevc_nvenc', 'av1_nvenc'}):
                     self.videowriter = NVHardwareVideoWriter(
@@ -716,7 +718,9 @@ class BatchProcessingMixin:
                         sar=_src_sar,
                         dar=_src_dar,
                     )
+                    _video_io_hw.telemetry.register_encoder("encode", _video_io_hw.BACKEND_NVENC_PIPE)
                 else:
+                    _video_io_hw.telemetry.register_encoder("encode", _video_io_hw.encoder_label(codec))
                     self.videowriter = FFMPEG_VideoWriter(
                         target_video,
                         (width, height),
