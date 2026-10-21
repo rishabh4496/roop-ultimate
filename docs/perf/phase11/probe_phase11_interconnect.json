@@ -1,0 +1,874 @@
+{
+ "script": "app/tests/probe_phase11_interconnect.py",
+ "models": {
+  "enhancer": "UltraMax",
+  "swap_model": "realswap",
+  "mask_engine": "RealityUX",
+  "threads": 20,
+  "sparse_auto_range_cfg": true,
+  "no_face_action": "Use untouched original frame"
+ },
+ "git_head": "8c3b2bb",
+ "clip": {
+  "path": "phase11_cfr.mp4",
+  "frames": 600,
+  "width": 960,
+  "height": 540,
+  "r_frame_rate": "30/1",
+  "avg_frame_rate": "30/1",
+  "cfr_by_timestamps": true
+ },
+ "runs": [
+  {
+   "tag": "measured_0",
+   "seconds": 41.69,
+   "fps": 14.39,
+   "error": null,
+   "output_frames": 600,
+   "faces_swapped": 162,
+   "swapped_frames": 156,
+   "detector_calls": {
+    "pre": 867,
+    "stage3": 0
+   },
+   "phase_wall_s": {
+    "pre": 23.874,
+    "open": 0.164,
+    "stage1": 6.583,
+    "gap": 0.0,
+    "stage2": 4.264,
+    "seal": 0.419,
+    "stage3": 11.851,
+    "finalize": 3.563
+   },
+   "peak_vram_mib_by_phase": {
+    "pre": 4835.5,
+    "open": 4169.5,
+    "stage1": 6927.5,
+    "stage2": 7383.5,
+    "seal": 7383.5,
+    "stage3": 11702.8,
+    "finalize": 10442.9
+   },
+   "release_event": {
+    "returned": true,
+    "vram_used_mib_before": 7383.5,
+    "vram_used_mib_after": 5421.5,
+    "freed_mib": 1962.0,
+    "analyser_models_before": {
+     "pool0": [
+      "landmark_2d_106",
+      "landmark_3d_68",
+      "recognition"
+     ],
+     "pool1": [
+      "landmark_2d_106",
+      "landmark_3d_68",
+      "recognition"
+     ]
+    },
+    "analyser_models_after": {
+     "pool0": []
+    }
+   },
+   "stats": {
+    "cv2.VideoCapture": {
+     "open": {
+      "n": 2,
+      "ms": 45.35
+     },
+     "pre": {
+      "n": 1,
+      "ms": 24.01
+     },
+     "stage1": {
+      "n": 1,
+      "ms": 23.32
+     },
+     "stage2": {
+      "n": 1,
+      "ms": 31.13
+     },
+     "stage3": {
+      "n": 1,
+      "ms": 25.72
+     },
+     "_total": {
+      "n": 6,
+      "ms": 149.53
+     }
+    },
+    "cv2.invertAffineTransform": {
+     "pre": {
+      "n": 18,
+      "ms": 0.14
+     },
+     "stage2": {
+      "n": 458,
+      "ms": 7.91
+     },
+     "stage3": {
+      "n": 624,
+      "ms": 18.99
+     },
+     "_total": {
+      "n": 1100,
+      "ms": 27.03
+     }
+    },
+    "cv2.warpAffine": {
+     "pre": {
+      "n": 51,
+      "ms": 15.37
+     },
+     "stage1": {
+      "n": 106,
+      "ms": 92.4
+     },
+     "stage2": {
+      "n": 687,
+      "ms": 144.27
+     },
+     "stage3": {
+      "n": 688,
+      "ms": 703.2
+     },
+     "_total": {
+      "n": 1532,
+      "ms": 955.25
+     }
+    },
+    "face_util.align_crop": {
+     "pre": {
+      "n": 24,
+      "ms": 13.67
+     },
+     "stage3": {
+      "n": 150,
+      "ms": 215.78
+     },
+     "_total": {
+      "n": 174,
+      "ms": 229.46
+     }
+    },
+    "face_util.estimate_norm": {
+     "pre": {
+      "n": 24,
+      "ms": 2.85
+     },
+     "stage3": {
+      "n": 312,
+      "ms": 146.75
+     },
+     "_total": {
+      "n": 336,
+      "ms": 149.6
+     }
+    },
+    "finalize_render": {
+     "finalize": {
+      "n": 1,
+      "ms": 376.06
+     },
+     "_total": {
+      "n": 1,
+      "ms": 376.06
+     }
+    },
+    "life.ffmpeg": {
+     "finalize": {
+      "n": 2,
+      "ms": 92.23
+     },
+     "open": {
+      "n": 3,
+      "ms": 67.03
+     },
+     "pre": {
+      "n": 1,
+      "ms": 141.0
+     },
+     "stage2": {
+      "n": 3,
+      "ms": 4055.77
+     },
+     "stage3": {
+      "n": 1,
+      "ms": 513.28
+     },
+     "_total": {
+      "n": 10,
+      "ms": 4869.31
+     }
+    },
+    "life.ffprobe": {
+     "finalize": {
+      "n": 7,
+      "ms": 338.27
+     },
+     "_total": {
+      "n": 7,
+      "ms": 338.27
+     }
+    },
+    "life.nvidia-smi": {
+     "open": {
+      "n": 1,
+      "ms": 35.84
+     },
+     "_total": {
+      "n": 1,
+      "ms": 35.84
+     }
+    },
+    "progress.update_progress": {
+     "stage3": {
+      "n": 600,
+      "ms": 165.43
+     },
+     "_total": {
+      "n": 600,
+      "ms": 165.43
+     }
+    },
+    "spawn.ffmpeg": {
+     "finalize": {
+      "n": 2,
+      "ms": 9.32
+     },
+     "open": {
+      "n": 3,
+      "ms": 11.86
+     },
+     "pre": {
+      "n": 1,
+      "ms": 5.77
+     },
+     "stage2": {
+      "n": 3,
+      "ms": 76.92
+     },
+     "stage3": {
+      "n": 2,
+      "ms": 33.56
+     },
+     "_total": {
+      "n": 11,
+      "ms": 137.43
+     }
+    },
+    "spawn.ffprobe": {
+     "finalize": {
+      "n": 7,
+      "ms": 31.81
+     },
+     "_total": {
+      "n": 7,
+      "ms": 31.81
+     }
+    },
+    "spawn.nvidia-smi": {
+     "open": {
+      "n": 1,
+      "ms": 4.45
+     },
+     "_total": {
+      "n": 1,
+      "ms": 4.45
+     }
+    },
+    "writer.close": {
+     "stage3": {
+      "n": 1,
+      "ms": 105.65
+     },
+     "_total": {
+      "n": 1,
+      "ms": 105.65
+     }
+    },
+    "writer.write_frame": {
+     "stage3": {
+      "n": 600,
+      "ms": 412.04
+     },
+     "_total": {
+      "n": 600,
+      "ms": 412.04
+     }
+    }
+   },
+   "detail": {
+    "spawn.ffmpeg": [
+     [
+      "pre",
+      "-hide_banner -loglevel error -y -f",
+      5.77
+     ],
+     [
+      "open",
+      "-hide_banner -hwaccels",
+      3.92
+     ],
+     [
+      "open",
+      "-hide_banner -decoders",
+      3.98
+     ],
+     [
+      "open",
+      "-hide_banner -encoders",
+      3.96
+     ],
+     [
+      "stage2",
+      "-hide_banner -h full",
+      4.3
+     ],
+     [
+      "stage2",
+      "-hide_banner -loglevel error -nostdin -hwaccel",
+      7.65
+     ],
+     [
+      "stage2",
+      "-hide_banner -loglevel error -nostdin -hwaccel",
+      64.97
+     ],
+     [
+      "stage3",
+      "-hide_banner -nostdin -loglevel error -hwaccel",
+      29.14
+     ],
+     [
+      "stage3",
+      "-hide_banner -loglevel error -nostdin -y",
+      4.42
+     ],
+     [
+      "finalize",
+      "-hide_banner -hwaccel auto -y -loglevel",
+      4.88
+     ],
+     [
+      "finalize",
+      "-hide_banner -hwaccel auto -y -loglevel",
+      4.45
+     ]
+    ],
+    "cv2.VideoCapture": [
+     [
+      "pre",
+      "phase11_cfr.mp4",
+      24.01
+     ],
+     [
+      "open",
+      "phase11_cfr.mp4",
+      22.58
+     ],
+     [
+      "open",
+      "phase11_cfr.mp4",
+      22.77
+     ],
+     [
+      "stage1",
+      "phase11_cfr.mp4",
+      23.32
+     ],
+     [
+      "stage2",
+      "phase11_cfr.mp4",
+      31.13
+     ],
+     [
+      "stage3",
+      "phase11_cfr.mp4",
+      25.72
+     ]
+    ],
+    "spawn.nvidia-smi": [
+     [
+      "open",
+      "--id=0 --query-gpu=driver_version,memory.total,memory.free --format=csv,noheader,nounits",
+      4.45
+     ]
+    ],
+    "spawn.ffprobe": [
+     [
+      "finalize",
+      "-v error -of json -show_entries",
+      4.77
+     ],
+     [
+      "finalize",
+      "-v error -select_streams a:0 -show_entries",
+      4.19
+     ],
+     [
+      "finalize",
+      "-v 0 -of default=noprint_wrappers=1 -select_streams",
+      4.37
+     ],
+     [
+      "finalize",
+      "-v error -select_streams a:0 -show_entries",
+      4.15
+     ],
+     [
+      "finalize",
+      "-v error -select_streams v:0 -show_entries",
+      4.14
+     ],
+     [
+      "finalize",
+      "-v error -of json -show_entries",
+      5.91
+     ],
+     [
+      "finalize",
+      "-v error -select_streams v:0 -count_packets",
+      4.28
+     ]
+    ]
+   },
+   "failure_signatures": {
+    "traceback": 0,
+    "prescan_failed": 0,
+    "prepass_failed": 0,
+    "writer_failed": 0
+   },
+   "log": "G:\\pinokio\\cache\\TEMP\\claude\\G--pinokio-api-roop-ultimate\\9cf96927-d781-4f49-b38f-4407da030d81\\scratchpad\\p11\\out\\measured_0.log"
+  },
+  {
+   "tag": "measured_1",
+   "seconds": 43.97,
+   "fps": 13.65,
+   "error": null,
+   "output_frames": 600,
+   "faces_swapped": 162,
+   "swapped_frames": 156,
+   "detector_calls": {
+    "pre": 867,
+    "stage3": 0
+   },
+   "phase_wall_s": {
+    "pre": 25.587,
+    "open": 0.181,
+    "stage1": 6.626,
+    "gap": 0.0,
+    "stage2": 4.153,
+    "seal": 0.429,
+    "stage3": 11.989,
+    "finalize": 4.251
+   },
+   "peak_vram_mib_by_phase": {
+    "pre": 4879.5,
+    "open": 4209.5,
+    "stage1": 6961.5,
+    "stage2": 7407.5,
+    "seal": 7111.5,
+    "stage3": 11795.1,
+    "finalize": 10477.0
+   },
+   "release_event": {
+    "returned": true,
+    "vram_used_mib_before": 7407.5,
+    "vram_used_mib_after": 5447.5,
+    "freed_mib": 1960.0,
+    "analyser_models_before": {
+     "pool0": [
+      "landmark_2d_106",
+      "landmark_3d_68",
+      "recognition"
+     ],
+     "pool1": [
+      "landmark_2d_106",
+      "landmark_3d_68",
+      "recognition"
+     ]
+    },
+    "analyser_models_after": {
+     "pool0": []
+    }
+   },
+   "stats": {
+    "cv2.VideoCapture": {
+     "open": {
+      "n": 2,
+      "ms": 54.92
+     },
+     "pre": {
+      "n": 1,
+      "ms": 25.49
+     },
+     "stage1": {
+      "n": 1,
+      "ms": 23.96
+     },
+     "stage2": {
+      "n": 1,
+      "ms": 25.01
+     },
+     "stage3": {
+      "n": 1,
+      "ms": 23.86
+     },
+     "_total": {
+      "n": 6,
+      "ms": 153.23
+     }
+    },
+    "cv2.invertAffineTransform": {
+     "pre": {
+      "n": 18,
+      "ms": 0.14
+     },
+     "stage2": {
+      "n": 458,
+      "ms": 7.58
+     },
+     "stage3": {
+      "n": 624,
+      "ms": 34.98
+     },
+     "_total": {
+      "n": 1100,
+      "ms": 42.69
+     }
+    },
+    "cv2.warpAffine": {
+     "pre": {
+      "n": 51,
+      "ms": 14.34
+     },
+     "stage1": {
+      "n": 106,
+      "ms": 93.64
+     },
+     "stage2": {
+      "n": 687,
+      "ms": 162.31
+     },
+     "stage3": {
+      "n": 688,
+      "ms": 894.14
+     },
+     "_total": {
+      "n": 1532,
+      "ms": 1164.43
+     }
+    },
+    "face_util.align_crop": {
+     "pre": {
+      "n": 24,
+      "ms": 13.03
+     },
+     "stage3": {
+      "n": 150,
+      "ms": 267.18
+     },
+     "_total": {
+      "n": 174,
+      "ms": 280.21
+     }
+    },
+    "face_util.estimate_norm": {
+     "pre": {
+      "n": 24,
+      "ms": 2.79
+     },
+     "stage3": {
+      "n": 312,
+      "ms": 159.02
+     },
+     "_total": {
+      "n": 336,
+      "ms": 161.8
+     }
+    },
+    "finalize_render": {
+     "finalize": {
+      "n": 1,
+      "ms": 271.27
+     },
+     "_total": {
+      "n": 1,
+      "ms": 271.27
+     }
+    },
+    "life.ffmpeg": {
+     "finalize": {
+      "n": 2,
+      "ms": 102.36
+     },
+     "open": {
+      "n": 3,
+      "ms": 72.49
+     },
+     "pre": {
+      "n": 1,
+      "ms": 152.71
+     },
+     "stage2": {
+      "n": 2,
+      "ms": 3980.3
+     },
+     "stage3": {
+      "n": 1,
+      "ms": 580.27
+     },
+     "_total": {
+      "n": 9,
+      "ms": 4888.13
+     }
+    },
+    "life.ffprobe": {
+     "finalize": {
+      "n": 7,
+      "ms": 233.08
+     },
+     "_total": {
+      "n": 7,
+      "ms": 233.08
+     }
+    },
+    "life.nvidia-smi": {
+     "open": {
+      "n": 1,
+      "ms": 39.09
+     },
+     "_total": {
+      "n": 1,
+      "ms": 39.09
+     }
+    },
+    "progress.update_progress": {
+     "stage3": {
+      "n": 600,
+      "ms": 297.41
+     },
+     "_total": {
+      "n": 600,
+      "ms": 297.41
+     }
+    },
+    "spawn.ffmpeg": {
+     "finalize": {
+      "n": 2,
+      "ms": 14.34
+     },
+     "open": {
+      "n": 3,
+      "ms": 14.6
+     },
+     "pre": {
+      "n": 1,
+      "ms": 4.58
+     },
+     "stage2": {
+      "n": 2,
+      "ms": 9.57
+     },
+     "stage3": {
+      "n": 2,
+      "ms": 14.55
+     },
+     "_total": {
+      "n": 10,
+      "ms": 57.63
+     }
+    },
+    "spawn.ffprobe": {
+     "finalize": {
+      "n": 7,
+      "ms": 35.42
+     },
+     "_total": {
+      "n": 7,
+      "ms": 35.42
+     }
+    },
+    "spawn.nvidia-smi": {
+     "open": {
+      "n": 1,
+      "ms": 5.45
+     },
+     "_total": {
+      "n": 1,
+      "ms": 5.45
+     }
+    },
+    "writer.close": {
+     "stage3": {
+      "n": 1,
+      "ms": 106.48
+     },
+     "_total": {
+      "n": 1,
+      "ms": 106.48
+     }
+    },
+    "writer.write_frame": {
+     "stage3": {
+      "n": 600,
+      "ms": 477.48
+     },
+     "_total": {
+      "n": 600,
+      "ms": 477.48
+     }
+    }
+   },
+   "detail": {
+    "spawn.ffmpeg": [
+     [
+      "pre",
+      "-hide_banner -loglevel error -y -f",
+      4.58
+     ],
+     [
+      "open",
+      "-hide_banner -hwaccels",
+      4.23
+     ],
+     [
+      "open",
+      "-hide_banner -decoders",
+      4.0
+     ],
+     [
+      "open",
+      "-hide_banner -encoders",
+      6.37
+     ],
+     [
+      "stage2",
+      "-hide_banner -loglevel error -nostdin -hwaccel",
+      4.52
+     ],
+     [
+      "stage2",
+      "-hide_banner -loglevel error -nostdin -hwaccel",
+      5.05
+     ],
+     [
+      "stage3",
+      "-hide_banner -nostdin -loglevel error -hwaccel",
+      4.87
+     ],
+     [
+      "stage3",
+      "-hide_banner -loglevel error -nostdin -y",
+      9.68
+     ],
+     [
+      "finalize",
+      "-hide_banner -hwaccel auto -y -loglevel",
+      7.44
+     ],
+     [
+      "finalize",
+      "-hide_banner -hwaccel auto -y -loglevel",
+      6.9
+     ]
+    ],
+    "cv2.VideoCapture": [
+     [
+      "pre",
+      "phase11_cfr.mp4",
+      25.49
+     ],
+     [
+      "open",
+      "phase11_cfr.mp4",
+      30.1
+     ],
+     [
+      "open",
+      "phase11_cfr.mp4",
+      24.81
+     ],
+     [
+      "stage1",
+      "phase11_cfr.mp4",
+      23.96
+     ],
+     [
+      "stage2",
+      "phase11_cfr.mp4",
+      25.01
+     ],
+     [
+      "stage3",
+      "phase11_cfr.mp4",
+      23.86
+     ]
+    ],
+    "spawn.nvidia-smi": [
+     [
+      "open",
+      "--id=0 --query-gpu=driver_version,memory.total,memory.free --format=csv,noheader,nounits",
+      5.45
+     ]
+    ],
+    "spawn.ffprobe": [
+     [
+      "finalize",
+      "-v error -of json -show_entries",
+      4.68
+     ],
+     [
+      "finalize",
+      "-v error -select_streams a:0 -show_entries",
+      5.11
+     ],
+     [
+      "finalize",
+      "-v 0 -of default=noprint_wrappers=1 -select_streams",
+      4.49
+     ],
+     [
+      "finalize",
+      "-v error -select_streams a:0 -show_entries",
+      4.36
+     ],
+     [
+      "finalize",
+      "-v error -select_streams v:0 -show_entries",
+      6.55
+     ],
+     [
+      "finalize",
+      "-v error -of json -show_entries",
+      4.61
+     ],
+     [
+      "finalize",
+      "-v error -select_streams v:0 -count_packets",
+      5.63
+     ]
+    ]
+   },
+   "failure_signatures": {
+    "traceback": 0,
+    "prescan_failed": 0,
+    "prepass_failed": 0,
+    "writer_failed": 0
+   },
+   "log": "G:\\pinokio\\cache\\TEMP\\claude\\G--pinokio-api-roop-ultimate\\9cf96927-d781-4f49-b38f-4407da030d81\\scratchpad\\p11\\out\\measured_1.log"
+  }
+ ],
+ "warmup": {
+  "seconds": 29.12,
+  "error": null,
+  "failure_signatures": {
+   "traceback": 0,
+   "prescan_failed": 0,
+   "prepass_failed": 0,
+   "writer_failed": 0
+  }
+ }
+}
