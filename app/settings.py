@@ -44,7 +44,6 @@ UI_SETTINGS = (
     ('swap_quantization', 'Swap model quantization (INT8/FP8)', 'Performance'),
     ('force_cpu', 'Force CPU for face analyser', 'Performance'),
     ('auto_thread_selection', 'Auto thread selection', 'Performance'),
-    ('sparse_auto_range', 'Sparse auto-range pre-scan', 'Performance'),
     ('face_detector_threshold', 'Face detection threshold', 'Performance'),
     ('face_detector_nms', 'Overlap NMS threshold', 'Performance'),
     ('detector_scale_pyramid', 'Detector scale pyramid', 'Performance'),
@@ -692,7 +691,22 @@ def same_machine_signature(saved, current):
             and set(saved_parts) <= set(current_parts))
 
 
+# The precisions the settings panel offers for the ONE global TensorRT request (roop/precision_policy.py: per-model
+# entries in PRECISION_OVERRIDES win over it, and unsafe rows are clamped to FP32 by resolve()).
+TRT_PRECISION_CHOICES = ('mixed', 'fp32')
+
+
 class Settings:
+    # Retired settings (Phase 12). They are CLASS attributes, not loaded from or saved to config.yaml and not in
+    # settings.schema.json: the React app and POST /api/swap always render through the in-memory streaming pipeline
+    # with the 3-stage sparse pre-scan and lossless (stream-copy) audio. They survive only so the frozen Gradio UI
+    # (app/ui, `start_legacy.js`), which reads them while it builds its widgets, keeps launching.
+    video_swapping_method = 'In-Memory processing'
+    skip_audio = False
+    keep_frames = False
+    wait_after_extraction = False
+    sparse_auto_range = True
+
     def __init__(self, config_file):
         self.config_file = config_file
         self.load()
@@ -1007,6 +1021,13 @@ class Settings:
         self.memory_limit = self.default_get(data, 'memory_limit', 0)
         # TensorRT precision mode: 'fp32' | 'fp16' | 'mixed' (only used when provider == 'tensorrt')
         self.trt_precision = self.default_get(data, 'trt_precision', 'mixed')
+        if str(self.trt_precision).strip().lower() not in TRT_PRECISION_CHOICES:
+            # Phase 12: 'fp16' is no longer a choice. A global FP16 request reaches every model whose policy row is
+            # only 'candidate' (GPEN, detectors, w600k), i.e. precision the policy has not gated. An older config.yaml
+            # that holds it is read as the default instead of being honoured. Harnesses that need FP16 name it per
+            # session through precision_policy.resolve(requested=...), which this does not touch.
+            print(f"[Settings] trt_precision {self.trt_precision!r} is not a choice any more; using 'mixed'.")
+            self.trt_precision = 'mixed'
         # Native TensorRT engine for the swap net: 'off' | 'auto' | 'fp8' |
         # 'int8' | 'fp16'. 'auto' picks by compute capability (roop.trt_quant).
         self.swap_quantization = self.default_get(data, 'swap_quantization', 'off')
@@ -1075,13 +1096,9 @@ class Settings:
         # 'off' | 'rife_2x' | 'rife_4x' | 'minterpolate_2x'
         self.interp_after_swap = self.default_get(data, 'interp_after_swap', 'off')
         self.blend_ratio = self.default_get(data, 'blend_ratio', 1.0)
-        self.video_swapping_method = self.default_get(data, 'video_swapping_method', 'In-Memory processing')
         self.no_face_action = self.default_get(data, 'no_face_action', 'Use untouched original frame')
         self.vr_mode = self.default_get(data, 'vr_mode', False)
         self.autorotate_faces = self.default_get(data, 'autorotate_faces', True)
-        self.skip_audio = self.default_get(data, 'skip_audio', False)
-        self.keep_frames = self.default_get(data, 'keep_frames', False)
-        self.wait_after_extraction = self.default_get(data, 'wait_after_extraction', False)
         self.output_method = self.default_get(data, 'output_method', 'File')
         self.mask_engine = self.default_get(data, 'mask_engine', 'RealityUX')
         # A second, independent occlusion engine. They compose as a union of
@@ -1278,7 +1295,6 @@ class Settings:
         # Temporal detection pre-pass (video anti-flicker): tracked detection with
         # gap-fill so the swap can't blink out on missed detections.
         self.temporal_detection = self.default_get(data, 'temporal_detection', True)
-        self.sparse_auto_range = bool(self.default_get(data, 'sparse_auto_range', False))
         # Advanced perf knobs (env-backed; 'auto' = leave launcher/auto-tune
         # behaviour untouched). Applied to os.environ at startup by run.py, so
         # changes take effect after an app restart.
@@ -1473,13 +1489,9 @@ class Settings:
             'upscale_model_after': self.upscale_model_after,
             'interp_after_swap': self.interp_after_swap,
             'blend_ratio': self.blend_ratio,
-            'video_swapping_method': self.video_swapping_method,
             'no_face_action': self.no_face_action,
             'vr_mode': self.vr_mode,
             'autorotate_faces': self.autorotate_faces,
-            'skip_audio': self.skip_audio,
-            'keep_frames': self.keep_frames,
-            'wait_after_extraction': self.wait_after_extraction,
             'output_method': self.output_method,
             'mask_engine': self.mask_engine,
             'mask_engine_2': self.mask_engine_2,
@@ -1633,7 +1645,6 @@ class Settings:
             'upright_remeasure': self.upright_remeasure,
             'process_priority': self.process_priority,
             'auto_thread_selection': getattr(self, 'auto_thread_selection', True),
-            'sparse_auto_range': getattr(self, 'sparse_auto_range', False),
             'benchmark_results': getattr(self, 'benchmark_results', {}),
         }
         # Atomic write: dump to a temp file and replace. Writing config.yaml in

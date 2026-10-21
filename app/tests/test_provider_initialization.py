@@ -467,7 +467,7 @@ class TestProviderInitializationMatrix(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             cfg = Settings(str(Path(tmpdir) / "config.yaml"))
             cfg.provider = "tensorrt"
-            cfg.trt_precision = "fp16"
+            cfg.trt_precision = "fp32"
             roop_globals.CFG = cfg
             roop_globals.execution_providers = [
                 ("TensorrtExecutionProvider", {}),
@@ -483,7 +483,7 @@ class TestProviderInitializationMatrix(unittest.TestCase):
 
                 # Matching keys required by React UI
                 self.assertEqual(pub["provider"], "tensorrt")
-                self.assertEqual(pub["trt_precision"], "fp16")
+                self.assertEqual(pub["trt_precision"], "fp32")
                 self.assertEqual(meta["requested_provider"], "tensorrt")
                 self.assertEqual(meta["active_provider"], "tensorrt")
                 self.assertEqual(meta["admitted_provider"], "tensorrt")
@@ -491,7 +491,7 @@ class TestProviderInitializationMatrix(unittest.TestCase):
                 self.assertTrue(meta["tensorrt_allowed"])
                 self.assertTrue(meta["tensorrt_active"])
                 self.assertIn("tensorrt", meta["providers"])
-                self.assertIn("fp16", meta["trt_precisions"])
+                self.assertIn("fp32", meta["trt_precisions"])
 
     def test_public_http_meta_and_settings_keep_6gb_tensorrt_admitted(self):
         """The public API must not reintroduce a sub-7GB block after backend admission."""
@@ -529,7 +529,7 @@ class TestProviderInitializationMatrix(unittest.TestCase):
                 self.assertEqual(meta["requested_provider"], "tensorrt")
                 self.assertEqual(meta["admitted_provider"], "tensorrt")
                 self.assertEqual(meta["active_provider"], "tensorrt")
-                self.assertEqual(meta["trt_precisions"], ["fp32", "fp16", "mixed"])
+                self.assertEqual(meta["trt_precisions"], ["mixed", "fp32"])
                 self.assertEqual(public_settings["provider"], "tensorrt")
                 self.assertEqual(public_settings["trt_precision"], "mixed")
 

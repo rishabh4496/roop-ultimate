@@ -13,7 +13,6 @@
     "swap_quantization",
     "force_cpu",
     "auto_thread_selection",
-    "sparse_auto_range",
     "face_detector_threshold",
     "face_detector_nms",
     "detector_scale_pyramid",
@@ -527,10 +526,6 @@
       "default": 1.0,
       "type": "float"
     },
-    "video_swapping_method": {
-      "default": "In-Memory processing",
-      "type": "str"
-    },
     "no_face_action": {
       "default": "Use untouched original frame",
       "type": "str"
@@ -541,18 +536,6 @@
     },
     "autorotate_faces": {
       "default": true,
-      "type": "bool"
-    },
-    "skip_audio": {
-      "default": false,
-      "type": "bool"
-    },
-    "keep_frames": {
-      "default": false,
-      "type": "bool"
-    },
-    "wait_after_extraction": {
-      "default": false,
       "type": "bool"
     },
     "output_method": {
@@ -1104,14 +1087,6 @@
     "temporal_detection": {
       "default": true,
       "type": "bool"
-    },
-    "sparse_auto_range": {
-      "default": false,
-      "type": "bool",
-      "ui": {
-        "label": "Sparse auto-range pre-scan",
-        "section": "Performance"
-      }
     },
     "perf_trt_pool": {
       "default": "auto",

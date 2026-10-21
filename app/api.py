@@ -58,6 +58,8 @@ from roop import capture_seed
 from roop import segment_writer
 from roop import live_preview
 from roop import stage_telemetry as _stage_telemetry
+from roop import render_policy as _render_policy
+from settings import TRT_PRECISION_CHOICES
 from roop import pipeline_status as _pipeline_status
 from roop import procmgr_runtime as _procmgr_runtime
 from roop import runtime_state as _runtime_state
@@ -1853,7 +1855,7 @@ def get_meta():
         "tensorrt_session_usable": prov_meta["tensorrt_session_usable"],
         "tensorrt_active": prov_meta["tensorrt_active"],
         "provider_status": prov_meta["provider_status"],
-        "trt_precisions": ["fp32", "fp16", "mixed"],
+        "trt_precisions": list(TRT_PRECISION_CHOICES),
         "enhancers": ["None", "Adaptive", "Codeformer", "Codeformer (fp16)", "DMDNet",
                        "GFPGAN", "GPEN 256", "GPEN 256 Pro", "GPEN Realistic", "GPEN", "GPEN 1024",
                        "GPEN 2048",
@@ -1891,7 +1893,6 @@ def get_meta():
         "priorities": ["auto", "high", "above_normal", "normal"],
         "no_face_actions": no_face_choices,
         "upscale": ["128px", "256px", "512px"],
-        "video_methods": ["Extract Frames to media", "In-Memory processing"],
         "output_methods": ["File", "Virtual Camera", "Both"],
         "image_formats": ["jpg", "png", "webp"],
         "video_formats": ["avi", "mkv", "mp4", "webm"],
@@ -5103,7 +5104,8 @@ def _run_swap(payload):
         enhancer = payload.get("enhancer", roop_globals.CFG.selected_enhancer)
         selection_state = processing_request["selection_state"]
         output_method = payload.get("output_method", roop_globals.CFG.output_method)
-        processing_method = payload.get("video_method", roop_globals.CFG.video_swapping_method)
+        # Phase 12: the pipeline's fixed choices (roop/render_policy.py); none of these is a setting any more.
+        render_flags = _render_policy.streaming_render_flags(payload)
         upsample = payload.get("upscale", roop_globals.CFG.subsample_upscale)
         selected_mask_engine = payload.get("mask_engine", roop_globals.CFG.mask_engine)
         selected_mask_engine_2 = payload.get(
@@ -5116,9 +5118,9 @@ def _run_swap(payload):
         roop_globals.target_path = None
         roop_globals.distance_threshold = float(payload.get("face_distance", roop_globals.CFG.max_face_distance))
         roop_globals.blend_ratio = float(payload.get("blend_ratio", roop_globals.CFG.blend_ratio))
-        roop_globals.keep_frames = bool(payload.get("keep_frames", roop_globals.CFG.keep_frames))
-        roop_globals.wait_after_extraction = bool(payload.get("wait_after_extraction", roop_globals.CFG.wait_after_extraction))
-        roop_globals.skip_audio = bool(payload.get("skip_audio", roop_globals.CFG.skip_audio))
+        roop_globals.keep_frames = render_flags["keep_frames"]
+        roop_globals.wait_after_extraction = render_flags["wait_after_extraction"]
+        roop_globals.skip_audio = render_flags["skip_audio"]
         roop_globals.face_swap_mode = processing_request["swap_mode"]
         roop_globals.default_det_size = bool(payload.get("default_det_size", roop_globals.CFG.default_det_size))
         roop_globals.face_detector_size = str(payload.get("face_detector_size", roop_globals.CFG.face_detector_size))
@@ -5126,7 +5128,7 @@ def _run_swap(payload):
         roop_globals.face_detector_nms = float(payload.get("face_detector_nms", roop_globals.CFG.face_detector_nms))
         roop_globals.sam2_model_size = payload.get("sam2_model_size", getattr(roop_globals.CFG, "sam2_model_size", "tiny"))
         roop_globals.track_identities = bool(payload.get("track_identities", getattr(roop_globals.CFG, "track_identities", False)))
-        roop_globals.sparse_auto_range = bool(payload.get("sparse_auto_range", getattr(roop_globals.CFG, "sparse_auto_range", False)))
+        roop_globals.sparse_auto_range = render_flags["sparse_auto_range"]
         roop_globals.no_face_action = index_of_no_face_action(payload.get("no_face_action", roop_globals.CFG.no_face_action))
         roop_globals.vr_mode = bool(payload.get("vr_mode", roop_globals.CFG.vr_mode))
         roop_globals.autorotate_faces = bool(payload.get("autorotate", roop_globals.CFG.autorotate_faces))
@@ -5283,7 +5285,7 @@ def _run_swap(payload):
         roop_globals.is_preview = False
         batch_process_regular(
             output_method, files_to_process, mask_engine, clip_text,
-            processing_method == "In-Memory processing",
+            render_flags["use_new_method"],
             # imagemask — the preview box's brush mask. Was hardcoded None, so a
             # painted mask was silently dropped on the way to the render.
             payload.get("imagemask") or None,

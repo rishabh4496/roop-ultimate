@@ -108,7 +108,6 @@ export const BUILTIN_PROFILES = [
     ],
     settingsPatch: {
       selected_enhancer: 'Restoreformer++',
-      video_swapping_method: 'In-Memory processing',
     },
   },
 ];

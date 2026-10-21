@@ -200,3 +200,76 @@ test('timeline drag', async ({ page }) => {
   test.info().annotations.push({ type: 'perf', description: `playhead frame ${before} -> ${after}` });
   expect(after, 'the drag must have moved the playhead, or the measurement above is of nothing').not.toBe(before);
 });
+
+// The same budget with the 3-step Pipeline Pill on screen, measured AGAINST A CONTROL.
+//
+// The mock's own telemetry is the old shape (`status`, no `processing`, no `started_at`), so the running-job tests above
+// never mount the pill and never start the run clocks. A real backend's frame (api._telemetry_snapshot) carries both, and
+// with `started_at` set the elapsed/ETA clocks of the run bars tick at 14-27 Hz: ~55-70 React commits/s on #/faceswap
+// and #/processing whether or not the pill exists (measured on HEAD without any pill code: 70.7/s). So the absolute
+// `BUDGET.job.commitsPerSec` (10) does not describe a real run and is not applied here.
+//
+// What this asserts is the pill's OWN cost: the same scripted socket twice, once with the stage tables emptied (no pill)
+// and once with a Stage 3 percentage that moves on every 4 Hz frame (the pill re-renders on each). The difference must stay
+// small, and the frame-time and long-task budgets must hold with it on screen.
+const PILL_EXTRA_COMMITS_PER_SEC = 6;
+
+test.describe('with a running job and the pipeline pill (stage tables moving at 4 Hz)', () => {
+  test.afterEach(async ({ request }) => { await request.post('/api/stop').catch(() => {}); });
+
+  for (const id of ['faceswap', 'processing']) {
+    test(`job running, pill vs control: #/${id}`, async ({ page, request }) => {
+      await request.post('/api/stop').catch(() => {});
+      const res = await request.post('/api/swap', { data: {} });
+      expect([200, 409]).toContain(res.status());
+      const st = (state, pct) => ({ state, stage_progress_pct: pct, active_ranges_count: 2, verified_target_frames: 180, skipped_frames_pct: 46.7, eta_seconds: 5, wall_s: 4.2 });
+      const startedAt = Date.now() / 1000 - 20;      // fixed for the run, as the backend's is
+      const arm = { withStages: false };
+      // The mock's own job ends after a few seconds and its /api/progress poll would then say "idle" over the socket's
+      // "processing" (the two channels agree on a real backend); keep the poll consistent for the whole test.
+      await page.route('**/api/progress', async (route) => {
+        const r = await route.fetch();
+        let b = {};
+        try { b = await r.json(); } catch { b = {}; }
+        await route.fulfill({ response: r, json: { ...b, processing: true, paused: false, error: '' } });
+      });
+      await page.routeWebSocket(/\/ws\/telemetry/, (ws) => {
+        let n = 0;
+        const send = () => {
+          n += 1;
+          const pct = (n * 1.7) % 100;
+          ws.send(JSON.stringify({
+            event: 'progress', processing: true, paused: false, progress: pct / 100, desc: `Processing frame ${Math.round(pct * 3.6)} / 360`,
+            error: '', current_frame: Math.round(pct * 3.6), total_frames: 360, fps: 11.8, fps_now: 14 + (n % 5) / 10, frame_ms: 69, eta_s: 7,
+            started_at: startedAt, live_seq: 0, engine_state: 'IDLE', engine_label: '', engine_model: '', engine_precision: '', engine_since: null,
+            stage: 'STAGE_3_MAIN_SWAP',
+            stages: arm.withStages
+              ? { STAGE_1_SPARSE_PRESCAN: st('DONE', 100), STAGE_2_ACTIVE_PREPASS: st('DONE', 100), STAGE_3_MAIN_SWAP: st('RUNNING', pct) }
+              : {},
+            summary: {},
+          }));
+        };
+        send();
+        const timer = setInterval(send, 250);
+        ws.onClose(() => clearInterval(timer));
+      });
+
+      await openTab(page, id);
+      await expect(page.getByTestId('pipeline-pill')).toHaveCount(0);
+      const control = await measure(page, `job running, no pill   #/${id}`);
+
+      arm.withStages = true;
+      // A real reload, not openTab alone: the hash is unchanged, so a bare goto keeps the first arm's app state and the
+      // two arms would not be comparable. The new socket carries the stage tables.
+      await page.reload();
+      await openTab(page, id);
+      await expect(page.getByTestId('pipeline-pill'), 'the pill must be on screen for this measurement to mean anything').toBeVisible();
+      const withPill = await measure(page, `job running, with pill #/${id}`);
+
+      expectWithin(withPill, { over20: BUDGET.job.over20, longTasks: BUDGET.job.longTasks });
+      expect(withPill.commitsPerSec - control.commitsPerSec,
+        `the pill costs ${(withPill.commitsPerSec - control.commitsPerSec).toFixed(1)} extra React commits/s (control ${control.commitsPerSec}, pill ${withPill.commitsPerSec})`)
+        .toBeLessThanOrEqual(PILL_EXTRA_COMMITS_PER_SEC);
+    });
+  }
+});

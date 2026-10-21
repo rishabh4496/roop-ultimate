@@ -113,7 +113,6 @@ export function buildBatchJobPayload({
       enhancer: overrides.enhancer || base.selected_enhancer || DEFAULT_ENHANCER,
       detection: swapMode || DEFAULT_SWAP_MODE,
       output_method: base.output_method || 'Images & Video',
-      video_method: base.video_swapping_method || 'In-Memory processing',
       upscale: base.subsample_upscale || '128px',
       mask_engine: base.mask_engine || 'DFL XSeg',
       mask_engine_2: base.mask_engine_2 || 'None',

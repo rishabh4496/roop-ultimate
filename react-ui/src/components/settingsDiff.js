@@ -17,7 +17,6 @@ export const LABELS = {
   mask_engine_2: 'Mask 2',
   max_threads: 'Threads',
   subsample_upscale: 'Pixel boost',
-  video_swapping_method: 'Method',
   output_method: 'Output',
   blend_ratio: 'Blend',
   max_face_distance: 'Face distance',

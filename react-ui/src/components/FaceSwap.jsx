@@ -41,9 +41,10 @@ import SliderTrackerBar from './faceswap/SliderTrackerBar';
 import Timeline from './faceswap/Timeline';
 import FacesetLibrary from './faceswap/FacesetLibrary';
 import IdentityBlender from './faceswap/IdentityBlender';
-import { EMPTY_BLEND, fetchIdentityBlend } from './faceswap/identityBlend';
+import { EMPTY_BLEND, fetchIdentityBlend, normalizeBlend } from './faceswap/identityBlend';
 import AmbilightGlow from './faceswap/AmbilightGlow';
 import FloatingActionDock from './faceswap/FloatingActionDock';
+import PipelinePill from './faceswap/PipelinePill';
 import MediaTabSessionBar from './faceswap/MediaTabSessionBar';
 import PresetStudioModal from './faceswap/PresetStudioModal';
 import { popoutManager } from './faceswap/PopoutPreviewManager';
@@ -110,7 +111,7 @@ export default function FaceSwap({
   const [identityBlend, setIdentityBlend] = useState(EMPTY_BLEND);
   useEffect(() => {
     let live = true;
-    fetchIdentityBlend().then((r) => { if (live && r) setIdentityBlend(r); });
+    fetchIdentityBlend().then((r) => { if (live && r) setIdentityBlend(normalizeBlend(r)); });
     return () => { live = false; };
   }, []);
   const [targetFaces, setTargetFaces] = useState([]);
@@ -858,7 +859,7 @@ export default function FaceSwap({
     return {
       ...sp,
       enhancer: sp.selected_enhancer, adaptive_enhancer_profile: sp.adaptive_enhancer_profile || 'BALANCED', detection: sp.face_detection_mode,
-      output_method: sp.output_method, video_method: sp.video_swapping_method,
+      output_method: sp.output_method,
       upscale: sp.subsample_upscale, mask_engine: sp.mask_engine,
       mask_engine_2: sp.mask_engine_2, clip_text: sp.mask_clip_text,
       sam2_model_size: sp.sam2_model_size, track_identities: sp.track_identities,
@@ -3358,7 +3359,6 @@ export default function FaceSwap({
         </Section>
 
         <Section title="Video parameters">
-          <Select label="Video method" value={p.video_swapping_method} onChange={(v) => set('video_swapping_method', v)} options={meta.video_methods} />
           <Select label="On no face detected" value={p.no_face_action} onChange={(v) => set('no_face_action', v)} options={meta.no_face_actions} />
           <Toggle label="Temporal detection (anti-flicker)" info="Video (In-Memory method): one tracked detection pre-pass over the clip. Short detection misses (≤10 frames) are gap-filled by interpolating the face's position, so the swap can't blink out; with 'Stabilize face' also on, keypoints AND mask/mouth landmarks are smoothed per person. The swap pass then skips per-frame detection and stays multi-threaded. Includes identity locking when that toggle is on." checked={!!p.temporal_detection} onChange={(v) => set('temporal_detection', v)} />
           <Toggle label="VR mode" checked={!!p.vr_mode} onChange={(v) => set('vr_mode', v)} />
@@ -3384,9 +3384,6 @@ export default function FaceSwap({
         <div>
           <Section title="System options" collapsible defaultOpen={false}>
             <Toggle label="Auto rotate horizontal faces" checked={!!p.autorotate_faces} onChange={(v) => set('autorotate_faces', v)} />
-            <Toggle label="Skip audio" checked={!!p.skip_audio} onChange={(v) => set('skip_audio', v)} />
-            <Toggle label="Keep frames (when extracting)" checked={!!p.keep_frames} onChange={(v) => set('keep_frames', v)} />
-            <Toggle label="Wait before creating video" checked={!!p.wait_after_extraction} onChange={(v) => set('wait_after_extraction', v)} />
           </Section>
         </div>
 
@@ -3874,6 +3871,7 @@ export default function FaceSwap({
                   </div>
                 </div>
               </div>
+              {progress.processing && <PipelinePill processing className="px-1" />}
             </div>
           </div>
 

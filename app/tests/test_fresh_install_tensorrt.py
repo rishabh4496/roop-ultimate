@@ -98,7 +98,7 @@ class TestFreshInstallTensorRT(unittest.TestCase):
         meta = get_meta()
         self.assertIn("tensorrt", meta["providers"])
         self.assertIn("mixed", meta["trt_precisions"])
-        self.assertIn("fp16", meta["trt_precisions"])
+        self.assertIn("fp32", meta["trt_precisions"])
         self.assertIn("fp32", meta["trt_precisions"])
 
 

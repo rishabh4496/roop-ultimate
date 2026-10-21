@@ -402,7 +402,7 @@ export default function Settings({ meta, settings, setSettings, notify }) {
                     process_priority: 'high',
                     force_cpu: false,
                   });
-                  notify('🚀 Full GPU Potential (Max Turbo) activated! TensorRT FP16, NVDEC, NVENC & Batch Swap enabled.', 'success');
+                  notify('🚀 Full GPU Potential (Max Turbo) activated! TensorRT mixed precision, NVDEC, NVENC & Batch Swap enabled.', 'success');
                 }}
                 className={`flex flex-col items-start p-2.5 rounded-xl border text-left transition-all ${
                   p.provider === 'tensorrt' && p.perf_nvdec === 'on' && p.perf_batch_swap === 'on'
@@ -583,11 +583,11 @@ export default function Settings({ meta, settings, setSettings, notify }) {
               label="Precision mode (TensorRT)"
               info={
                 isTrtActive
-                  ? "mixed = recommended; fp16 = fastest; fp32 = most accurate. Applies after app restart."
+                  ? "mixed = recommended (the per-model policy keeps XSeg, the landmark models and RestoreFormer++ on FP32 either way); fp32 = every model at FP32, slowest. Applies after app restart."
                   : `TensorRT is currently inactive (${trtFailureReason || activeProvider}). Configured precision is preserved and will take effect when TensorRT runtime is available.`
               }
               {...bind('trt_precision', 'mixed')}
-              options={m.trt_precisions ?? ['fp32', 'fp16', 'mixed']}
+              options={m.trt_precisions ?? ['mixed', 'fp32']}
               disabled={!isTrtActive}
             />
           )}
@@ -606,12 +606,6 @@ export default function Settings({ meta, settings, setSettings, notify }) {
             label="Auto thread selection"
             info="Automatically scale thread execution dynamically for the selected hardware tier and workload mode (Standard, Enhanced, Heavy)."
             {...bindToggle('auto_thread_selection')}
-          />
-
-          <Toggle
-            label="Sparse auto-range pre-scan"
-            info="Rapidly sample video keyframes before processing to detect target face presence and swap only active ranges, passing through non-target frames at maximum speed."
-            {...bindToggle('sparse_auto_range')}
           />
 
           <Slider

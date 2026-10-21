@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Section, Slider, Toggle, Button } from '../ui';
 import { useApi } from '../../useApi';
-import { EMPTY_BLEND } from './identityBlend';
+import { EMPTY_BLEND, normalizeBlend } from './identityBlend';
 import { logFailure } from '../../failureLog';
 
 // Identity Blender: latent blend of up to four source identities on the ArcFace
@@ -13,17 +13,16 @@ import { logFailure } from '../../failureLog';
 
 const MAX_SLOTS = 4;
 
-// `jawline` is the "Feature Weight" direction (68-landmark jaw squareness);
-// `gender` is the Femininity <-> Masculinity axis the brief asks for.
+// Only the dials identity_render_validation.json proves writable through the swapper (BLEND_DIALS in
+// identityBlend.js). Age, Femininity <-> Masculinity and Expression were rendered at t = ±0.4 / ±0.75 on 65
+// paired faces and moved the swapped face non-monotonically or not at all (age: both signs read OLDER; sex: no
+// signed response; expression: null, the swapper takes it from the target), so they were removed here rather
+// than shipped as sliders that look live. The backend still refuses them (identity_algebra.dial_steps).
+// `jawline` is the "Feature Dominance" direction (68-landmark jaw squareness): ±1 on the dial is a 0.75 step
+// along the direction (`step_per_dial`), and the identity guard below (default cosine 0.80) scales it back.
 const DIALS = [
-  { key: 'age', label: 'Age Shift', min: -30, max: 30, step: 1, unit: 'yr',
-    info: 'Moves the identity along the direction genderage reads as older (+) or younger (-), calibrated in years on the fitting corpus. Bounded to ±30 years and by the identity guard.' },
-  { key: 'gender', label: 'Femininity ↔ Masculinity', min: -1, max: 1, step: 0.05,
-    info: '±1 = two standard deviations of how real faces vary along the fitted sex direction.' },
-  { key: 'jawline', label: 'Feature Dominance', min: -1, max: 1, step: 0.05,
-    info: 'Facial-structure weight: the direction that tracks jaw squareness in the fitting corpus. ±1 = two standard deviations.' },
-  { key: 'expression', label: 'Expression Intensity', min: -1, max: 1, step: 0.05,
-    info: 'ArcFace is trained to IGNORE expression, and the swapper takes expression from the target, so this direction is weak by construction. Check the fit score beside it.' },
+  { key: 'jawline', label: 'Feature Dominance (Jaw)', min: -1, max: 1, step: 0.05,
+    info: 'Facial-structure weight: the direction that tracks jaw squareness. ±1 is a 0.75 step along it; the identity guard below pulls the result back toward the blended identity. Measured on hyperswap: monotone but weak (jaw ratio −0.011…+0.009 over ±0.75, for −0.11…−0.15 identity cosine).' },
 ];
 
 const pct = (v) => `${Math.round((v || 0) * 100)}%`;
@@ -38,7 +37,7 @@ function scoreBadge(entry) {
 
 export default function IdentityBlender({ sourceFaces = [], sourceFacesInfo = [], value, onChange, onUploadSource, notify }) {
   const { postJSON } = useApi();
-  const recipe = value || EMPTY_BLEND;
+  const recipe = normalizeBlend(value || EMPTY_BLEND);
   const [diag, setDiag] = useState(null);
   const [busySlot, setBusySlot] = useState(-1);
   const [pickSlot, setPickSlot] = useState(-1);
@@ -51,7 +50,7 @@ export default function IdentityBlender({ sourceFaces = [], sourceFacesInfo = []
     return m;
   }, [sourceFacesInfo]);
 
-  const update = (patch) => onChange({ ...recipe, ...patch });
+  const update = (patch) => onChange(normalizeBlend({ ...recipe, ...patch }));
   const setComponents = (components) => update({ components: components.slice(0, MAX_SLOTS) });
   const setDial = (key, v) => update({ dials: { ...recipe.dials, [key]: v } });
 
@@ -193,14 +192,14 @@ export default function IdentityBlender({ sourceFaces = [], sourceFacesInfo = []
             const eff = applied[dial.key];
             return (
               <div key={dial.key} className={missing ? 'pointer-events-none opacity-40' : ''} aria-disabled={missing || undefined}>
-                <Slider label={`${dial.label}${dial.unit ? ` (${dial.unit})` : ''}`} info={dial.info}
+                <Slider label={dial.label} info={dial.info}
                   value={Number(recipe.dials?.[dial.key]) || 0} min={dial.min} max={dial.max} step={dial.step}
                   onChange={(v) => setDial(dial.key, v)}
                   modified={Math.abs(Number(recipe.dials?.[dial.key]) || 0) > 1e-9}
                   onReset={() => setDial(dial.key, 0)} />
                 <div className="-mt-1 flex justify-between text-nano text-muted">
                   <span title={entry?.render_verdict || ''}>{missing ? (entry?.render_verdict ? 'render-tested: no controllable effect on the swapped face' : 'no fitted direction') : badge ? <span className={badge.weak ? 'text-amber-300/80' : ''}>fit {badge.text}{badge.weak ? ' · weak' : ''}</span> : ''}</span>
-                  {clamped && eff != null && <span className="text-amber-300/80">guard → {dial.key === 'age' ? `${eff.toFixed(1)} yr` : eff.toFixed(2)}</span>}
+                  {clamped && eff != null && <span className="text-amber-300/80">guard → {eff.toFixed(2)}</span>}
                 </div>
               </div>
             );
@@ -219,7 +218,7 @@ export default function IdentityBlender({ sourceFaces = [], sourceFacesInfo = []
         </div>
 
         <div className="flex justify-end">
-          <Button size="sm" variant="secondary" onClick={() => onChange({ ...EMPTY_BLEND, dials: { ...EMPTY_BLEND.dials } })}>Reset blender</Button>
+          <Button size="sm" variant="secondary" onClick={() => onChange(normalizeBlend(EMPTY_BLEND))}>Reset blender</Button>
         </div>
       </div>
     </Section>

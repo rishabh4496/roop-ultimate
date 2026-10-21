@@ -248,8 +248,19 @@ Benchmark reporting rules and the Python-only telemetry probe are in
 
 #### Three-stage progress and busy previews
 
-A render runs up to three stages: `STAGE_1_SPARSE_PRESCAN` (only with
-`sparse_auto_range`), `STAGE_2_ACTIVE_PREPASS` (tracking/detection over the
+The Face Swap and Processing run bars show the same frames as a **3-step pill**: 1 Pre-Scan -> 2 Range Lock -> 3 Render & Mux
+(`react-ui/src/components/faceswap/PipelinePill.jsx`, model in `pillModel.js`). It reads `/ws/telemetry` only - no REST call, so
+the 15 s API deadline never applies to it - and shows the culled share (`skipped_frames_pct`) and the current fps beside step 3.
+Stage 4 is not in `stages`, so step 3 reads "Muxing" between Stage 3 finishing and the report arriving.
+
+Video renders always stream in memory with the 3-stage scan and a stream-copied audio track (Phase 12): Keep frames, Wait before
+creating video, Skip audio, the Video method and the sparse pre-scan toggle are gone from the UI, `config.yaml` and the settings
+schema. `roop/render_policy.py` holds the fixed choices; `skip_audio` and `sparse_auto_range` remain readable from a request
+payload only (distributed chunk renders and the test harness).
+
+A render runs up to three stages: `STAGE_1_SPARSE_PRESCAN` (every video; it is no
+longer a setting - still images never reach it and an animated WebP is excluded),
+`STAGE_2_ACTIVE_PREPASS` (tracking/detection over the
 active ranges) and `STAGE_3_MAIN_SWAP`. Every `/ws/telemetry` frame carries
 `stage` (the one running, or `null`) and `stages`, one object per stage:
 `state` (`PENDING|RUNNING|DONE|SKIPPED|FAILED|RESTORED`), `stage_progress_pct`,

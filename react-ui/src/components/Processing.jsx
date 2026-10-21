@@ -11,6 +11,7 @@ import ProcessingTerminal from './faceswap/ProcessingTerminal';
 import DiagnosticsPanel from './faceswap/DiagnosticsPanel';
 import RunModelsPanel from './faceswap/RunModelsPanel';
 import PipelineHud from './faceswap/PipelineReport';
+import PipelinePill from './faceswap/PipelinePill';
 import LiveProcessingPeek from './faceswap/LiveProcessingPeek';
 import useTelemetry from './faceswap/useTelemetry';
 import { useThrottledSelector, shallowEqual } from '../store/liveSubscribe';
@@ -198,6 +199,8 @@ export default function Processing({ progress, settings, notify, setTab,
             </div>
           </div>
         )}
+        {/* The 3-step pill under the run bar: Pre-Scan -> Range Lock -> Render & Mux, from /ws/telemetry only. */}
+        <PipelinePill processing={!!processing} className="mt-2.5 px-1" />
       </div>
 
       {/* Diagnostics HUD: the backend's three stages live, then its finished report (stage wall clocks, seek

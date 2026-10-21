@@ -43,7 +43,6 @@ identity_detail_strength: 0
 interp_after_swap: 'off'
 jaw_reshape: false
 jaw_reshape_strength: 0.4
-keep_frames: false
 launch_browser: false
 lipsync_audio_source: original
 lipsync_enabled: false
@@ -110,7 +109,6 @@ server_name: ''
 server_port: 0
 server_share: false
 show_mask_offsets: false
-skip_audio: false
 skin_tone_warmth: 0
 saturation_match: 0
 stabilize_beta: 0.1
@@ -166,6 +164,4 @@ use_os_temp_folder: false
 use_source_bank: true
 verify_swap: auto
 video_quality: 14
-video_swapping_method: In-Memory processing
 vr_mode: false
-wait_after_extraction: false

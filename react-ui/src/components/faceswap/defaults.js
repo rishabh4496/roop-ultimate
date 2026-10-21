@@ -129,7 +129,6 @@ export const FACESWAP_DEFAULTS = {
   expression_blink_sync: false,
 
   // Video parameters
-  video_swapping_method: 'In-Memory processing',
   no_face_action: 'Use untouched original frame',
   temporal_detection: true,
   vr_mode: false,
@@ -152,9 +151,6 @@ export const FACESWAP_DEFAULTS = {
 
   // System options
   autorotate_faces: true,
-  skip_audio: false,
-  keep_frames: false,
-  wait_after_extraction: false,
 
   // Enhancements
   track_identities: true,

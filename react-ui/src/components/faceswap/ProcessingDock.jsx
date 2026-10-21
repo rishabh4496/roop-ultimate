@@ -42,8 +42,8 @@ export default function ProcessingDock({
           disabled={stopping || !!controlBusy || (!paused && pauseRequested)}
           className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-md active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed ${
             paused
-              ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-600/20'
-              : 'bg-amber-600 hover:bg-amber-500 text-white shadow-amber-600/20'
+              ? 'bg-emerald-700 hover:bg-emerald-600 text-white shadow-emerald-700/20'
+              : 'bg-amber-700 hover:bg-amber-600 text-white shadow-amber-700/20'
           }`}
           title={paused ? 'Resume execution' : pauseRequested ? 'Waiting for a safe checkpoint' : 'Pause execution'}
         >

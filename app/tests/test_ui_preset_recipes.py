@@ -94,7 +94,6 @@ ENUMS = {
     'color_transfer_mode': _py_list(API_SRC, 'color_transfer_modes'),
     'detector_engine': _py_list(API_SRC, 'detector_engines'),
     'subsample_upscale': _py_list(API_SRC, 'upscale'),
-    'video_swapping_method': _py_list(API_SRC, 'video_methods'),
     'output_method': _py_list(API_SRC, 'output_methods'),
     'no_face_action': set(re.findall(r'"([^"]+)"', re.search(
         r'no_face_choices = \[(.*?)\]', API_SRC, re.S).group(1))),

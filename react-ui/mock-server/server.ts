@@ -528,7 +528,7 @@ async function startServer() {
       git_version: 'v2.5.0-ultimate',
       installed_commit: { sha: 'a'.repeat(40), short: 'a'.repeat(12), date: '2026-09-22T00:00:00+00:00' },
       providers: ['cuda', 'tensorrt', 'cpu'],
-      trt_precisions: ['fp32', 'fp16', 'mixed'],
+      trt_precisions: ['mixed', 'fp32'],
       enhancers: [
         'None',
         'Adaptive',
@@ -598,7 +598,6 @@ async function startServer() {
       priorities: ['auto', 'high', 'above_normal', 'normal'],
       no_face_actions: ['Use untouched original frame', 'Blank frame', 'Skip frame'],
       upscale: ['128px', '256px', '512px'],
-      video_methods: ['Extract Frames to media', 'In-Memory processing'],
       output_methods: ['File', 'Virtual Camera', 'Both'],
       image_formats: ['jpg', 'png', 'webp'],
       video_formats: ['avi', 'mkv', 'mp4', 'webm'],
