@@ -328,3 +328,108 @@ class ContentAwareSceneDetector:
             if start_frame > 0:
                 cuts.add(start_frame)
         return cuts
+
+
+class HardwareBitstreamCutDetector:
+    """Hardware bitstream and VRAM tensor scene-cut detector.
+
+    Extracts macroblock/coding-unit motion vector statistics (mv0_x, mv0_y, cu_type)
+    and QP deltas (qp_luma) from PyNvVideoCodec decode statistics, combined with
+    fast GPU L1 downsampled tensor diffs directly in VRAM.
+    Populates timeline chapter markers and scene cut intervals automatically.
+    """
+
+    DEFAULT_LUMA_CUT_DELTA = 28.0
+    DEFAULT_INTRA_RATIO_THRESH = 0.85
+    DEFAULT_QP_JUMP_THRESH = 6.0
+    DEFAULT_REFRACTORY = 3
+
+    def __init__(
+        self,
+        luma_cut_delta: float = DEFAULT_LUMA_CUT_DELTA,
+        intra_ratio_thresh: float = DEFAULT_INTRA_RATIO_THRESH,
+        qp_jump_thresh: float = DEFAULT_QP_JUMP_THRESH,
+        refractory_frames: int = DEFAULT_REFRACTORY,
+    ):
+        self.luma_cut_delta = float(luma_cut_delta)
+        self.intra_ratio_thresh = float(intra_ratio_thresh)
+        self.qp_jump_thresh = float(qp_jump_thresh)
+        self.refractory_frames = int(refractory_frames)
+        self._last_luma_tensor: Optional[Any] = None
+        self._last_mean_qp: Optional[float] = None
+        self._last_cut_frame: int = -999999
+        self.scene_cuts: List[int] = []
+
+    def reset(self) -> None:
+        self._last_luma_tensor = None
+        self._last_mean_qp = None
+        self._last_cut_frame = -999999
+        self.scene_cuts.clear()
+
+    def observe(self, frame_idx: int, tensor: Any = None, stats: Optional[Dict[str, Any]] = None) -> bool:
+        """Observe a frame's VRAM tensor and/or decode statistics.
+        Returns True if a cut transition is detected at frame_idx.
+        """
+        is_cut = False
+
+        # 1. Macroblock / coding-unit motion vector stats & QP deltas
+        mean_qp = None
+        if stats and isinstance(stats, dict):
+            qp_luma = stats.get('qp_luma')
+            if qp_luma:
+                mean_qp = float(np.mean(qp_luma))
+                if self._last_mean_qp is not None:
+                    qp_delta = abs(mean_qp - self._last_mean_qp)
+                    if qp_delta >= self.qp_jump_thresh:
+                        is_cut = True
+
+            cu_type = stats.get('cu_type')
+            if cu_type and frame_idx > 0:
+                cu_arr = np.asarray(cu_type)
+                intra_ratio = float(np.mean(cu_arr == 0))
+                if intra_ratio >= self.intra_ratio_thresh:
+                    is_cut = True
+
+            mv0_x = stats.get('mv0_x')
+            mv0_y = stats.get('mv0_y')
+            if mv0_x and mv0_y and self._last_mean_qp is not None:
+                mag = np.mean(np.sqrt(np.asarray(mv0_x, dtype=np.float32)**2 + np.asarray(mv0_y, dtype=np.float32)**2))
+                if mag > 35.0:
+                    is_cut = True
+
+        # 2. Fast GPU L1 downsampled tensor diff in VRAM
+        if tensor is not None:
+            try:
+                import torch
+                if isinstance(tensor, torch.Tensor) and tensor.is_cuda:
+                    t = tensor.float()
+                    if t.ndim == 3:
+                        t = t.unsqueeze(0)
+                    small = torch.nn.functional.adaptive_avg_pool2d(t, (36, 64))[0]
+                    luma = 0.299 * small[0] + 0.587 * small[1] + 0.114 * small[2]
+                    if self._last_luma_tensor is not None:
+                        diff = float(torch.abs(luma - self._last_luma_tensor).mean().item())
+                        if diff >= self.luma_cut_delta:
+                            is_cut = True
+                    self._last_luma_tensor = luma
+            except Exception as exc:
+                _swallowed("scene_detector.py:observe_tensor", exc, "tensor diff fallback")
+
+        if mean_qp is not None:
+            self._last_mean_qp = mean_qp
+
+        if is_cut:
+            if (frame_idx - self._last_cut_frame) < self.refractory_frames:
+                is_cut = False
+            else:
+                self._last_cut_frame = frame_idx
+                self.scene_cuts.append(frame_idx)
+
+        return is_cut
+
+    def observe_hw_frame(self, hw_frame: Any) -> bool:
+        """Helper to observe an HwFrame directly."""
+        tensor = getattr(hw_frame, "tensor", None)
+        stats = getattr(hw_frame, "decode_stats", None)
+        index = getattr(hw_frame, "index", 0)
+        return self.observe(index, tensor=tensor, stats=stats)

@@ -17,6 +17,7 @@ import roop.globals
 from roop.degrade import swallowed as _swallowed
 from roop.face_clustering import (
     cluster_face_embeddings,
+    cluster_face_embeddings_gpu,
     compute_cosine_distance,
     extract_face_embedding,
     normalize_embedding,
@@ -88,6 +89,62 @@ class FaceBank:
         self.last_video_path = None
         self.scene_cuts.clear()
 
+    def _aggregate_characters(self, collected_faces: List[Dict[str, Any]], cluster_labels: Any) -> List[Dict[str, Any]]:
+        """Aggregate clustered face detections into character records with thumbnails and pose angles."""
+        unique_labels = sorted(set(cluster_labels))
+        characters = []
+
+        for c_id in unique_labels:
+            indices = [i for i, lbl in enumerate(cluster_labels) if lbl == c_id]
+            members = [collected_faces[i] for i in indices]
+
+            # Compute cluster mean embedding
+            embs = np.asarray([m['embedding'] for m in members], dtype=np.float32)
+            mean_raw = np.mean(embs, axis=0)
+            mean_norm = normalize_embedding(mean_raw)
+
+            # Sort by quality: low off-axis + high detection score
+            members.sort(key=lambda m: (m['off_axis'], -m['det_score']))
+            best_member = members[0]
+
+            # Collect pose angles: front, left profile, right profile
+            angles = [best_member]
+            left_profiles = [m for m in members if m['yaw'] > 25]
+            if left_profiles:
+                left_profiles.sort(key=lambda m: -m['det_score'])
+                angles.append(left_profiles[0])
+            right_profiles = [m for m in members if m['yaw'] < -25]
+            if right_profiles:
+                right_profiles.sort(key=lambda m: -m['det_score'])
+                angles.append(right_profiles[0])
+
+            thumb_url = crop_to_dataurl(best_member['crop'])
+
+            char_record = {
+                'person_id': f"tp_{c_id}",
+                'display_rank': int(c_id),
+                'name': f"Actor {c_id + 1}",
+                'thumbnail': thumb_url,
+                'cluster_size': len(members),
+                'best_frame': int(best_member['frame_idx']),
+                'off_axis': float(best_member['off_axis']),
+                'det_score': float(best_member['det_score']),
+                'mean_embedding': mean_norm.tolist() if mean_norm is not None else [],
+                'target_faces': [a['face'] for a in angles],
+                'angles_count': len(angles),
+            }
+            characters.append(char_record)
+
+        # Sort characters by cluster size descending (main characters first)
+        characters.sort(key=lambda c: -c['cluster_size'])
+        # Re-assign display ranks
+        for rank, ch in enumerate(characters):
+            ch['display_rank'] = rank
+            ch['name'] = f"Actor {rank + 1}"
+
+        self.characters = characters
+        return characters
+
     def scan_video(
         self,
         video_path: str,
@@ -111,6 +168,102 @@ class FaceBank:
         self.clear()
         self.last_video_path = video_path
 
+        # ── Hardware Path: Keyframe-only sparse sampling + Bitstream Cut Detector + GPU clustering ──
+        from roop.video_io_hw import hw_io_wanted, NvSparseKeyframeReader
+        from roop.scene_detector import HardwareBitstreamCutDetector
+
+        if hw_io_wanted():
+            try:
+                cut_detector = HardwareBitstreamCutDetector()
+                collected_faces: List[Dict[str, Any]] = []
+                with NvSparseKeyframeReader(video_path, adaptive_midpoints=True, max_gop_gap=60, enable_decode_stats=True) as reader:
+                    sample_tbl = reader.sample_table(max_gop_gap=60)
+                    total_samples = len(sample_tbl)
+                    if max_samples and total_samples > max_samples:
+                        step = max(1, total_samples // max_samples)
+                        sample_tbl = sample_tbl[::step]
+                    
+                    frames_batch = []
+                    import torch
+
+                    def process_hw_frames(batch):
+                        for hw_f in batch:
+                            if (time.time() - t0) > time_budget:
+                                return
+                            # Observe bitstream stats & GPU L1 tensor diff
+                            if cut_detector.observe_hw_frame(hw_f):
+                                self.scene_cuts.add(hw_f.index)
+
+                            bgr = hw_f.bgr()
+                            detected = get_all_faces(bgr) or []
+                            for face in detected:
+                                det_score = float(getattr(face, 'det_score', 0.0) or 0.0)
+                                if det_score < min_det_score:
+                                    continue
+                                bbox = getattr(face, 'bbox', None)
+                                if bbox is None:
+                                    continue
+                                bw, bh = bbox[2] - bbox[0], bbox[3] - bbox[1]
+                                if min(bw, bh) < min_face_size:
+                                    continue
+                                emb = extract_face_embedding(face, bgr)
+                                if emb is None:
+                                    continue
+                                kps = getattr(face, 'kps', None)
+                                pitch, yaw, roll = solve_pose_5pt(kps) if kps is not None else (0.0, 0.0, 0.0)
+                                off_axis = offaxis_deg(pitch, yaw)
+                                crop = extract_face_crop(bgr, face)
+                                _attach_source_crops(face, bgr)
+                                collected_faces.append({
+                                    'face': face,
+                                    'embedding': emb,
+                                    'frame_idx': hw_f.index,
+                                    'det_score': det_score,
+                                    'off_axis': off_axis,
+                                    'crop': crop,
+                                    'yaw': yaw,
+                                    'pitch': pitch,
+                                })
+
+                    s_count = 0
+                    for hw_f in reader.sample_frames(enable_stats=True):
+                        if (time.time() - t0) > time_budget:
+                            break
+                        frames_batch.append(hw_f)
+                        s_count += 1
+                        if len(frames_batch) >= 4:
+                            process_hw_frames(frames_batch)
+                            frames_batch.clear()
+                        if on_progress and (s_count % 10 == 0 or s_count == total_samples):
+                            pct = int(s_count * 100 / max(1, total_samples))
+                            on_progress(s_count, total_samples, f"Scanning faces: {pct}%")
+                    if frames_batch:
+                        process_hw_frames(frames_batch)
+                        frames_batch.clear()
+
+                self.scene_cuts = set(cut_detector.scene_cuts)
+                if collected_faces:
+                    embs = np.asarray([cf['embedding'] for cf in collected_faces], dtype=np.float32)
+                    if torch.cuda.is_available():
+                        embs_t = torch.as_tensor(embs, device="cuda")
+                        cluster_labels = cluster_face_embeddings_gpu(
+                            embs_t,
+                            method=clustering_method,
+                            eps=eps,
+                            distance_threshold=distance_threshold,
+                        )
+                    else:
+                        cluster_labels = cluster_face_embeddings(
+                            embs,
+                            method=clustering_method,
+                            eps=eps,
+                            distance_threshold=distance_threshold,
+                        )
+                    return self._aggregate_characters(collected_faces, cluster_labels)
+            except Exception as exc:
+                _swallowed("face_bank.py:hw_scan", exc, "hardware scan failed; falling back to capture")
+
+        # ── Fallback Capture Path ──
         from roop import hdr_pipeline
         cap = hdr_pipeline.open_capture(video_path)
         if not cap.isOpened():
@@ -203,62 +356,7 @@ class FaceBank:
             distance_threshold=distance_threshold,
         )
 
-        # 3. Aggregate clusters into characters
-        unique_labels = sorted(set(cluster_labels))
-        characters = []
-
-        for c_id in unique_labels:
-            indices = [i for i, lbl in enumerate(cluster_labels) if lbl == c_id]
-            members = [collected_faces[i] for i in indices]
-
-            # Compute cluster mean embedding
-            embs = np.asarray([m['embedding'] for m in members], dtype=np.float32)
-            mean_raw = np.mean(embs, axis=0)
-            mean_norm = normalize_embedding(mean_raw)
-
-            # Sort by quality: low off-axis + high detection score
-            members.sort(key=lambda m: (m['off_axis'], -m['det_score']))
-            best_member = members[0]
-
-            # Collect pose angles: front, left profile, right profile
-            angles = [best_member]
-            # Find left profile (yaw > 25)
-            left_profiles = [m for m in members if m['yaw'] > 25]
-            if left_profiles:
-                left_profiles.sort(key=lambda m: -m['det_score'])
-                angles.append(left_profiles[0])
-            # Find right profile (yaw < -25)
-            right_profiles = [m for m in members if m['yaw'] < -25]
-            if right_profiles:
-                right_profiles.sort(key=lambda m: -m['det_score'])
-                angles.append(right_profiles[0])
-
-            thumb_url = crop_to_dataurl(best_member['crop'])
-
-            char_record = {
-                'person_id': f"tp_{c_id}",
-                'display_rank': int(c_id),
-                'name': f"Actor {c_id + 1}",
-                'thumbnail': thumb_url,
-                'cluster_size': len(members),
-                'best_frame': int(best_member['frame_idx']),
-                'off_axis': float(best_member['off_axis']),
-                'det_score': float(best_member['det_score']),
-                'mean_embedding': mean_norm.tolist() if mean_norm is not None else [],
-                'target_faces': [a['face'] for a in angles],
-                'angles_count': len(angles),
-            }
-            characters.append(char_record)
-
-        # Sort characters by cluster size descending (main characters first)
-        characters.sort(key=lambda c: -c['cluster_size'])
-        # Re-assign display ranks
-        for rank, ch in enumerate(characters):
-            ch['display_rank'] = rank
-            ch['name'] = f"Actor {rank + 1}"
-
-        self.characters = characters
-        return characters
+        return self._aggregate_characters(collected_faces, cluster_labels)
 
     def apply_to_globals(self, characters: Optional[List[Dict[str, Any]]] = None) -> int:
         """Populate roop.globals with target faces and person IDs from Face Bank."""

@@ -577,6 +577,25 @@ class HardwarePaths(unittest.TestCase):
         self.assertEqual((s["decode_backend"], s["encode_backend"]), ("NVDEC-DLPack", "NVENC-Direct"))
         self.assertIsNotNone(s["decode_queue_saturation"])
 
+    def test_sparse_keyframe_reader_samples_gop_midpoints_when_gop_exceeds_60(self):
+        clip_path = os.path.join(_TMP.name, "long_gop.mp4")
+        cmd = [_FFMPEG, "-hide_banner", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=25",
+               "-t", "4", "-c:v", "libx264", "-g", "75", "-pix_fmt", "yuv420p", "-x264-params", "keyint=75:min-keyint=75:scenecut=0",
+               clip_path]
+        proc = _run(cmd)
+        self.assertEqual(proc.returncode, 0)
+        with hw.NvSparseKeyframeReader(clip_path, adaptive_midpoints=True, max_gop_gap=60) as r:
+            table = r.keyframe_table()
+            self.assertGreaterEqual(len(table), 1)
+            sample_tbl = r.sample_table(max_gop_gap=60)
+            self.assertGreater(len(sample_tbl), len(table), "Adaptive midpoint frames must be sampled when GOP > 60")
+            has_mid = any(not is_k for _, _, is_k in sample_tbl)
+            self.assertTrue(has_mid, "Sample table must contain non-keyframe midpoint samples")
+            frames = list(r.sample_frames(enable_stats=True))
+            self.assertEqual(len(frames), len(sample_tbl))
+            self.assertIsNotNone(frames[0].decode_stats)
+            self.assertIn("qp_luma", frames[0].decode_stats)
+
 
 if __name__ == "__main__":
     unittest.main()

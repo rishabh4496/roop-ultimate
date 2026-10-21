@@ -266,6 +266,7 @@ Target media, the people found in it and their captured angles.
 | POST | `/api/target/group` | PersonGroups |
 | POST | `/api/target/name` | PersonGroups |
 | GET | `/api/target/preview_grid` | FaceSwap |
+| GET | `/api/target/scene_cuts` | FaceSwap |
 | POST | `/api/target/remove` | BatchSwap, FaceSwap |
 | POST | `/api/target/remove_face` | PersonGroups |
 | POST | `/api/target/select` | FaceSwap |

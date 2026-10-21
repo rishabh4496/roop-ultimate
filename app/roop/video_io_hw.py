@@ -258,10 +258,11 @@ class HwFrame:
     convention). A zero-copy frame is valid until its reader's next read/close (``StaleFrameError`` after that);
     ``detach()`` copies it on the device so it can be kept."""
 
-    __slots__ = ("index", "pts", "_tensor", "_host", "_owner", "_gen", "_nbytes")
+    __slots__ = ("index", "pts", "_tensor", "_host", "_owner", "_gen", "_nbytes", "decode_stats", "is_keyframe")
 
     def __init__(self, index: int, pts: Optional[int], *, tensor: Any = None, host: Optional[np.ndarray] = None,
-                 owner: Any = None, gen: int = 0, nbytes: int = 0) -> None:
+                 owner: Any = None, gen: int = 0, nbytes: int = 0,
+                 decode_stats: Optional[Dict[str, Any]] = None, is_keyframe: bool = True) -> None:
         self.index = index
         self.pts = pts
         self._tensor = tensor
@@ -269,6 +270,8 @@ class HwFrame:
         self._owner = owner
         self._gen = gen
         self._nbytes = nbytes
+        self.decode_stats = decode_stats
+        self.is_keyframe = bool(is_keyframe)
 
     def _check(self) -> None:
         if self._owner is not None and self._owner._gen != self._gen:
@@ -301,8 +304,9 @@ class HwFrame:
         self._check()
         if self._tensor is not None:
             return HwFrame(self.index, self.pts, tensor=self._tensor.clone(), host=self._host,
-                           nbytes=self._nbytes)
-        return HwFrame(self.index, self.pts, host=self._host, nbytes=self._nbytes)
+                           nbytes=self._nbytes, decode_stats=self.decode_stats, is_keyframe=self.is_keyframe)
+        return HwFrame(self.index, self.pts, host=self._host, nbytes=self._nbytes,
+                       decode_stats=self.decode_stats, is_keyframe=self.is_keyframe)
 
 
 # --------------------------------------------------------------------------------------------------------------
@@ -462,11 +466,19 @@ class NvSparseKeyframeReader:
 
     backend = BACKEND_NVDEC_DLPACK
 
-    def __init__(self, path: str, *, gpu_id: int = 0, tag: str = "stage1-keyframes") -> None:
+    def __init__(self, path: str, *, gpu_id: int = 0, tag: str = "stage1-keyframes",
+                 adaptive_midpoints: bool = True, max_gop_gap: int = 60,
+                 enable_decode_stats: bool = True) -> None:
         nvc, torch = _load_nvc()
         self._nvc, self._torch = nvc, torch
         self.path = path
         self.gpu_id = int(gpu_id)
+        self.adaptive_midpoints = bool(adaptive_midpoints)
+        self.max_gop_gap = max(1, int(max_gop_gap))
+        self.enable_decode_stats = bool(enable_decode_stats)
+        self._pts_by_rank: Dict[int, int] = {}
+        self._rank_by_pts: Dict[int, int] = {}
+        self._total_packet_count: int = 0
         try:
             dmx = nvc.CreateDemuxer(str(path))
             self.width, self.height = int(dmx.Width()), int(dmx.Height())
@@ -500,27 +512,96 @@ class NvSparseKeyframeReader:
             pts_all.append(int(p.pts))
             if p.key:
                 keys.append((int(p.pts), self._classify(p)))
+        sorted_pts = sorted(pts_all)
+        self._total_packet_count = len(sorted_pts)
+        self._rank_by_pts = {pts: i for i, pts in enumerate(sorted_pts)}
+        self._pts_by_rank = {i: pts for i, pts in enumerate(sorted_pts)}
         return keys, pts_all
 
     def keyframe_table(self) -> List[Tuple[int, int]]:
         """``[(display_index, pts)]`` of the accepted keyframes."""
         if self._table is None:
             keys, pts_all = self._scan()
-            rank = {pts: i for i, pts in enumerate(sorted(pts_all))}
+            rank = self._rank_by_pts
             self._table = [(rank[pts], pts) for pts, ok in keys if ok]
         return list(self._table)
 
-    def keyframes(self, max_frames: Optional[int] = None) -> Iterator[HwFrame]:
-        nvc, torch = self._nvc, self._torch
+    def sample_table(self, max_gop_gap: Optional[int] = None) -> List[Tuple[int, int, bool]]:
+        """``[(display_index, pts, is_keyframe)]`` of keyframes plus adaptive midpoint frames
+        whenever the gap between keyframes exceeds max_gop_gap (default 60)."""
         table = self.keyframe_table()
-        index_of = {pts: idx for idx, pts in table}
+        if not table:
+            return []
+        gap_limit = self.max_gop_gap if max_gop_gap is None else max(1, int(max_gop_gap))
+        samples: List[Tuple[int, int, bool]] = []
+        for i, (idx, pts) in enumerate(table):
+            samples.append((idx, pts, True))
+            if i + 1 < len(table):
+                next_idx, next_pts = table[i + 1]
+                gap = next_idx - idx
+                if gap > gap_limit:
+                    # Adaptive midpoint frame only when GOP length exceeds 60 frames
+                    mid_idx = idx + gap // 2
+                    mid_pts = self._pts_by_rank.get(mid_idx, int(round((pts + next_pts) / 2)))
+                    samples.append((mid_idx, mid_pts, False))
+            elif self._total_packet_count > 0:
+                gap = self._total_packet_count - idx
+                if gap > gap_limit:
+                    mid_idx = idx + gap // 2
+                    mid_pts = self._pts_by_rank.get(mid_idx, pts + 1)
+                    samples.append((mid_idx, mid_pts, False))
+        seen = set()
+        deduped = []
+        for item in sorted(samples, key=lambda x: x[0]):
+            if item[0] not in seen:
+                seen.add(item[0])
+                deduped.append(item)
+        return deduped
+
+    def sample_frames(self, max_frames: Optional[int] = None, enable_stats: Optional[bool] = None) -> Iterator[HwFrame]:
+        """Decode keyframes plus adaptive midpoints directly into VRAM, attaching decode statistics."""
+        return self.keyframes(max_frames=max_frames, sample_midpoints=True, enable_stats=enable_stats)
+
+    def keyframes(self, max_frames: Optional[int] = None, sample_midpoints: bool = False,
+                  enable_stats: Optional[bool] = None) -> Iterator[HwFrame]:
+        nvc, torch = self._nvc, self._torch
+        use_stats = bool(self.enable_decode_stats if enable_stats is None else enable_stats)
+        table = self.sample_table() if sample_midpoints else [(idx, pts, True) for idx, pts in self.keyframe_table()]
+        if not table:
+            return
+
+        has_midpoints = any(not is_key for _, _, is_key in table)
+        frame_bytes = self.width * self.height * 3
+
+        # When midpoints or decode stats are requested, use SimpleDecoder to access frames in VRAM
+        if has_midpoints or use_stats:
+            try:
+                dec = nvc.CreateSimpleDecoder(self.path, self.gpu_id, 0, 0, True, 0, 0, False, 1,
+                                             nvc.OutputColorType.RGBP, False, use_stats)
+                n = 0
+                for idx, pts, is_key in table:
+                    try:
+                        raw = dec[idx]
+                        t = torch.from_dlpack(raw).clone()
+                        stats = raw.ParseDecodeStats() if use_stats else None
+                        telemetry.note_decoded(frame_bytes, device=True)
+                        yield HwFrame(idx, pts, tensor=t, nbytes=frame_bytes, decode_stats=stats, is_keyframe=is_key)
+                        n += 1
+                        if max_frames is not None and n >= max_frames:
+                            return
+                    except Exception as exc:
+                        _swallowed("roop/video_io_hw.py:sample_decode", exc, f"skipping frame {idx}")
+                return
+            except Exception as exc:
+                _swallowed("roop/video_io_hw.py:simple_decoder_fallback", exc, "falling back to demuxer decoder")
+
+        index_of = {pts: idx for idx, pts, _ in table}
         dec = nvc.CreateDecoder(gpuid=self.gpu_id, codec=self._codec_id, usedevicememory=True,
                                 outputColorType=nvc.OutputColorType.RGBP,
                                 latency=nvc.DisplayDecodeLatencyType.LOW)
         flush = nvc.PacketData()
         flush.bsl = 0
         dmx = nvc.CreateDemuxer(str(self.path))
-        frame_bytes = self.width * self.height * 3
         n = 0
         while True:
             p = dmx.Demux()
@@ -536,7 +617,7 @@ class NvSparseKeyframeReader:
                     if ts not in index_of:
                         continue
                     telemetry.note_decoded(frame_bytes, device=True)
-                    yield HwFrame(index_of[ts], ts, tensor=torch.from_dlpack(f).clone(), nbytes=frame_bytes)
+                    yield HwFrame(index_of[ts], ts, tensor=torch.from_dlpack(f).clone(), nbytes=frame_bytes, is_keyframe=True)
                     n += 1
                     if max_frames is not None and n >= max_frames:
                         return
@@ -839,6 +920,8 @@ class _KeyframeAdapter:
 
     def keyframes_iter(self) -> Iterator[HwFrame]:
         r = self.reader
+        if hasattr(r, "sample_frames"):
+            return r.sample_frames()
         return r.keyframes() if hasattr(r, "keyframes") else iter(r)
 
     def close(self) -> None:

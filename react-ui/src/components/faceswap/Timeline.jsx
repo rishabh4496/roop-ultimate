@@ -229,6 +229,7 @@ export default function Timeline({
   setView,
   segments = [],
   onSegmentClick,
+  sceneCuts = [],
 }) {
   // ── View window ───────────────────────────────────────────────────────────
   // The track shows [view.start, view.end] rather than the whole clip. `pctOf`
@@ -363,10 +364,16 @@ export default function Timeline({
   useEffect(() => {
     try {
       const raw = localStorage.getItem(markersKey(targetKey));
-      const list = raw ? JSON.parse(raw) : [];
-      setMarkers(Array.isArray(list) ? list.filter((n) => Number.isFinite(n)) : []);
+      const list = raw ? JSON.parse(raw) : null;
+      if (Array.isArray(list) && list.length > 0) {
+        setMarkers(list.filter((n) => Number.isFinite(n)));
+      } else if (Array.isArray(sceneCuts) && sceneCuts.length > 0) {
+        setMarkers(sceneCuts.filter((n) => Number.isFinite(n)));
+      } else {
+        setMarkers(Array.isArray(list) ? [] : []);
+      }
     } catch { setMarkers([]); }
-  }, [targetKey]);
+  }, [targetKey, sceneCuts]);
 
   const persistMarkers = (list) => {
     const next = [...new Set(list)].filter((f) => f >= 1 && f <= maxFrames).sort((a, b) => a - b);

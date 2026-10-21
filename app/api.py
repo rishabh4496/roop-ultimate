@@ -600,6 +600,18 @@ def _target_context_payload():
     _normalize_target_identity_locked()
     records = _target_person_records()
     stable_mapping = getattr(state, "active_target_person_source_mapping", {}) or {}
+    scene_cuts = []
+    try:
+        from roop.face_bank import get_face_bank
+        bank = get_face_bank()
+        active_path = None
+        if list_files_process and 0 <= getattr(state, "selected_target_index", 0) < len(list_files_process):
+            active_path = list_files_process[state.selected_target_index].filename
+        bank_path = getattr(bank, "last_video_path", None)
+        if bank_path and (not active_path or os.path.abspath(str(bank_path)) == os.path.abspath(str(active_path))):
+            scene_cuts = sorted(int(frame) for frame in getattr(bank, "scene_cuts", set()) or set())
+    except Exception as exc:
+        _swallowed("api.py:target_context_scene_cuts", exc, "omitted scene_cuts")
     return {
         "target_media_id": getattr(state, "active_target_media_id", None),
         "selected_target_face_index": getattr(state, "selected_target_face_index", 0),
@@ -619,6 +631,7 @@ def _target_context_payload():
         "target_persons": records,
         "selected_target_person_id": getattr(state, "selected_target_person_id", None),
         "selected_reference_face_id": getattr(state, "selected_reference_face_id", None),
+        "scene_cuts": scene_cuts,
     }
 
 # Live progress, polled by the React UI
@@ -2742,16 +2755,77 @@ def target_preview_grid(index: int = 0, frames: str = "", width: int = 200,
         return JSONResponse(status_code=400, content={"message": "no frames"})
     wanted = wanted[:64]
     quality = max(30, min(int(quality), 95))
+    width = max(16, int(width)) if width else 200
     busy = _preview_busy_response(cached=all(
         _encoded_get(_frame_etag(filename, f, width, "jpg", quality)) is not None for f in set(wanted)))
     if busy is not None:
         return busy
 
     encoded = {}
+    uncached = []
     for f in sorted(set(wanted)):
-        _, data, _media = _still(filename, f, width, "jpg", quality)
-        if data is not None:
-            encoded[f] = data
+        tag = _frame_etag(filename, f, width, "jpg", quality)
+        hit = _encoded_get(tag)
+        if hit is not None:
+            encoded[f] = hit[0]
+        else:
+            uncached.append(f)
+
+    if uncached and util.is_video(filename):
+        try:
+            from roop.video_io_hw import hw_io_wanted, _load_nvc, telemetry
+            if hw_io_wanted():
+                nvc, torch = _load_nvc()
+                f_to_idx = {f: max(0, f - 1) for f in uncached}
+                sorted_indices = sorted(set(f_to_idx.values()))
+                dec = nvc.CreateSimpleDecoder(
+                    str(filename), 0, 0, 0, True, 0, 0, False, 1, nvc.OutputColorType.RGBP
+                )
+                meta = dec.get_stream_metadata()
+                num_frames = int(getattr(meta, "num_frames", 0) or 0)
+                if num_frames > 0:
+                    sorted_indices = [min(idx, num_frames - 1) for idx in sorted_indices]
+                batch_decoded = dec.get_batch_frames_by_index(sorted_indices)
+
+                idx_to_frame = {}
+                if len(batch_decoded) == len(sorted_indices):
+                    idx_to_frame = {idx: dec_frame for idx, dec_frame in zip(sorted_indices, batch_decoded)}
+
+                for f in uncached:
+                    target_idx = f_to_idx[f]
+                    if num_frames > 0:
+                        target_idx = min(target_idx, num_frames - 1)
+                    dec_frame = idx_to_frame.get(target_idx)
+                    if dec_frame is not None:
+                        t = torch.from_dlpack(dec_frame)
+                        h_in, w_in = t.shape[1], t.shape[2]
+                        if width and width > 0 and w_in > width:
+                            h_out = max(1, round(h_in * width / w_in))
+                            t_down = torch.nn.functional.interpolate(
+                                t.unsqueeze(0).float(),
+                                size=(h_out, width),
+                                mode="bilinear",
+                                align_corners=False
+                            )[0].clamp(0, 255).byte()
+                        else:
+                            t_down = t
+                            h_out = h_in
+                        bgr = t_down[[2, 1, 0], :, :].permute(1, 2, 0).contiguous().cpu().numpy()
+                        ok, buf = cv2.imencode(".jpg", bgr, [int(cv2.IMWRITE_JPEG_QUALITY), int(quality)])
+                        if ok:
+                            data = buf.tobytes()
+                            encoded[f] = data
+                            tag = _frame_etag(filename, f, width, "jpg", quality)
+                            _encoded_put(tag, data, "image/jpeg")
+                            telemetry.note_decoded(h_out * width * 3, device=True)
+        except Exception as exc:
+            _swallowed("api.py:target_preview_grid_hw", exc, "HW filmstrip downscale failed; falling back to CPU")
+
+    for f in uncached:
+        if f not in encoded:
+            _, data, _media = _still(filename, f, width, "jpg", quality)
+            if data is not None:
+                encoded[f] = data
 
     parts = []
     for f in wanted:
@@ -2760,6 +2834,28 @@ def target_preview_grid(index: int = 0, frames: str = "", width: int = 200,
         parts.append(data)
     return StreamingResponse(io.BytesIO(b"".join(parts)),
                              media_type="application/octet-stream")
+
+
+@app.get("/api/target/scene_cuts")
+def target_scene_cuts(index: int = None, media_id: str = None):
+    """Return detected scene cut frame numbers for the active (or specified) target."""
+    target_index, resolved_id = _target_index_for_ref(index=index, media_id=media_id)
+    if target_index is None or target_index < 0 or target_index >= len(list_files_process):
+        return JSONResponse(status_code=404, content={"message": "no target"})
+    filename = list_files_process[target_index].filename
+    scene_cuts = []
+    try:
+        from roop.face_bank import get_face_bank
+        bank = get_face_bank()
+        bank_path = getattr(bank, "last_video_path", None)
+        if bank_path and os.path.abspath(str(bank_path)) == os.path.abspath(str(filename)):
+            scene_cuts = sorted(int(frame) for frame in getattr(bank, "scene_cuts", set()) or set())
+    except Exception as exc:
+        _swallowed("api.py:target_scene_cuts", exc, "scene_cuts query error")
+    return {
+        "target_media_id": resolved_id,
+        "scene_cuts": scene_cuts,
+    }
 
 
 @app.get("/api/target/preview_seq")

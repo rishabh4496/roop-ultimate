@@ -307,6 +307,7 @@ export default function FaceSwap({
 
   // Target-to-Source visual mapping state
   const [faceMapping, setFaceMapping] = useState({});
+  const [sceneCuts, setSceneCuts] = useState([]);
 
   // Target media is an ordered view, not an identity. Keep the complete UI
   // context keyed by the backend-issued media id so A -> B -> A restores A's
@@ -365,6 +366,9 @@ export default function FaceSwap({
 
   const applyTargetContext = (res, mediaId = res?.target_media_id) => {
     if (!mediaId) return;
+    if (Array.isArray(res?.scene_cuts)) {
+      setSceneCuts(res.scene_cuts);
+    }
     const saved = targetContextsRef.current[mediaId] || {};
     const faces = res?.target_faces ?? saved.targetFaces ?? [];
     const groups = res?.target_groups ?? saved.targetGroups ?? [];
@@ -4097,6 +4101,7 @@ export default function FaceSwap({
                   targetKey={activeTargetMediaId || targets[selTarget]?.name || String(selTarget)}
                   segments={segments.segments}
                   onSegmentClick={jumpToSegment}
+                  sceneCuts={sceneCuts}
                 />
                 <SegmentBar
                   segments={segments.segments}

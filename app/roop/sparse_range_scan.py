@@ -351,6 +351,145 @@ def _full_range(total: int, mode: str, **extra: Any) -> Tuple[List[Tuple[int, in
 # Orchestration
 # --------------------------------------------------------------------------------------
 
+def _scan_active_ranges_hw(
+    source_video: str,
+    target_faces: Optional[Sequence[Any]] = None,
+    frame_start: int = 0,
+    frame_end: Optional[int] = None,
+    frame_count: Optional[int] = None,
+    fps: float = 25.0,
+    stride: Optional[int] = None,
+    swap_distance_threshold: Optional[float] = None,
+    det_thresh: Optional[float] = None,
+    progress_cb: Optional[Callable[[int, int], None]] = None,
+    should_stop: Optional[Callable[[], bool]] = None,
+    detector: Any = None,
+) -> Tuple[List[Tuple[int, int]], np.ndarray, Dict[str, Any]]:
+    import time
+    import roop.globals
+    from roop.video_io_hw import NvSparseKeyframeReader, HwFrame
+    from roop.scene_detector import HardwareBitstreamCutDetector
+    import PyNvVideoCodec as nvc
+    import torch
+
+    t0 = time.perf_counter()
+    with NvSparseKeyframeReader(source_video, adaptive_midpoints=True, max_gop_gap=60, enable_decode_stats=True) as reader:
+        table = reader.keyframe_table()
+        total_packets = reader._total_packet_count or (frame_count or 0)
+        actual_fps = reader.fps if reader.fps > 0 else (fps or 25.0)
+        if frame_end is None or frame_end <= 0:
+            frame_end = total_packets if total_packets > 0 else (frame_start + max(1, int(frame_count or 1)))
+        total_frames = max(1, frame_end - frame_start)
+
+        S = max(1, int(stride)) if stride is not None else sparse_stride(actual_fps)
+        M = dilation_pad(S)
+
+        if total_frames <= S * 2:
+            return _full_range(total_frames, "full_short_clip")
+
+        if det_thresh is None:
+            det_thresh = float(getattr(roop.globals, 'face_detector_threshold', 0.60))
+        det_floor = det_score_floor(det_thresh)
+        target_matrix = unit_embeddings(target_faces or ())
+
+        sim_floor = None
+        if target_matrix is not None:
+            distance = swap_distance_threshold
+            if distance is None:
+                distance = float(getattr(roop.globals, 'face_distance_threshold', 0.65) or 0.65)
+            sim_floor = similarity_floor(1.0 - float(distance))
+
+        probe = detector if detector is not None else FaceAnalyserProbe(det_floor, target_matrix, sim_floor)
+        worker_count = max(1, int(probe.prepare()))
+
+        cut_detector = HardwareBitstreamCutDetector()
+        positives: List[int] = []
+        samples_done = 0
+        detector_errors = 0
+
+        # Build sample schedule: sample GOP keyframes (plus adaptive midpoints when GOP > 60)
+        rel_kfs = [k - frame_start for k, _ in table if frame_start <= k < frame_end]
+        gaps = [rel_kfs[i+1] - rel_kfs[i] for i in range(len(rel_kfs)-1)] if len(rel_kfs) > 1 else [total_frames]
+        median_gap = np.median(gaps) if gaps else total_frames
+
+        if median_gap < S:
+            scheduled_samples = list(range(0, total_frames, S))
+            if (total_frames - 1) not in scheduled_samples:
+                scheduled_samples.append(total_frames - 1)
+        else:
+            scheduled_samples = list(rel_kfs) if rel_kfs else [0]
+            expanded = []
+            for i, idx in enumerate(scheduled_samples):
+                expanded.append(idx)
+                next_idx = scheduled_samples[i+1] if i + 1 < len(scheduled_samples) else total_frames
+                if next_idx - idx > 60:
+                    expanded.append(idx + (next_idx - idx) // 2)
+            scheduled_samples = sorted(set(expanded))
+
+        dec = nvc.CreateSimpleDecoder(source_video, reader.gpu_id, 0, 0, True, 0, 0, False, 1,
+                                     nvc.OutputColorType.RGBP, False, reader.enable_decode_stats)
+
+        total_samples = len(scheduled_samples)
+        prev_idx = None
+
+        def test_frame(abs_f, rel_f):
+            nonlocal samples_done, detector_errors
+            raw = dec[abs_f]
+            t = torch.from_dlpack(raw).clone()
+            stats = raw.ParseDecodeStats() if reader.enable_decode_stats else None
+            is_cut = cut_detector.observe(abs_f, tensor=t, stats=stats)
+            hw_f = HwFrame(abs_f, None, tensor=t, decode_stats=stats)
+            bgr = hw_f.bgr()
+            try:
+                if probe.positive(bgr):
+                    positives.append(rel_f)
+            except Exception as exc:
+                _swallowed("sparse_range_scan:hw_detect", exc, "face detect failed")
+                detector_errors += 1
+            samples_done += 1
+            if progress_cb is not None:
+                try:
+                    progress_cb(samples_done, total_samples)
+                except Exception as exc:
+                    _swallowed("sparse_range_scan:progress_cb", exc, "progress callback error")
+            return is_cut
+
+        for s_idx in scheduled_samples:
+            if should_stop and should_stop():
+                break
+            abs_idx = frame_start + s_idx
+            is_cut = test_frame(abs_idx, s_idx)
+            # If a scene cut fell between samples, inspect the midpoint
+            if is_cut and prev_idx is not None and (s_idx - prev_idx) >= 2:
+                mid_rel = prev_idx + (s_idx - prev_idx) // 2
+                mid_abs = frame_start + mid_rel
+                test_frame(mid_abs, mid_rel)
+            prev_idx = s_idx
+
+        elapsed = time.perf_counter() - t0
+        common = dict(
+            stride=S, pad=M, workers=worker_count, det_floor=det_floor,
+            sim_floor=sim_floor, targeted=bool(getattr(probe, 'targeted', target_matrix is not None)),
+            samples_total=total_samples, samples_done=samples_done,
+            cuts=len(cut_detector.scene_cuts), scene_cuts=list(cut_detector.scene_cuts),
+            detector_errors=detector_errors, hits_count=len(positives),
+            elapsed_s=round(elapsed, 3),
+            scan_fps=round(samples_done / elapsed, 1) if elapsed > 0 else None,
+            mode="nv_hardware_keyframes",
+        )
+
+        ranges, mask = build_active_ranges(positives, total_frames, S)
+        active_count = int(np.sum(mask))
+        percentage = round((active_count / total_frames) * 100.0, 1)
+        stats = dict(common, active_frames=active_count, total_frames=total_frames,
+                     skipped_frames=total_frames - active_count, percentage=percentage,
+                     ranges=ranges,
+                     mode="sparse_auto_range" if ranges else "no_target_found")
+        print(f"[SparseScan] Hardware Keyframe Pre-Scan complete in {elapsed:.2f}s: "
+              f"{len(ranges)} active range(s), {len(cut_detector.scene_cuts)} scene cuts.", flush=True)
+        return ranges, mask, stats
+
+
 def scan_active_ranges(
     source_video: str,
     target_faces: Optional[Sequence[Any]] = None,
@@ -391,6 +530,27 @@ def scan_active_ranges(
     if capture is None:
         if not source_video or not os.path.isfile(source_video):
             return _full_range(frame_count or 1, "fail_safe_full", error="file_not_found")
+        from roop.video_io_hw import hw_io_wanted, HwUnavailable
+        if hw_io_wanted():
+            try:
+                return _scan_active_ranges_hw(
+                    source_video,
+                    target_faces=target_faces,
+                    frame_start=frame_start,
+                    frame_end=frame_end,
+                    frame_count=frame_count,
+                    fps=fps,
+                    stride=stride,
+                    swap_distance_threshold=swap_distance_threshold,
+                    det_thresh=det_thresh,
+                    progress_cb=progress_cb,
+                    should_stop=should_stop,
+                    detector=detector,
+                )
+            except HwUnavailable as exc:
+                print(f"[SparseScan] Hardware keyframe pre-scan unavailable ({exc}); using fallback demuxer", flush=True)
+            except Exception as exc:
+                _swallowed("sparse_range_scan:hw_scan", exc, "hardware scan failed; using fallback demuxer")
         capture = cv2.VideoCapture(source_video)
     cap = capture
     if not cap.isOpened():

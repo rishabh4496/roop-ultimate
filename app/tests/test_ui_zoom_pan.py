@@ -216,8 +216,9 @@ class MagnifierLens(unittest.TestCase):
         CSS length inside the app-zoomed subtree (layout px). Undivided, the
         glass sits at `zoom x` the cursor's distance from the stage corner."""
         src = _code(PREVIEW)
-        block = src.split('setLensPos({', 1)
-        self.assertEqual(len(block), 2, 'no setLensPos call found')
+        delimiter = 'lensPendingRef.current = {' if 'lensPendingRef.current = {' in src else 'setLensPos({'
+        block = src.split(delimiter, 1)
+        self.assertEqual(len(block), 2, f'no {delimiter} call found')
         head = block[1][:500]
         for field in ('x:', 'y:', 'imgW:', 'imgH:', 'imgX:', 'imgY:'):
             line = [ln for ln in head.splitlines() if ln.strip().startswith(field)]

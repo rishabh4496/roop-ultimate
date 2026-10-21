@@ -91,12 +91,24 @@ def compute_cosine_distance(a: np.ndarray, b: np.ndarray) -> float:
     return max(0.0, 1.0 - compute_cosine_similarity(a, b))
 
 
-def compute_distance_matrix(embeddings: List[np.ndarray]) -> np.ndarray:
-    """Compute pairwise cosine distance matrix between normalized embeddings."""
-    if not embeddings:
+def compute_distance_matrix(embeddings: Any) -> np.ndarray:
+    """Compute pairwise cosine distance matrix between normalized embeddings using vectorized GPU matrix multiplication."""
+    if embeddings is None or len(embeddings) == 0:
         return np.zeros((0, 0), dtype=np.float32)
 
-    # Determine common dimension D from first non-empty embedding
+    try:
+        import torch
+        if isinstance(embeddings, torch.Tensor):
+            if embeddings.ndim == 2:
+                t = embeddings.to("cuda") if torch.cuda.is_available() else embeddings
+                normed = torch.nn.functional.normalize(t.float(), p=2, dim=1)
+                sims = torch.mm(normed, normed.t())
+                dists = (1.0 - sims).clamp(min=0.0, max=2.0)
+                dists.fill_diagonal_(0.0)
+                return dists.cpu().numpy()
+    except Exception as exc:
+        _swallowed("roop/face_clustering.py:gpu_distance_matrix", exc, "GPU pairwise distance fallback to CPU")
+
     dim = 512
     for e in embeddings:
         if e is not None and hasattr(e, '__len__') and len(e) > 0:
@@ -111,6 +123,18 @@ def compute_distance_matrix(embeddings: List[np.ndarray]) -> np.ndarray:
         else:
             cleaned.append(normed)
 
+    try:
+        import torch
+        if torch.cuda.is_available() and len(cleaned) > 1:
+            # Vectorized GPU matrix multiplication (torch.mm cosine similarity)
+            embs_tensor = torch.as_tensor(np.asarray(cleaned, dtype=np.float32), device="cuda")
+            sims = torch.mm(embs_tensor, embs_tensor.t())
+            dists = (1.0 - sims).clamp(min=0.0, max=2.0)
+            dists.fill_diagonal_(0.0)
+            return dists.cpu().numpy()
+    except Exception as exc:
+        _swallowed("face_clustering.py:compute_distance_matrix:gpu", exc, "fallback to numpy")
+
     embs = np.asarray(cleaned, dtype=np.float32)
     # Matrix multiplication for cosine similarities: E @ E.T
     sims = np.dot(embs, embs.T)
@@ -121,25 +145,27 @@ def compute_distance_matrix(embeddings: List[np.ndarray]) -> np.ndarray:
     return np.maximum(0.0, dists).astype(np.float32)
 
 
-def cluster_face_embeddings(
-    embeddings: List[np.ndarray],
+def compute_distance_matrix_gpu(embeddings_tensor: Any) -> Any:
+    """Compute pairwise cosine distance matrix directly in VRAM using torch.mm."""
+    import torch
+    if not isinstance(embeddings_tensor, torch.Tensor):
+        embeddings_tensor = torch.as_tensor(embeddings_tensor, dtype=torch.float32, device="cuda")
+    elif not embeddings_tensor.is_cuda and torch.cuda.is_available():
+        embeddings_tensor = embeddings_tensor.to("cuda")
+    normed = torch.nn.functional.normalize(embeddings_tensor.float(), p=2, dim=1)
+    sims = torch.mm(normed, normed.t())
+    dists = (1.0 - sims).clamp(min=0.0, max=2.0)
+    dists.fill_diagonal_(0.0)
+    return dists
+
+
+def _cluster_from_dist_matrix(
+    dist_matrix: np.ndarray,
     method: str = 'dbscan',
     eps: float = 0.45,
     min_samples: int = 1,
     distance_threshold: float = 0.45,
 ) -> np.ndarray:
-    """Cluster face embeddings using DBSCAN or Agglomerative Clustering.
-
-    Returns an array of integer cluster IDs of length len(embeddings).
-    """
-    n = len(embeddings)
-    if n == 0:
-        return np.array([], dtype=np.int32)
-    if n == 1:
-        return np.zeros(1, dtype=np.int32)
-
-    dist_matrix = compute_distance_matrix(embeddings)
-
     method_key = (method or 'dbscan').lower()
     if method_key == 'dbscan':
         # DBSCAN with precomputed distance matrix
@@ -182,8 +208,48 @@ def cluster_face_embeddings(
     # Re-index labels contiguously starting at 0
     unique_labels = sorted(set(labels))
     mapping = {old_lbl: new_lbl for new_lbl, old_lbl in enumerate(unique_labels)}
-    contiguous_labels = np.array([mapping[lbl] for lbl in labels], dtype=np.int32)
-    return contiguous_labels
+    return np.array([mapping[lbl] for lbl in labels], dtype=np.int32)
+
+
+def cluster_face_embeddings(
+    embeddings: List[np.ndarray],
+    method: str = 'dbscan',
+    eps: float = 0.45,
+    min_samples: int = 1,
+    distance_threshold: float = 0.45,
+) -> np.ndarray:
+    """Cluster face embeddings using DBSCAN or Agglomerative Clustering.
+
+    Returns an array of integer cluster IDs of length len(embeddings).
+    """
+    n = len(embeddings)
+    if n == 0:
+        return np.array([], dtype=np.int32)
+    if n == 1:
+        return np.zeros(1, dtype=np.int32)
+
+    dist_matrix = compute_distance_matrix(embeddings)
+    return _cluster_from_dist_matrix(dist_matrix, method=method, eps=eps, min_samples=min_samples,
+                                     distance_threshold=distance_threshold)
+
+
+def cluster_face_embeddings_gpu(
+    embeddings_tensor: Any,
+    method: str = 'dbscan',
+    eps: float = 0.45,
+    min_samples: int = 1,
+    distance_threshold: float = 0.45,
+) -> np.ndarray:
+    """Cluster face embeddings directly from a VRAM tensor using GPU matrix multiplication."""
+    if embeddings_tensor is None or (hasattr(embeddings_tensor, '__len__') and len(embeddings_tensor) == 0):
+        return np.array([], dtype=np.int32)
+    if len(embeddings_tensor) == 1:
+        return np.zeros(1, dtype=np.int32)
+
+    dist_gpu = compute_distance_matrix_gpu(embeddings_tensor)
+    dist_matrix = dist_gpu.cpu().numpy()
+    return _cluster_from_dist_matrix(dist_matrix, method=method, eps=eps, min_samples=min_samples,
+                                     distance_threshold=distance_threshold)
 
 
 def solve_hungarian_matching(
