@@ -134,8 +134,10 @@ const flattenValues = (value, prefix = '', depth = 0) => {
 
 function RuntimeSection({ name, section }) {
   const values = section?.values || {};
+  // `pipeline_report` is a whole nested report with its own panel (PipelineReport.jsx); flattened here it
+  // would spend the ten rows this card has on its first keys.
   const rows = flattenValues(values)
-    .filter(([key]) => key !== 'items')
+    .filter(([key]) => key !== 'items' && !key.startsWith('pipeline_report'))
     .slice(0, 10);
   const status = section?.status || 'UNKNOWN';
   const statusTone = status === 'AVAILABLE'

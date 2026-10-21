@@ -1655,6 +1655,8 @@ def batch_process(output_method, files:list[ProcessEntry], use_new_method) -> No
     _clear_terminal_for_new_run()
 
     roop.globals.processing = True
+    # One Stage 4 result per finished video (roop/finalize_output.py); api._run_swap reads it.
+    roop.globals.last_finalize = []
     # Marks the encode as live so a terminal Ctrl-C (destroy()) can wait for the
     # output video to be finalized before exiting. Cleared in end_processing.
     roop.globals.batch_active = True
@@ -1873,20 +1875,35 @@ def batch_process(output_method, files:list[ProcessEntry], use_new_method) -> No
                         destination = final_video_destination(video_file_name, v.filename, index)
                         pathlib.Path(os.path.dirname(destination)).mkdir(parents=True, exist_ok=True)
 
-                        if not skip_audio:
-                            # Dubbing against an uploaded track: mux THAT file's audio
-                            # instead of the original clip's. restore_audio only reads
-                            # stream 1's audio (-map 1:a:0?), so any file works here.
-                            audio_source = v.filename
-                            if (getattr(roop.globals, 'lipsync_enabled', False)
-                                    and getattr(roop.globals, 'lipsync_audio_source', 'original') == 'upload'
-                                    and getattr(roop.globals, 'lipsync_audio_path', None)):
-                                audio_source = roop.globals.lipsync_audio_path
-                            ffmpeg.restore_audio(video_file_name, audio_source, v.startframe, v.endframe, destination)
-                            if os.path.isfile(destination):
-                                _remove_file_retry(video_file_name)
-                        else:
-                            shutil.move(video_file_name, destination)
+                        # Dubbing against an uploaded track: mux THAT file's audio
+                        # instead of the original clip's. restore_audio only reads
+                        # stream 1's audio (-map 1:a:0?), so any file works here.
+                        audio_source = v.filename
+                        if (getattr(roop.globals, 'lipsync_enabled', False)
+                                and getattr(roop.globals, 'lipsync_audio_source', 'original') == 'upload'
+                                and getattr(roop.globals, 'lipsync_audio_path', None)):
+                            audio_source = roop.globals.lipsync_audio_path
+                        # Stage 4: mux (or move), VERIFY the file with an ffprobe header read, and delete the
+                        # intermediate only if it passed. This used to be `restore_audio(...)` with its result
+                        # ignored and `if os.path.isfile(destination): remove(intermediate)`, so a mux that died
+                        # half way deleted the only complete copy and the job still read COMPLETED.
+                        from roop import finalize_output
+                        _fin = finalize_output.finalize_render(
+                            video_file_name, destination,
+                            audio_source=None if skip_audio else audio_source,
+                            trim_start=v.startframe, trim_end=v.endframe,
+                            expected_frames=int(v.endframe - v.startframe),
+                            skip_audio=skip_audio, stopped=stopped)
+                        roop.globals.last_finalize.append(_fin)
+                        if not _fin['ok']:
+                            update_status(f'FINALIZE FAILED for {os.path.basename(destination)}: '
+                                          + '; '.join(_fin['problems'])
+                                          + (f' - the intermediate video is kept at {video_file_name}'
+                                             if _fin.get('kept_intermediate') else ''))
+                            destination = ''
+                        elif _fin['orphans']:
+                            update_status('[Finalize] leftover files of this render: '
+                                          + ', '.join(os.path.basename(o) for o in _fin['orphans']))
                     # Synthetic-media tag on the file the user receives (after the
                     # A/V remux, which maps the ORIGINAL's metadata and would drop it).
                     if destination and os.path.isfile(destination):

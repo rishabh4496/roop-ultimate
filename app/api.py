@@ -4156,6 +4156,12 @@ def _record_run_history(payload: dict, produced_files: list):
             "frames": frames,
             "fps": fps,
         }
+        # The per-job report (roop/stage_telemetry.build_summary): stage wall clocks, seek counts, passthrough /
+        # GPU frames, peak VRAM, Stage 4 verification, speedup estimate. Absent on entries recorded before Phase 9
+        # and on runs that never reached the 3-stage pipeline (the UI treats a missing report as unknown).
+        _report = _stage_telemetry.summary()
+        if _report:
+            entry["report"] = _report
         entries = _load_history()
         entries.insert(0, entry)
         _save_history(entries)
@@ -5306,6 +5312,16 @@ def _run_swap(payload):
             selection_state=selection_state,
             processing_request=processing_request)
 
+        # Stage 4 (roop/finalize_output.py): a render whose output failed verification is a FAILED job, not a
+        # COMPLETED one. The intermediate video was kept; the post-passes below would run on a missing file.
+        for _fin_result in (getattr(roop_globals, "last_finalize", None) or []):
+            _stage_telemetry.set_finalize(_fin_result)
+        _failed_finalize = [f for f in (getattr(roop_globals, "last_finalize", None) or []) if not f.get("ok")]
+        if _failed_finalize:
+            raise RuntimeError("Output verification failed: " + "; ".join(_failed_finalize[0].get("problems") or ["unknown"])
+                               + (f" (the intermediate video is kept at {_failed_finalize[0]['kept_intermediate']})"
+                                  if _failed_finalize[0].get("kept_intermediate") else ""))
+
         # batch_process_regular returns normally after a deliberate stop so it
         # can finalize any partial output safely.  Do not treat that return as
         # a successful run: post-passes, the Done state, and completed-history
@@ -5317,6 +5333,11 @@ def _run_swap(payload):
             # deliberate stop in its Errors filter or red terminal styling.
             _push_log("⏹ Stopped — partial output was not recorded as completed", force=True)
             return
+
+        # The 3-stage pipeline and its Stage 4 finalization are done: build the per-job report now so
+        # /ws/telemetry and the history entry carry it (the upscale / interpolation passes below are not part
+        # of it). `end_run` in the `finally` is idempotent.
+        _stage_telemetry.end_run(ok=True)
 
         # ── AI upscale second pass (opt-in) ─────────────────────────────────
         # Upscale each finished output in place so the final result is a single

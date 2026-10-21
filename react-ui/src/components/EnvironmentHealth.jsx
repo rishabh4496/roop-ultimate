@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { useApi } from '../useApi';
 import { Section } from './ui';
 import { Icon } from '../icons';
+import { PipelineSummaryCard } from './faceswap/PipelineReport';
 
 // ── Environment health & update compatibility ────────────────────────────────
 //
@@ -60,6 +61,37 @@ const CLASS_TONE = {
   'REQUIRES REVIEW': 'text-amber-300',
   UNVERIFIED: 'text-white/60',
 };
+
+// The last finished render's report. The runtime state carries it until the backend restarts; after that the
+// newest history entry that has one is the only record, and it is labelled as such.
+function LastRunReport({ runtime }) {
+  const { getJSON } = useApi();
+  const live = runtime?.sections?.PERFORMANCE?.values?.pipeline_report;
+  const liveReport = live && typeof live === 'object' && live.stages ? live : null;
+  const [fromHistory, setFromHistory] = useState(null);
+
+  useEffect(() => {
+    if (liveReport) return undefined;
+    let alive = true;
+    getJSON('/api/history', { timeout: 15000 }).then((res) => {
+      const hit = (res?.entries || []).find((e) => e.report && e.report.stages);
+      if (alive && hit) setFromHistory({ report: hit.report, time: hit.time, name: (hit.outputs || [])[0] });
+    }).catch(() => {});
+    return () => { alive = false; };
+  }, [liveReport, getJSON]);
+
+  const report = liveReport || fromHistory?.report || null;
+  return (
+    <Section title="Last run report" icon={Icon.settings}>
+      <div className="text-micro text-muted mb-2">
+        {liveReport ? 'The render that finished most recently in this session.'
+          : fromHistory ? `From History: ${fromHistory.name || 'a run'} · ${new Date(fromHistory.time * 1000).toLocaleString()}`
+            : 'No finished render has a report yet.'}
+      </div>
+      {report ? <PipelineSummaryCard report={report} title="Last run" /> : null}
+    </Section>
+  );
+}
 
 export default function EnvironmentHealth({ notify, meta }) {
   const { getJSON } = useApi();
@@ -133,6 +165,7 @@ export default function EnvironmentHealth({ notify, meta }) {
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="lg:col-span-2"><LastRunReport runtime={runtime} /></div>
       <Section
         title="Environment health"
         icon={Icon.meter}

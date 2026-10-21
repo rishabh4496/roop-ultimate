@@ -6,6 +6,7 @@ import { confirmDialog } from './confirm';
 import { LABELS, CHIP_KEYS, fmtDur, fmtVal, primitives, diffSettings } from './settingsDiff';
 import { Icon } from '../icons';
 import { logFailure, reportFailure } from '../failureLog';
+import { PipelineSummaryCard } from './faceswap/PipelineReport';
 
 /**
  * Run History — a browsable record of every completed swap.
@@ -392,6 +393,11 @@ function RunRow({ entry, outputPath, existing, presets, selected, compareFull, o
             {chips.length ? chips.map((k) => <Chip key={k} k={k} v={p[k]} />)
               : <span className="text-mini text-muted">no settings recorded</span>}
           </div>
+
+          {/* The run's pipeline report (absent on runs recorded before it existed: shown as nothing, not as zeros) */}
+          {entry.report && entry.report.stages && (
+            <PipelineSummaryCard report={entry.report} title="Report" defaultOpen={false} className="mt-2" />
+          )}
 
           {/* Actions */}
           <div className="mt-2.5 flex items-center gap-1.5 flex-wrap">

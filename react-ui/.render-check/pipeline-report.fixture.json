@@ -1,0 +1,77 @@
+{
+ "schema": 1,
+ "ok": true,
+ "finished_at": 1792570347.4659986,
+ "total_frames": 360,
+ "videos_in_job": 1,
+ "total_wall_s": 25.25,
+ "effective_fps": 16.84,
+ "speedup": {
+  "multiplier": 1.35,
+  "estimated": true,
+  "baseline_s": 28.03,
+  "actual_s": 20.73,
+  "method": "this run's per-active-frame cost (Stage 2 + Stage 3 wall) scaled to every frame, divided by the 3-stage wall clock; a dense render is not run"
+ },
+ "vram": {
+  "peak_gb": 11.53,
+  "base_gb": 4.107,
+  "total_gb": 11.994,
+  "samples": 80
+ },
+ "stages": {
+  "STAGE_1_SPARSE_PRESCAN": {
+   "state": "DONE",
+   "wall_s": 5.78,
+   "sampled_frames": 61,
+   "samples_total": 61,
+   "stride": 6,
+   "workers": 2,
+   "worker_utilization_pct": 94.9,
+   "active_ranges_count": 2,
+   "skipped_frames_pct": 46.7
+  },
+  "STAGE_2_ACTIVE_PREPASS": {
+   "state": "DONE",
+   "wall_s": 4.332,
+   "active_ranges_count": 2,
+   "grab_calls": 0,
+   "set_calls": 2,
+   "seek_walks": 0,
+   "verified_target_frames": 156
+  },
+  "STAGE_3_MAIN_SWAP": {
+   "state": "DONE",
+   "wall_s": 10.617,
+   "frames": 360,
+   "passthrough_frames": 168,
+   "gpu_frames": 192,
+   "swapped_frames": 156,
+   "faces_swapped": 162,
+   "peak_vram_gb": 11.53,
+   "processing_fps": 33.91
+  },
+  "STAGE_4_FINALIZE": {
+   "state": "DONE",
+   "ok": true,
+   "wall_s": 0.648,
+   "mux_s": 0.315,
+   "frames": 360,
+   "expected_frames": 360,
+   "audio_present": true,
+   "audio_start_offset_ms": 0.0,
+   "color": {
+    "color_space": "bt709",
+    "color_primaries": "bt709",
+    "color_transfer": "bt709",
+    "color_range": "tv"
+   },
+   "color_preserved": true,
+   "problems": [],
+   "orphans": [],
+   "temp_deleted": true,
+   "output": "G:\\pinokio\\cache\\TEMP\\claude\\G--pinokio-api-roop-ultimate\\e43d57ce-c3e7-4aa5-9970-2b7fdbb8dd2a\\scratchpad\\verify9c\\out\\clip_cfr_13-42-23.mp4",
+   "bytes": 2302864
+  }
+ }
+}

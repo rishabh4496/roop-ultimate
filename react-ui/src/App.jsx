@@ -16,7 +16,7 @@ import useTelemetrySocket from './useTelemetrySocket';
 import CompileBanner from './components/CompileBanner';
 import { usePipelineStatusSocket } from './usePipelineStatus';
 import { useJobStore } from './store/jobStore';
-import { setRunTelemetry, selectProg, etaMsOf, clearEngineTelemetry } from './store/telemetryStore';
+import { setRunTelemetry, setPipelineTelemetry, selectProg, etaMsOf, clearEngineTelemetry } from './store/telemetryStore';
 import { LiveText, LiveBar } from './components/LiveTelemetry';
 import { themeByName, allThemes, applyThemeToDom } from './themes';
 import { SETTINGS_CATALOG, focusSetting } from './components/settingsCatalog';
@@ -420,6 +420,7 @@ export default function App() {
         && frame.event !== 'heartbeat')) return;
     reportNet(true);
     setRunTelemetry(frame);
+    setPipelineTelemetry(frame);
     const structural = {
       processing: frame.processing,
       paused: frame.paused,

@@ -10,6 +10,7 @@ import ProcessingDock from './faceswap/ProcessingDock';
 import ProcessingTerminal from './faceswap/ProcessingTerminal';
 import DiagnosticsPanel from './faceswap/DiagnosticsPanel';
 import RunModelsPanel from './faceswap/RunModelsPanel';
+import PipelineHud from './faceswap/PipelineReport';
 import LiveProcessingPeek from './faceswap/LiveProcessingPeek';
 import useTelemetry from './faceswap/useTelemetry';
 import { useThrottledSelector, shallowEqual } from '../store/liveSubscribe';
@@ -198,6 +199,11 @@ export default function Processing({ progress, settings, notify, setTab,
           </div>
         )}
       </div>
+
+      {/* Diagnostics HUD: the backend's three stages live, then its finished report (stage wall clocks, seek
+          counts, passthrough / GPU frames, peak VRAM, Stage 4 verification, speedup estimate). Above the
+          live/finished split on purpose: the report arrives when the run ENDS, i.e. in the finished view. */}
+      <PipelineHud />
 
       {/* ── The stage ───────────────────────────────────────────────────────
           Responsive scrollable container so the terminal and controls are never

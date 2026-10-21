@@ -850,6 +850,12 @@ class BatchProcessingMixin:
                 self._active_ranges_stats = stats
                 _st.set_ranges(len(ranges) if ranges is not None else None,
                                (stats or {}).get('active_frames'), (stats or {}).get('total_frames'))
+                if not _stage1_restored:
+                    _s1 = stats or {}
+                    _st.put(_st.STAGE_1_SPARSE_PRESCAN, sampled_frames=_s1.get('samples_done'),
+                            samples_total=_s1.get('samples_total'), stride=_s1.get('stride'),
+                            workers=_s1.get('workers'),
+                            worker_utilization_pct=_s1.get('worker_utilization_pct'))
                 if _stage1_restored:
                     _st.restored(_st.STAGE_1_SPARSE_PRESCAN)
                 else:
@@ -880,6 +886,8 @@ class BatchProcessingMixin:
             _stage_lbl = "2/3" if _sparse_active else "1/2"
             print(f"[Pipeline] === Stage {_stage_lbl}: Pre-Pass (Tracking & Detection) ===", flush=True)
             _st.enter(_st.STAGE_2_ACTIVE_PREPASS)
+            from roop import range_seek as _range_seek
+            _range_seek.reset_counts()       # cap.set vs cap.grab totals of THIS pre-pass (report)
         else:
             _st.skip(_st.STAGE_2_ACTIVE_PREPASS)
         _prepass_failed = False
@@ -971,6 +979,7 @@ class BatchProcessingMixin:
             _plan = getattr(self, 'stage2_frame_plan', None)
             # 0 is a finding (the pre-pass ran and verified no frame); unknown is only a failed pre-pass.
             _st.set_verified(None if _prepass_failed else len(_plan or {}))
+            _st.put(_st.STAGE_2_ACTIVE_PREPASS, **_range_seek.counts())
             if _stage2_restored and not _prepass_failed:
                 _st.restored(_st.STAGE_2_ACTIVE_PREPASS)
             else:
@@ -982,6 +991,7 @@ class BatchProcessingMixin:
         _main_lbl = "3/3" if (_sparse_active and _prepass_active) else ("2/2" if (_sparse_active or _prepass_active) else "Main")
         print(f"[Pipeline] === Stage {_main_lbl}: Main Processing ===", flush=True)
         _st.enter(_st.STAGE_3_MAIN_SWAP, self.total_frames)
+        _swaps_at_stage3 = self.total_swaps
         # Live FPS + queue monitor (ROOP_PIPELINE_LOG_EVERY, default 100, 0 = off).
         # `_runtime_read/write_queue` are only (re)bound by the parallel-stab path
         # and survive between runs, so clear them or a threaded render following a
@@ -1148,6 +1158,7 @@ class BatchProcessingMixin:
             self._track_assignments = None
             self._track_source_map = None
             self._lipsync_audio = None
+            _st.put(_st.STAGE_3_MAIN_SWAP, faces_swapped=int(self.total_swaps - _swaps_at_stage3))
             _st.leave(_st.STAGE_3_MAIN_SWAP, ok=sys.exc_info()[1] is None and self._writer_error is None)
             # release_face_analyser_aux() intentionally leaves a detector-only
             # object for the main pass. Do not let that reduced object escape

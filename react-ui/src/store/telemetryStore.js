@@ -47,8 +47,14 @@ const EMPTY_RUN = {
 /** The fields a telemetry frame carries that change every tick. */
 export const FAST_FIELDS = Object.keys(EMPTY_RUN);
 
+// The 3-stage pipeline view and the finished per-job report (roop/stage_telemetry.py): `stages` is the
+// live state of Stage 1-3, `summary` the report the backend builds when the render ends ({} until then).
+// Objects, not flat fields, so they are compared by value below instead of with `!==`.
+const EMPTY_PIPELINE = { stage: null, stages: {}, summary: {} };
+
 export const useTelemetryStore = create(() => ({
   run: EMPTY_RUN,
+  pipeline: EMPTY_PIPELINE,
   /** /api/system/telemetry: gpu, vram_used/total, cpu_percent, ram_*, threads. */
   system: null,
 }));
@@ -66,6 +72,20 @@ export function setRunTelemetry(patch) {
     }
   }
   if (changed) useTelemetryStore.setState({ run: next });
+}
+
+/** Take the `stage` / `stages` / `summary` of a telemetry frame; a no-op when none of them changed. */
+export function setPipelineTelemetry(frame) {
+  if (!frame || typeof frame !== 'object') return;
+  if (!('stages' in frame) && !('summary' in frame)) return;
+  const next = {
+    stage: frame.stage ?? null,
+    stages: frame.stages || {},
+    summary: frame.summary || {},
+  };
+  const cur = useTelemetryStore.getState().pipeline;
+  if (cur && JSON.stringify(cur) === JSON.stringify(next)) return;
+  useTelemetryStore.setState({ pipeline: next });
 }
 
 export function resetRunTelemetry() {

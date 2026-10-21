@@ -30,8 +30,9 @@ if APP not in sys.path:
 from roop import stage_telemetry as st  # noqa: E402
 import project_checkpoint as pc  # noqa: E402
 
+# `wall_s` (seconds the stage has run / took) was added by Phase 9 with the per-job report.
 STAGE_KEYS = {"state", "stage_progress_pct", "active_ranges_count", "verified_target_frames",
-              "skipped_frames_pct", "eta_seconds"}
+              "skipped_frames_pct", "eta_seconds", "wall_s"}
 
 
 class Registry(unittest.TestCase):

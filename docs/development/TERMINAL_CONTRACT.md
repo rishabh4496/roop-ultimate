@@ -48,6 +48,15 @@ benchmark and source inspection are required for this gate. This is evidence
 that reporting is not inserted into the per-frame hot path, not a claim of
 full-video GPU throughput on both hardware targets.
 
+## Per-job pipeline report (Phase 9)
+
+`PERFORMANCE.values.pipeline_report` carries the finished job's 3-stage + finalization report
+(`roop/stage_telemetry.build_summary`): stage wall clocks, `cap.set` / `cap.grab` counts, passthrough and GPU frame
+counts, peak VRAM, the Stage 4 verification (`roop/finalize_output.py`) and a labelled speedup estimate. It is `UNKNOWN`
+until a job has finished, and the section count stays 14. The same object rides `/ws/telemetry` as `summary` and is stored
+on the history entry as `report`. The Processing terminal's section cards skip it (it has its own panel,
+`PipelineReport.jsx`). Field definitions and how to read them: `docs/BENCHMARKS.md`, "Phase 9 per-job report".
+
 ## Limitations
 
 - Project and checkpoint sections are available when the active API/queue state

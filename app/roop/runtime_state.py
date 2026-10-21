@@ -267,6 +267,15 @@ def _profile_data(manager) -> tuple[Mapping[str, Any], Any]:
         return {}, profile
 
 
+def _pipeline_report() -> Any:
+    try:
+        from roop import stage_telemetry
+        return stage_telemetry.summary() or UNKNOWN
+    except Exception as _degrade_error:
+        _swallowed("roop/runtime_state.py:pipeline_report", _degrade_error, "report left UNKNOWN")
+        return UNKNOWN
+
+
 def _section(status: str, values: Mapping[str, Any], source: str) -> dict:
     """Build the stable named section shape used by terminal and React."""
     return {"status": status, "source": source, "values": dict(values)}
@@ -656,6 +665,10 @@ def snapshot(progress: Optional[Mapping[str, Any]] = None,
         "scheduler": scheduler_summary,
         "bottleneck": (scheduler_summary.get("bottleneck") or
                        runtime_summary.get("bottleneck") or UNKNOWN),
+        # The finished job's 3-stage + finalization report (roop/stage_telemetry.build_summary): stage wall
+        # clocks, seek counts, passthrough / GPU frames, peak VRAM, Stage 4 verification, speedup estimate.
+        # UNKNOWN until a job has finished (never a fabricated zero).
+        "pipeline_report": _pipeline_report(),
     }
     sections = {
         "SYSTEM": _section("AVAILABLE", {

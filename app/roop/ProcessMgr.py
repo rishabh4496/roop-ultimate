@@ -1,5 +1,6 @@
 from roop.degrade import swallowed as _swallowed
 from roop import gpu_recovery as _gpu_recovery
+from roop import stage_telemetry as _stage_telemetry
 import gc
 import os
 import cv2
@@ -1916,8 +1917,8 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                             resimg = _gpu_recovery.run_frame(
                                 lambda: self.process_frame(frame, frame_idx=frame_idx,
                                                            output_pending=True),
-                                lambda: self.process_frame(fallback_frame.copy(), frame_idx=frame_idx,
-                                                           output_pending=True),
+                                lambda: self._process_frame_uncounted(fallback_frame.copy(), frame_idx=frame_idx,
+                                                                      output_pending=True),
                                 site='process_videoframes',
                                 abort=lambda: not roop.globals.processing)
                 except Exception as exc:
@@ -2113,8 +2114,8 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                             pause_controller.end()
                     result = _gpu_recovery.run_frame(
                         lambda: self.process_frame(frame, frame_idx=frame_idx, output_pending=True),
-                        lambda: self.process_frame(fallback_frame.copy(), frame_idx=frame_idx,
-                                                   output_pending=True),
+                        lambda: self._process_frame_uncounted(fallback_frame.copy(), frame_idx=frame_idx,
+                                                              output_pending=True),
                         site='scheduler', abort=lambda: not roop.globals.processing)
                     if result is not None:
                         return result
@@ -2672,12 +2673,18 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 frame_fn = self.process_frame
                 implementation = getattr(frame_fn, '__wrapped__', None)
 
-                def _once(src):
-                    if implementation is not None:
-                        return implementation(self, src, frame_idx=frame_idx)
-                    return frame_fn(src, frame_idx=frame_idx, output_pending=output_pending)
+                def _once(src, counted=True):
+                    # Warm-up priming and an OOM retry re-run frames the report has already counted (or will
+                    # not count): the flag keeps `_count_stage3` from counting them again.
+                    self._tls.stage_count_off = not counted
+                    try:
+                        if implementation is not None:
+                            return implementation(self, src, frame_idx=frame_idx)
+                        return frame_fn(src, frame_idx=frame_idx, output_pending=output_pending)
+                    finally:
+                        self._tls.stage_count_off = False
                 if pristine is None:
-                    result = _once(frame)          # warm-up priming: its frames are discarded, nothing to rescue
+                    result = _once(frame, counted=False)   # warm-up priming: its frames are discarded, nothing to rescue
                 else:
                     # A device out-of-memory error reruns the frame alone after the caches are flushed
                     # (roop/gpu_recovery.py). `pristine` is the caller's untouched snapshot - the failed
@@ -2687,7 +2694,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     # dedup slot this thread holds so its neighbour is not made to wait for a frame that
                     # is about to be redone.
                     result = _gpu_recovery.run_frame(
-                        lambda: _once(frame), lambda: _once(pristine.copy()), site='stabilization',
+                        lambda: _once(frame), lambda: _once(pristine.copy(), counted=False), site='stabilization',
                         abort=lambda: not roop.globals.processing, before_wait=before_wait)
                 if output_pending and result is not None:
                     pause_controller.pending_output(1)
@@ -3365,6 +3372,26 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             return
         _live_preview.publish(frame)
 
+    def _count_stage3(self, key):
+        """One Stage 3 frame event for the per-job report (stage_telemetry).
+
+        Counted per FRAME WRITTEN, not per call: a parallel stabilization block re-runs its warm-up frames
+        through `process_frame` to prime its filters and throws the results away (`_process_stab_frame`,
+        pristine=None), and a device-OOM recovery reruns a frame it already counted. Both set
+        `_tls.stage_count_off`; counting inside `process_frame` without it read 624 frames for a 600-frame
+        trim (tests/verify_stage4_report.py R1)."""
+        if getattr(self._tls, 'stage_count_off', False):
+            return
+        _stage_telemetry.add(_stage_telemetry.STAGE_3_MAIN_SWAP, key)
+
+    def _process_frame_uncounted(self, frame, **kwargs):
+        """`process_frame` for a RERUN of a frame the report already counted (device-OOM recovery)."""
+        self._tls.stage_count_off = True
+        try:
+            return self.process_frame(frame, **kwargs)
+        finally:
+            self._tls.stage_count_off = False
+
     @pause_aware
     def process_frame(self, frame:Frame, frame_idx=None):
         """Process one frame inside the shared pause-safe work boundary."""
@@ -3379,6 +3406,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         if active_mask is not None and frame_idx is not None:
             if 0 <= frame_idx < len(active_mask):
                 if not active_mask[frame_idx]:
+                    self._count_stage3('passthrough_frames')
                     return frame
                 # Active range entry: flush temporal buffers if previous frame was inactive
                 if frame_idx > 0 and not active_mask[frame_idx - 1]:
@@ -3407,8 +3435,10 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             if _engine is not None:
                 _engine.set_ordered(_ordered)
         # Fast-path: avoid frame.copy() before face detection & target matching
+        self._count_stage3('gpu_frames')
         num_swapped, resimg = self.swap_faces(frame, None, stabilize=True, frame_idx=frame_idx)
         if num_swapped > 0:
+            self._count_stage3('swapped_frames')
             temp_frame = resimg
             if roop.globals.no_face_action == eNoFaceAction.SKIP_FRAME_IF_DISSIMILAR:
                 if len(self.input_face_datas) > num_swapped:

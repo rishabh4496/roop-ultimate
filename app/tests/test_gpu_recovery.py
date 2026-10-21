@@ -255,7 +255,8 @@ def _src(rel):
 def test_both_per_frame_paths_go_through_run_frame_with_a_pristine_retry_copy():
     s = _src('roop/ProcessMgr.py')
     assert s.count('_gpu_recovery.run_frame(') == 3                      # sequential, scheduler, stabilisation
-    assert s.count('self.process_frame(fallback_frame.copy()') == 2     # the retry never reuses the mutated frame
+    assert s.count('self._process_frame_uncounted(fallback_frame.copy()') == 2     # the retry never reuses the mutated frame
+    assert 'self.process_frame(fallback_frame.copy()' not in s                      # ...and is never counted twice (Phase 9)
     assert "site='process_videoframes'" in s and "site='scheduler'" in s
 
 

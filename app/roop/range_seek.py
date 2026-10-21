@@ -118,6 +118,30 @@ def source_is_cfr(path: Optional[str], fps: float) -> Optional[bool]:
     return verdict
 
 
+# Process-wide totals over every RangeSeeker, for the per-job report (stage_telemetry): `set_calls` are
+# cap.set(POS_FRAMES) seeks, `grab_calls` frames advanced by cap.grab() (or the read fallback), `seek_walks`
+# the forward walks that replaced a seek. The Stage 2 caller zeroes them on entry and reads them on exit.
+_TOTALS = {'set_calls': 0, 'grab_calls': 0, 'seek_walks': 0}
+_TOTALS_LOCK = threading.Lock()
+
+
+def reset_counts() -> None:
+    with _TOTALS_LOCK:
+        for k in _TOTALS:
+            _TOTALS[k] = 0
+
+
+def counts() -> dict:
+    with _TOTALS_LOCK:
+        return dict(_TOTALS)
+
+
+def _count(key: str, n: int = 1) -> None:
+    if n:
+        with _TOTALS_LOCK:
+            _TOTALS[key] += n
+
+
 class RangeSeeker:
     """Moves a capture to absolute frame indices and counts what it has delivered.
 
@@ -147,11 +171,16 @@ class RangeSeeker:
     def _advance(self, n: int) -> bool:
         grab = getattr(self.cap, 'grab', None)
         step = grab if callable(grab) else (lambda: self.cap.read()[0])
-        for _ in range(n):
-            if not step():
-                return False
-            self.pos += 1
-            self.stats['walked'] += 1
+        walked = 0
+        try:
+            for _ in range(n):
+                if not step():
+                    return False
+                self.pos += 1
+                self.stats['walked'] += 1
+                walked += 1
+        finally:
+            _count('grab_calls', walked)
         return True
 
     def goto(self, frame: int) -> bool:
@@ -166,16 +195,19 @@ class RangeSeeker:
             # then needs the one seek every reader does exactly.
             self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
             self.stats['seeks'] += 1
+            _count('set_calls')
             self.pos = 0
             gap = frame
         if gap > 0 and (self.sequential or gap <= self.seq_gap_max):
             self.stats['walks'] += 1
+            _count('seek_walks')
             ok = self._advance(gap)
             if not ok:
                 self.stats['failed'] += 1
             return ok
         self.cap.set(cv2.CAP_PROP_POS_FRAMES, frame)
         self.stats['seeks'] += 1
+        _count('set_calls')
         self.pos = frame
         return True
 

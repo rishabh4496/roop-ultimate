@@ -74,6 +74,43 @@ into the RTX 3060 table or vice versa. Optimization verdicts are classified as
 beneficial on both, target-specific, neutral, regression on one GPU, or unsafe/
 rejected.
 
+## Phase 9 per-job report (Stage 4 finalization and the 3-stage metrics)
+
+Added 2026-10-21. Every render now ends with ONE structured report, built by `roop/stage_telemetry.build_summary`
+when the run ends. It is a JSON payload, not a file in this folder: it is carried by `/ws/telemetry` (`summary`),
+stored on each history entry (`/api/history` -> `entries[].report`), and returned by `/api/runtime/state` as
+`sections.PERFORMANCE.values.pipeline_report` (the structured runtime report keeps its 14 sections). The UI shows it
+on `#/processing` (live stage rows, then the report), `#/settings` ("Last run report") and `#/history` (per run).
+
+| Stage | Fields (all `null` when not measured, never 0) |
+|---|---|
+| 1 sparse pre-scan | `wall_s`, `sampled_frames` / `samples_total`, `stride`, `workers`, `worker_utilization_pct` (detector time over workers x wall clock), `active_ranges_count`, `skipped_frames_pct` |
+| 2 active-range pre-pass | `wall_s`, `active_ranges_count`, `set_calls` (`cap.set` seeks), `grab_calls` (frames advanced by `cap.grab`, or the read fallback), `seek_walks`, `verified_target_frames` |
+| 3 main swap | `wall_s`, `frames`, `passthrough_frames` (zero GPU work), `gpu_frames`, `swapped_frames` (at least one face swapped), `faces_swapped`, `peak_vram_gb`, `processing_fps` |
+| 4 finalize | `ok`, `wall_s`, `mux_s`, `frames`, `expected_frames`, `audio_start_offset_ms`, `color` + `color_preserved`, `problems`, `orphans`, `temp_deleted` |
+| run | `total_frames`, `total_wall_s`, `effective_fps` (frames / (Stage 1-4 wall); excludes the ~30 s of model load before Stage 1), `vram` (`peak_gb`, `base_gb`, `total_gb`), `speedup` |
+
+How to read the numbers:
+
+- **Frame accounting is exact:** `passthrough_frames + gpu_frames == frames run`, and `passthrough_frames` equals the
+  frames outside Stage 1's active ranges. Counting is per frame WRITTEN (warm-up priming frames and OOM reruns are not
+  counted; `ProcessMgr._count_stage3`).
+- **Peak VRAM is device-wide** (`torch.cuda.mem_get_info`, sampled every 250 ms): torch's own allocator cannot see the
+  ONNX Runtime / TensorRT memory. `base_gb` is the used value when the run began, so the desktop's share is visible.
+- **`speedup.multiplier` is an ESTIMATE** (`estimated: true`): a dense 1-stage render is not run during a job, so the
+  baseline is this run's own per-active-frame cost, `(Stage 2 + Stage 3 wall) x total / active`, divided by the 3-stage
+  wall. Measured against real dense arms on the Phase 5 clip it UNDERstates by about 11-24% (estimate 2.18 / 2.23x;
+  pipeline-only measurement 2.34 / 2.65x; end to end including model load 1.67x). Read it beside the swap rate: the dense
+  arm swapped 172 frames, the 3-stage 156.
+- A multi-video job's report covers the last video (`videos_in_job`).
+
+Verification: `app/env/Scripts/python.exe app/tests/verify_stage4_report.py` (real renders of the Phase 5 clip with noise
+audio: CFR, a trimmed CFR render, an irregular-timestamp VFR clip, and a counterbalanced dense/3-stage benchmark;
+27 invariants, exit 0). Reports and the UI screenshots are in `docs/perf/stage9/`:
+`verify_stage4_report.json` (final), `first_run_before_count_fix.json` (the run that found the over-counting) and
+`second_run_vfr_ground_truth_wrong.json` (the run whose VFR ground truth was my generator's mistake). The run was made on
+the working tree on top of `400ed65`. RTX 3060: not measured.
+
 ## Phase 6 pose/source-bank quality evaluation
 
 `tests/phase6_pose_quality.py` evaluates the existing pose-aware source-bank

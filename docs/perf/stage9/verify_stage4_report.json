@@ -1,0 +1,1250 @@
+{
+ "script": "app/tests/verify_stage4_report.py",
+ "workdir": "G:\\pinokio\\cache\\TEMP\\claude\\G--pinokio-api-roop-ultimate\\e43d57ce-c3e7-4aa5-9970-2b7fdbb8dd2a\\scratchpad\\verify9c",
+ "git_head": "400ed65",
+ "trim": [
+  150,
+  510
+ ],
+ "models": {
+  "enhancer": "UltraMax",
+  "swap_model": "realswap",
+  "mask_engine": "RealityUX",
+  "threads": 20,
+  "sparse_auto_range_cfg": true,
+  "no_face_action": "Use untouched original frame"
+ },
+ "warmup": {
+  "warmup_3stage": {
+   "seconds": 28.34,
+   "error": null
+  },
+  "warmup_1stage": {
+   "seconds": 25.8,
+   "error": null
+  }
+ },
+ "runs": [
+  {
+   "tag": "cfr_3stage_full",
+   "overrides": {
+    "sparse_auto_range": true
+   },
+   "range": [
+    0,
+    600
+   ],
+   "expected_frames": 600,
+   "render_seconds": 48.83,
+   "error": null,
+   "output": "G:\\pinokio\\cache\\TEMP\\claude\\G--pinokio-api-roop-ultimate\\e43d57ce-c3e7-4aa5-9970-2b7fdbb8dd2a\\scratchpad\\verify9c\\out\\clip_cfr_13-41-32.mp4",
+   "report": {
+    "schema": 1,
+    "ok": true,
+    "finished_at": 1792570296.2848334,
+    "total_frames": 600,
+    "videos_in_job": 1,
+    "total_wall_s": 24.914,
+    "effective_fps": 27.84,
+    "speedup": {
+     "multiplier": 2.18,
+     "estimated": true,
+     "baseline_s": 46.14,
+     "actual_s": 21.19,
+     "method": "this run's per-active-frame cost (Stage 2 + Stage 3 wall) scaled to every frame, divided by the 3-stage wall clock; a dense render is not run"
+    },
+    "vram": {
+     "peak_gb": 11.426,
+     "base_gb": 4.072,
+     "total_gb": 11.994,
+     "samples": 80
+    },
+    "stages": {
+     "STAGE_1_SPARSE_PRESCAN": {
+      "state": "DONE",
+      "wall_s": 6.421,
+      "sampled_frames": 101,
+      "samples_total": 101,
+      "stride": 6,
+      "workers": 2,
+      "worker_utilization_pct": 97.5,
+      "active_ranges_count": 2,
+      "skipped_frames_pct": 68.0
+     },
+     "STAGE_2_ACTIVE_PREPASS": {
+      "state": "DONE",
+      "wall_s": 4.419,
+      "active_ranges_count": 2,
+      "grab_calls": 0,
+      "set_calls": 2,
+      "seek_walks": 0,
+      "verified_target_frames": 156
+     },
+     "STAGE_3_MAIN_SWAP": {
+      "state": "DONE",
+      "wall_s": 10.347,
+      "frames": 600,
+      "passthrough_frames": 408,
+      "gpu_frames": 192,
+      "swapped_frames": 156,
+      "faces_swapped": 162,
+      "peak_vram_gb": 11.426,
+      "processing_fps": 57.99
+     },
+     "STAGE_4_FINALIZE": {
+      "state": "DONE",
+      "ok": true,
+      "wall_s": 0.363,
+      "mux_s": 0.255,
+      "frames": 600,
+      "expected_frames": 600,
+      "audio_present": true,
+      "audio_start_offset_ms": 0.0,
+      "color": {
+       "color_space": "bt709",
+       "color_primaries": "bt709",
+       "color_transfer": "bt709",
+       "color_range": "tv"
+      },
+      "color_preserved": true,
+      "problems": [],
+      "orphans": [],
+      "temp_deleted": true,
+      "output": "G:\\pinokio\\cache\\TEMP\\claude\\G--pinokio-api-roop-ultimate\\e43d57ce-c3e7-4aa5-9970-2b7fdbb8dd2a\\scratchpad\\verify9c\\out\\clip_cfr_13-41-32.mp4",
+      "bytes": 2893865
+     }
+    }
+   },
+   "finalize_results": [
+    {
+     "stage": "STAGE_4_FINALIZE",
+     "ok": true,
+     "output": "G:\\pinokio\\cache\\TEMP\\claude\\G--pinokio-api-roop-ultimate\\e43d57ce-c3e7-4aa5-9970-2b7fdbb8dd2a\\scratchpad\\verify9c\\out\\clip_cfr_13-41-32.mp4",
+     "expected_frames": 600,
+     "stopped": false,
+     "problems": [],
+     "orphans": [],
+     "temp_deleted": true,
+     "wall_s": 0.363,
+     "mux_s": 0.255,
+     "reference_frames": 600,
+     "expect_audio": true,
+     "verify": {
+      "probe_ms": 33.4,
+      "bytes": 2893865,
+      "video_codec": "hevc",
+      "width": 960,
+      "height": 540,
+      "fps": 30.0,
+      "video_duration_s": 20.0,
+      "frames": 600,
+      "frames_source": "header",
+      "audio_present": true,
+      "color": {
+       "color_space": "bt709",
+       "color_primaries": "bt709",
+       "color_transfer": "bt709",
+       "color_range": "tv"
+      },
+      "color_preserved": true,
+      "color_tagged": true,
+      "audio_start_offset_ms": 0.0,
+      "audio_overrun_ms": 0.0
+     }
+    }
+   ],
+   "leftovers": [],
+   "log": "G:\\pinokio\\cache\\TEMP\\claude\\G--pinokio-api-roop-ultimate\\e43d57ce-c3e7-4aa5-9970-2b7fdbb8dd2a\\scratchpad\\verify9c\\out\\cfr_3stage_full.log",
+   "output_packets": 600,
+   "output_color": {
+    "color_space": "bt709",
+    "color_primaries": "bt709",
+    "color_transfer": "bt709",
+    "color_range": "tv"
+   },
+   "output_video_duration_s": 20.0,
+   "audio_lag_ms": 0.0,
+   "seek_lines": {
+    "seeks": 2,
+    "walked": 0
+   },
+   "active_mask_in_trim": 192
+  },
+  {
+   "tag": "cfr_3stage_trim",
+   "overrides": {
+    "sparse_auto_range": true
+   },
+   "range": [
+    150,
+    510
+   ],
+   "expected_frames": 360,
+   "render_seconds": 50.94,
+   "error": null,
+   "output": "G:\\pinokio\\cache\\TEMP\\claude\\G--pinokio-api-roop-ultimate\\e43d57ce-c3e7-4aa5-9970-2b7fdbb8dd2a\\scratchpad\\verify9c\\out\\clip_cfr_13-42-23.mp4",
+   "report": {
+    "schema": 1,
+    "ok": true,
+    "finished_at": 1792570347.4659986,
+    "total_frames": 360,
+    "videos_in_job": 1,
+    "total_wall_s": 25.25,
+    "effective_fps": 16.84,
+    "speedup": {
+     "multiplier": 1.35,
+     "estimated": true,
+     "baseline_s": 28.03,
+     "actual_s": 20.73,
+     "method": "this run's per-active-frame cost (Stage 2 + Stage 3 wall) scaled to every frame, divided by the 3-stage wall clock; a dense render is not run"
+    },
+    "vram": {
+     "peak_gb": 11.53,
+     "base_gb": 4.107,
+     "total_gb": 11.994,
+     "samples": 80
+    },
+    "stages": {
+     "STAGE_1_SPARSE_PRESCAN": {
+      "state": "DONE",
+      "wall_s": 5.78,
+      "sampled_frames": 61,
+      "samples_total": 61,
+      "stride": 6,
+      "workers": 2,
+      "worker_utilization_pct": 94.9,
+      "active_ranges_count": 2,
+      "skipped_frames_pct": 46.7
+     },
+     "STAGE_2_ACTIVE_PREPASS": {
+      "state": "DONE",
+      "wall_s": 4.332,
+      "active_ranges_count": 2,
+      "grab_calls": 0,
+      "set_calls": 2,
+      "seek_walks": 0,
+      "verified_target_frames": 156
+     },
+     "STAGE_3_MAIN_SWAP": {
+      "state": "DONE",
+      "wall_s": 10.617,
+      "frames": 360,
+      "passthrough_frames": 168,
+      "gpu_frames": 192,
+      "swapped_frames": 156,
+      "faces_swapped": 162,
+      "peak_vram_gb": 11.53,
+      "processing_fps": 33.91
+     },
+     "STAGE_4_FINALIZE": {
+      "state": "DONE",
+      "ok": true,
+      "wall_s": 0.648,
+      "mux_s": 0.315,
+      "frames": 360,
+      "expected_frames": 360,
+      "audio_present": true,
+      "audio_start_offset_ms": 0.0,
+      "color": {
+       "color_space": "bt709",
+       "color_primaries": "bt709",
+       "color_transfer": "bt709",
+       "color_range": "tv"
+      },
+      "color_preserved": true,
+      "problems": [],
+      "orphans": [],
+      "temp_deleted": true,
+      "output": "G:\\pinokio\\cache\\TEMP\\claude\\G--pinokio-api-roop-ultimate\\e43d57ce-c3e7-4aa5-9970-2b7fdbb8dd2a\\scratchpad\\verify9c\\out\\clip_cfr_13-42-23.mp4",
+      "bytes": 2302864
+     }
+    }
+   },
+   "finalize_results": [
+    {
+     "stage": "STAGE_4_FINALIZE",
+     "ok": true,
+     "output": "G:\\pinokio\\cache\\TEMP\\claude\\G--pinokio-api-roop-ultimate\\e43d57ce-c3e7-4aa5-9970-2b7fdbb8dd2a\\scratchpad\\verify9c\\out\\clip_cfr_13-42-23.mp4",
+     "expected_frames": 360,
+     "stopped": false,
+     "problems": [],
+     "orphans": [],
+     "temp_deleted": true,
+     "wall_s": 0.648,
+     "mux_s": 0.315,
+     "reference_frames": 360,
+     "expect_audio": true,
+     "verify": {
+      "probe_ms": 144.0,
+      "bytes": 2302864,
+      "video_codec": "hevc",
+      "width": 960,
+      "height": 540,
+      "fps": 30.0,
+      "video_duration_s": 12.0,
+      "frames": 360,
+      "frames_source": "header",
+      "audio_present": true,
+      "color": {
+       "color_space": "bt709",
+       "color_primaries": "bt709",
+       "color_transfer": "bt709",
+       "color_range": "tv"
+      },
+      "color_preserved": true,
+      "color_tagged": true,
+      "audio_start_offset_ms": 0.0,
+      "audio_overrun_ms": -10.83
+     }
+    }
+   ],
+   "leftovers": [],
+   "log": "G:\\pinokio\\cache\\TEMP\\claude\\G--pinokio-api-roop-ultimate\\e43d57ce-c3e7-4aa5-9970-2b7fdbb8dd2a\\scratchpad\\verify9c\\out\\cfr_3stage_trim.log",
+   "output_packets": 360,
+   "output_color": {
+    "color_space": "bt709",
+    "color_primaries": "bt709",
+    "color_transfer": "bt709",
+    "color_range": "tv"
+   },
+   "output_video_duration_s": 12.0,
+   "audio_lag_ms": -13.33,
+   "seek_lines": {
+    "seeks": 2,
+    "walked": 0
+   },
+   "active_mask_in_trim": 192
+  },
+  {
+   "tag": "vfr_3stage_full",
+   "overrides": {
+    "sparse_auto_range": true
+   },
+   "range": [
+    0,
+    591
+   ],
+   "expected_frames": 591,
+   "render_seconds": 53.08,
+   "error": null,
+   "output": "G:\\pinokio\\cache\\TEMP\\claude\\G--pinokio-api-roop-ultimate\\e43d57ce-c3e7-4aa5-9970-2b7fdbb8dd2a\\scratchpad\\verify9c\\out\\clip_vfr_13-43-16.mp4",
+   "report": {
+    "schema": 1,
+    "ok": true,
+    "finished_at": 1792570400.6982353,
+    "total_frames": 591,
+    "videos_in_job": 1,
+    "total_wall_s": 26.415,
+    "effective_fps": 26.34,
+    "speedup": {
+     "multiplier": 2.17,
+     "estimated": true,
+     "baseline_s": 47.92,
+     "actual_s": 22.05,
+     "method": "this run's per-active-frame cost (Stage 2 + Stage 3 wall) scaled to every frame, divided by the 3-stage wall clock; a dense render is not run"
+    },
+    "vram": {
+     "peak_gb": 11.393,
+     "base_gb": 4.111,
+     "total_gb": 11.994,
+     "samples": 83
+    },
+    "stages": {
+     "STAGE_1_SPARSE_PRESCAN": {
+      "state": "DONE",
+      "wall_s": 6.81,
+      "sampled_frames": 119,
+      "samples_total": 119,
+      "stride": 5,
+      "workers": 2,
+      "worker_utilization_pct": 97.9,
+      "active_ranges_count": 2,
+      "skipped_frames_pct": 68.2
+     },
+     "STAGE_2_ACTIVE_PREPASS": {
+      "state": "DONE",
+      "wall_s": 4.222,
+      "active_ranges_count": 2,
+      "grab_calls": 272,
+      "set_calls": 0,
+      "seek_walks": 2,
+      "verified_target_frames": 156
+     },
+     "STAGE_3_MAIN_SWAP": {
+      "state": "DONE",
+      "wall_s": 11.021,
+      "frames": 591,
+      "passthrough_frames": 403,
+      "gpu_frames": 188,
+      "swapped_frames": 156,
+      "faces_swapped": 162,
+      "peak_vram_gb": 11.393,
+      "processing_fps": 53.62
+     },
+     "STAGE_4_FINALIZE": {
+      "state": "DONE",
+      "ok": true,
+      "wall_s": 0.381,
+      "mux_s": 0.161,
+      "frames": 591,
+      "expected_frames": 591,
+      "audio_present": true,
+      "audio_start_offset_ms": 0.0,
+      "color": {
+       "color_space": "bt709",
+       "color_primaries": "bt709",
+       "color_transfer": "bt709",
+       "color_range": "tv"
+      },
+      "color_preserved": true,
+      "problems": [],
+      "orphans": [],
+      "temp_deleted": true,
+      "output": "G:\\pinokio\\cache\\TEMP\\claude\\G--pinokio-api-roop-ultimate\\e43d57ce-c3e7-4aa5-9970-2b7fdbb8dd2a\\scratchpad\\verify9c\\out\\clip_vfr_13-43-16.mp4",
+      "bytes": 2869837
+     }
+    }
+   },
+   "finalize_results": [
+    {
+     "stage": "STAGE_4_FINALIZE",
+     "ok": true,
+     "output": "G:\\pinokio\\cache\\TEMP\\claude\\G--pinokio-api-roop-ultimate\\e43d57ce-c3e7-4aa5-9970-2b7fdbb8dd2a\\scratchpad\\verify9c\\out\\clip_vfr_13-43-16.mp4",
+     "expected_frames": 591,
+     "stopped": false,
+     "problems": [],
+     "orphans": [],
+     "temp_deleted": true,
+     "wall_s": 0.381,
+     "mux_s": 0.161,
+     "reference_frames": 591,
+     "expect_audio": true,
+     "verify": {
+      "probe_ms": 40.1,
+      "bytes": 2869837,
+      "video_codec": "hevc",
+      "width": 960,
+      "height": 540,
+      "fps": 30.0,
+      "video_duration_s": 19.7,
+      "frames": 591,
+      "frames_source": "header",
+      "audio_present": true,
+      "color": {
+       "color_space": "bt709",
+       "color_primaries": "bt709",
+       "color_transfer": "bt709",
+       "color_range": "tv"
+      },
+      "color_preserved": true,
+      "color_tagged": true,
+      "audio_start_offset_ms": 0.0,
+      "audio_overrun_ms": 12.0
+     }
+    }
+   ],
+   "leftovers": [],
+   "log": "G:\\pinokio\\cache\\TEMP\\claude\\G--pinokio-api-roop-ultimate\\e43d57ce-c3e7-4aa5-9970-2b7fdbb8dd2a\\scratchpad\\verify9c\\out\\vfr_3stage_full.log",
+   "output_packets": 591,
+   "output_color": {
+    "color_space": "bt709",
+    "color_primaries": "bt709",
+    "color_transfer": "bt709",
+    "color_range": "tv"
+   },
+   "output_video_duration_s": 19.7,
+   "audio_lag_ms": 0.0,
+   "seek_lines": {
+    "seeks": 0,
+    "walked": 272
+   },
+   "active_mask_in_trim": 188
+  },
+  {
+   "tag": "cfr_1stage_A",
+   "overrides": {
+    "sparse_auto_range": false,
+    "temporal_detection": false,
+    "track_identities": false
+   },
+   "range": [
+    0,
+    600
+   ],
+   "expected_frames": 600,
+   "render_seconds": 90.83,
+   "error": null,
+   "output": "G:\\pinokio\\cache\\TEMP\\claude\\G--pinokio-api-roop-ultimate\\e43d57ce-c3e7-4aa5-9970-2b7fdbb8dd2a\\scratchpad\\verify9c\\out\\clip_cfr_13-44-47.mp4",
+   "report": {
+    "schema": 1,
+    "ok": true,
+    "finished_at": 1792570491.8165448,
+    "total_frames": 600,
+    "videos_in_job": 1,
+    "total_wall_s": 63.567,
+    "effective_fps": 10.16,
+    "speedup": {
+     "multiplier": 1.0,
+     "estimated": true,
+     "baseline_s": 58.71,
+     "actual_s": 58.71,
+     "method": "this run's per-active-frame cost (Stage 2 + Stage 3 wall) scaled to every frame, divided by the 3-stage wall clock; a dense render is not run"
+    },
+    "vram": {
+     "peak_gb": 11.994,
+     "base_gb": 4.111,
+     "total_gb": 11.994,
+     "samples": 222
+    },
+    "stages": {
+     "STAGE_1_SPARSE_PRESCAN": {
+      "state": "SKIPPED",
+      "wall_s": null,
+      "sampled_frames": null,
+      "samples_total": null,
+      "stride": null,
+      "workers": null,
+      "worker_utilization_pct": null,
+      "active_ranges_count": null,
+      "skipped_frames_pct": null
+     },
+     "STAGE_2_ACTIVE_PREPASS": {
+      "state": "SKIPPED",
+      "wall_s": null,
+      "active_ranges_count": null,
+      "grab_calls": null,
+      "set_calls": null,
+      "seek_walks": null,
+      "verified_target_frames": null
+     },
+     "STAGE_3_MAIN_SWAP": {
+      "state": "DONE",
+      "wall_s": 58.714,
+      "frames": 600,
+      "passthrough_frames": null,
+      "gpu_frames": 600,
+      "swapped_frames": 172,
+      "faces_swapped": 178,
+      "peak_vram_gb": 11.994,
+      "processing_fps": 10.22
+     },
+     "STAGE_4_FINALIZE": {
+      "state": "DONE",
+      "ok": true,
+      "wall_s": 0.368,
+      "mux_s": 0.262,
+      "frames": 600,
+      "expected_frames": 600,
+      "audio_present": true,
+      "audio_start_offset_ms": 0.0,
+      "color": {
+       "color_space": "bt709",
+       "color_primaries": "bt709",
+       "color_transfer": "bt709",
+       "color_range": "tv"
+      },
+      "color_preserved": true,
+      "problems": [],
+      "orphans": [],
+      "temp_deleted": true,
+      "output": "G:\\pinokio\\cache\\TEMP\\claude\\G--pinokio-api-roop-ultimate\\e43d57ce-c3e7-4aa5-9970-2b7fdbb8dd2a\\scratchpad\\verify9c\\out\\clip_cfr_13-44-47.mp4",
+      "bytes": 2951272
+     }
+    }
+   },
+   "finalize_results": [
+    {
+     "stage": "STAGE_4_FINALIZE",
+     "ok": true,
+     "output": "G:\\pinokio\\cache\\TEMP\\claude\\G--pinokio-api-roop-ultimate\\e43d57ce-c3e7-4aa5-9970-2b7fdbb8dd2a\\scratchpad\\verify9c\\out\\clip_cfr_13-44-47.mp4",
+     "expected_frames": 600,
+     "stopped": false,
+     "problems": [],
+     "orphans": [],
+     "temp_deleted": true,
+     "wall_s": 0.368,
+     "mux_s": 0.262,
+     "reference_frames": 600,
+     "expect_audio": true,
+     "verify": {
+      "probe_ms": 34.0,
+      "bytes": 2951272,
+      "video_codec": "hevc",
+      "width": 960,
+      "height": 540,
+      "fps": 30.0,
+      "video_duration_s": 20.0,
+      "frames": 600,
+      "frames_source": "header",
+      "audio_present": true,
+      "color": {
+       "color_space": "bt709",
+       "color_primaries": "bt709",
+       "color_transfer": "bt709",
+       "color_range": "tv"
+      },
+      "color_preserved": true,
+      "color_tagged": true,
+      "audio_start_offset_ms": 0.0,
+      "audio_overrun_ms": 0.0
+     }
+    }
+   ],
+   "leftovers": [],
+   "log": "G:\\pinokio\\cache\\TEMP\\claude\\G--pinokio-api-roop-ultimate\\e43d57ce-c3e7-4aa5-9970-2b7fdbb8dd2a\\scratchpad\\verify9c\\out\\cfr_1stage_A.log",
+   "output_packets": 600,
+   "output_color": {
+    "color_space": "bt709",
+    "color_primaries": "bt709",
+    "color_transfer": "bt709",
+    "color_range": "tv"
+   },
+   "output_video_duration_s": 20.0,
+   "audio_lag_ms": 0.0,
+   "seek_lines": {
+    "seeks": 0,
+    "walked": 0
+   },
+   "active_mask_in_trim": null
+  },
+  {
+   "tag": "cfr_1stage_B",
+   "overrides": {
+    "sparse_auto_range": false,
+    "temporal_detection": false,
+    "track_identities": false
+   },
+   "range": [
+    0,
+    600
+   ],
+   "expected_frames": 600,
+   "render_seconds": 84.87,
+   "error": null,
+   "output": "G:\\pinokio\\cache\\TEMP\\claude\\G--pinokio-api-roop-ultimate\\e43d57ce-c3e7-4aa5-9970-2b7fdbb8dd2a\\scratchpad\\verify9c\\out\\clip_cfr_13-46-11.mp4",
+   "report": {
+    "schema": 1,
+    "ok": true,
+    "finished_at": 1792570576.8780074,
+    "total_frames": 600,
+    "videos_in_job": 1,
+    "total_wall_s": 56.824,
+    "effective_fps": 11.5,
+    "speedup": {
+     "multiplier": 1.0,
+     "estimated": true,
+     "baseline_s": 51.68,
+     "actual_s": 51.68,
+     "method": "this run's per-active-frame cost (Stage 2 + Stage 3 wall) scaled to every frame, divided by the 3-stage wall clock; a dense render is not run"
+    },
+    "vram": {
+     "peak_gb": 11.994,
+     "base_gb": 4.14,
+     "total_gb": 11.994,
+     "samples": 201
+    },
+    "stages": {
+     "STAGE_1_SPARSE_PRESCAN": {
+      "state": "SKIPPED",
+      "wall_s": null,
+      "sampled_frames": null,
+      "samples_total": null,
+      "stride": null,
+      "workers": null,
+      "worker_utilization_pct": null,
+      "active_ranges_count": null,
+      "skipped_frames_pct": null
+     },
+     "STAGE_2_ACTIVE_PREPASS": {
+      "state": "SKIPPED",
+      "wall_s": null,
+      "active_ranges_count": null,
+      "grab_calls": null,
+      "set_calls": null,
+      "seek_walks": null,
+      "verified_target_frames": null
+     },
+     "STAGE_3_MAIN_SWAP": {
+      "state": "DONE",
+      "wall_s": 51.677,
+      "frames": 600,
+      "passthrough_frames": null,
+      "gpu_frames": 600,
+      "swapped_frames": 172,
+      "faces_swapped": 178,
+      "peak_vram_gb": 11.994,
+      "processing_fps": 11.61
+     },
+     "STAGE_4_FINALIZE": {
+      "state": "DONE",
+      "ok": true,
+      "wall_s": 0.493,
+      "mux_s": 0.38,
+      "frames": 600,
+      "expected_frames": 600,
+      "audio_present": true,
+      "audio_start_offset_ms": 0.0,
+      "color": {
+       "color_space": "bt709",
+       "color_primaries": "bt709",
+       "color_transfer": "bt709",
+       "color_range": "tv"
+      },
+      "color_preserved": true,
+      "problems": [],
+      "orphans": [],
+      "temp_deleted": true,
+      "output": "G:\\pinokio\\cache\\TEMP\\claude\\G--pinokio-api-roop-ultimate\\e43d57ce-c3e7-4aa5-9970-2b7fdbb8dd2a\\scratchpad\\verify9c\\out\\clip_cfr_13-46-11.mp4",
+      "bytes": 2951272
+     }
+    }
+   },
+   "finalize_results": [
+    {
+     "stage": "STAGE_4_FINALIZE",
+     "ok": true,
+     "output": "G:\\pinokio\\cache\\TEMP\\claude\\G--pinokio-api-roop-ultimate\\e43d57ce-c3e7-4aa5-9970-2b7fdbb8dd2a\\scratchpad\\verify9c\\out\\clip_cfr_13-46-11.mp4",
+     "expected_frames": 600,
+     "stopped": false,
+     "problems": [],
+     "orphans": [],
+     "temp_deleted": true,
+     "wall_s": 0.493,
+     "mux_s": 0.38,
+     "reference_frames": 600,
+     "expect_audio": true,
+     "verify": {
+      "probe_ms": 37.4,
+      "bytes": 2951272,
+      "video_codec": "hevc",
+      "width": 960,
+      "height": 540,
+      "fps": 30.0,
+      "video_duration_s": 20.0,
+      "frames": 600,
+      "frames_source": "header",
+      "audio_present": true,
+      "color": {
+       "color_space": "bt709",
+       "color_primaries": "bt709",
+       "color_transfer": "bt709",
+       "color_range": "tv"
+      },
+      "color_preserved": true,
+      "color_tagged": true,
+      "audio_start_offset_ms": 0.0,
+      "audio_overrun_ms": 0.0
+     }
+    }
+   ],
+   "leftovers": [],
+   "log": "G:\\pinokio\\cache\\TEMP\\claude\\G--pinokio-api-roop-ultimate\\e43d57ce-c3e7-4aa5-9970-2b7fdbb8dd2a\\scratchpad\\verify9c\\out\\cfr_1stage_B.log",
+   "output_packets": 600,
+   "output_color": {
+    "color_space": "bt709",
+    "color_primaries": "bt709",
+    "color_transfer": "bt709",
+    "color_range": "tv"
+   },
+   "output_video_duration_s": 20.0,
+   "audio_lag_ms": 0.0,
+   "seek_lines": {
+    "seeks": 0,
+    "walked": 0
+   },
+   "active_mask_in_trim": null
+  },
+  {
+   "tag": "cfr_3stage_B",
+   "overrides": {
+    "sparse_auto_range": true
+   },
+   "range": [
+    0,
+    600
+   ],
+   "expected_frames": 600,
+   "render_seconds": 56.53,
+   "error": null,
+   "output": "G:\\pinokio\\cache\\TEMP\\claude\\G--pinokio-api-roop-ultimate\\e43d57ce-c3e7-4aa5-9970-2b7fdbb8dd2a\\scratchpad\\verify9c\\out\\clip_cfr_13-47-08.mp4",
+   "report": {
+    "schema": 1,
+    "ok": true,
+    "finished_at": 1792570633.61051,
+    "total_frames": 600,
+    "videos_in_job": 1,
+    "total_wall_s": 27.633,
+    "effective_fps": 26.08,
+    "speedup": {
+     "multiplier": 2.23,
+     "estimated": true,
+     "baseline_s": 50.55,
+     "actual_s": 22.65,
+     "method": "this run's per-active-frame cost (Stage 2 + Stage 3 wall) scaled to every frame, divided by the 3-stage wall clock; a dense render is not run"
+    },
+    "vram": {
+     "peak_gb": 11.49,
+     "base_gb": 4.14,
+     "total_gb": 11.994,
+     "samples": 86
+    },
+    "stages": {
+     "STAGE_1_SPARSE_PRESCAN": {
+      "state": "DONE",
+      "wall_s": 6.473,
+      "sampled_frames": 101,
+      "samples_total": 101,
+      "stride": 6,
+      "workers": 2,
+      "worker_utilization_pct": 97.6,
+      "active_ranges_count": 2,
+      "skipped_frames_pct": 68.0
+     },
+     "STAGE_2_ACTIVE_PREPASS": {
+      "state": "DONE",
+      "wall_s": 4.42,
+      "active_ranges_count": 2,
+      "grab_calls": 0,
+      "set_calls": 2,
+      "seek_walks": 0,
+      "verified_target_frames": 156
+     },
+     "STAGE_3_MAIN_SWAP": {
+      "state": "DONE",
+      "wall_s": 11.756,
+      "frames": 600,
+      "passthrough_frames": 408,
+      "gpu_frames": 192,
+      "swapped_frames": 156,
+      "faces_swapped": 162,
+      "peak_vram_gb": 11.49,
+      "processing_fps": 51.04
+     },
+     "STAGE_4_FINALIZE": {
+      "state": "DONE",
+      "ok": true,
+      "wall_s": 0.361,
+      "mux_s": 0.257,
+      "frames": 600,
+      "expected_frames": 600,
+      "audio_present": true,
+      "audio_start_offset_ms": 0.0,
+      "color": {
+       "color_space": "bt709",
+       "color_primaries": "bt709",
+       "color_transfer": "bt709",
+       "color_range": "tv"
+      },
+      "color_preserved": true,
+      "problems": [],
+      "orphans": [],
+      "temp_deleted": true,
+      "output": "G:\\pinokio\\cache\\TEMP\\claude\\G--pinokio-api-roop-ultimate\\e43d57ce-c3e7-4aa5-9970-2b7fdbb8dd2a\\scratchpad\\verify9c\\out\\clip_cfr_13-47-08.mp4",
+      "bytes": 2893865
+     }
+    }
+   },
+   "finalize_results": [
+    {
+     "stage": "STAGE_4_FINALIZE",
+     "ok": true,
+     "output": "G:\\pinokio\\cache\\TEMP\\claude\\G--pinokio-api-roop-ultimate\\e43d57ce-c3e7-4aa5-9970-2b7fdbb8dd2a\\scratchpad\\verify9c\\out\\clip_cfr_13-47-08.mp4",
+     "expected_frames": 600,
+     "stopped": false,
+     "problems": [],
+     "orphans": [],
+     "temp_deleted": true,
+     "wall_s": 0.361,
+     "mux_s": 0.257,
+     "reference_frames": 600,
+     "expect_audio": true,
+     "verify": {
+      "probe_ms": 33.4,
+      "bytes": 2893865,
+      "video_codec": "hevc",
+      "width": 960,
+      "height": 540,
+      "fps": 30.0,
+      "video_duration_s": 20.0,
+      "frames": 600,
+      "frames_source": "header",
+      "audio_present": true,
+      "color": {
+       "color_space": "bt709",
+       "color_primaries": "bt709",
+       "color_transfer": "bt709",
+       "color_range": "tv"
+      },
+      "color_preserved": true,
+      "color_tagged": true,
+      "audio_start_offset_ms": 0.0,
+      "audio_overrun_ms": 0.0
+     }
+    }
+   ],
+   "leftovers": [],
+   "log": "G:\\pinokio\\cache\\TEMP\\claude\\G--pinokio-api-roop-ultimate\\e43d57ce-c3e7-4aa5-9970-2b7fdbb8dd2a\\scratchpad\\verify9c\\out\\cfr_3stage_B.log",
+   "output_packets": 600,
+   "output_color": {
+    "color_space": "bt709",
+    "color_primaries": "bt709",
+    "color_transfer": "bt709",
+    "color_range": "tv"
+   },
+   "output_video_duration_s": 20.0,
+   "audio_lag_ms": 0.0,
+   "seek_lines": {
+    "seeks": 2,
+    "walked": 0
+   },
+   "active_mask_in_trim": 192
+  }
+ ],
+ "invariants": {
+  "cfr_full": {
+   "F1_stage4_ok_no_orphans": {
+    "ok": true,
+    "detail": {
+     "ok": true,
+     "temp_deleted": true,
+     "orphans": [],
+     "leftovers": [],
+     "problems": []
+    }
+   },
+   "F2_frames_and_duration": {
+    "ok": true,
+    "detail": {
+     "packets": 600,
+     "expected_by_the_source": 600,
+     "duration_s": 20.0
+    }
+   },
+   "F3_lipsync_under_one_frame": {
+    "ok": true,
+    "detail": {
+     "audio_lag_ms": 0.0,
+     "one_frame_ms": 33.33
+    }
+   },
+   "F4_colour_tags": {
+    "ok": true,
+    "detail": {
+     "delivered": {
+      "color_space": "bt709",
+      "color_primaries": "bt709",
+      "color_transfer": "bt709",
+      "color_range": "tv"
+     },
+     "stage4_saw": {
+      "color_space": "bt709",
+      "color_primaries": "bt709",
+      "color_transfer": "bt709",
+      "color_range": "tv"
+     },
+     "preserved": true
+    }
+   },
+   "R1_frame_accounting": {
+    "ok": true,
+    "detail": {
+     "passthrough": 408,
+     "gpu": 192,
+     "sum": 600,
+     "frames_the_pipeline_ran": 600,
+     "active_in_trim_by_stage1": 192
+    }
+   },
+   "R2_wall_clocks": {
+    "ok": true,
+    "detail": {
+     "s1": 6.421,
+     "s2": 4.419,
+     "s3": 10.347,
+     "sum": 21.19,
+     "render_seconds": 48.83,
+     "stage4_s": 0.363
+    }
+   },
+   "R3_vram_and_worker_utilization": {
+    "ok": true,
+    "detail": {
+     "vram": {
+      "peak_gb": 11.426,
+      "base_gb": 4.072,
+      "total_gb": 11.994,
+      "samples": 80
+     },
+     "stage3_peak_gb": 11.426,
+     "worker_utilization_pct": 97.5,
+     "workers": 2,
+     "sampled_frames": 101
+    }
+   },
+   "R4_seek_counts_match_the_seekers": {
+    "ok": true,
+    "detail": {
+     "report": {
+      "set_calls": 2,
+      "grab_calls": 0
+     },
+     "seeker_log": {
+      "seeks": 2,
+      "walked": 0
+     }
+    }
+   },
+   "R5_json_and_runtime_state": {
+    "ok": true,
+    "detail": {
+     "json_safe": true,
+     "runtime_state_equal": true
+    }
+   }
+  },
+  "cfr_trim": {
+   "F1_stage4_ok_no_orphans": {
+    "ok": true,
+    "detail": {
+     "ok": true,
+     "temp_deleted": true,
+     "orphans": [],
+     "leftovers": [],
+     "problems": []
+    }
+   },
+   "F2_frames_and_duration": {
+    "ok": true,
+    "detail": {
+     "packets": 360,
+     "expected_by_the_source": 360,
+     "duration_s": 12.0
+    }
+   },
+   "F3_lipsync_under_one_frame": {
+    "ok": true,
+    "detail": {
+     "audio_lag_ms": -13.33,
+     "one_frame_ms": 33.33
+    }
+   },
+   "F4_colour_tags": {
+    "ok": true,
+    "detail": {
+     "delivered": {
+      "color_space": "bt709",
+      "color_primaries": "bt709",
+      "color_transfer": "bt709",
+      "color_range": "tv"
+     },
+     "stage4_saw": {
+      "color_space": "bt709",
+      "color_primaries": "bt709",
+      "color_transfer": "bt709",
+      "color_range": "tv"
+     },
+     "preserved": true
+    }
+   },
+   "R1_frame_accounting": {
+    "ok": true,
+    "detail": {
+     "passthrough": 168,
+     "gpu": 192,
+     "sum": 360,
+     "frames_the_pipeline_ran": 360,
+     "active_in_trim_by_stage1": 192
+    }
+   },
+   "R2_wall_clocks": {
+    "ok": true,
+    "detail": {
+     "s1": 5.78,
+     "s2": 4.332,
+     "s3": 10.617,
+     "sum": 20.73,
+     "render_seconds": 50.94,
+     "stage4_s": 0.648
+    }
+   },
+   "R3_vram_and_worker_utilization": {
+    "ok": true,
+    "detail": {
+     "vram": {
+      "peak_gb": 11.53,
+      "base_gb": 4.107,
+      "total_gb": 11.994,
+      "samples": 80
+     },
+     "stage3_peak_gb": 11.53,
+     "worker_utilization_pct": 94.9,
+     "workers": 2,
+     "sampled_frames": 61
+    }
+   },
+   "R4_seek_counts_match_the_seekers": {
+    "ok": true,
+    "detail": {
+     "report": {
+      "set_calls": 2,
+      "grab_calls": 0
+     },
+     "seeker_log": {
+      "seeks": 2,
+      "walked": 0
+     }
+    }
+   },
+   "R5_json_and_runtime_state": {
+    "ok": true,
+    "detail": {
+     "json_safe": true,
+     "runtime_state_equal": true
+    }
+   }
+  },
+  "vfr_full": {
+   "F1_stage4_ok_no_orphans": {
+    "ok": true,
+    "detail": {
+     "ok": true,
+     "temp_deleted": true,
+     "orphans": [],
+     "leftovers": [],
+     "problems": []
+    }
+   },
+   "F2_frames_and_duration": {
+    "ok": true,
+    "detail": {
+     "packets": 591,
+     "expected_by_the_source": 591,
+     "duration_s": 19.7
+    }
+   },
+   "F3_lipsync_under_one_frame": {
+    "ok": true,
+    "detail": {
+     "audio_lag_ms": 0.0,
+     "one_frame_ms": 33.33
+    }
+   },
+   "F4_colour_tags": {
+    "ok": true,
+    "detail": {
+     "delivered": {
+      "color_space": "bt709",
+      "color_primaries": "bt709",
+      "color_transfer": "bt709",
+      "color_range": "tv"
+     },
+     "stage4_saw": {
+      "color_space": "bt709",
+      "color_primaries": "bt709",
+      "color_transfer": "bt709",
+      "color_range": "tv"
+     },
+     "preserved": true
+    }
+   },
+   "R1_frame_accounting": {
+    "ok": true,
+    "detail": {
+     "passthrough": 403,
+     "gpu": 188,
+     "sum": 591,
+     "frames_the_pipeline_ran": 591,
+     "active_in_trim_by_stage1": 188
+    }
+   },
+   "R2_wall_clocks": {
+    "ok": true,
+    "detail": {
+     "s1": 6.81,
+     "s2": 4.222,
+     "s3": 11.021,
+     "sum": 22.05,
+     "render_seconds": 53.08,
+     "stage4_s": 0.381
+    }
+   },
+   "R3_vram_and_worker_utilization": {
+    "ok": true,
+    "detail": {
+     "vram": {
+      "peak_gb": 11.393,
+      "base_gb": 4.111,
+      "total_gb": 11.994,
+      "samples": 83
+     },
+     "stage3_peak_gb": 11.393,
+     "worker_utilization_pct": 97.9,
+     "workers": 2,
+     "sampled_frames": 119
+    }
+   },
+   "R4_seek_counts_match_the_seekers": {
+    "ok": true,
+    "detail": {
+     "report": {
+      "set_calls": 0,
+      "grab_calls": 272
+     },
+     "seeker_log": {
+      "seeks": 0,
+      "walked": 272
+     }
+    }
+   },
+   "R5_json_and_runtime_state": {
+    "ok": true,
+    "detail": {
+     "json_safe": true,
+     "runtime_state_equal": true
+    }
+   }
+  }
+ },
+ "speedup": {
+  "estimates": [
+   2.18,
+   2.23
+  ],
+  "measured_pipeline_only": {
+   "dense_s": [
+    59.1,
+    52.2
+   ],
+   "three_stage_s": [
+    21.5,
+    23.0
+   ],
+   "ratio_of_means": 2.5,
+   "ratio_per_dense_arm": [
+    2.65,
+    2.34
+   ]
+  },
+  "measured_end_to_end_render_call": {
+   "dense_s": [
+    90.83,
+    84.87
+   ],
+   "three_stage_s": [
+    48.83,
+    56.53
+   ],
+   "ratio_of_means": 1.67,
+   "fixed_overhead_s_per_render": [
+    31.7,
+    32.7,
+    27.3,
+    33.5
+   ]
+  },
+  "estimate_within_dense_arm_range": false,
+  "note": "the estimate is defined on STAGE walls (Stage 1+2+3+4), so the like-for-like measurement is `measured_pipeline_only`; `render()` also carries ~30 s of model load / init that precedes the first stage and is in no stage wall. Two dense arms differ by up to ~25% (first-arm effects), so the estimate is compared with the RANGE they span. Informational, not gated."
+ },
+ "failed": [],
+ "exit": 0
+}

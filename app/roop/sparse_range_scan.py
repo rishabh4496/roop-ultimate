@@ -469,7 +469,10 @@ def scan_active_ranges(
                     _put(_SENTINEL)
                 cap.release()
 
+        busy_s: List[float] = []          # one entry per worker, appended as it exits (no lock needed)
+
         def _work() -> None:
+            busy = 0.0
             try:
                 while True:
                     try:
@@ -484,12 +487,15 @@ def scan_active_ranges(
                     if frame is None:
                         result_q.put((kind, idx, False, True))
                         continue
+                    t_det = time.perf_counter()
                     try:
                         result_q.put((kind, idx, bool(probe.positive(frame)), False))
                     except Exception as exc:
                         _swallowed("sparse_range_scan:detect", exc, "sample frame skipped")
                         result_q.put((kind, idx, False, True))
+                    busy += time.perf_counter() - t_det
             finally:
+                busy_s.append(busy)
                 result_q.put(_DONE)
 
         t0 = time.perf_counter()
@@ -533,7 +539,12 @@ def scan_active_ranges(
                       detector_errors=detector_errors, hits_count=len(positives),
                       start_mismatch=bool(info.get('start_mismatch')),
                       elapsed_s=round(elapsed, 3),
-                      scan_fps=round(info.get('decoded', 0) / elapsed, 1) if elapsed > 0 else None)
+                      scan_fps=round(info.get('decoded', 0) / elapsed, 1) if elapsed > 0 else None,
+                      # Detector time summed over the pool / (workers x wall clock): 100% = no worker ever
+                      # waited on the demuxer. Low means the pool is starved by decode, not that it is slow.
+                      worker_busy_s=round(sum(busy_s), 3),
+                      worker_utilization_pct=(round(100.0 * sum(busy_s) / (worker_count * elapsed), 1)
+                                              if elapsed > 0 and worker_count else None))
 
         # A scan that did not finish cannot say which frames are inactive, so it never
         # returns a partial answer. One that finished but could not look at some samples
