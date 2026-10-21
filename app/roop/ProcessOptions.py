@@ -120,8 +120,5 @@ class ProcessOptions:
         elif self.processing_request and "auto_bypass_restorer_native_swap" in self.processing_request:
             self.auto_bypass_restorer_native_swap = bool(self.processing_request["auto_bypass_restorer_native_swap"])
         else:
-            try:
-                env_b = os.environ.get("ROOP_AUTO_BYPASS_RESTORER_NATIVE_SWAP", "").strip().lower()
-                self.auto_bypass_restorer_native_swap = env_b in ("1", "true", "yes", "on")
-            except Exception:
-                self.auto_bypass_restorer_native_swap = False
+            env_b = os.environ.get("ROOP_AUTO_BYPASS_RESTORER_NATIVE_SWAP", "").strip().lower()
+            self.auto_bypass_restorer_native_swap = env_b in ("1", "true", "yes", "on")

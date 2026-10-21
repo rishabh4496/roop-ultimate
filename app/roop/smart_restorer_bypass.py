@@ -133,7 +133,7 @@ def face_bbox_height(face: Any) -> Optional[float]:
             y0, y1 = float(box_list[1]), float(box_list[3])
             h = y1 - y0
             return h if h > 0 else None
-    except Exception:
+    except (TypeError, ValueError, IndexError):
         pass
     return None
 
