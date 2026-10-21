@@ -1,0 +1,64 @@
+{
+  "clip": "Love.mp4",
+  "frame_size": [
+    1280,
+    720
+  ],
+  "gpu": "NVIDIA GeForce RTX 4070",
+  "reps": 30,
+  "cv2_threads": 1,
+  "caveat": "GPU arm omits landmark hull / adaptive feather / temporal EMA / overlap trim; ceiling on the step, not a port",
+  "faces": {
+    "1": {
+      "cpu_paste_upscale": {
+        "median_ms": 13.116500002070097,
+        "min_ms": 12.62019999558106,
+        "max_ms": 14.021299997693859
+      },
+      "gpu_with_host_boundary": {
+        "median_ms": 1.5803500027686823,
+        "min_ms": 1.4259999952628277,
+        "max_ms": 1.9595999983721413
+      },
+      "gpu_vram_resident": {
+        "median_ms": 0.9047999992617406,
+        "min_ms": 0.8721000049263239,
+        "max_ms": 1.3677000024472363
+      }
+    },
+    "2": {
+      "cpu_paste_upscale": {
+        "median_ms": 25.935199995728908,
+        "min_ms": 25.367400005052332,
+        "max_ms": 26.939600000332575
+      },
+      "gpu_with_host_boundary": {
+        "median_ms": 2.267700001539197,
+        "min_ms": 2.0145000016782433,
+        "max_ms": 2.64949999836972
+      },
+      "gpu_vram_resident": {
+        "median_ms": 1.669550001679454,
+        "min_ms": 1.448700000764802,
+        "max_ms": 2.1103999970364384
+      }
+    },
+    "4": {
+      "cpu_paste_upscale": {
+        "median_ms": 51.28955000327551,
+        "min_ms": 50.256200003786944,
+        "max_ms": 61.56280000141123
+      },
+      "gpu_with_host_boundary": {
+        "median_ms": 3.7523499995586462,
+        "min_ms": 3.317100003187079,
+        "max_ms": 4.367499997897539
+      },
+      "gpu_vram_resident": {
+        "median_ms": 3.173699999024393,
+        "min_ms": 2.768799997284077,
+        "max_ms": 3.794999996898696
+      }
+    }
+  }
+}
