@@ -17,6 +17,7 @@ import glob
 import importlib
 import importlib.metadata
 import os
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:False,max_split_size_mb:128"
 import platform
 import shutil
 import struct

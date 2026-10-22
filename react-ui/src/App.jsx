@@ -1397,6 +1397,7 @@ export default function App() {
                     notify={notify}
                     progress={progress}
                     setTab={setTab}
+                    onUpdateSetting={(k, v) => setSettings?.(s => ({ ...s, [k]: v }))}
                   />
                 )}
                 {tab === 'processing' && (

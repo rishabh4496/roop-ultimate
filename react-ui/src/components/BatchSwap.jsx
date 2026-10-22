@@ -36,7 +36,7 @@ const ENHANCER_OPTIONS = [
   'None',
 ];
 
-export default function BatchSwap({ settings = {}, notify }) {
+export default function BatchSwap({ settings = {}, notify, onUpdateSetting }) {
   const { getJSON, postFiles, postJSON } = useApi();
   // ── Server State ────────────────────────────────────────────────────────
   const [targets, setTargets] = useState([]);

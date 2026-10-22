@@ -2,9 +2,17 @@ from roop.degrade import swallowed as _swallowed
 #!/usr/bin/env python3
 
 import os
-# Keep long-lived graph/static buffers in expandable segments.  This must be
-# configured before importing torch so the CUDA caching allocator sees it.
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+# Must be configured before importing torch so the CUDA caching allocator sees it.
+#
+# expandable_segments is OFF so torch never competes with TensorRT's virtual-memory buffers
+# (nvinfer1 StdVirtualMemoryBufferImpl::resizePhysical, `Cuda Driver (invalid argument)`) for
+# cuMemCreate handles on WDDM.  UNMEASURED as a fix for that error: PyTorch 2.7 on Windows does
+# not implement expandable segments at all (it prints "expandable_segments not supported on
+# this platform" and stays on the native allocator, checked 2026-10-23), so here the key only
+# keeps the setting off if a later torch adds the support.  max_split_size_mb=128 is the part
+# that takes effect: blocks above 128 MB are not split for small requests.
+# An operator's own PYTORCH_CUDA_ALLOC_CONF is respected.
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:False,max_split_size_mb:128"
 
 import sys
 import shutil
@@ -402,12 +410,12 @@ def decode_execution_providers(execution_providers: List[str]) -> List[str]:
                     # Guarded like every other env read here: an unparseable
                     # value is a tuning typo, and letting it raise would take
                     # provider setup — and so the whole app — down at startup.
-                    _default_cap = 2 * 1024 * 1024 * 1024
+                    _default_cap = 536870912  # 512 MB cap
                     try:
                         max_cap = int(os.environ.get('ROOP_TRT_MAX_WORKSPACE_BYTES', _default_cap))
                     except (TypeError, ValueError):
                         max_cap = _default_cap
-                    workspace_size = min(calc_size, max_cap) if calc_size > 0 else calc_size
+                    workspace_size = min(calc_size, max_cap) if calc_size > 0 else max_cap
 
                 print(f"[TRT] device {total_gb:.1f}GB VRAM -> workspace limit "
                       f"({workspace_size / (1024**3):.1f}GB), partition_iters from env/default")
@@ -500,7 +508,9 @@ def decode_execution_providers(execution_providers: List[str]) -> List[str]:
                     'trt_timing_cache_path': precision_cache,
                 }
                 if workspace_size > 0:
-                    trt_opts['trt_max_workspace_size'] = workspace_size
+                    trt_opts['trt_max_workspace_size'] = min(workspace_size, 536870912)
+                else:
+                    trt_opts['trt_max_workspace_size'] = 536870912
                 list_providers[i] = ('TensorrtExecutionProvider', trt_opts)
             elif list_providers[i] == 'DmlExecutionProvider':
                 dml_opts = {

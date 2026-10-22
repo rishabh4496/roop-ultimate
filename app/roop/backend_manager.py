@@ -606,6 +606,15 @@ def build_session_with_fallback(build, providers, tag: str = "model"):
     one.  Returns ``(session, providers_used)`` so the caller can record what
     actually ran rather than what it asked for.
     """
+    try:
+        from roop.trt_native_runner import is_native_loaded
+        if is_native_loaded(tag):
+            if any("tensorrt" in str(_name(p)).lower() for p in (providers or ())):
+                print(f"[Backend] {tag}: already loaded in native TensorRT runner; excluding ORT TensorRT", flush=True)
+                providers = _strip_provider(providers, "tensorrt")
+    except Exception as _exc:
+        _swallowed("roop/backend_manager.py:615", _exc, "native runner check fallback")
+
     attempts: List[Tuple[str, List]] = [("requested", list(providers or ()))]
     if any("tensorrt" in str(_name(p)).lower() for p in (providers or ())):
         attempts.append(("cuda/cpu", _strip_provider(providers, "tensorrt")))
@@ -622,7 +631,12 @@ def build_session_with_fallback(build, providers, tag: str = "model"):
         if not chain:
             continue
         try:
-            session = build(chain)
+            if any("tensorrt" in str(_name(p)).lower() for p in chain):
+                from roop.trt_build_guard import around_trt_build
+                with around_trt_build("session_fallback:" + str(tag)):
+                    session = build(chain)
+            else:
+                session = build(chain)
         except Exception as error:  # noqa: BLE001 - the point is to degrade
             _swallowed("roop/backend_manager.py:376", error, "fallback continued")
             if first_error is None:

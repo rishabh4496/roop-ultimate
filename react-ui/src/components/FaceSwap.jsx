@@ -1027,6 +1027,17 @@ export default function FaceSwap({
   // without batching the events pile up and scrubbing/hovering feels sticky.
   const timelineRafRef = useRef(null);
   const timelinePendingRef = useRef(null);
+  // Playhead drag, decoupled from this panel's render. This component owns ~4,000 lines of
+  // JSX and every `setFrame` re-renders all of it, so committing the frame once per display
+  // frame was ~92 React commits/s during a drag (react-ui/e2e/frame-budget.spec.js). The
+  // playhead and its timecode are moved by the Timeline's imperative API at pointer rate
+  // (playheadApiRef); `frame` itself is committed at most every SCRUB_COMMIT_MS, which is
+  // all the preview can use anyway (useThrottledFrameRequest asks for a frame per 150 ms),
+  // and once more, immediately, when the pointer is released.
+  const playheadApiRef = useRef(null);
+  const scrubCommitRef = useRef({ timer: null, pending: null, last: 0 });
+  const [isDraggingScrub, setIsDraggingScrub] = useState(false);
+  const scrubDebounceTimerRef = useRef(null);
   const [isGeneratingPreviewClip, setIsGeneratingPreviewClip] = useState(false);
   const [origStartEnd, setOrigStartEnd] = useState(null);
 
@@ -2208,9 +2219,12 @@ export default function FaceSwap({
   // fresh server fetch, so request a lightweight downscaled frame — a full-res
   // HD/4K JPEG per frame makes dragging feel sluggish. Snap back to full
   // resolution the instant the user settles on a frame.
-  const scrubbingNow = isScrubbing || isPlaying;
+  const scrubbingNow = isDraggingScrub || isPlaying;
   const rawReqUrl = targets.length > 0
-    ? `${API}/api/target/preview?index=${selTarget}&frame=${frame}${scrubbingNow ? '&width=960' : ''}`
+    // `scrubbing=1` asks the backend for a proxy (<= 720 px tall, JPEG q85); when pointer movement
+    // stops for 150 ms or releases, the settled frame is requested without it, at full size.
+    // Keep `index=..&frame=..` first: rawIsCurrent reads them.
+    ? `${API}/api/target/preview?index=${selTarget}&frame=${frame}${scrubbingNow ? '&width=960&scrubbing=1' : ''}`
     : '';
   // Load raw frames one at a time, latest wins (see useSequentialImage). Binding
   // an <img> directly to rawReqUrl issued a request per intermediate frame of a
@@ -2227,7 +2241,7 @@ export default function FaceSwap({
     // usePlaybackBuffer). Left enabled, every played frame also queued a
     // random-access still request on the same single decoder the playback
     // stream reads sequentially — a seek per request, fighting the stream.
-    useThrottledFrameRequest(rawReqUrl, { throttleMs: 150, enabled: !isPlaying });
+    useThrottledFrameRequest(rawReqUrl, { throttleMs: 150, enabled: !isPlaying, sequence: true });
   // Until the first frame of a new target has loaded there is nothing better to
   // show, so fall through to the request URL rather than blanking the box.
   const rawUrl = loadedRawUrl || rawReqUrl;
@@ -2451,6 +2465,10 @@ export default function FaceSwap({
 
   const handleTimelinePointerMove = (e) => {
     if (!timelineRef.current) return;
+    // Mid-drag the hover line and thumbnail would sit exactly under the playhead the user is
+    // already moving. Updating them anyway was a React commit of this whole panel per pointer
+    // move, for a readout nobody can see.
+    if (isScrubbing) return;
     const clientX = e.clientX ?? e.touches?.[0]?.clientX;
     if (clientX === undefined) return;
     timelinePendingRef.current = clientX;
@@ -2471,6 +2489,36 @@ export default function FaceSwap({
     setHoverFrame(null);
   };
   useEffect(() => () => { if (timelineRafRef.current) cancelAnimationFrame(timelineRafRef.current); }, []);
+
+  // Commit the newest dragged-to frame into state now, if one is waiting.
+  const SCRUB_COMMIT_MS = 100;
+  const commitScrubFrame = () => {
+    const c = scrubCommitRef.current;
+    if (c.timer) { clearTimeout(c.timer); c.timer = null; }
+    const f = c.pending;
+    if (f === null) return;
+    c.pending = null;
+    c.last = performance.now();
+    setFrame(f);
+  };
+  // Move the playhead to `f` at pointer rate and commit the frame at most every SCRUB_COMMIT_MS
+  // (a leading commit, then a trailing one for whatever the pointer settles on).
+  const scrubPlayheadTo = (f) => {
+    playheadApiRef.current?.(f);
+    const c = scrubCommitRef.current;
+    c.pending = f;
+    const wait = SCRUB_COMMIT_MS - (performance.now() - c.last);
+    if (wait <= 0) commitScrubFrame();
+    else if (!c.timer) c.timer = setTimeout(commitScrubFrame, wait);
+  };
+  useEffect(() => () => {
+    const c = scrubCommitRef.current;
+    if (c.timer) { clearTimeout(c.timer); c.timer = null; }
+    if (scrubDebounceTimerRef.current) {
+      clearTimeout(scrubDebounceTimerRef.current);
+      scrubDebounceTimerRef.current = null;
+    }
+  }, []);
 
   /* eslint-disable react-hooks/exhaustive-deps -- intentional: scrub handlers bind latest markers via helpers, no re-subscribe wanted */
   useEffect(() => {
@@ -2502,17 +2550,37 @@ export default function FaceSwap({
         }
         if (best !== null) targetFrame = best;
       }
+      if (dragType === 'playhead') {
+        // Pointer rate: move the playhead only; the frame is committed on a slower clock (see scrubPlayheadTo).
+        scrubPlayheadTo(Math.max(1, Math.min(targetFrame, maxFrames)));
+        return;
+      }
       updateTimelinePos(targetFrame, dragType);
     };
     const handlePointerMove = (e) => {
       const clientX = e.clientX ?? e.touches?.[0]?.clientX;
       if (clientX === undefined) return;
       pendingX = clientX;
+      if (dragType === 'playhead') {
+        setIsDraggingScrub((prev) => (prev ? prev : true));
+        if (scrubDebounceTimerRef.current) clearTimeout(scrubDebounceTimerRef.current);
+        scrubDebounceTimerRef.current = setTimeout(() => {
+          setIsDraggingScrub(false);
+        }, 150);
+      }
       if (rafId === null) rafId = requestAnimationFrame(flush);
     };
 
     const handlePointerUp = () => {
       if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null; }
+      if (scrubDebounceTimerRef.current) {
+        clearTimeout(scrubDebounceTimerRef.current);
+        scrubDebounceTimerRef.current = null;
+      }
+      setIsDraggingScrub(false);
+      // Land on the frame the pointer was released over: commit it in the same batch that ends the
+      // scrub, so the full-resolution request goes out for THIS frame and not the last committed one.
+      if (dragType === 'playhead') commitScrubFrame();
       setIsScrubbing(false);
       if (dragType === 'start') {
         const val = targets[selTarget]?.start_frame ?? 1;
@@ -2527,6 +2595,10 @@ export default function FaceSwap({
     window.addEventListener('pointerup', handlePointerUp);
     return () => {
       if (rafId !== null) cancelAnimationFrame(rafId);
+      if (scrubDebounceTimerRef.current) {
+        clearTimeout(scrubDebounceTimerRef.current);
+        scrubDebounceTimerRef.current = null;
+      }
       window.removeEventListener('pointermove', handlePointerMove);
       window.removeEventListener('pointerup', handlePointerUp);
     };
@@ -2563,6 +2635,11 @@ export default function FaceSwap({
 
     setDragType(dragTarget);
     setIsScrubbing(true);
+    if (dragTarget === 'playhead') {
+      // The click itself commits at once; the drag that follows is paced from here.
+      scrubCommitRef.current.pending = null;
+      scrubCommitRef.current.last = performance.now();
+    }
     updateTimelinePos(targetFrame, dragTarget);
   };
 
@@ -4105,6 +4182,7 @@ export default function FaceSwap({
                   segments={segments.segments}
                   onSegmentClick={jumpToSegment}
                   sceneCuts={sceneCuts}
+                  playheadApiRef={playheadApiRef}
                 />
                 <SegmentBar
                   segments={segments.segments}

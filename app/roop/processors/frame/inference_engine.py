@@ -1,3 +1,4 @@
+from roop.degrade import swallowed as _swallowed
 """OptimizedInferenceSession: TensorRT -> CUDA -> CPU, with persistent device
 IO binding, for the swap models (HiFiFace, HyperSwap).
 
@@ -364,7 +365,13 @@ class OptimizedInferenceSession:
     def _providers(self, provider: str, model_arg: str) -> List[Any]:
         chain: List[Any] = []
         stream = str(self._stream.cuda_stream) if self._stream is not None else "0"
-        if provider == "tensorrt":
+        trt_native = False
+        try:
+            from roop.trt_native_runner import is_native_loaded
+            trt_native = is_native_loaded(model_arg)
+        except Exception as _exc:
+            _swallowed("roop/processors/frame/inference_engine.py:371", _exc, "native runner check fallback")
+        if provider == "tensorrt" and not trt_native:
             self.cache_dir = self._cache_path()
             # Booleans as 'True'/'False': ORT 1.23 REJECTS '1'/'0' for these keys,
             # and a rejected option does not raise -- ORT drops TensorRT AND
@@ -372,6 +379,7 @@ class OptimizedInferenceSession:
             # ['CPUExecutionProvider']"). Found by this module's own smoke run.
             opts = {
                 "device_id": str(self.device_id),
+                "trt_max_workspace_size": "536870912",
                 "trt_fp16_enable": "True" if self.precision == "fp16" else "False",
                 "trt_engine_cache_enable": "True",
                 "trt_engine_cache_path": str(self.cache_dir),
@@ -391,14 +399,17 @@ class OptimizedInferenceSession:
                 "device_id": str(self.device_id),
                 "has_user_compute_stream": "1",
                 "user_compute_stream": stream,
+                "arena_extend_strategy": "kSameAsRequested",
             }))
         chain.append("CPUExecutionProvider")
         return chain
 
     def _build(self, onnxruntime, model_arg: str, provider: str):
         self.providers = self._providers(provider, model_arg)
-        session = onnxruntime.InferenceSession(model_arg, self._session_options,
-                                               providers=self.providers)
+        from roop.trt_build_guard import around_trt_build
+        with around_trt_build("inference_engine:" + Path(model_arg).stem):
+            session = onnxruntime.InferenceSession(model_arg, self._session_options,
+                                                   providers=self.providers)
         self._binding = None
         self._outputs: Dict[str, Any] = {}
         self._staging: Dict[str, Any] = {}

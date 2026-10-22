@@ -412,11 +412,13 @@ def _parse_network(trt: Any, model_path: str | os.PathLike[str]) -> tuple[Any, A
 
 
 def _serialize(builder: Any, network: Any, config: Any) -> bytes:
-    if hasattr(builder, "build_serialized_network"):
-        serialized = builder.build_serialized_network(network, config)
-    else:
-        engine = builder.build_engine(network, config)
-        serialized = engine.serialize()
+    from roop.trt_build_guard import around_trt_build
+    with around_trt_build("native-engine"):
+        if hasattr(builder, "build_serialized_network"):
+            serialized = builder.build_serialized_network(network, config)
+        else:
+            engine = builder.build_engine(network, config)
+            serialized = engine.serialize()
     if serialized is None:
         raise TensorRTGraphError("TensorRT returned no serialized engine")
     return bytes(serialized)

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import useThrottledFrameRequest from './useThrottledFrameRequest';
 
 /**
@@ -230,6 +230,13 @@ export default function Timeline({
   segments = [],
   onSegmentClick,
   sceneCuts = [],
+  /**
+   * A ref the parent calls `.current(frame)` on to move the playhead WITHOUT a React commit.
+   * During a playhead drag the parent commits `frame` a few times a second (the preview can
+   * only follow that fast anyway) while the pointer produces one position per display frame;
+   * this is how the playhead and its timecode badge keep up with the pointer between commits.
+   */
+  playheadApiRef = null,
 }) {
   // ── View window ───────────────────────────────────────────────────────────
   // The track shows [view.start, view.end] rather than the whole clip. `pctOf`
@@ -247,9 +254,16 @@ export default function Timeline({
   const pctOf = (f) => ((f - vStart) / vSpan) * 100;
   const inView = (f) => f >= vStart && f <= vEnd;
 
+  // The frame the playhead is DRAWN at. Between drag commits the parent's `frame` lags the pointer,
+  // so while scrubbing a re-render (hover state, a commit) must not snap the playhead back to it:
+  // it reads the last position the imperative API wrote. Outside a drag the two are one value.
+  const liveFrameRef = useRef(frame);
+  if (!isScrubbing) liveFrameRef.current = frame;
+  const shownFrame = isScrubbing ? liveFrameRef.current : frame;
+
   const startPct = pctOf(startFrame);
   const endPct = pctOf(endFrame);
-  const currentPct = pctOf(frame);
+  const currentPct = pctOf(shownFrame);
   const rangeLen = Math.max(0, endFrame - startFrame + 1);
   const rangeShare = Math.round((rangeLen / maxFrames) * 100);
 
@@ -435,6 +449,30 @@ export default function Timeline({
   // instead of centring them.
   const anchor = (pct) => (pct < 3 ? 'translateX(0)' : pct > 97 ? 'translateX(-100%)' : 'translateX(-50%)');
 
+  // Imperative playhead: writes the same three things the JSX below renders (the line's `left`, the
+  // badge's `left`/`transform`/text/visibility) straight to the DOM. Re-registered on every render so
+  // it closes over the CURRENT view window and fps; React's own render of those values for the same
+  // frame is identical, so the two never disagree.
+  const playheadElRef = useRef(null);
+  const badgeElRef = useRef(null);
+  const badgeTextRef = useRef(null);
+  useLayoutEffect(() => {
+    if (!playheadApiRef) return undefined;
+    playheadApiRef.current = (f) => {
+      liveFrameRef.current = f;
+      const pct = pctOf(f);
+      if (playheadElRef.current) playheadElRef.current.style.left = `${pct}%`;
+      const badge = badgeElRef.current;
+      if (badge) {
+        badge.style.left = `${pct}%`;
+        badge.style.transform = anchor(pct);
+        badge.style.display = inView(f) ? '' : 'none';
+      }
+      if (badgeTextRef.current) badgeTextRef.current.textContent = fmtTCF(f, fps);
+    };
+    return () => { if (playheadApiRef) playheadApiRef.current = null; };
+  });
+
   const step = (d) => setFrame((f) => clamp(f + d, 1, maxFrames));
 
   return (
@@ -619,7 +657,8 @@ export default function Timeline({
           )}
 
           {/* Playhead */}
-          <div className={`absolute inset-y-0 z-30 pointer-events-none ${isScrubbing ? '' : 'transition-[left] duration-100 ease-out'}`}
+          <div ref={playheadElRef}
+               className={`absolute inset-y-0 z-30 pointer-events-none ${isScrubbing ? '' : 'transition-[left] duration-100 ease-out'}`}
                style={{ left: `${currentPct}%` }}>
             <div className="absolute inset-y-0 left-0 -translate-x-1/2 w-[2px] bg-white shadow-[0_0_0_1px_rgba(0,0,0,0.45)]" />
             <div className="absolute -top-px left-0 -translate-x-1/2 h-0 w-0 border-x-[6px] border-x-transparent border-t-[8px] border-t-[var(--accent)]" />
@@ -630,14 +669,15 @@ export default function Timeline({
         {/* Playhead timecode, riding under the track. Hidden when the playhead
             has been scrolled out of the window — it sits outside the track's
             overflow clip, so it would otherwise float free of its own line. */}
-        {inView(frame) && (
-          <div className={`absolute -bottom-2 z-30 pointer-events-none ${isScrubbing ? '' : 'transition-[left] duration-100 ease-out'}`}
-               style={{ left: `${currentPct}%`, transform: anchor(currentPct) }}>
-            <span className="rounded-md bg-[var(--accent)] px-1.5 py-0.5 font-mono text-note font-bold tabular-nums text-white shadow-[0_2px_6px_rgba(0,0,0,0.5)]">
-              {fmtTCF(frame, fps)}
-            </span>
-          </div>
-        )}
+        {/* Always mounted (hidden with display:none when out of view) so the imperative API above has an
+            element to write to when a drag carries the playhead back into view. */}
+        <div ref={badgeElRef}
+             className={`absolute -bottom-2 z-30 pointer-events-none ${isScrubbing ? '' : 'transition-[left] duration-100 ease-out'}`}
+             style={{ left: `${currentPct}%`, transform: anchor(currentPct), display: inView(shownFrame) ? undefined : 'none' }}>
+          <span ref={badgeTextRef} className="rounded-md bg-[var(--accent)] px-1.5 py-0.5 font-mono text-note font-bold tabular-nums text-white shadow-[0_2px_6px_rgba(0,0,0,0.5)]">
+            {fmtTCF(shownFrame, fps)}
+          </span>
+        </div>
       </div>
 
       {/* ── Overview strip ───────────────────────────────────────────────────

@@ -225,6 +225,55 @@ def test_without_cpu_handles_bare_names_and_tuples():
     assert without_cpu([(CUDA_EP, {}), CPU_EP, (CPU_EP, {})]) == [(CUDA_EP, {})]
 
 
+def test_native_runner_loaded_model_excludes_ort_tensorrt(ort):
+    fake = ort()
+    from roop.trt_native_runner import register_native_loaded, unregister_native_loaded, is_native_loaded
+    register_native_loaded("xseg.onnx")
+    try:
+        session = build([(TENSORRT_EP, TRT_OPTS), (CUDA_EP, CUDA_OPTS), CPU_EP])
+        attempted = [_name(p) for p in fake.attempts[-1]]
+        assert TENSORRT_EP not in attempted
+        assert CUDA_EP in attempted
+        assert session.get_providers()[0] == CUDA_EP
+    finally:
+        unregister_native_loaded("xseg.onnx")
+
+
+def test_native_runner_alias_normalization_and_backend_fallback():
+    from roop.trt_native_runner import register_native_loaded, unregister_native_loaded, is_native_loaded
+    from roop.backend_manager import build_session_with_fallback
+
+    engine_mock_path = "models/restoreformer_plus_plus/engines/isl_q_enchigh.engine"
+    register_native_loaded(engine_mock_path)
+    try:
+        assert is_native_loaded("isl_q_enchigh")
+        assert is_native_loaded("restoreformer++")
+        assert is_native_loaded("restoreformer_plus_plus")
+        assert is_native_loaded("restoreformer_single_output")
+        assert is_native_loaded("enhancer:restoreformer++")
+        assert not is_native_loaded("inswapper_128")
+
+        # Test backend_manager.build_session_with_fallback excludes TensorRT
+        calls = []
+        def fake_builder(chain):
+            calls.append(list(chain))
+            class S:
+                def get_providers(self):
+                    return [_name(chain[0])]
+            return S()
+
+        sess, used = build_session_with_fallback(
+            fake_builder,
+            [("TensorrtExecutionProvider", {}), ("CUDAExecutionProvider", {}), "CPUExecutionProvider"],
+            tag="restoreformer++"
+        )
+        assert not any("tensorrt" in str(_name(p)).lower() for p in used)
+        assert any("cuda" in str(_name(p)).lower() for p in used)
+    finally:
+        unregister_native_loaded(engine_mock_path)
+        assert not is_native_loaded("restoreformer++")
+
+
 
 
 # ---------------------------------------------------------------------------

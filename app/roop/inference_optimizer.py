@@ -783,7 +783,7 @@ class InferenceRuntimeBenchmarker:
             elif mode == ExecutionMode.CUDA:
                 cuda_opts = {
                     "device_id": self.device_id,
-                    "arena_extend_strategy": "kNextPowerOfTwo",
+                    "arena_extend_strategy": "kSameAsRequested",
                     "cudnn_conv_algo_search": "EXHAUSTIVE",
                     "do_copy_in_default_stream": True,
                 }
@@ -791,7 +791,7 @@ class InferenceRuntimeBenchmarker:
             elif mode in (ExecutionMode.TRT_FP32, ExecutionMode.TRT_FP16, ExecutionMode.TRT_MIXED):
                 trt_opts = {
                     "device_id": self.device_id,
-                    "trt_max_workspace_size": self.hardware_profile.workspace_bytes,
+                    "trt_max_workspace_size": min(self.hardware_profile.workspace_bytes, 536870912),
                     "trt_builder_optimization_level": self.hardware_profile.builder_optimization_level,
                     "trt_fp16_enable": mode in (ExecutionMode.TRT_FP16, ExecutionMode.TRT_MIXED),
                     "trt_engine_cache_enable": True,
@@ -801,11 +801,29 @@ class InferenceRuntimeBenchmarker:
                 if mode == ExecutionMode.TRT_MIXED:
                     trt_opts["trt_layer_norm_fp32_fallback"] = True
 
-                providers = [("TensorrtExecutionProvider", trt_opts), "CUDAExecutionProvider", "CPUExecutionProvider"]
+                trt_native = False
+                try:
+                    from roop.trt_native_runner import is_native_loaded
+                    trt_native = is_native_loaded(metadata.path) or is_native_loaded(metadata.model_name)
+                except Exception as _exc:
+                    _swallowed("roop/inference_optimizer.py:808", _exc, "native check fallback")
+
+                providers = []
+                if not trt_native:
+                    providers.append(("TensorrtExecutionProvider", trt_opts))
+                providers.extend([
+                    ("CUDAExecutionProvider", {
+                        "device_id": self.device_id,
+                        "arena_extend_strategy": "kSameAsRequested",
+                    }),
+                    "CPUExecutionProvider",
+                ])
             else:
                 providers = ["CPUExecutionProvider"]
 
-            session = ort.InferenceSession(str(metadata.path), sess_options=sess_options, providers=providers)
+            from roop.trt_build_guard import around_trt_build
+            with around_trt_build("bench:" + metadata.path.stem):
+                session = ort.InferenceSession(str(metadata.path), sess_options=sess_options, providers=providers)
 
             # Warmup
             t0 = time.perf_counter()

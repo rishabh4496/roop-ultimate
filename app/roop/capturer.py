@@ -1,5 +1,5 @@
 from roop.degrade import swallowed as _swallowed
-from typing import Optional
+from typing import Callable, Optional
 from collections import OrderedDict
 import json
 import os
@@ -38,6 +38,7 @@ current_capture = None
 # re-decodes from the nearest keyframe and can cost seconds per frame, whereas
 # reading the next frame in order is near real-time.
 current_next_pos = None
+last_decoded_frame_idx = None
 
 # Serialises all access to the shared VideoCapture and animated-WebP cache.
 # cv2.VideoCapture is NOT thread-safe: concurrent reads from multiple Gradio
@@ -63,6 +64,7 @@ _awebp_frames = None   # list of BGR numpy arrays, populated lazily
 # So keep the decoded frames themselves, keyed by (path, mtime, requested index),
 # under a byte budget. Lookups take their own lock and happen BEFORE the capture
 # lock: a hit must not queue behind another thread's 200 ms seek.
+_FRAME_CACHE_MAX_ENTRIES = 64
 _frame_cache = OrderedDict()     # key -> BGR array
 _frame_cache_bytes = 0
 _frame_cache_lock = threading.Lock()
@@ -124,7 +126,8 @@ def _cache_put(key, frame):
             _frame_cache_bytes -= int(old.nbytes)
         _frame_cache[key] = frame
         _frame_cache_bytes += size
-        while _frame_cache_bytes > budget and len(_frame_cache) > 1:
+        while ((_frame_cache_bytes > budget and len(_frame_cache) > 1)
+               or len(_frame_cache) > _FRAME_CACHE_MAX_ENTRIES):
             _, evicted = _frame_cache.popitem(last=False)
             _frame_cache_bytes -= int(evicted.nbytes)
 
@@ -146,18 +149,10 @@ def frame_cache_stats():
 
 
 def _walk_max() -> int:
-    """How many frames to decode-and-discard forward rather than seeking.
-
-    Measured on a 720p H.264 clip: cv2's CAP_PROP_POS_FRAMES seek costs a flat
-    ~125-180 ms whatever the distance, while grab() (decode, skip conversion) is
-    0.67 ms/frame — so walking wins out to roughly 190 frames. Scrub drags and
-    frame-stepping move a handful of frames at a time and were paying the full
-    seek for every one of them. 90 keeps a wide margin under break-even for
-    files whose seek is cheaper than this one's."""
     try:
-        return max(0, int(os.environ.get("ROOP_SEEK_WALK", "90")))
+        return max(0, int(os.environ.get("ROOP_SEEK_WALK", "24")))
     except ValueError:
-        return 90
+        return 24
 
 
 def _pipe_walk_max() -> int:
@@ -536,8 +531,17 @@ def get_image_frame(filename: str):
     return None
 
 
-def get_video_frame(video_path: str, frame_number: int = 0) -> Optional[Frame]:
-    global current_video_path, current_capture, current_frame_total, current_next_pos
+class FrameSuperseded(Exception):
+    """A queued frame request was dropped because the caller asked for a newer frame meanwhile."""
+
+
+def get_video_frame(video_path: str, frame_number: int = 0,
+                    cancel: Optional[Callable[[], bool]] = None) -> Optional[Frame]:
+    """Decode one frame (1-based). ``cancel`` is polled once the capture lock is held -- the point at
+    which a request that queued behind another thread's seek wakes up -- and raises FrameSuperseded when
+    it returns True, so a scrub drag's abandoned requests cost a lock hand-off, not a decode each. A
+    decode already running cannot be interrupted; only work still waiting is dropped."""
+    global current_video_path, current_capture, current_frame_total, current_next_pos, last_decoded_frame_idx
 
     # Cache lookup deliberately OUTSIDE _capture_lock: a hit is the common case
     # while scrubbing (the same frame is asked for by the raw preview, the swap
@@ -555,6 +559,8 @@ def get_video_frame(video_path: str, frame_number: int = 0) -> Optional[Frame]:
         cached = _cache_get(key)
         if cached is not None:
             return cached
+        if cancel is not None and cancel():
+            raise FrameSuperseded(frame_number)
 
         # Animated WebP — use PIL-based reader (no FFmpeg involved)
         if video_path.lower().endswith(".webp"):
@@ -599,6 +605,7 @@ def get_video_frame(video_path: str, frame_number: int = 0) -> Optional[Frame]:
                           f"{os.path.basename(video_path)}; using ffprobe's "
                           f"{info['frames']} frames.", flush=True)
             current_next_pos = 0  # a fresh capture reads frame 0 on the next read()
+            last_decoded_frame_idx = None
 
         total = int(current_frame_total or 0)
         if total <= 0:
@@ -644,8 +651,19 @@ def get_video_frame(video_path: str, frame_number: int = 0) -> Optional[Frame]:
         # stepping three frames forward used to cost forty times what walking
         # does — and a scrub drag is nothing but short hops (see _walk_max).
         if target != current_next_pos:
-            gap = target - current_next_pos if current_next_pos is not None else None
-            if gap is not None and 0 < gap <= _walk_max():
+            walk_limit = _walk_max()
+            can_walk = False
+            if last_decoded_frame_idx is not None and current_next_pos is not None:
+                step = target - last_decoded_frame_idx
+                if 0 < step <= walk_limit and target >= current_next_pos:
+                    can_walk = True
+            elif current_next_pos is not None:
+                gap = target - current_next_pos
+                if 0 < gap <= walk_limit:
+                    can_walk = True
+
+            if can_walk and current_next_pos is not None and target > current_next_pos:
+                gap = target - current_next_pos
                 for _ in range(gap):
                     if not current_capture.grab():
                         # Ran off the end of what the decoder will give us; the
@@ -658,9 +676,11 @@ def get_video_frame(video_path: str, frame_number: int = 0) -> Optional[Frame]:
                 current_capture.set(cv2.CAP_PROP_POS_FRAMES, target)
         has_frame, frame = current_capture.read()
         if has_frame and frame is not None and getattr(frame, "size", 0) > 0:
+            last_decoded_frame_idx = target
             current_next_pos = target + 1
             _cache_put(key, frame)
             return frame
+        last_decoded_frame_idx = None
         current_next_pos = None  # position unknown after a failed read
 
         # Fallback 1: ffmpeg pipe reader
@@ -671,12 +691,14 @@ def get_video_frame(video_path: str, frame_number: int = 0) -> Optional[Frame]:
                 print(f"[Capturer] OpenCV could not decode frame {target} of "
                       f"{os.path.basename(video_path)} but ffmpeg could — using the "
                       f"ffmpeg pipe for this file (common with long H.265).", flush=True)
+            last_decoded_frame_idx = target
             _cache_put(key, frame)
             return frame
 
         # Fallback 2: Direct ffmpeg extraction into temporary scrub cache
         frame = _extract_fallback_frame(video_path, target)
         if frame is not None and getattr(frame, "size", 0) > 0:
+            last_decoded_frame_idx = target
             _cache_put(key, frame)
             return frame
 
@@ -684,7 +706,7 @@ def get_video_frame(video_path: str, frame_number: int = 0) -> Optional[Frame]:
 
 
 def release_video():
-    global current_capture, current_next_pos, current_video_path, current_frame_total
+    global current_capture, current_next_pos, current_video_path, current_frame_total, last_decoded_frame_idx
 
     with _capture_lock:
         if current_capture is not None:
@@ -692,6 +714,7 @@ def release_video():
             current_capture = None
         _release_pipe()
         current_next_pos = None
+        last_decoded_frame_idx = None
         # Clear the identity too, so the next request re-opens instead of matching a
         # path whose capture is gone (and re-reads the frame count, which was stale).
         current_video_path = None

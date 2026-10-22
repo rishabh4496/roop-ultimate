@@ -1073,7 +1073,7 @@ def _detect_faces_raw(frame, det_size=None, det_thresh=None, aux=True, unclamped
     # not a license to change the spatial resolution.  Its anchor priors and
     # mixed-precision engine are calibrated at 640x640; feeding the configured
     # 512 size produced valid-looking tensors but zero confidence scores.
-    if engine == 'retinaface_r50':
+    if engine in ('retinaface_r50', 'retinaface', 'scrfd'):
         eff_size = 640
     eff_thresh = (det_thresh if det_thresh is not None
                   else getattr(roop.globals, 'face_detector_threshold', 0.60))
@@ -1085,8 +1085,11 @@ def _detect_faces_raw(frame, det_size=None, det_thresh=None, aux=True, unclamped
         # Temporarily override detection size and threshold on the underlying model if requested
         orig_input_size = getattr(fa.det_model, 'input_size', None)
         orig_det_thresh = getattr(fa.det_model, 'det_thresh', None)
-        if det_size is not None and orig_input_size is not None:
-            fa.det_model.input_size = (det_size, det_size)
+        if orig_input_size is not None:
+            if engine in ('retinaface_r50', 'retinaface', 'scrfd'):
+                fa.det_model.input_size = (640, 640)
+            elif det_size is not None:
+                fa.det_model.input_size = (det_size, det_size)
         if det_thresh is not None and orig_det_thresh is not None:
             fa.det_model.det_thresh = det_thresh
             
@@ -1112,7 +1115,7 @@ def _detect_faces_raw(frame, det_size=None, det_thresh=None, aux=True, unclamped
             else:
                 faces = fa.get(frame)
         finally:
-            if det_size is not None and orig_input_size is not None:
+            if orig_input_size is not None and (det_size is not None or engine in ('retinaface_r50', 'retinaface', 'scrfd')):
                 fa.det_model.input_size = orig_input_size
             if det_thresh is not None and orig_det_thresh is not None:
                 fa.det_model.det_thresh = orig_det_thresh

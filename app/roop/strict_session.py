@@ -301,6 +301,16 @@ def create_strictly_accelerated_session(
               % (label, TENSORRT_EP), flush=True)
         chain = [p for p in chain if _name(p) != TENSORRT_EP]
 
+    try:
+        from roop.trt_native_runner import is_native_loaded
+        if is_native_loaded(label) or (not isinstance(model, bytes) and is_native_loaded(model)):
+            if any(_name(p) == TENSORRT_EP for p in chain):
+                print("[Session] %s: already loaded in native TensorRT runner; excluding ORT %s"
+                      % (label, TENSORRT_EP), flush=True)
+                chain = [p for p in chain if _name(p) != TENSORRT_EP]
+    except Exception as _exc:
+        _swallowed("roop/strict_session.py:is_native_loaded", _exc, "native check fallback")
+
     if sess_options is None:
         from roop.utilities import get_onnx_session_options
         sess_options = get_onnx_session_options()
@@ -313,7 +323,11 @@ def create_strictly_accelerated_session(
     # silent step down in here would hand them a session on a provider they did
     # not ask for and leave that state wrong. Callers that DO want a ladder use
     # backend_manager.build_session_with_fallback.
-    session = ort.InferenceSession(model, sess_options, providers=chain)
+    from contextlib import nullcontext
+    from roop.trt_build_guard import around_trt_build
+    _guard = around_trt_build("session:" + label) if any(_name(p) == TENSORRT_EP for p in chain) else nullcontext()
+    with _guard:
+        session = ort.InferenceSession(model, sess_options, providers=chain)
 
     # ORT also fails without raising: it drops the GPU provider and returns a
     # working CPU session. Ask the built session. TensorRT -> CUDA is the one

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import os
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:False,max_split_size_mb:128"
 import socket
 import sys
 import time

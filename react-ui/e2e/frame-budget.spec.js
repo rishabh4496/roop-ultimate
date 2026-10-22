@@ -29,12 +29,18 @@ const WINDOW_MS = 4000;
 //   lens   600 pointermoves: 2.1 commits/s since the glass is moved by an rAF writer (InteractivePreview.jsx); it was 58/s
 //          when the position was React state. This is the guard for that fix: the old code fails it by 5x.
 // NOT asserted: brush painting (11% of frames over 20 ms, but only ~45 ms of the main thread's time is script: software
-// canvas raster in headless, not something a main-thread change moves) and the timeline drag (about 94 commits/s of the
-// panel that owns the playhead; frames stay at 59 fps here). Both are reported so a change shows up, and left open.
+// canvas raster in headless, not something a main-thread change moves). Brush painting is reported so a change shows
+// up, and left open.
+//   drag   240 pointermoves: 87-92 commits/s before 2026-10-23 (the playhead's `setFrame` AND the hover line's
+//          `setHoverFrame` each re-rendered the 4,000-line panel at pointer rate), 33-35/s after: the playhead and its
+//          timecode move through Timeline's imperative API, `frame` commits every 100 ms, hover is skipped mid-drag.
+//          Script time in the window 738 -> 376 ms. What is left is the preview's own request lifecycle (a new frame
+//          arriving is a legitimate commit). The ceiling is 2x under the old code so a return of either fails it.
 const BUDGET = {
   idle: { over20: 5, longTasks: 0, commitsPerSec: 6 },
   job: { over20: 5, longTasks: 0, commitsPerSec: 10 },
   lens: { commitsPerSec: 10 },
+  drag: { commitsPerSec: 48 },
 };
 
 function expectWithin(r, budget) {
@@ -189,7 +195,7 @@ test('timeline drag', async ({ page }) => {
   const b = await track.boundingBox();
   const frameInput = page.getByLabel('Frame number');
   const before = await frameInput.inputValue();
-  await measure(page, 'timeline drag, 240 pointermoves', async () => {
+  const r = await measure(page, 'timeline drag, 240 pointermoves', async () => {
     await page.mouse.move(b.x + b.width * 0.1, b.y + b.height / 2);
     await page.mouse.down();
     for (let i = 0; i <= 240; i++) await page.mouse.move(b.x + b.width * (0.1 + 0.8 * (i / 240)), b.y + b.height / 2);
@@ -199,6 +205,18 @@ test('timeline drag', async ({ page }) => {
   const after = await frameInput.inputValue();
   test.info().annotations.push({ type: 'perf', description: `playhead frame ${before} -> ${after}` });
   expect(after, 'the drag must have moved the playhead, or the measurement above is of nothing').not.toBe(before);
+  expectWithin(r, BUDGET.drag);
+
+  // The playhead is moved by the DOM between commits, so prove the two agree once the pointer is released:
+  // the committed frame must be the one under the pointer (90% along the track), and the playhead line
+  // must be drawn at that frame's position -- not at the last frame the 100 ms commit clock happened to see.
+  const max = Number(await frameInput.getAttribute('max'));
+  const expected = 1 + 0.9 * (max - 1);
+  expect(Math.abs(Number(after) - expected), `released at 90% of ${max} frames: expected ~${expected.toFixed(0)}, got ${after}`)
+    .toBeLessThanOrEqual(Math.max(2, max * 0.01));
+  const left = await track.locator('div.z-30.pointer-events-none').first().evaluate((el) => parseFloat(el.style.left));
+  const drawn = (Number(after) - 1) / Math.max(1, max - 1) * 100;
+  expect(Math.abs(left - drawn), `playhead drawn at ${left}%, committed frame ${after} is at ${drawn.toFixed(2)}%`).toBeLessThanOrEqual(0.5);
 });
 
 // The same budget with the 3-step Pipeline Pill on screen, measured AGAINST A CONTROL.

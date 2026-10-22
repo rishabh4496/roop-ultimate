@@ -63,7 +63,7 @@ class TensorRTInferenceSession:
 
         trt_options: Dict[str, Any] = {
             "device_id": device_id,
-            "trt_max_workspace_size": workspace_size_gb * 1024 * 1024 * 1024,
+            "trt_max_workspace_size": min(int(workspace_size_gb * 1024 * 1024 * 1024), 536870912) if workspace_size_gb > 0 else 536870912,
             "trt_fp16_enable": enable_fp16,
             "trt_engine_cache_enable": True,
             "trt_engine_cache_path": self.cache_dir,
@@ -80,7 +80,7 @@ class TensorRTInferenceSession:
 
         cuda_options: Dict[str, Any] = {
             "device_id": device_id,
-            "arena_extend_strategy": "kNextPowerOfTwo",
+            "arena_extend_strategy": "kSameAsRequested",
             "cudnn_conv_algo_search": "EXHAUSTIVE",
             "do_copy_in_default_stream": True,
         }
@@ -108,7 +108,9 @@ class TensorRTInferenceSession:
 
         _prepare_runtime()
         logger.info("Initializing session for %s with TensorRT EP...", os.path.basename(model_path))
-        self.session = ort.InferenceSession(self.model_path, sess_options=sess_options, providers=providers)
+        from roop.trt_build_guard import around_trt_build
+        with around_trt_build("trt_engine:" + os.path.basename(model_path)):
+            self.session = ort.InferenceSession(self.model_path, sess_options=sess_options, providers=providers)
         self.active_providers = self.session.get_providers()
         logger.info("Session bound with providers: %s", self.active_providers)
         if self.active_providers[:1] != [_TRT_EP]:

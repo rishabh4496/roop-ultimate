@@ -9,6 +9,7 @@ The Gradio UI (app/ui/) is the frozen legacy/backup UI and is NOT touched here.
 from roop.degrade import swallowed as _swallowed
 
 import os
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:False,max_split_size_mb:128"
 import io
 import copy
 import collections
@@ -52,7 +53,7 @@ import roop.globals as roop_globals
 from roop import utilities as util
 from roop.face_util import extract_face_images, get_all_faces
 from roop.FaceSet import FaceSet
-from roop.capturer import get_video_frame, get_video_frame_total, get_image_frame
+from roop.capturer import get_video_frame, get_video_frame_total, get_image_frame, FrameSuperseded
 from roop.ProcessEntry import ProcessEntry
 from roop import capture_seed
 from roop import segment_writer
@@ -2655,20 +2656,26 @@ def _encode_frame(frame_img, width: int, fmt: str, quality: int = 90):
     return buf.tobytes(), media
 
 
-def _read_target_frame(filename: str, frame: int):
+def _read_target_frame(filename: str, frame: int, cancel=None):
     if util.is_video(filename) or filename.lower().endswith("gif") or util.is_animated_webp(filename):
+        # `cancel` is passed only when there is one: callers (and tests) that replace
+        # get_video_frame with a two-argument stand-in keep working.
+        if cancel is not None:
+            return get_video_frame(filename, frame, cancel=cancel)
         return get_video_frame(filename, frame)
     return get_image_frame(filename)
 
 
-def _still(filename: str, frame: int, width: int, fmt: str, quality: int):
+def _still(filename: str, frame: int, width: int, fmt: str, quality: int, cancel=None):
     """One encoded still, from cache when we have it. Returns (tag, data, media);
-    data is None when the frame could not be read."""
+    data is None when the frame could not be read. Raises FrameSuperseded when
+    `cancel` says a newer frame was asked for while this one waited its turn."""
     tag = _frame_etag(filename, frame, width, fmt, quality)
     hit = _encoded_get(tag)
     if hit is not None:
         return tag, hit[0], hit[1]
-    frame_img = _read_target_frame(filename, frame)
+    frame_img = (_read_target_frame(filename, frame, cancel) if cancel is not None
+                 else _read_target_frame(filename, frame))
     if frame_img is None:
         return tag, None, None
     data, media = _encode_frame(frame_img, width, fmt, quality)
@@ -2677,9 +2684,61 @@ def _still(filename: str, frame: int, width: int, fmt: str, quality: int):
     return tag, data, media
 
 
+# ── Scrub-time previews ──────────────────────────────────────────────────────
+# While the playhead is being dragged the client asks for `scrubbing=1`: a proxy
+# frame (at most 720 px tall) as a binary JPEG at quality 85. The frame it settles
+# on is asked for again without the flag, at full size. Both ride the same
+# cache-by-ETag path as every other still; the flag only changes the width and the
+# quality that go into the key.
+_SCRUB_MAX_HEIGHT = 720
+_SCRUB_JPEG_QUALITY = 85
+
+# Newest `frame_seq_id` seen per target index, and when. The client numbers its
+# frame requests (wall-clock ms, so two tabs order correctly); a request that
+# reaches the decoder after a NEWER one for the same target has arrived is dead
+# work -- the client has aborted it and nobody will look at the picture -- so it is
+# refused instead of decoded. An entry older than _SEQ_FRESH_S is ignored: a
+# client clock that stepped backwards must not be able to wedge previews.
+_SEQ_FRESH_S = 2.0
+_frame_seq_lock = threading.Lock()
+_frame_seq_latest = {}      # target index -> (newest seq, time.monotonic() when seen)
+
+
+def _note_frame_seq(index: int, seq: int) -> None:
+    if seq < 0:
+        return
+    with _frame_seq_lock:
+        seen = _frame_seq_latest.get(index)
+        if seen is None or seq >= seen[0] or time.monotonic() - seen[1] > _SEQ_FRESH_S:
+            _frame_seq_latest[index] = (seq, time.monotonic())
+
+
+def _frame_seq_superseded(index: int, seq: int) -> bool:
+    """True when a newer frame request for this target has been seen."""
+    if seq < 0:
+        return False
+    with _frame_seq_lock:
+        seen = _frame_seq_latest.get(index)
+    return seen is not None and seen[0] > seq and time.monotonic() - seen[1] <= _SEQ_FRESH_S
+
+
+def _scrub_width(filename: str, width: int) -> int:
+    """Width that keeps a scrub proxy at most _SCRUB_MAX_HEIGHT tall, never larger than a
+    width the caller asked for. 0 (no downscale) when the source is already small enough."""
+    if not util.is_video(filename):
+        return width
+    from roop.capturer import _probe_video
+    info = _probe_video(filename)
+    if not info or not info.get("w") or not info.get("h") or info["h"] <= _SCRUB_MAX_HEIGHT:
+        return width
+    cap = max(2, round(_SCRUB_MAX_HEIGHT * info["w"] / info["h"]))
+    return min(width, cap) if width and width > 0 else cap
+
+
 @app.get("/api/target/preview")
 def target_preview(request: Request, index: int = 0, frame: int = 1, width: int = 0,
-                   fmt: str = "jpg", quality: int = 90):
+                   fmt: str = "jpg", quality: int = 90, scrubbing: bool = False,
+                   frame_seq_id: int = -1):
     """Return the raw target frame (no swap).
 
     Defaults to JPEG — PNG encode of an HD/4K frame is 5-10x slower and much
@@ -2697,6 +2756,11 @@ def target_preview(request: Request, index: int = 0, frame: int = 1, width: int 
         return JSONResponse(status_code=404, content={"message": "no target"})
     filename = list_files_process[index].filename
     quality = max(30, min(int(quality), 100))
+    if scrubbing:
+        # Proxy frame for a drag: JPEG at 85, at most 720 px tall (see _SCRUB_MAX_HEIGHT).
+        fmt, quality = "jpg", _SCRUB_JPEG_QUALITY
+        width = _scrub_width(filename, width)
+    _note_frame_seq(index, frame_seq_id)
 
     etag = _frame_etag(filename, frame, width, fmt, quality)
     # `no-cache` (revalidate, don't blind-trust) rather than a max-age: the list
@@ -2710,7 +2774,13 @@ def target_preview(request: Request, index: int = 0, frame: int = 1, width: int 
     busy = _preview_busy_response(cached=_encoded_get(etag) is not None)
     if busy is not None:
         return busy
-    _, data, media = _still(filename, frame, width, fmt, quality)
+    superseded = (lambda: _frame_seq_superseded(index, frame_seq_id)) if frame_seq_id >= 0 else None
+    if superseded is not None and superseded():
+        return JSONResponse(status_code=409, content={"superseded": True, "message": "a newer frame was requested"})
+    try:
+        _, data, media = _still(filename, frame, width, fmt, quality, superseded)
+    except FrameSuperseded:
+        return JSONResponse(status_code=409, content={"superseded": True, "message": "a newer frame was requested"})
     if data is None:
         return JSONResponse(status_code=404, content={"message": "no frame"})
     if util.is_video(filename):

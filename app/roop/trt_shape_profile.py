@@ -112,10 +112,19 @@ class InputSpec:
 # error into a render with no faces (the yoloface failure of 2026-08-24).
 _STATIC_OVERRIDES: Dict[str, Tuple[int, ...]] = {
     "retinaface_r50": (1, 3, 640, 640),
+    "retinaface": (1, 3, 640, 640),
+    "scrfd": (1, 3, 640, 640),
+    "det_10g": (1, 3, 640, 640),
+    "det_500m": (1, 3, 640, 640),
+    "det_2.5g": (1, 3, 640, 640),
+    "scrfd_2.5g_kps": (1, 3, 640, 640),
+    "scrfd_10g_bnkps": (1, 3, 640, 640),
+    "scrfd_500m_bnkps": (1, 3, 640, 640),
+    "scrfd_10g_kps": (1, 3, 640, 640),
 }
 
 # Whether the overrides apply when ROOP_TRT_STATIC_PROFILE is unset.
-_STATIC_PROFILE_DEFAULT = False
+_STATIC_PROFILE_DEFAULT = True
 
 
 @dataclass(frozen=True)

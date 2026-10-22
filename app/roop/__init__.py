@@ -1,4 +1,5 @@
 import os
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:False,max_split_size_mb:128"
 import pkgutil
 
 # Extend package path so repo root 'roop' (including benchmark) is resolved when importing from app/roop

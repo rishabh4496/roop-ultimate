@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { decodeFrame, releaseFrame } from './frameDecoder';
-import { busyDelay, createFailureTracker, isAbort } from './retryPolicy';
+import { busyDelay, createFailureTracker, isSuperseding } from './retryPolicy';
 
 // ── One frame request at a time, throttled, and cancelled the moment it is
 //    superseded ────────────────────────────────────────────────────────────
@@ -52,10 +52,23 @@ import { busyDelay, createFailureTracker, isAbort } from './retryPolicy';
 
 const DEFAULT_THROTTLE_MS = 150;
 
+// ── Sequence ids: the server can drop what the client has abandoned ───────
+//
+// Aborting the fetch frees the CLIENT, but a request already queued behind the single decoder on the
+// server still runs its seek. With `sequence: true` every request carries `frame_seq_id`, a number that
+// only goes up (wall-clock milliseconds, so two tabs order correctly too), and the backend refuses with
+// `409 {superseded: true}`, without decoding, any request that reaches it after a newer one for the same
+// target (api._frame_seq_superseded). That 409 is, like an abort, not a failure (retryPolicy.isSuperseded).
+// The wanted URL (`src`) is untouched -- failures, staleness and the cache key are all by `src` -- the id
+// is added only to the URL that goes on the wire.
+const withSequence = (src, seq) => `${src}${src.includes('?') ? '&' : '?'}frame_seq_id=${seq}`;
+
 export default function useThrottledFrameRequest(url, {
   throttleMs = DEFAULT_THROTTLE_MS,
   /** Pass false to hold the current frame and issue nothing (e.g. tab hidden). */
   enabled = true,
+  /** Number each request so the server can drop one that a newer request has overtaken. */
+  sequence = false,
 } = {}) {
   // The decoded frame is NOT state — handing an ImageBitmap to React would put
   // it in the render path. It goes to the canvas through this ref-like box,
@@ -81,6 +94,9 @@ export default function useThrottledFrameRequest(url, {
   // Earliest time the next attempt may start, when the last one failed.
   const notBeforeRef = useRef(0);
   const drainRef = useRef(() => {});
+  const sequenceRef = useRef(sequence);
+  sequenceRef.current = sequence;
+  const lastSeqRef = useRef(0);
 
   // Re-arm on mount, not just disarm on unmount: StrictMode mounts, cleans up
   // and mounts again with these same refs, so a cleanup-only version would
@@ -96,7 +112,14 @@ export default function useThrottledFrameRequest(url, {
     inFlightRef.current = { ctrl, src };
     setPending(true);
 
-    decodeFrame(src, { signal: ctrl.signal }).then((img) => {
+    let wire = src;
+    if (sequenceRef.current) {
+      // Strictly increasing within this tab even if the clock stalls or two requests share a millisecond.
+      lastSeqRef.current = Math.max(lastSeqRef.current + 1, Math.floor(performance.timeOrigin + performance.now()));
+      wire = withSequence(src, lastSeqRef.current);
+    }
+
+    decodeFrame(wire, { signal: ctrl.signal }).then((img) => {
       if (!aliveRef.current || ctrl.signal.aborted) { releaseFrame(img); return; }
       failuresRef.current.ok(src);
       notBeforeRef.current = 0;
@@ -111,7 +134,8 @@ export default function useThrottledFrameRequest(url, {
       // AbortError is the normal outcome for every frame the user swept past —
       // not a failure, and not counted. A genuine failure leaves the previous
       // frame up rather than blanking, and schedules the next attempt later.
-      if (isAbort(err) || ctrl.signal.aborted || !aliveRef.current) return;
+      // A 409 "superseded" is the server's version of the same thing: a newer request overtook this one.
+      if (isSuperseding(err) || ctrl.signal.aborted || !aliveRef.current) return;
       if (wantedRef.current !== src) return;      // the user has moved on
       // "Busy" (the pre-pass has the GPU) is the backend asking for time, not a failure: wait as long
       // as it said, keep the frame on screen and keep the failure budget for real errors.

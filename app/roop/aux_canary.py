@@ -429,8 +429,10 @@ def check_session(stem: str, session, model_file: str,
     check builds a reference engine and can take minutes with no frame counter to show for it.
     """
     from roop import pipeline_status
+    from roop.trt_build_guard import around_trt_build
     with pipeline_status.stage(pipeline_status.STAGE_RUNNING_CANARY, model=stem,
-                               precision=pipeline_status.session_precision(session)):
+                               precision=pipeline_status.session_precision(session)), \
+            around_trt_build("canary:" + stem):
         return _check_session(stem, session, model_file, reference_factory)
 
 

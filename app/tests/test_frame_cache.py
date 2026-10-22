@@ -191,6 +191,29 @@ class FrameDecodingTest(unittest.TestCase):
         entries_after, _ = frame_cache_stats()
         self.assertEqual(entries_before, entries_after)
 
+    def test_cache_max_entries_bounded_at_64(self):
+        """Even with an unlimited byte budget, the cache must not exceed 64 entries."""
+        os.environ["ROOP_FRAME_CACHE_MB"] = "1024"
+        clear_frame_cache()
+        for f in range(1, FRAMES + 1):  # FRAMES is 72
+            get_video_frame(self.video, f)
+        entries, _ = frame_cache_stats()
+        self.assertLessEqual(entries, 64)
+        self.assertEqual(entries, 64)
+
+    def test_last_decoded_frame_idx_tracked(self):
+        """The decoder tracks last_decoded_frame_idx on persistent preview reader."""
+        os.environ["ROOP_FRAME_CACHE_MB"] = "0"
+        release_video()
+        self.assertIsNone(capturer.last_decoded_frame_idx)
+        get_video_frame(self.video, 5)
+        # target is 0-based, so frame 5 is index 4
+        self.assertEqual(capturer.last_decoded_frame_idx, 4)
+        get_video_frame(self.video, 10)
+        self.assertEqual(capturer.last_decoded_frame_idx, 9)
+        release_video()
+        self.assertIsNone(capturer.last_decoded_frame_idx)
+
 
 if __name__ == "__main__":
     unittest.main()

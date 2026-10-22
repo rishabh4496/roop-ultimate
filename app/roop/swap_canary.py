@@ -238,8 +238,10 @@ def check_engine(session: Any,
     frozen "Starting..." on ``/ws/telemetry``.
     """
     from roop import pipeline_status
+    from roop.trt_build_guard import around_trt_build
     with pipeline_status.stage(pipeline_status.STAGE_RUNNING_CANARY, model=tag,
-                               precision=pipeline_status.session_precision(session)):
+                               precision=pipeline_status.session_precision(session)), \
+            around_trt_build("canary:" + tag):
         return _check_engine(session, reference_factory, tag, emap, floor)
 
 

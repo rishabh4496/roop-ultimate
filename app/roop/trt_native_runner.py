@@ -1,3 +1,4 @@
+from roop.degrade import swallowed as _swallowed
 """Run a natively built TensorRT engine (``trt_graph_surgery.build_native_engine`` / ``tools/restorer_native_engine.py``).
 
 ONNX Runtime's TensorRT provider cannot take a per-layer precision constraint (its only hook is the LayerNorm
@@ -11,12 +12,94 @@ import os
 from typing import Optional
 
 
+_NATIVE_LOADED_MODELS: set[str] = set()
+
+
+def _normalize_name(name: str) -> str:
+    n = name.lower().strip()
+    for prefix in ("enhancer:", "swap:", "detector:", "mask:", "session:", "model:"):
+        if n.startswith(prefix):
+            n = n[len(prefix):]
+    n = n.replace("++", "_plus_plus").replace("+", "_plus").replace("-", "_").replace(" ", "_")
+    return n
+
+
+def _model_keys(model_name_or_path: str) -> set[str]:
+    keys: set[str] = set()
+    s = str(model_name_or_path).strip()
+    if not s:
+        return keys
+
+    base = os.path.basename(s)
+    stem = os.path.splitext(base)[0].lower()
+    keys.add(s.lower())
+    keys.add(base.lower())
+    keys.add(stem)
+
+    norm_stem = _normalize_name(stem)
+    keys.add(norm_stem)
+    norm_base = _normalize_name(base)
+    keys.add(norm_base)
+
+    # Check sidecar JSON if it's an engine path or file
+    json_path = None
+    if s.endswith(".engine") or os.path.exists(s):
+        candidate_json = os.path.splitext(s)[0] + ".json"
+        if os.path.exists(candidate_json):
+            json_path = candidate_json
+
+    if json_path and os.path.isfile(json_path):
+        try:
+            import json
+            with open(json_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                underlying = data.get("model")
+                if underlying:
+                    u_stem = os.path.splitext(os.path.basename(str(underlying)))[0].lower()
+                    keys.add(u_stem)
+                    keys.add(_normalize_name(u_stem))
+        except Exception as _exc:
+            _swallowed("roop/trt_native_runner.py:60", _exc, "sidecar json read fallback")
+
+    # Directory components (e.g. .../restoreformer_plus_plus/engines/...)
+    parts = [p.lower() for p in os.path.normpath(s).split(os.sep) if p]
+    for part in parts:
+        keys.add(part)
+        keys.add(_normalize_name(part))
+
+    # Canonical aliases mapping
+    if any("restoreformer" in k for k in keys):
+        keys.update({
+            "restoreformer",
+            "restoreformer++",
+            "restoreformer_plus_plus",
+            "restoreformer_single_output",
+            "restoreformerplusplus",
+        })
+
+    return keys
+
+
+def register_native_loaded(model_name_or_path: str) -> None:
+    _NATIVE_LOADED_MODELS.update(_model_keys(model_name_or_path))
+
+
+def unregister_native_loaded(model_name_or_path: str) -> None:
+    _NATIVE_LOADED_MODELS.difference_update(_model_keys(model_name_or_path))
+
+
+def is_native_loaded(model_name_or_path: str) -> bool:
+    query_keys = _model_keys(model_name_or_path)
+    return bool(query_keys & _NATIVE_LOADED_MODELS)
+
+
 class NativeEngine:
     def __init__(self, engine_path: str, device_id: int = 0, primary_output: Optional[str] = None):
         import tensorrt as trt
         import torch
         self._trt, self._torch = trt, torch
         self.path = os.path.abspath(engine_path)
+        register_native_loaded(self.path)
         if primary_output is None:      # the builder records which output is the real one next to the engine
             try:
                 import json
@@ -96,12 +179,13 @@ class NativeEngine:
         return (time.perf_counter() - t0) / iters * 1e3
 
     def close(self):
+        unregister_native_loaded(self.path)
         self.context = None
         self.engine = None
         self._x = self._y = None
 
 
-__all__ = ["NativeEngine"]
+__all__ = ["NativeEngine", "is_native_loaded", "register_native_loaded", "unregister_native_loaded"]
 
 
 # ── an onnxruntime-shaped session over a NativeEngine ───────────────────────────────────────────────────────────────
@@ -167,6 +251,10 @@ class NativeSession:
 
     def run_with_iobinding(self, binding):
         binding._y = self.engine.run(binding._x.astype("float32", copy=False).reshape(self.engine.in_shape))
+
+    def close(self):
+        if self.engine is not None:
+            self.engine.close()
 
 
 __all__ += ["NativeSession"]

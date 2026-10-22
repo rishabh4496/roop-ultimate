@@ -19,7 +19,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import {
-  RETRY_DELAYS_MS, MAX_RETRIES, MAX_FAILURES, backoffDelay, createFailureTracker, isAbort,
+  RETRY_DELAYS_MS, MAX_RETRIES, MAX_FAILURES, backoffDelay, createFailureTracker, isAbort, isSuperseded, isSuperseding,
   BUSY_MIN_MS, BUSY_MAX_MS, BUSY_DEFAULT_MS, busyRetryMs, httpFailure, isBusy, busyDelay,
 } from '../src/components/faceswap/retryPolicy.js';
 
@@ -92,6 +92,14 @@ console.log('── AbortError ────────────────�
     !isAbort(new Error('HTTP 500')) && !isAbort(new Error('decode failed')) && !isAbort(null) && !isAbort(undefined));
 }
 
+console.log('── 409 superseded (frame_seq_id) ──────────────────────────');
+{
+  ok('the backend\'s 409 is "superseded", not a failure', isSuperseded(httpFailure(409)));
+  ok('...as is an abort, under the combined test', isSuperseding(new DOMException('aborted', 'AbortError')) && isSuperseding(httpFailure(409)));
+  ok('500, 404, 503-busy and null are NOT superseded (they still spend the budget or wait)',
+    [500, 404, 503].every((s) => !isSuperseded(httpFailure(s))) && !isSuperseded(httpFailure(503, { busy: true })) && !isSuperseded(null) && !isSuperseding(new Error('decode failed')));
+}
+
 console.log('── busy backend (pre-pass burst) ──────────────────────────');
 {
   ok('a 503 hint in the body wins and is used as given',
@@ -127,7 +135,15 @@ console.log('── wiring ─────────────────�
   ok('useThrottledFrameRequest counts failures through the tracker',
     hook.includes("from './retryPolicy'") && hook.includes('failuresRef.current.fail(src)'));
   ok('...never counts an abort or a superseded URL',
-    hook.includes('isAbort(err) || ctrl.signal.aborted') && hook.includes('wantedRef.current !== src'));
+    hook.includes('isSuperseding(err) || ctrl.signal.aborted') && hook.includes('wantedRef.current !== src'));
+  ok('...a sequenced request carries frame_seq_id on the wire only, strictly increasing, and failures stay keyed by src',
+    hook.includes('const withSequence') && hook.includes('wire = withSequence(src, lastSeqRef.current)')
+    && hook.includes('lastSeqRef.current + 1') && hook.includes('decodeFrame(wire,') && hook.includes('failuresRef.current.fail(src)'));
+  ok('...and FaceSwap opts in, asking for the scrub proxy while dragging',
+    (() => {
+      const fs = readFileSync(join(here, '..', 'src', 'components', 'FaceSwap.jsx'), 'utf8').replace(/\r\n/g, '\n');
+      return fs.includes('sequence: true') && fs.includes("'&width=960&scrubbing=1'");
+    })());
   ok('...gives up when exhausted instead of draining again',
     hook.includes('failuresRef.current.exhausted(want)'));
   ok('...waits out the backoff in drain()', hook.includes('notBeforeRef.current - now'));

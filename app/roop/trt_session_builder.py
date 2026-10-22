@@ -457,7 +457,7 @@ class TensorRTSessionConfig:
                 "trt_timing_cache_path": str(cache_dir),
                 "trt_fp16_enable": bool(self.fp16),
                 "trt_builder_optimization_level": int(self.builder_optimization_level),
-                "trt_max_workspace_size": int(self.resolved_workspace()),
+                "trt_max_workspace_size": min(int(self.resolved_workspace()), 536870912),
                 "trt_max_partition_iterations": 2000,
                 "trt_min_subgraph_size": 1,
                 "trt_force_sequential_engine_build": True,
@@ -542,7 +542,9 @@ def build_tensorrt_session(
     options.add_session_config_entry("session.disable_cpu_ep_fallback", "1")
     providers = [("TensorrtExecutionProvider", settings.provider_options(path))]
     try:
-        session = ort.InferenceSession(str(path), sess_options=options, providers=providers)
+        from roop.trt_build_guard import around_trt_build
+        with around_trt_build("session:" + path.stem):
+            session = ort.InferenceSession(str(path), sess_options=options, providers=providers)
     except Exception as error:
         raise TensorRTSessionError(
             f"TensorRT session construction failed for {path}; no fallback was attempted: {error}"

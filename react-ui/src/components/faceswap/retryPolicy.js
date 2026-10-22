@@ -39,6 +39,17 @@ export function backoffDelay(failures) {
 export const isAbort = (err) => err?.name === 'AbortError';
 
 /**
+ * True for the backend's `409 {superseded: true}`: this request carried a `frame_seq_id` and a NEWER
+ * one for the same target reached the server first, so it was refused without a decode
+ * (/api/target/preview). The newer request is the one that matters; the older one failed nothing.
+ * Like an abort, it is never counted against the failure budget. (On that endpoint 409 means nothing else.)
+ */
+export const isSuperseded = (err) => !!err && err.status === 409;
+
+/** Both ways a request can end because the user moved on, neither of which is a failure. */
+export const isSuperseding = (err) => isAbort(err) || isSuperseded(err);
+
+/**
  * Consecutive-failure bookkeeping for ONE thing being asked for at a time (a
  * frame URL, a playback chunk). The count belongs to a key: asking for a
  * different key starts from zero, which is what makes "the user moved on" and
