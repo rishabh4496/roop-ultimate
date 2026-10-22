@@ -1030,8 +1030,17 @@ class NvZeroCopyWriter:
 
     def __init__(self, path: str, width: int, height: int, fps: float, *, codec: str = "h264",
                  bitrate: Optional[int] = None, gop: Optional[int] = None, preset: str = "P4", gpu_id: int = 0,
-                 matrix: Optional[Tuple[float, float]] = None, tag: str = "encode") -> None:
+                 matrix: Optional[Tuple[float, float]] = None, tag: str = "encode",
+                 quality: Optional[Any] = None) -> None:
         nvc, torch = _load_nvc()
+        # Opt-in multipass / spatial AQ / temporal AQ (roop.nvenc_quality; default OFF, see its docstring for the
+        # measurements and for why only these kwarg spellings count). `quality` overrides the environment.
+        from roop import nvenc_quality
+        self.quality = quality if quality is not None else nvenc_quality.options()
+        bundle_preset = nvenc_quality.preset_override(self.quality)
+        if bundle_preset:
+            preset = bundle_preset.upper()
+        preset = str(preset).upper()                       # CreateEncoder spells presets P1..P7
         self._nvc, self._torch = nvc, torch
         codec = codec.lower()
         if codec not in _BITS_PER_PIXEL:
@@ -1055,7 +1064,8 @@ class NvZeroCopyWriter:
         try:
             self._enc = nvc.CreateEncoder(self.width, self.height, "NV12", False, codec=codec, gpu_id=int(gpu_id),
                                           fps=int(round(float(fps))), gop=int(gop or max(1, round(float(fps)))),
-                                          preset=preset, rc="vbr", bitrate=bitrate, maxbitrate=bitrate * 2)
+                                          preset=preset, rc="vbr", bitrate=bitrate, maxbitrate=bitrate * 2,
+                                          **nvenc_quality.encoder_kwargs(self.quality))
             self._mux = nvc.FFmpegMuxer(
                 file_path=path, media_format=nvc.GetMediaFormat(path), codec=codec, width=self.width,
                 height=self.height, fps_num=self._fps_num, fps_den=self._fps_den, timebase_num=1,
@@ -1116,7 +1126,7 @@ class NvZeroCopyWriter:
                 self._enc = None
                 gc.collect()
         return {"path": self.path, "frames": self.frames_written, "packets": self.packets,
-                "backend": self.backend, "codec": self.codec}
+                "backend": self.backend, "codec": self.codec, "nvenc_quality": self.quality.label()}
 
     def finalize(self, destination: str, *, audio_source: Optional[str], trim_start: Optional[int] = None,
                  trim_end: Optional[int] = None, expected_frames: Optional[int] = None) -> Dict[str, Any]:

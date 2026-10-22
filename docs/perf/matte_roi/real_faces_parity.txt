@@ -1,0 +1,14 @@
+  check_for_updates()
+[probe] Love.mp4: 30 faces
+[probe] Weeds.mp4: 30 faces
+[probe] Monica Bellucci .mp4: 30 faces
+[probe] double/d1.mp4: 30 faces
+[probe] double/d4.mp4: 15 faces
+[probe] double/d6.mp4: 0 faces
+faces 135  canvas path taken 129/135
+max level difference: 1   differing pixels per face: median 0  p95 4  max 6   faces with any difference: 46
+  Love.mp4                  1280px wide  faces  30  max diff 1  max pixels 6
+  Weeds.mp4                 1280px wide  faces  30  max diff 1  max pixels 3
+  Monica Bellucci .mp4      1280px wide  faces  30  max diff 1  max pixels 1
+  double/d1.mp4             1920px wide  faces  30  max diff 1  max pixels 5
+  double/d4.mp4             1280px wide  faces  15  max diff 1  max pixels 1

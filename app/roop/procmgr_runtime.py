@@ -1170,7 +1170,9 @@ def audit_over_threshold(best_d, threshold):
 
 def _audit_reset():
     from roop import gpu_recovery as _gpu_recovery
+    from roop import grain_match as _grain_match
     _gpu_recovery.reset()
+    _grain_match.reset()
     _audit.clear()
     _audit_over.clear()
     _audit_det_miss.clear()
@@ -1316,6 +1318,9 @@ def _audit_report():
                 print(f"   {k.strip()}", flush=True)
     from roop import gpu_recovery as _gpu_recovery
     for _line in _gpu_recovery.summary_lines():
+        print(f"  {_line}", flush=True)
+    from roop import grain_match as _grain_match
+    for _line in _grain_match.summary_lines():
         print(f"  {_line}", flush=True)
     # The outcome check pastes the plate back over a swap it has already
     # counted, so a discarded face is a face that reached the output UNSWAPPED

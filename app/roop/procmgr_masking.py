@@ -19,6 +19,7 @@ import numpy as np
 
 import roop.globals
 from roop import mask_roi
+from roop import grain_match
 from roop.typing import Frame, Face
 from roop.face_util import clamp_cut_values, kps_pose_ratios
 from roop.nonfrontal import nonfrontal_score
@@ -55,6 +56,18 @@ _NO_HYST = os.environ.get('ROOP_NONFRONTAL_HYST', '1').strip().lower() in ('0', 
 # Same shape as temporal_compositing.warn_compositing_fallback.
 _MASK_WARN_SEEN = {}
 _MASK_WARN_LOCK = _threading.RLock()
+
+
+_PASTE_INTERP = {'cubic': cv2.INTER_CUBIC, 'lanczos4': cv2.INTER_LANCZOS4}
+
+
+def _paste_interp():
+    """Interpolation of the inverse warp that carries the swapped face back into the frame.
+
+    ``ROOP_PASTE_INTERP=lanczos4`` selects an 8x8 sinc kernel; anything else, including a typo, is the shipped bicubic
+    (a misspelling must not silently pick a different filter). See ``tests/test_paste_interp.py`` for what it changes.
+    """
+    return _PASTE_INTERP.get(os.environ.get('ROOP_PASTE_INTERP', 'cubic').strip().lower(), cv2.INTER_CUBIC)
 
 
 def _warn_once(key, message):
@@ -532,6 +545,87 @@ class MaskingMixin:
         blended_image += overlay
         return np.clip(blended_image, 0, 255).astype(np.uint8)
 
+    # ── Matte on the face's neighbourhood instead of the whole frame ─────────────────────────────────────────────────
+    # `paste_upscale` built its matte on a full-frame canvas: a zeroed uint8 frame, a full-frame warp of the ellipse, a
+    # second zeroed frame for the landmark hull, np.minimum, np.where over the frame, and a full-frame float32 divide
+    # (33 MB at 4K) -- to produce a matte that is non-zero over ~230 px. Measured (real paste_upscale, one 230 px face,
+    # cv2 on one thread, 2026-10-22): 15.5 ms at 720p, 25.8 at 1080p, 75.3 ms at 4K per face. `mask_roi` had already
+    # made the blur / erode / dilate themselves region-bounded; this removes the rest.
+    #
+    # The same functions run on a canvas that is the warped crop's bounding box grown by the widest thing in the chain
+    # (the feather: blend_px = mask_size * blend / 200, plus the 3x3 anti-alias), so every output pixel has the whole of
+    # its support inside the canvas (nothing non-zero is ever left outside it), and the frame's own 1-pixel border is
+    # zeroed only where the canvas touches it. If the matte still reaches a canvas edge that is not a frame edge, the
+    # result is thrown away and the full-frame path runs. ROOP_BLEND_ROI_MATTE=0 forces the full-frame path.
+    #
+    # NOT BIT-IDENTICAL, and that is cv2's doing, not the geometry's: warpAffine rounds its source coordinates in fixed
+    # point (1/1024 px, then 1/32 px for the interpolation weight), and translating the destination origin changes
+    # which side of a rounding boundary a few edge pixels fall on. Measured over 36 randomised faces (frame edges,
+    # rotation, scale, blend 0..100): 10 differ, by ONE level, at 4..29 matte-edge pixels, 2 pixels or fewer in the
+    # composited frame; the render-to-render pixel noise floor is 0.71/255 mean, 22/255 max (AGENTS.md).
+    # `tests/test_matte_roi.py` bounds it (max 1 level, <= 64 pixels).
+    #
+    # Only where nothing needs the matte in FRAME space: the temporal compositor (per-track matte state), a face-overlap
+    # region, a swap model's own mask, other faces to protect, the overlay, and the distance-transform edge mode.
+    _MATTE_ROI_GUARD = 4
+
+    def _matte_roi_eligible(self, region, mm_matte, temporal_compositor, target_face):
+        if os.environ.get('ROOP_BLEND_ROI_MATTE', '1').strip().lower() in ('0', 'false', 'no', 'off'):
+            return False
+        if region is not None or mm_matte is not None or self.options.show_face_area_overlay:
+            return False
+        if temporal_compositor is not None and getattr(temporal_compositor, 'enabled', False):
+            return False
+        if str(getattr(roop.globals, 'mask_edge_mode', 'gaussian') or 'gaussian').lower() == 'distance':
+            return False
+        frame_faces = getattr(self._tls, 'frame_faces', None)
+        if frame_faces and len(frame_faces) > 1 and target_face is not None:
+            return False
+        return True
+
+    def _matte_roi(self, ellipse, IM, frame_shape, face_landmarks, face_kps, mask_offsets):
+        """``(matte float32 0..1 on the canvas, canvas_x0, canvas_y0)`` or None to use the full-frame path."""
+        fh, fw = frame_shape[:2]
+        ch, cw = ellipse.shape[:2]
+        corners = np.array([[0, 0], [cw, 0], [cw, ch], [0, ch]], np.float64)
+        pts = corners @ np.asarray(IM, np.float64)[:, :2].T + np.asarray(IM, np.float64)[:, 2]
+        if not np.isfinite(pts).all():
+            return None
+        xmin, ymin = pts.min(0)
+        xmax, ymax = pts.max(0)
+        extent = float(np.sqrt(max(xmax - xmin, 1.0) * max(ymax - ymin, 1.0)))
+        blend = max(0.0, float(mask_offsets[4]))
+        margin = int(np.ceil(extent * blend / 200.0)) + 8            # widest reach of the chain, see blur_area
+        cx0, cy0 = max(0, int(np.floor(xmin)) - margin), max(0, int(np.floor(ymin)) - margin)
+        cx1, cy1 = min(fw, int(np.ceil(xmax)) + margin), min(fh, int(np.ceil(ymax)) + margin)
+        if cx1 <= cx0 or cy1 <= cy0 or (cx1 - cx0) * (cy1 - cy0) > 0.6 * fh * fw:
+            return None                                              # off-frame, or no saving: full-frame path
+        IMc = np.array(IM, np.float64)
+        IMc[0, 2] -= cx0
+        IMc[1, 2] -= cy0
+        canvas = cv2.warpAffine(ellipse, IMc, (cx1 - cx0, cy1 - cy0), flags=cv2.INTER_LINEAR, borderValue=0.0)
+        # the full-frame path zeroes the FRAME's border row/column; here only the sides the canvas shares with it
+        if cy0 == 0:
+            canvas[:1, :] = 0
+        if cy1 == fh:
+            canvas[-1:, :] = 0
+        if cx0 == 0:
+            canvas[:, :1] = 0
+        if cx1 == fw:
+            canvas[:, -1:] = 0
+        if face_landmarks is not None:
+            lm_mask = self.create_landmark_mask(face_landmarks, (cy1 - cy0, cx1 - cx0), mask_offsets[4],
+                                                kps=face_kps, origin=(cx0, cy0))
+            canvas = np.minimum(canvas, lm_mask)
+        canvas = self.blur_area(canvas, mask_offsets[4])
+        g = self._MATTE_ROI_GUARD
+        if ((cy0 > 0 and canvas[:g, :].any()) or (cy1 < fh and canvas[-g:, :].any())
+                or (cx0 > 0 and canvas[:, :g].any()) or (cx1 < fw and canvas[:, -g:].any())):
+            _warn_once('matte_roi_guard', '[Mask] the face matte reached the edge of its working canvas; '
+                       'this face used the full-frame path (exact, slower)')
+            return None
+        return canvas.astype(np.float32) / 255, cx0, cy0
+
     def paste_upscale(self, fake_face, upsk_face, M, target_img, scale_factor, mask_offsets, face_landmarks=None, face_kps=None, region=None, model_mask=None, model_mask_weight=0.0, inplace=False, target_face=None, appearance=None, temporal_compositor=None, track_id=None, frame_index=None, occlusion_score=0.0, motion=0.0):
         M_scale = M * scale_factor
         IM = cv2.invertAffineTransform(M_scale)
@@ -565,18 +659,27 @@ class MaskingMixin:
         mm_matte = self._model_mask_matte(model_mask, model_mask_weight,
                                           img_matte.shape, IM, target_img.shape)
 
-        img_matte = cv2.warpAffine(img_matte, IM, (target_img.shape[1], target_img.shape[0]), flags=cv2.INTER_LINEAR, borderValue=0.0)
-        img_matte[:1, :] = img_matte[-1:, :] = img_matte[:, :1] = img_matte[:, -1:] = 0
+        # The matte lives on a canvas that starts at frame position (mox, moy). On the fast path below that canvas is
+        # the face's neighbourhood; otherwise it is the whole frame at (0, 0), exactly as before.
+        mox = moy = 0
+        _canvas = None
+        if self._matte_roi_eligible(region, mm_matte, temporal_compositor, target_face):
+            _canvas = self._matte_roi(img_matte, IM, target_img.shape, face_landmarks, face_kps, mask_offsets)
+        if _canvas is not None:
+            img_matte, mox, moy = _canvas
+        else:
+            img_matte = cv2.warpAffine(img_matte, IM, (target_img.shape[1], target_img.shape[0]), flags=cv2.INTER_LINEAR, borderValue=0.0)
+            img_matte[:1, :] = img_matte[-1:, :] = img_matte[:, :1] = img_matte[:, -1:] = 0
 
-        # Constrain mask to actual face outline using landmark convex hull.
-        # For angled/profile faces this prevents the warped ellipse from covering
-        # background regions where the swap model put grey fill pixels.
-        if face_landmarks is not None:
-            lm_mask = self.create_landmark_mask(face_landmarks, target_img.shape, mask_offsets[4], kps=face_kps)
-            img_matte = np.minimum(img_matte, lm_mask)
+            # Constrain mask to actual face outline using landmark convex hull.
+            # For angled/profile faces this prevents the warped ellipse from covering
+            # background regions where the swap model put grey fill pixels.
+            if face_landmarks is not None:
+                lm_mask = self.create_landmark_mask(face_landmarks, target_img.shape, mask_offsets[4], kps=face_kps)
+                img_matte = np.minimum(img_matte, lm_mask)
 
-        img_matte = self.blur_area(img_matte, mask_offsets[4])
-        img_matte = img_matte.astype(np.float32) / 255
+            img_matte = self.blur_area(img_matte, mask_offsets[4])
+            img_matte = img_matte.astype(np.float32) / 255
 
         # Phase 12 keeps the canonical matte in a tiny per-track EMA before it
         # is warped. This is the only stateful mask operation; all downstream
@@ -678,10 +781,11 @@ class MaskingMixin:
         if len(nz_y) == 0:
             return target_img
 
-        y0, y1 = max(0, int(nz_y.min()) - 2), min(target_img.shape[0], int(nz_y.max()) + 3)
-        x0, x1 = max(0, int(nz_x.min()) - 2), min(target_img.shape[1], int(nz_x.max()) + 3)
+        # (moy, mox) is 0 unless the matte is on the face-neighbourhood canvas; y0..x1 stay FRAME coordinates.
+        y0, y1 = max(0, int(nz_y.min()) + moy - 2), min(target_img.shape[0], int(nz_y.max()) + moy + 3)
+        x0, x1 = max(0, int(nz_x.min()) + mox - 2), min(target_img.shape[1], int(nz_x.max()) + mox + 3)
 
-        roi_matte = img_matte[y0:y1, x0:x1]
+        roi_matte = img_matte[y0 - moy:y1 - moy, x0 - mox:x1 - mox]
         if roi_matte.ndim == 2:
             roi_matte = roi_matte[:, :, None]
 
@@ -694,7 +798,7 @@ class MaskingMixin:
             roi_size = (x1 - x0, y1 - y0)
             roi_paste = cv2.warpAffine(
                 upsk_face, roi_IM, roi_size,
-                flags=cv2.INTER_CUBIC,
+                flags=_paste_interp(),
                 borderMode=cv2.BORDER_REPLICATE).astype(np.float32)
             if upsk_face is not fake_face and getattr(self.options, 'blend_ratio', 1.0) < 0.999:
                 # IM is scaled to upsk_face's resolution — bring fake_face to
@@ -705,7 +809,7 @@ class MaskingMixin:
                         interpolation=cv2.INTER_CUBIC)
                 roi_fake = cv2.warpAffine(
                     fake_face, roi_IM, roi_size,
-                    flags=cv2.INTER_CUBIC,
+                    flags=_paste_interp(),
                     borderMode=cv2.BORDER_REPLICATE)
                 roi_paste = cv2.addWeighted(
                     roi_paste.astype(np.uint8), self.options.blend_ratio,
@@ -713,7 +817,7 @@ class MaskingMixin:
         else:
             paste_face = cv2.warpAffine(
                 upsk_face, IM, (target_img.shape[1], target_img.shape[0]),
-                flags=cv2.INTER_CUBIC,
+                flags=_paste_interp(),
                 borderMode=cv2.BORDER_REPLICATE)
             if upsk_face is not fake_face and getattr(self.options, 'blend_ratio', 1.0) < 0.999:
                 if fake_face.shape[:2] != upsk_face.shape[:2]:
@@ -722,7 +826,7 @@ class MaskingMixin:
                         interpolation=cv2.INTER_CUBIC)
                 fake_face = cv2.warpAffine(
                     fake_face, IM, (target_img.shape[1], target_img.shape[0]),
-                    flags=cv2.INTER_CUBIC,
+                    flags=_paste_interp(),
                     borderMode=cv2.BORDER_REPLICATE)
                 paste_face = cv2.addWeighted(
                     paste_face, self.options.blend_ratio,
@@ -751,6 +855,23 @@ class MaskingMixin:
                 _warn_once('boundary_illumination',
                            '[Mask] boundary illumination match failed; this '
                            'face was composited without it: %s: %s'
+                           % (type(exc).__name__, str(exc)[:160]))
+
+        # ── Sensor-noise match ───────────────────────────────────────────────
+        # Adds only the finest-scale noise the plate has under this face and the paste lacks (variances add; see
+        # roop.grain_match). A no-op, and bit-identical, whenever the paste is already at least as noisy as the plate,
+        # which is every clip measured so far: the swap sits ~4x ABOVE a delivered plate's floor.
+        # ROOP_GRAIN_MATCH=0 turns it off.
+        _grain = grain_match.strength()
+        if _grain > 0.0:
+            try:
+                roi_paste, _ = grain_match.match(
+                    roi_paste, roi_target, roi_matte[:, :, 0], strength=_grain,
+                    frame_index=frame_index, track_id=track_id, origin=(x0, y0))
+            except Exception as exc:
+                _swallowed("roop/procmgr_masking.py:grain_match", exc, "fallback continued")
+                _warn_once('grain_match',
+                           '[Grain] sensor-noise match failed; this face was composited without it: %s: %s'
                            % (type(exc).__name__, str(exc)[:160]))
 
         _compositing_engine = str(os.environ.get('ROOP_COMPOSITING_ENGINE', '0')).strip().lower() not in (
@@ -1003,8 +1124,12 @@ class MaskingMixin:
 
         return mask_roi.gaussian_blur(img_matte, (blur_size, blur_size))
 
-    def create_landmark_mask(self, landmarks_2d, frame_shape, blend_amount, kps=None):
+    def create_landmark_mask(self, landmarks_2d, frame_shape, blend_amount, kps=None, origin=(0, 0)):
         """Build a binary mask from the convex hull of facial landmarks.
+
+        ``origin`` (x, y) is the integer frame position of the canvas's top-left pixel: the hull and its dilation
+        are computed from FRAME coordinates (so face size and every kernel are what they would be on the whole
+        frame) and only the rasterisation is shifted into a ``frame_shape``-sized canvas. (0, 0) is the full frame.
 
         Works in target-frame space so the shape naturally matches the actual
         visible face area regardless of yaw/pitch — unlike the ellipse which is
@@ -1023,6 +1148,8 @@ class MaskingMixin:
         """
         mask = np.zeros(frame_shape[:2], dtype=np.uint8)
         hull, face_h, face_w = landmark_hull(landmarks_2d, kps)
+        if origin[0] or origin[1]:
+            hull = (hull - np.asarray(origin, dtype=hull.dtype)).astype(hull.dtype)
         cv2.fillConvexPoly(mask, hull, 255)
 
         # Dilate slightly so the hull doesn't clip skin right at the landmark

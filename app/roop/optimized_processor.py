@@ -2093,6 +2093,103 @@ class CudaAffineBatch:
             )
         return composite
 
+    @classmethod
+    def paste_faces_roi(
+        cls,
+        frames: Any,
+        aligned_faces: Any,
+        frame_ids: Any,
+        matrices: Any,
+        masks: Optional[Any] = None,
+        blend_ratio: float = 1.0,
+        feather: bool = True,
+        feather_blur: float = 0.3,
+        occlusion_masks: Optional[Any] = None,
+        inplace: bool = False,
+        pad: int = 2,
+    ) -> Any:
+        """``paste_faces`` that samples and composites ONLY the face's destination box.
+
+        ``paste_faces`` builds a ``frame_height x frame_width x 2`` sampling grid, runs ``grid_sample`` over the whole
+        frame twice (the patch and its alpha) and clones every frame in the batch, to change a few hundred pixels.
+        Here, per face, the four corners of the aligned crop are carried into the frame through the inverse matrix,
+        their bounding box (grown by ``pad`` px, which covers the bicubic and bilinear taps that hang over the crop's
+        edge) is the only region sampled, and it is composited into the frame in place of the same slice.
+
+        SAME SAMPLING POSITIONS, not a re-derivation: the box origin is folded into the matrix translation
+        (``t' = t + A @ origin``) and the same :meth:`_grid` builds the grid, so inside the box every pixel is read
+        from the same crop coordinate as in ``paste_faces``; outside it ``paste_faces`` has alpha exactly 0 (zero
+        padding), so the frame there is unchanged in both. Parity with ``paste_faces`` is ``tests/test_cuda_affine_roi.py``.
+
+        ``inplace`` writes into ``frames`` instead of a clone (the caller owns it); the default keeps ``paste_faces``'
+        contract.
+        """
+
+        torch = _torch_module
+        if torch is None:
+            raise RuntimeError("PyTorch is required for CUDA face compositing")
+        import torch.nn.functional as functional
+
+        if aligned_faces.ndim != 4:
+            raise ValueError("aligned_faces must be NCHW")
+        frame_height = int(frames.shape[2])
+        frame_width = int(frames.shape[3])
+        crop_size = int(aligned_faces.shape[2])
+        count = int(aligned_faces.shape[0])
+        mats = matrices.to(dtype=aligned_faces.dtype)
+        inverse = cls.invert_affine(mats)                                  # crop -> frame
+        corners = torch.tensor(
+            [[0.0, 0.0, 1.0], [float(crop_size), 0.0, 1.0], [float(crop_size), float(crop_size), 1.0],
+             [0.0, float(crop_size), 1.0]], dtype=mats.dtype, device=mats.device).t()
+        projected = torch.bmm(inverse, corners.unsqueeze(0).expand(count, -1, -1))        # N x 2 x 4
+        lo = projected.min(dim=2).values.floor().to(torch.int64) - int(pad)
+        hi = projected.max(dim=2).values.ceil().to(torch.int64) + int(pad)
+        boxes = torch.stack((lo[:, 0], lo[:, 1], hi[:, 0], hi[:, 1]), dim=1).cpu().tolist()   # one sync for the batch
+
+        if masks is None:
+            if feather:
+                alpha_crop = cls.box_mask(crop_size, feather_blur, device=aligned_faces.device,
+                                          dtype=aligned_faces.dtype).expand(count, -1, -1, -1)
+            else:
+                alpha_crop = torch.ones((count, 1, crop_size, crop_size), dtype=aligned_faces.dtype,
+                                        device=aligned_faces.device)
+        else:
+            alpha_crop = masks
+            if alpha_crop.ndim == 3:
+                alpha_crop = alpha_crop.unsqueeze(1)
+            alpha_crop = alpha_crop.to(dtype=aligned_faces.dtype)
+        if occlusion_masks is not None:
+            occlusion = occlusion_masks
+            if occlusion.ndim == 3:
+                occlusion = occlusion.unsqueeze(1)
+            if tuple(occlusion.shape[-2:]) != (crop_size, crop_size):
+                occlusion = functional.interpolate(
+                    occlusion.to(dtype=aligned_faces.dtype), size=(crop_size, crop_size),
+                    mode="bilinear", align_corners=False)
+            alpha_crop = alpha_crop * occlusion.to(dtype=aligned_faces.dtype)
+
+        composite = frames if inplace else frames.clone()
+        matrices3 = cls._matrix3(mats)[:, :2, :]
+        strength = float(max(0.0, min(1.0, blend_ratio)))
+        for index in range(count):
+            x0, y0, x1, y1 = boxes[index]
+            x0, y0 = max(0, x0), max(0, y0)
+            x1, y1 = min(frame_width, x1), min(frame_height, y1)
+            if x1 <= x0 or y1 <= y0:
+                continue                                                  # the face is entirely off the frame
+            m = matrices3[index:index + 1].clone()
+            m[:, :, 2] = m[:, :, 2] + m[:, :, 0] * float(x0) + m[:, :, 1] * float(y0)
+            grid = cls._grid(m, input_height=crop_size, input_width=crop_size,
+                             output_height=y1 - y0, output_width=x1 - x0)
+            patch = functional.grid_sample(aligned_faces[index:index + 1], grid, mode="bicubic",
+                                           padding_mode="zeros", align_corners=False)
+            weight = functional.grid_sample(alpha_crop[index:index + 1], grid, mode="bilinear",
+                                            padding_mode="zeros", align_corners=False).clamp(0.0, 1.0) * strength
+            frame_index = int(frame_ids[index])
+            region = composite[frame_index, :, y0:y1, x0:x1]
+            composite[frame_index, :, y0:y1, x0:x1] = patch[0] * weight[0] + region * (1.0 - weight[0])
+        return composite
+
 
 def torch_linalg_inverse(matrix: Any) -> Any:
     """Keep the affine helper import-safe on installations without Torch."""

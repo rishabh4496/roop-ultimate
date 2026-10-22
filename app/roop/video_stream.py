@@ -19,6 +19,7 @@ import numpy as np
 from roop.ffmpeg_path import (NVENC_PRESET_DEFAULT, NVENC_PRESETS, ffmpeg_binary,
                               frame_rate_arg)
 from roop.util_ffmpeg import clamp_quality
+from roop import nvenc_quality as _nvenc_quality
 from roop import synthetic_label as _synthetic_label
 from roop.degrade import swallowed as _swallowed
 
@@ -567,6 +568,11 @@ class NVHardwareVideoWriter:
 
     def _encoder_preset(self, codec: str) -> Optional[str]:
         if codec in _HARDWARE_CODECS:
+            # ROOP_NVENC_QUALITY_FIRST asks for p6 even over the constructor's explicit "p4"; an explicit
+            # ROOP_NVENC_PRESET still beats it (preset_override returns None then).
+            bundle_preset = _nvenc_quality.preset_override()
+            if bundle_preset:
+                return bundle_preset
             selected = str(
                 self.preset
                 or os.environ.get("ROOP_NVENC_PRESET", NVENC_PRESET_DEFAULT)
@@ -632,6 +638,7 @@ class NVHardwareVideoWriter:
                 "-cq",
                 str(quality),
             ])
+            cmd.extend(_nvenc_quality.ffmpeg_args(codec))             # opt-in; [] unless asked for
         else:
             cmd.extend(["-preset", self._encoder_preset(codec) or "faster", "-crf", str(quality)])
         if self.bitrate:

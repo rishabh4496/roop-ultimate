@@ -23,6 +23,7 @@ DEVNULL = -3
 from roop.ffmpeg_path import (NVENC_PRESET_DEFAULT, NVENC_PRESETS,
                               ffmpeg_binary, frame_rate_arg)
 from roop.env import env_str
+from roop import nvenc_quality as _nvenc_quality
 
 # Resolved rather than assumed: a bare "ffmpeg" only works inside a
 # Pinokio-managed shell, and outside one the encoder pre-flight aborted
@@ -255,7 +256,10 @@ class FFMPEG_VideoWriter:
             nvenc_preset = env_str('ROOP_NVENC_PRESET', NVENC_PRESET_DEFAULT)
             if nvenc_preset not in NVENC_PRESETS:
                 nvenc_preset = NVENC_PRESET_DEFAULT
+            nvenc_quality = _nvenc_quality.options()
+            nvenc_preset = _nvenc_quality.preset_override(nvenc_quality) or nvenc_preset
             cmd.extend(['-rc', 'vbr', '-cq', str(crf), '-preset', nvenc_preset, '-tune', 'hq'])
+            cmd.extend(_nvenc_quality.ffmpeg_args(codec, nvenc_quality))      # opt-in; [] unless asked for
         else:
             cmd.extend(['-crf', str(crf)])
 

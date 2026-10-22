@@ -1,0 +1,78 @@
+[
+ {
+  "arm": "a",
+  "tag": "00_a",
+  "path": "G:\\pinokio\\api\\roop-ultimate\\app\\output\\ab_env\\00_a\\d1_17-51-10.mp4",
+  "wall": 721.8499279022217,
+  "elapsed": 662.6803677082062,
+  "fps": 0.18108277511676465,
+  "swapped": 127,
+  "swap_pct": 100.0,
+  "seen": 127,
+  "size": 4841385,
+  "grep": [
+   "[Pipeline] === Stage 2/2: Main Processing ===",
+   "[Pipeline] frames 100 | 0.19 fps (avg 0.19) | in 0.0/1 chunks (empty 100%) | out 0.0/1 chunks (full 0%) | DECODE-STARVED: workers waited on input | 1.00 faces/frame, 0.2 faces/s",
+   "[Pipeline] done: 120 frames in 626.8s = 0.19 fps | decode-starved 100% | encoder-bound 0% of samples | 1.00 faces/frame, 0.2 faces/s",
+   "grain match: 0/127 face(s) got grain, 127 already at least as noisy as the plate, 0 too small to measure; mean noise floor plate 0.48 vs swap 1.31 (8-bit levels)"
+  ],
+  "diff_vs_first_a": null
+ },
+ {
+  "arm": "a",
+  "tag": "01_a",
+  "path": "G:\\pinokio\\api\\roop-ultimate\\app\\output\\ab_env\\01_a\\d1_17-55-23.mp4",
+  "wall": 252.4038028717041,
+  "elapsed": 200.83995985984802,
+  "fps": 0.597490659148406,
+  "swapped": 127,
+  "swap_pct": 100.0,
+  "seen": 127,
+  "size": 4841385,
+  "grep": [
+   "[Pipeline] === Stage 2/2: Main Processing ===",
+   "[Pipeline] frames 100 | 0.71 fps (avg 0.71) | in 0.0/1 chunks (empty 100%) | out 0.0/1 chunks (full 0%) | DECODE-STARVED: workers waited on input | 1.00 faces/frame, 0.7 faces/s",
+   "[Pipeline] done: 120 frames in 169.6s = 0.71 fps | decode-starved 100% | encoder-bound 0% of samples | 1.00 faces/frame, 0.7 faces/s",
+   "grain match: 0/127 face(s) got grain, 127 already at least as noisy as the plate, 0 too small to measure; mean noise floor plate 0.48 vs swap 1.31 (8-bit levels)"
+  ],
+  "diff_vs_first_a": 0.0
+ },
+ {
+  "arm": "b",
+  "tag": "02_b",
+  "path": "G:\\pinokio\\api\\roop-ultimate\\app\\output\\ab_env\\02_b\\d1_18-03-27.mp4",
+  "wall": 484.55604696273804,
+  "elapsed": 441.0550150871277,
+  "fps": 0.2720749019854014,
+  "swapped": 127,
+  "swap_pct": 100.0,
+  "seen": 127,
+  "size": 4814497,
+  "grep": [
+   "[Pipeline] === Stage 2/2: Main Processing ===",
+   "[Pipeline] frames 100 | 0.27 fps (avg 0.27) | in 0.0/1 chunks (empty 100%) | out 0.0/1 chunks (full 0%) | DECODE-STARVED: workers waited on input | 1.00 faces/frame, 0.3 faces/s",
+   "[Pipeline] done: 120 frames in 407.9s = 0.29 fps | decode-starved 100% | encoder-bound 0% of samples | 1.00 faces/frame, 0.3 faces/s",
+   "grain match: 0/127 face(s) got grain, 127 already at least as noisy as the plate, 0 too small to measure; mean noise floor plate 0.48 vs swap 1.31 (8-bit levels)"
+  ],
+  "diff_vs_first_a": 0.9981869427297667
+ },
+ {
+  "arm": "b",
+  "tag": "03_b",
+  "path": "G:\\pinokio\\api\\roop-ultimate\\app\\output\\ab_env\\03_b\\d1_18-06-43.mp4",
+  "wall": 196.10360646247864,
+  "elapsed": 152.1214599609375,
+  "fps": 0.7888433363104337,
+  "swapped": 127,
+  "swap_pct": 100.0,
+  "seen": 127,
+  "size": 4814497,
+  "grep": [
+   "[Pipeline] === Stage 2/2: Main Processing ===",
+   "[Pipeline] frames 100 | 1.03 fps (avg 1.03) | in 0.0/1 chunks (empty 100%) | out 0.0/1 chunks (full 0%) | DECODE-STARVED: workers waited on input | 1.00 faces/frame, 1.0 faces/s",
+   "[Pipeline] done: 120 frames in 120.1s = 1.00 fps | decode-starved 100% | encoder-bound 0% of samples | 1.00 faces/frame, 1.0 faces/s",
+   "grain match: 0/127 face(s) got grain, 127 already at least as noisy as the plate, 0 too small to measure; mean noise floor plate 0.48 vs swap 1.31 (8-bit levels)"
+  ],
+  "diff_vs_first_a": 0.9981869427297667
+ }
+]

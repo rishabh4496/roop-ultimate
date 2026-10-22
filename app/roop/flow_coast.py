@@ -94,6 +94,9 @@ class FlowResult:
     # forward-backward / patch checks), so this falls with the covered fraction:
     # an occlusion estimate that needs no mask. 1.0 for a failed step (unknown).
     survival: float = 1.0
+    # True when ``landmarks`` were re-measured by the landmark net on this step's box (roop/landmark_refresh.py)
+    # instead of being the key frame's landmarks moved rigidly.
+    refreshed: bool = False
 
 
 def _as_points(value: Any) -> Optional[np.ndarray]:

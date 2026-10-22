@@ -409,6 +409,13 @@ class TrackingMixin:
             from roop import flow_backend as _flow_backend
             flow_tracker = _flow_backend.select(log=lambda m: print(m, flush=True))
             self._flow_backend_name = flow_tracker.name
+        # Opt-in (ROOP_PREPASS_LANDMARK_REFRESH): re-measure the landmarks of every face a flow step places, with the
+        # landmark net on the box flow produced (roop/landmark_refresh.py). Needs the COLOUR frame of the step, so the
+        # scan keeps references (not copies) to the last few decoded frames beside the grey ones.
+        from roop import landmark_refresh as _landmark_refresh
+        _landmark_refresh.reset()
+        refresh_on = bool(flow_on and _landmark_refresh.enabled())
+        frame_ring = {}
         # Detections the appearance-only fallback was not allowed to claim.
         reid_refused = 0
         # Observations whose embedding was disbelieved because the recognition
@@ -705,6 +712,13 @@ class TrackingMixin:
                 flow_stats['refused'] += 1
                 t['fc'] = None                       # a failed chain is over
                 return
+            if refresh_on:
+                # the same boundary the detector runs inside; this is the in-order consumer thread
+                with _prof('track_detect'), _gpu_guard(pooled=analysis_pooled(), owner='analysis'):
+                    _lm = _landmark_refresh.refresh_with_leased_analyser(frame_ring.get(f_idx), r)
+                if _lm is not None:
+                    r.landmarks = _lm
+                    r.refreshed = True
             t.setdefault('flow', {})[f_idx] = r
             if detect_k > 1 and r.bbox is not None:
                 t['flow_bbox'] = (f_idx, np.asarray(r.bbox, np.float32).copy())
@@ -1291,6 +1305,9 @@ class TrackingMixin:
                     if _g is not None:
                         gray_ring[idx] = _g
                         gray_ring.pop(idx - (pool_workers + 8), None)
+                        if refresh_on:
+                            frame_ring[idx] = frame
+                            frame_ring.pop(idx - (pool_workers + 8), None)
 
                 detect_plan = None
                 if temporal_tracker is not None and isinstance(frame, np.ndarray):
@@ -2581,6 +2598,9 @@ class TrackingMixin:
                   + (f', {n_flow_refused} refused because flow missed the closing detection'
                      if n_flow_refused else '')
                   + '. ROOP_FLOW_COAST=0 disables.', flush=True)
+        from roop import landmark_refresh as _landmark_refresh_report
+        for _line in _landmark_refresh_report.summary_lines():
+            print(_line, flush=True)
         n_refused_cut = int(getattr(self, '_interp_refused_cut', 0) or 0)
         n_cuts = len(getattr(self, '_shot_boundaries', None) or ())
         tracker_state = getattr(self, '_temporal_tracker', None)
@@ -2838,6 +2858,11 @@ class TrackingMixin:
         if lms is None:
             self._flow_refused = getattr(self, '_flow_refused', 0) + len(frames)
             return None
+        # A step the landmark net re-measured (roop/landmark_refresh.py) is an independent measurement of that frame:
+        # it carries no accumulated drift, so the linear correction toward the closing detection that `bridge_gap`
+        # spread over the path would over-correct it. The tolerance check above (flow arrived at the closing
+        # detection) has already vouched for the chain; the frame itself keeps what the net measured.
+        lms = [r.landmarks if getattr(r, 'refreshed', False) else lm for r, lm in zip(steps, lms)]
         kps = spread_residual([r.kps for r in steps], end.kps, kp_b)
         bb_b = np.asarray(b.bbox, np.float32).reshape(2, 2)
         bbs = spread_residual([r.bbox.reshape(2, 2) for r in steps],

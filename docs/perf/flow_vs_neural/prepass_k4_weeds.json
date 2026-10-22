@@ -1,0 +1,32 @@
+{
+ "clip": "Weeds.mp4",
+ "frames": 300,
+ "k": 4,
+ "flow_bridged_off": 219,
+ "flow_bridged_on": 219,
+ "refresh_off": {
+  "n": 217,
+  "median": 1.2357790156069417,
+  "p90": 4.111767176558698,
+  "p95": 6.223799295251859,
+  "p99": 19.980856461082112,
+  "max": 47.559241400226846,
+  "mean": 2.3447632839854418
+ },
+ "refresh_on": {
+  "n": 217,
+  "median": 0.9263662415908881,
+  "p90": 2.68241274569623,
+  "p95": 4.065959810697857,
+  "p99": 21.964796348540244,
+  "max": 45.556029878538276,
+  "mean": 1.8733594112936236
+ },
+ "lines_off": [
+  "[Flow] 273 dropout frame(s) followed by optical flow (cv points; 2 chain(s) ended inconsistent); 219 gap-filled face(s) placed by flow, 21 refused because flow missed the closing detection. ROOP_FLOW_COAST=0 disables."
+ ],
+ "lines_on": [
+  "[Flow] 273 dropout frame(s) followed by optical flow (cv points; 2 chain(s) ended inconsistent); 219 gap-filled face(s) placed by flow, 21 refused because flow missed the closing detection. ROOP_FLOW_COAST=0 disables.",
+  "[LandmarkRefresh] 244/271 flow-placed face(s) had their landmarks re-measured by the landmark net (27 answers refused as too far from the flow geometry, 0 without a frame, 0 without the model, 0 errors). ROOP_PREPASS_LANDMARK_REFRESH=0 disables."
+ ]
+}
