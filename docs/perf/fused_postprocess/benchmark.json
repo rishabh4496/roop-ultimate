@@ -1,0 +1,49 @@
+{
+ "rows": [
+  {
+   "faces": 1,
+   "size": 256,
+   "fused_ms": 0.13355199992656708,
+   "unfused_torch_ms": 2.8127520084381104,
+   "fused_with_host_ms": 0.2070500049740076,
+   "cpu_ms_all_faces": 6.568299999344163,
+   "cpu_ms_per_face": 6.568299999344163,
+   "unfused_cuda_kernels": 211,
+   "max_diff_levels": 1.0
+  },
+  {
+   "faces": 4,
+   "size": 256,
+   "fused_ms": 0.19624000042676926,
+   "unfused_torch_ms": 2.7523839473724365,
+   "fused_with_host_ms": 0.3859999997075647,
+   "cpu_ms_all_faces": 25.08360001957044,
+   "cpu_ms_per_face": 6.27090000489261,
+   "unfused_cuda_kernels": 213,
+   "max_diff_levels": 1.0
+  },
+  {
+   "faces": 1,
+   "size": 512,
+   "fused_ms": 0.3617440015077591,
+   "unfused_torch_ms": 3.464367985725403,
+   "fused_with_host_ms": 0.7404999996651895,
+   "cpu_ms_all_faces": 28.908899999805726,
+   "cpu_ms_per_face": 28.908899999805726,
+   "unfused_cuda_kernels": 283,
+   "max_diff_levels": 1.0
+  },
+  {
+   "faces": 4,
+   "size": 512,
+   "fused_ms": 1.4860000014305115,
+   "unfused_torch_ms": 10.525152206420898,
+   "fused_with_host_ms": 2.000449996558018,
+   "cpu_ms_all_faces": 186.33160000899807,
+   "cpu_ms_per_face": 46.58290000224952,
+   "unfused_cuda_kernels": 287,
+   "max_diff_levels": 1.0
+  }
+ ],
+ "device": "NVIDIA GeForce RTX 4070"
+}

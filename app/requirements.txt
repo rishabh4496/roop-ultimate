@@ -35,3 +35,8 @@ accelerate
 # Zero-copy NVDEC/NVENC (roop/video_io_hw.py). Optional at run time: without it, or without an NVIDIA GPU, every
 # reader and writer falls back to the ffmpeg/OpenCV pipeline. Marked so macOS / ARM installs never try to resolve it.
 PyNvVideoCodec>=2.2,<3; (sys_platform == "win32" or sys_platform == "linux") and (platform_machine == "AMD64" or platform_machine == "x86_64")
+# One-kernel Stage 3 post-processing (app/core/fused_postprocess.py) and L2 persistence windows (app/core/l2_persistence.py).
+# Optional at run time and NOT imported by the render: both modules report why they are unavailable instead of failing.
+# torch 2.7 on Linux already pins triton 3.3; Windows has no upstream triton, hence the community build (bundles its own C stub compiler).
+triton-windows>=3.3,<3.4; sys_platform == "win32" and platform_machine == "AMD64"
+cuda-python>=12.8,<13; (sys_platform == "win32" or sys_platform == "linux") and (platform_machine == "AMD64" or platform_machine == "x86_64")
