@@ -264,12 +264,35 @@ def build_engine(spec: EngineSpec, source: Path, precision: str, gpu: GpuInfo, *
     from face_engine.utils.onnx_batch import batched_model
 
     trt = _trt()
-    # Lock xseg, 2d106det, and 1k3d68 to FP32 to prevent NaN/mask corruption
-    if any(stem in spec.model.lower() for stem in ("xseg", "2d106det", "1k3d68")) and precision != "fp32":
-        logger.warning("Model %s is locked to FP32 per precision policy; forcing FP32", spec.model)
+    # Lock xseg, 2d106det, and 1k3d68 to FP32 in raw whole-model FP16 builds;
+    # surgical mixed precision uses PrecisionSurgeon layer-level clamping instead.
+    if precision not in ("fp16", "fp32", "fp8", "bf16", "mixed", "surgical"):
+        raise ValueError("precision must be fp16, fp32, fp8, bf16, or mixed")
+    if precision == "fp16" and any(stem in spec.model.lower() for stem in ("xseg", "2d106det", "1k3d68")):
+        logger.warning("Model %s is locked to FP32 under raw FP16; use mixed/surgical precision for layer-level clamping", spec.model)
         precision = "fp32"
-    if precision not in ("fp16", "fp32", "fp8"):
-        raise ValueError("precision must be fp16, fp32, or fp8")
+    if precision in ("mixed", "surgical"):
+        try:
+            from app.core.trt_precision_surgeon import PrecisionSurgeon
+            surgeon = PrecisionSurgeon(device_id=gpu.device_id)
+            tmp_surged = root / f"{spec.model}_surged.onnx"
+            surgeon.surgical_transform(graph, model_family=spec.model, target_precision="fp16", output_path=tmp_surged)
+            graph = tmp_surged
+            precision = "fp16"
+        except Exception as exc:
+            logger.warning("PrecisionSurgeon failed on %s: %s; keeping original graph", spec.model, exc)
+            precision = "fp16"
+    elif precision == "bf16":
+        try:
+            from app.core.trt_precision_surgeon import PrecisionSurgeon
+            surgeon = PrecisionSurgeon(device_id=gpu.device_id)
+            tmp_surged = root / f"{spec.model}_surged_bf16.onnx"
+            surgeon.surgical_transform(graph, model_family=spec.model, target_precision="bf16", use_bf16_adain=True, output_path=tmp_surged)
+            graph = tmp_surged
+            precision = "fp16"
+        except Exception as exc:
+            logger.warning("PrecisionSurgeon failed on %s: %s; keeping original graph", spec.model, exc)
+            precision = "fp16"
     root.mkdir(parents=True, exist_ok=True)
     torch.cuda.set_device(gpu.device_id)
     graph = source

@@ -191,3 +191,36 @@ recorded by `record_provider_degradation(..., model=...)` and reported in `/api/
 shipped files: UltraMax (`codeformer.fp16`) `x:1x3x512x512 .. 8x3x512x512` (the brief's 1..4 is a subset); GPEN-256/512, RF++, CodeFormer v0.1 and
 `inswapper_128` are exported **static** `[1,3,S,S]`, so a `[1..4]` or Pixel-Boost `[1..16,3,128,128]` profile cannot be bound to them (TensorRT rejects a
 max above a static dimension) without re-exporting the models, and a dynamic-batch swapper was measured slower. `test_stage2_precision_profiles.py` pins both facts.
+
+## Surgical Layer-Level Mixed Precision (`app/core/trt_precision_surgeon.py`, 2026-10-22)
+
+Upgrades the application's TensorRT engine compilation pipeline from coarse whole-model precision locking
+(which previously forced `xseg`, `2d106det`, and `1k3d68` to pure whole-model FP32 and `RF++` to blanket FP16)
+to Surgical Layer-Level Mixed Precision:
+
+1. **Automated ONNX GraphSurgeon Precision Clamping**:
+   - Traverses the ONNX graph with `onnx_graphsurgeon`.
+   - Converts primary compute backbones (`Conv`, `ConvTranspose`, `Gemm`, `MatMul`) to FP16/BF16.
+   - Automatically wraps numerically sensitive sub-graphs in explicit `Cast(to=FLOAT32)` -> Op -> `Cast(to=FLOAT16/BF16)` boundaries:
+     * All `InstanceNormalization`, `LayerNormalization`, `GroupNormalization`, and AdaIN variance blocks
+       (`ReduceMean`, `Sub`, `Pow`, `Sqrt`, `Div`, `GlobalAveragePool`, `Reciprocal`).
+     * All Attention `Softmax` and `Exp` operations in `RestoreFormer++` and `CodeFormer`.
+     * The final coordinate regression layers in `2d106det` and `1k3d68` (`fc1`, `conv2`, `bn2`, etc.).
+     * The final `Sigmoid` mask probability head in `xseg` (`Sigmoid_4`, `out_conv`, `Conv2D_48__128`).
+   - Retains FP32 graph output types for landmarks and mask probabilities to guarantee zero coordinate drift and full IoU fidelity.
+
+2. **Native BF16 & Calibrated FP8 Support (Ada Lovelace SM89 / Hopper SM90 / Blackwell SM100+)**:
+   - Hardware capability detection via `torch.cuda.get_device_capability() >= (8, 9)` and NVML.
+   - Strongly Typed BF16 execution for AdaIN modulation and normalization blocks, executing on Tensor Cores with
+     full FP32 dynamic exponent range (up to 3.4e38, zero overflow risk).
+   - "Prime Turbo FP8" compilation tier for `HyperSwap` and `RestoreFormer++` via `nvidia-modelopt` (with calibrated
+     native E4M3 Q/DQ fallback), using a 64-face calibration cache (`batch_size=1`) to quantize interior Conv/Linear
+     weights to FP8 E4M3 while keeping stems, skip-connections, and heads in FP16/BF16.
+
+3. **Polygraphy Accuracy Verification Gate**:
+   - Compares the compiled Mixed-Precision TensorRT engine output against the pure FP32 ONNX Runtime baseline on
+     reference face tensors.
+   - Asserts `PSNR > 48 dB` and `Cosine Similarity > 0.9995` before caching the `.engine` file.
+   - Automatically rejects and purges engines that fail the numerical fidelity gates, writing a `.json` verification
+     manifest sidecar alongside passing engines.
+
