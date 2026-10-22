@@ -185,7 +185,7 @@ file means deleting it from that list. Do not add a file to it to make lint pass
 
 ## API
 
-Every path below is one the UI calls today (129 HTTP endpoints and 3 WebSockets), with the verbs the
+Every path below is one the UI calls today (132 HTTP endpoints and 3 WebSockets), with the verbs the
 backend registers for it. `app/tests/test_ui_api_surface.py` keeps this honest: it fails if the UI calls a
 route the backend does not register, if this section omits one the UI calls, or if it lists one that does
 not exist. Add an endpoint to the UI and that test tells you to list it here. JSON in, JSON out unless the
@@ -387,6 +387,9 @@ Benchmark, auto-tune, TensorRT cache and hardware/telemetry.
 | GET, POST | `/api/enhancer/ultramax/settings` | EnhancerSettings |
 | GET | `/api/enhancer/ultramax/telemetry` | EnhancerSettings |
 | GET | `/api/runtime/state` | EnvironmentHealth |
+| POST | `/api/settings/benchmark_cancel` | ProviderBenchmark |
+| GET | `/api/settings/benchmark_status` | ProviderBenchmark |
+| POST | `/api/settings/benchmark_threads` | ProviderBenchmark |
 | GET | `/api/system/hardware` | EnvironmentHealth |
 | GET | `/api/system/profile` | DiagnosticsPanel |
 | GET | `/api/system/telemetry` | EnvironmentHealth, Home, useTelemetry |

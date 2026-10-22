@@ -12,6 +12,7 @@ import DiagnosticsPanel from './faceswap/DiagnosticsPanel';
 import RunModelsPanel from './faceswap/RunModelsPanel';
 import HeadPoseHud from './faceswap/HeadPoseHud';
 import PipelineHud from './faceswap/PipelineReport';
+import ProviderBenchmark from './faceswap/ProviderBenchmark';
 import PipelinePill from './faceswap/PipelinePill';
 import LiveProcessingPeek from './faceswap/LiveProcessingPeek';
 import useTelemetry from './faceswap/useTelemetry';
@@ -208,6 +209,8 @@ export default function Processing({ progress, settings, notify, setTab,
           counts, passthrough / GPU frames, peak VRAM, Stage 4 verification, speedup estimate). Above the
           live/finished split on purpose: the report arrives when the run ENDS, i.e. in the finished view. */}
       <PipelineHud />
+      {/* 1-click CPU vs TensorRT vs OpenVINO provider matrix; report-only, needs an idle GPU. */}
+      <ProviderBenchmark processing={!!processing} />
 
       {/* ── The stage ───────────────────────────────────────────────────────
           Responsive scrollable container so the terminal and controls are never

@@ -870,7 +870,8 @@ class BatchProcessingMixin:
                     _st.put(_st.STAGE_1_SPARSE_PRESCAN, sampled_frames=_s1.get('samples_done'),
                             samples_total=_s1.get('samples_total'), stride=_s1.get('stride'),
                             workers=_s1.get('workers'),
-                            worker_utilization_pct=_s1.get('worker_utilization_pct'))
+                            worker_utilization_pct=_s1.get('worker_utilization_pct'),
+                            scene_cuts=_s1.get('cuts'), scan_mode=_s1.get('mode'))
                 if _stage1_restored:
                     _st.restored(_st.STAGE_1_SPARSE_PRESCAN)
                 else:

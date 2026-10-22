@@ -67,6 +67,17 @@ PENDING, RUNNING, DONE, SKIPPED, FAILED = "PENDING", "RUNNING", "DONE", "SKIPPED
 # computed (roop/stage_cache.py). Distinct from SKIPPED (the stage does not apply) and from DONE (it ran).
 RESTORED = "RESTORED"
 
+# Stage 3 operation timings (decode / align-warp / swap model / blend / encode), fed by procmgr_runtime._prof.
+# Written from ~20 worker threads, so it has its own small lock; `_ops_on` is a plain bool read on the hot path
+# (a stale read costs one sample at a stage boundary, never correctness) and is True only while Stage 3 RUNS.
+_ops_on = False
+_ops_lock = threading.Lock()
+_ops: Dict[str, list] = {}                       # _prof stage name -> [seconds, calls]
+# Which _prof stage is which column of the brief's Stage 3 line. `swap` is the swap model's inference call,
+# `alignment` the face crop/warp (cv2 on the host unless a GPU warp is wired), `blend` the paste-back.
+OPS_COLUMNS = (("decode", "decode"), ("warp", "alignment"), ("model", "swap"), ("restore", "enhance"),
+               ("blend", "blend"), ("encode", "encode"))
+
 _lock = threading.RLock()
 _run: Dict[str, Any] = {}
 _stages: Dict[str, Dict[str, Any]] = {}
@@ -129,10 +140,61 @@ def begin_run(total_frames: int = 0) -> None:
     _vram.start()
 
 
+def record_op(stage: str, seconds: float) -> None:
+    """One timed Stage 3 operation (called by `_prof` while `_ops_on`)."""
+    with _ops_lock:
+        slot = _ops.get(stage)
+        if slot is None:
+            _ops[stage] = [seconds, 1]
+        else:
+            slot[0] += seconds
+            slot[1] += 1
+
+
+def _ops_ms() -> Dict[str, Optional[Dict[str, Any]]]:
+    """ms per call and call count for each Stage 3 column; None for one that never ran (never a made-up 0)."""
+    with _ops_lock:
+        raw = {k: (v[0], v[1]) for k, v in _ops.items()}
+    out: Dict[str, Optional[Dict[str, Any]]] = {}
+    for column, name in OPS_COLUMNS:
+        sec, calls = raw.get(name, (0.0, 0))
+        out[column] = {"ms": round(1000.0 * sec / calls, 3), "calls": calls} if calls else None
+    return out
+
+
+def _backends() -> Dict[str, Optional[str]]:
+    """What each Stage 3 column ran ON, from the live configuration - labels, not measurements.
+
+    `warp` is the host cv2 path: the GPU warp/paste (`CudaAffineBatch`) and CV-CUDA have no production caller, so
+    this never says "cv-cuda" unless that changes. `model` is the primary execution provider; `encode` is the
+    ffmpeg codec in use (an *_nvenc codec means the hardware encoder)."""
+    out: Dict[str, Optional[str]] = {"decode": None, "warp": "cv2 (CPU)", "model": None, "restore": None,
+                                     "blend": "cv2 (CPU)", "encode": None}
+    try:
+        import roop.globals as g
+        provs = list(getattr(g, "execution_providers", None) or [])
+        if provs:
+            first = provs[0]                          # a bare name or a (name, options) pair
+            name = str(first[0] if isinstance(first, (tuple, list)) else first).replace("ExecutionProvider", "")
+            out["model"] = "TensorRT" if name.lower().startswith("tensorrt") else name
+        out["encode"] = getattr(g, "video_encoder", None) or None
+    except Exception as exc:                          # noqa: BLE001 - labels are optional
+        _swallowed("roop/stage_telemetry.py:backends", exc, "backend labels left out")
+    io = _video_io_snapshot() or {}
+    out["decode"] = io.get("decode_backend") or "ffmpeg / cv2"
+    out["encode"] = io.get("encode_backend") or out["encode"]
+    return out
+
+
 def enter(stage: str, total: int = 0) -> None:
+    global _ops_on
     with _lock:
         s = _stages.setdefault(stage, _blank())
         s.update(state=RUNNING, done=0, total=int(total or 0), since=time.time(), ended=None)
+    if stage == STAGE_3_MAIN_SWAP:
+        with _ops_lock:
+            _ops.clear()
+        _ops_on = True
 
 
 def progress(stage: str, done: int, total: Optional[int] = None) -> None:
@@ -147,6 +209,9 @@ def progress(stage: str, done: int, total: Optional[int] = None) -> None:
 
 
 def leave(stage: str, ok: bool = True) -> None:
+    global _ops_on
+    if stage == STAGE_3_MAIN_SWAP:
+        _ops_on = False
     with _lock:
         s = _stages.get(stage)
         if s is None:
@@ -162,6 +227,8 @@ def end_run(ok: bool = True) -> Dict[str, Any]:
 
     A stage still RUNNING here was cut short (a stop, an exception between stages), so it reads
     FAILED rather than being left claiming a burst that ended; the final state stays readable."""
+    global _ops_on
+    _ops_on = False
     with _lock:
         for s in _stages.values():
             if s["state"] == RUNNING:
@@ -299,6 +366,37 @@ def _video_io_snapshot() -> Optional[Dict[str, Any]]:
         return None
 
 
+def _rate(count: Any, seconds: Any) -> Optional[float]:
+    c, t = _num(count), _num(seconds)
+    return round(c / t, 2) if c is not None and t and t > 0 else None
+
+
+def _ratio_pct(part: Any, other: Any) -> Optional[float]:
+    a, b = _num(part), _num(other)
+    if a is None or b is None or (a + b) <= 0:
+        return None
+    return round(100.0 * a / (a + b), 1)
+
+
+def _ops_report() -> Dict[str, Optional[Dict[str, Any]]]:
+    """Stage 3's per-operation ms/call with the backend each ran on; a column that never ran is None."""
+    ops, labels = _ops_ms(), _backends()
+    return {col: (dict(v, backend=labels.get(col)) if v else None) for col, v in ops.items()}
+
+
+def _aux_offload() -> Optional[Dict[str, Any]]:
+    """The native OpenVINO runner's live sessions, or None when it was never loaded / has no session."""
+    mod = sys.modules.get("roop.openvino_runner")
+    if mod is None:
+        return None
+    try:
+        rep = mod.report()
+    except Exception as exc:                          # noqa: BLE001
+        _swallowed("roop/stage_telemetry.py:aux_offload", exc, "OpenVINO block left out of the report")
+        return None
+    return rep if rep.get("sessions") else None
+
+
 def build_summary(ok: bool = True, now: Optional[float] = None) -> Dict[str, Any]:
     """The per-job report. JSON-safe; every metric that was not measured is None, never a fabricated 0."""
     with _lock:
@@ -323,7 +421,11 @@ def build_summary(ok: bool = True, now: Optional[float] = None) -> Dict[str, Any
                   "stride": c1.get("stride"), "workers": c1.get("workers"),
                   "worker_utilization_pct": c1.get("worker_utilization_pct"),
                   "active_ranges_count": run.get("active_ranges_count"),
-                  "skipped_frames_pct": _skipped_pct()}
+                  "skipped_frames_pct": _skipped_pct(),
+                  # Keyframe samples per second of the scan's own wall clock, and the cuts it found. None when
+                  # the scan was restored from a checkpoint (it did not run) or the scanner did not report them.
+                  "keyframes_per_sec": _rate(c1.get("sampled_frames"), s1),
+                  "scene_cuts": c1.get("scene_cuts"), "scan_mode": c1.get("scan_mode")}
         stage2 = {"state": st[STAGE_2_ACTIVE_PREPASS]["state"], "wall_s": s2,
                   "active_ranges_count": run.get("active_ranges_count"),
                   "grab_calls": c2.get("grab_calls"), "set_calls": c2.get("set_calls"),
@@ -332,13 +434,20 @@ def build_summary(ok: bool = True, now: Optional[float] = None) -> Dict[str, Any
                   "detect_interval": c2.get("detect_interval"), "detector_calls": c2.get("detector_calls"),
                   "scan_frames": c2.get("scan_frames"), "coast_frames": c2.get("coast_frames"),
                   "flow_backend": c2.get("flow_backend"), "landmark_filter": c2.get("landmark_filter"),
-                  "trajectory_faces": c2.get("trajectory_faces")}
+                  "trajectory_faces": c2.get("trajectory_faces"),
+                  # Neural = frames the detector actually ran on; flow = frames it was skipped on and the previous
+                  # result was carried by the tracker (`coast`). The ratio is flow / (flow + neural).
+                  "neural_detected_frames": c2.get("detector_calls"),
+                  "flow_tracked_frames": c2.get("coast_frames"),
+                  "flow_ratio_pct": _ratio_pct(c2.get("coast_frames"), c2.get("detector_calls")),
+                  "fps": _rate(c2.get("scan_frames"), s2)}
         stage3 = {"state": st[STAGE_3_MAIN_SWAP]["state"], "wall_s": s3,
                   "frames": run.get("total_frames"),
                   "passthrough_frames": c3.get("passthrough_frames"), "gpu_frames": c3.get("gpu_frames"),
                   "swapped_frames": c3.get("swapped_frames"), "faces_swapped": c3.get("faces_swapped"),
                   "peak_vram_gb": _peak(STAGE_3_MAIN_SWAP),
-                  "processing_fps": round(total / s3, 2) if total and s3 else None}
+                  "processing_fps": round(total / s3, 2) if total and s3 else None,
+                  "ops": _ops_report()}
         # Stage 4 is the LAST finalize of the job (a multi-video job reports the last video's pipeline).
         last = fins[-1] if fins else None
         stage4 = None
@@ -359,7 +468,7 @@ def build_summary(ok: bool = True, now: Optional[float] = None) -> Dict[str, Any
         eff_fps = round(total / (pipeline_s + s4), 2) if total and (pipeline_s + s4) > 0 else None
         speedup = estimate_speedup(s1, s2, s3, total, active, restored=restored)
         return {"schema": 1, "ok": bool(ok) and (stage4 is None or stage4["ok"]), "finished_at": now,
-                "video_io": _video_io_snapshot(),
+                "video_io": _video_io_snapshot(), "aux_offload": _aux_offload(),
                 "total_frames": total, "videos_in_job": videos, "total_wall_s": total_wall,
                 "effective_fps": eff_fps, "speedup": speedup,
                 "vram": {"peak_gb": vram.get("peak_gb"), "base_gb": vram.get("base_gb"),
@@ -379,6 +488,16 @@ def _skipped_pct() -> Optional[float]:
     if active is None or not total:
         return None
     return round(max(0.0, min(100.0, 100.0 * (total - active) / total)), 1)
+
+
+def _live_rate(stage: Dict[str, Any], now: float) -> Optional[float]:
+    """done / elapsed for a RUNNING stage, done / wall once it ended; None before it has a measurement."""
+    since, done = stage.get("since"), stage.get("done") or 0
+    if since is None or done <= 0 or stage.get("state") in (PENDING, SKIPPED, RESTORED):
+        return None
+    end = stage.get("ended") if stage.get("ended") is not None else now
+    elapsed = end - since
+    return round(done / elapsed, 2) if elapsed > 0 else None
 
 
 def snapshot() -> Dict[str, Any]:
@@ -406,7 +525,17 @@ def snapshot() -> Dict[str, Any]:
                 "skipped_frames_pct": skipped,
                 "eta_seconds": eta,
                 "wall_s": _wall(s, now),
+                # Stage-local items per second: samples (Stage 1), active-range frames (Stage 2), frames (Stage 3).
+                "fps": _live_rate(s, now),
             }
+        if _stages.get(STAGE_3_MAIN_SWAP, {}).get("state") in (RUNNING, DONE):
+            out[STAGE_3_MAIN_SWAP]["ops"] = _ops_report()
+        c1 = _counters.get(STAGE_1_SPARSE_PRESCAN) or {}
+        c2 = _counters.get(STAGE_2_ACTIVE_PREPASS) or {}
+        out[STAGE_1_SPARSE_PRESCAN]["scene_cuts"] = c1.get("scene_cuts")
+        out[STAGE_2_ACTIVE_PREPASS].update(
+            neural_detected_frames=c2.get("detector_calls"), flow_tracked_frames=c2.get("coast_frames"),
+            flow_ratio_pct=_ratio_pct(c2.get("coast_frames"), c2.get("detector_calls")))
         return {"stage": current, "stages": out, "summary": dict(_summary)}
 
 
@@ -424,7 +553,10 @@ def busy_stage() -> Optional[str]:
 
 
 def reset() -> None:
-    global _videos
+    global _videos, _ops_on
+    _ops_on = False
+    with _ops_lock:
+        _ops.clear()
     with _lock:
         _run.clear()
         _stages.clear()

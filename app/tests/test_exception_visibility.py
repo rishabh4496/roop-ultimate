@@ -97,6 +97,7 @@ ACCEPTED_SILENT = {
     'roop/processors/Enhance_GPEN256Pro.py': 1,
     'roop/processors/Enhance_UltraMax.py': 1,
     'roop/processors/FaceSwapInsightFace.py': 1,
+    'roop/openvino_runner.py': 1,   # _on_done: the error is stored and re-raised by the waiting thread
     'roop/processors/Mask_XSeg.py': 1,
     'roop/processors/face_enhancer.py': 1, 'roop/processors/face_swapper.py': 2,
     'roop/processors/frame/inference_engine.py': 4,

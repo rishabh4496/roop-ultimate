@@ -1,0 +1,15 @@
+{
+  "model_key": "arcface",
+  "model_sha": "4c06341c33c2ca1f86781dab0e829f88ad5b64be9fba56e56bc9ebdefc619e43",
+  "ir": "arcface_4c06341c33c2_int8.xml",
+  "calibration_samples": 102,
+  "holdout_samples": 44,
+  "metric": "min_embedding_cosine",
+  "value": 0.92691,
+  "passed": false,
+  "device_checked": "CPU",
+  "nncf_options": {
+    "max_num_iterations": 20
+  },
+  "created": 1792656077.6844049
+}

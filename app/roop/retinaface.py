@@ -344,6 +344,10 @@ def _build_one(model_type, model_path, providers, file):
         # signature and contract; bound per instance, so site-packages is
         # untouched. See roop/nms.py.
         bind_instance_nms(det)
+        # retinaface_10g.onnx is the SCRFD 10g graph. Opt-in native OpenVINO runner (ROOP_OPENVINO_NATIVE); a
+        # no-op, one dict lookup, when it is unset. insightface reads only `det.session`, so replacing it is enough.
+        from roop import openvino_runner
+        det.session = openvino_runner.adopt(model_path, det.session, model_key='scrfd')
     from roop import baseline_probe
     baseline_probe.log_session(f'retinaface:{model_type}', getattr(det, 'session', None),
                                _requested, model_file=model_path)

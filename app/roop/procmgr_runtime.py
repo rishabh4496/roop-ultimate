@@ -10,6 +10,7 @@ their original comments explaining the measured values behind them.
 """
 from roop.degrade import swallowed as _swallowed
 from roop import baseline_probe as _bp
+from roop import stage_telemetry as _stage_telemetry
 
 import contextlib
 import functools
@@ -755,7 +756,8 @@ def _prof(stage):
     monitor = _RUNTIME_MONITOR
     profiler = _DETAILED_PROFILER
     sink = _STAGE_SINK
-    if not _PROFILE and monitor is None and profiler is None and sink is None:
+    live_ops = _stage_telemetry._ops_on      # True only while Stage 3 runs: feeds the HUD's ms-per-operation line
+    if not _PROFILE and monitor is None and profiler is None and sink is None and not live_ops:
         yield
         return
     t0 = time.perf_counter()
@@ -774,6 +776,8 @@ def _prof(stage):
             profiler.end(profile_token)
         if sink is not None:
             sink(stage, dt)
+        if live_ops:
+            _stage_telemetry.record_op(stage, dt)
 
 
 def _prof_reset():

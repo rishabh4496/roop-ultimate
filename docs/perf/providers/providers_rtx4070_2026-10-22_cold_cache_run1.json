@@ -1,0 +1,446 @@
+{
+ "status": "success",
+ "version": 2,
+ "profile": "providers",
+ "ran_at": "2026-10-22 13:11:16",
+ "duration_sec": 630.9,
+ "device": {
+  "gpu_name": "NVIDIA GeForce RTX 4070",
+  "total_vram_gb": 11.99,
+  "free_vram_gb": 9.77,
+  "cpu_physical": 24,
+  "cpu_logical": 32,
+  "platform": "Windows-10",
+  "provider": "tensorrt",
+  "trt_precision": "mixed",
+  "ort_providers": [
+   "TensorrtExecutionProvider",
+   "CUDAExecutionProvider",
+   "CPUExecutionProvider"
+  ],
+  "active_providers": [
+   "TensorrtExecutionProvider",
+   "CUDAExecutionProvider",
+   "CPUExecutionProvider"
+  ],
+  "cuda_ok": true,
+  "device_id": 0,
+  "gpu_vendor": "nvidia",
+  "architecture": "Ada Lovelace",
+  "compute_capability": "8.9",
+  "vram_tier": "desktop",
+  "available_vram_gb": 9.77,
+  "cuda_version": "12.8",
+  "driver_version": "617.42",
+  "tensorrt_version": "10.9.0.34",
+  "onnxruntime_version": "1.23.2",
+  "tensor_core_capabilities": [
+   "bf16",
+   "fp16",
+   "fp8",
+   "int8"
+  ],
+  "fp16_supported": true,
+  "bf16_supported": true,
+  "int8_supported": true,
+  "fp8_supported": true,
+  "nvdec_available": true,
+  "nvdec_codecs": [
+   "av1_cuvid",
+   "h264_cuvid",
+   "hevc_cuvid",
+   "vp9_cuvid"
+  ],
+  "nvenc_available": true,
+  "nvenc_codecs": [
+   "av1_nvenc",
+   "h264_nvenc",
+   "hevc_nvenc"
+  ],
+  "ram_total_gb": 31.691,
+  "ram_available_gb": 13.907,
+  "hardware_profile_key": "97d4a87c37a404a99b09de3f",
+  "trt_tuning": {
+   "builder_optimization_level": 3,
+   "auxiliary_streams": -1,
+   "cuda_graph": false
+  },
+  "cpu_tuning": {
+   "opencv_kernel_threads": "auto",
+   "ort_dynamic_block_base": "4"
+  }
+ },
+ "gpu_name": "NVIDIA GeForce RTX 4070",
+ "total_vram_gb": 11.99,
+ "faces_per_frame": 1.0,
+ "stages": [
+  {
+   "key": "detect",
+   "label": "Detector \u2014 RetinaFace r50 @640",
+   "model": "retinaface_r50.onnx",
+   "provider": "Tensorrt",
+   "pool_knob": "detector_pool",
+   "pooled": true,
+   "calls_per_frame": 1.0,
+   "input_shape": [
+    640,
+    640
+   ],
+   "ms_call": 3.041,
+   "ms_frame": 3.041,
+   "vram_per_instance_mb": 0.0,
+   "build_sec": 4.12,
+   "scaling": [
+    {
+     "n": 1,
+     "calls_s": 328.79,
+     "runs_fps": [
+      328.79
+     ],
+     "spread_pct": 0.0,
+     "stable": true,
+     "ms_latency": 3.041,
+     "speedup": 1.0,
+     "free_vram_gb": 10.23
+    }
+   ],
+   "best_n": 1,
+   "note": "one call per frame; hybrid engines pool via ROOP_DETECTOR_POOL",
+   "error": ""
+  },
+  {
+   "key": "recognize",
+   "label": "Recognition \u2014 w600k_r50 @112",
+   "model": "w600k_r50.onnx",
+   "provider": "Tensorrt",
+   "pool_knob": "detmask_pool",
+   "pooled": true,
+   "calls_per_frame": 1.0,
+   "input_shape": [
+    112,
+    112
+   ],
+   "ms_call": 1.463,
+   "ms_frame": 1.463,
+   "vram_per_instance_mb": 0.0,
+   "build_sec": 4.19,
+   "scaling": [
+    {
+     "n": 1,
+     "calls_s": 683.58,
+     "runs_fps": [
+      683.58
+     ],
+     "spread_pct": 0.0,
+     "stable": true,
+     "ms_latency": 1.463,
+     "speedup": 1.0,
+     "free_vram_gb": 10.23
+    }
+   ],
+   "best_n": 1,
+   "note": "per face; feeds identity matching AND the swapper",
+   "error": ""
+  },
+  {
+   "key": "landmark",
+   "label": "Landmarks \u2014 2d106det @192",
+   "model": "2d106det.onnx",
+   "provider": "Tensorrt",
+   "pool_knob": "detmask_pool",
+   "pooled": true,
+   "calls_per_frame": 1.0,
+   "input_shape": [
+    192,
+    192
+   ],
+   "ms_call": 0.676,
+   "ms_frame": 0.676,
+   "vram_per_instance_mb": 0.0,
+   "build_sec": 3.65,
+   "scaling": [
+    {
+     "n": 1,
+     "calls_s": 1478.89,
+     "runs_fps": [
+      1478.89
+     ],
+     "spread_pct": 0.0,
+     "stable": true,
+     "ms_latency": 0.676,
+     "speedup": 1.0,
+     "free_vram_gb": 10.3
+    }
+   ],
+   "best_n": 1,
+   "note": "per face; landmark_3d_68 is lazy and not counted here",
+   "error": ""
+  },
+  {
+   "key": "swap",
+   "label": "Swapper \u2014 realswap @256",
+   "model": "hyperswap_1a_256.onnx",
+   "provider": "Tensorrt",
+   "pool_knob": "trt_pool",
+   "pooled": true,
+   "calls_per_frame": 1.0,
+   "input_shape": [],
+   "ms_call": 7.051,
+   "ms_frame": 7.051,
+   "vram_per_instance_mb": 0.0,
+   "build_sec": 6.59,
+   "scaling": [
+    {
+     "n": 1,
+     "calls_s": 141.83,
+     "runs_fps": [
+      141.83
+     ],
+     "spread_pct": 0.0,
+     "stable": true,
+     "ms_latency": 7.051,
+     "speedup": 1.0,
+     "free_vram_gb": 8.89
+    }
+   ],
+   "best_n": 1,
+   "note": "1 tile(s) per face at 256px pixel boost; FP32-forced under TRT (FP16 overflows to rainbow smudge)",
+   "error": ""
+  },
+  {
+   "key": "enhance",
+   "label": "Enhancer \u2014 UltraMax",
+   "model": "codeformer.fp16.onnx",
+   "provider": "Tensorrt",
+   "pool_knob": "trt_pool",
+   "pooled": true,
+   "calls_per_frame": 1.0,
+   "input_shape": [],
+   "ms_call": 25.479,
+   "ms_frame": 25.479,
+   "vram_per_instance_mb": 0.0,
+   "build_sec": 4.33,
+   "scaling": [
+    {
+     "n": 1,
+     "calls_s": 39.25,
+     "runs_fps": [
+      39.25
+     ],
+     "spread_pct": 0.0,
+     "stable": true,
+     "ms_latency": 25.479,
+     "speedup": 1.0,
+     "free_vram_gb": 9.85
+    }
+   ],
+   "best_n": 1,
+   "note": "CodeFormer fp16 with UltraMax lean host path",
+   "error": ""
+  },
+  {
+   "key": "mask_xseg",
+   "label": "Mask \u2014 RealityUX / DFL XSeg",
+   "model": "xseg.onnx",
+   "provider": "Tensorrt",
+   "pool_knob": "detmask_pool",
+   "pooled": true,
+   "calls_per_frame": 1.0,
+   "input_shape": [],
+   "ms_call": 0.0,
+   "ms_frame": 0.0,
+   "vram_per_instance_mb": 0.0,
+   "build_sec": 4.24,
+   "scaling": [],
+   "best_n": 1,
+   "note": "",
+   "error": "invalid throughput: 0.0"
+  },
+  {
+   "key": "mask_resnet18",
+   "label": "Mask \u2014 RealityUX / BiSeNet",
+   "model": "resnet18.onnx",
+   "provider": "Tensorrt",
+   "pool_knob": "detmask_pool",
+   "pooled": true,
+   "calls_per_frame": 1.0,
+   "input_shape": [],
+   "ms_call": 12.473,
+   "ms_frame": 12.473,
+   "vram_per_instance_mb": 0.0,
+   "build_sec": 16.62,
+   "scaling": [
+    {
+     "n": 1,
+     "calls_s": 80.18,
+     "runs_fps": [
+      80.18
+     ],
+     "spread_pct": 0.0,
+     "stable": true,
+     "ms_latency": 12.473,
+     "speedup": 1.0,
+     "free_vram_gb": 10.14
+    }
+   ],
+   "best_n": 1,
+   "note": "",
+   "error": ""
+  }
+ ],
+ "provider_matrix": {
+  "kind": "provider_matrix",
+  "faces_per_frame": 1.0,
+  "openvino_device": null,
+  "stages": [
+   {
+    "stage": "Detector \u2014 RetinaFace r50 @640",
+    "key": "detect",
+    "calls_per_frame": 1.0,
+    "primary_provider": "Tensorrt",
+    "primary_ms": 3.041,
+    "cpu_ms": 90.257,
+    "openvino_ms": null,
+    "openvino_calls_per_s": null,
+    "openvino_device": null
+   },
+   {
+    "stage": "Recognition \u2014 w600k_r50 @112",
+    "key": "recognize",
+    "calls_per_frame": 1.0,
+    "primary_provider": "Tensorrt",
+    "primary_ms": 1.463,
+    "cpu_ms": 43.561,
+    "openvino_ms": null,
+    "openvino_calls_per_s": null,
+    "openvino_device": null
+   },
+   {
+    "stage": "Landmarks \u2014 2d106det @192",
+    "key": "landmark",
+    "calls_per_frame": 1.0,
+    "primary_provider": "Tensorrt",
+    "primary_ms": 0.676,
+    "cpu_ms": 3.059,
+    "openvino_ms": null,
+    "openvino_calls_per_s": null,
+    "openvino_device": null
+   },
+   {
+    "stage": "Swapper \u2014 realswap @256",
+    "key": "swap",
+    "calls_per_frame": 1.0,
+    "primary_provider": "Tensorrt",
+    "primary_ms": 7.051,
+    "cpu_ms": 140.892,
+    "openvino_ms": null,
+    "openvino_calls_per_s": null,
+    "openvino_device": null
+   },
+   {
+    "stage": "Enhancer \u2014 UltraMax",
+    "key": "enhance",
+    "calls_per_frame": 1.0,
+    "primary_provider": "Tensorrt",
+    "primary_ms": 25.479,
+    "cpu_ms": null,
+    "openvino_ms": null,
+    "openvino_calls_per_s": null,
+    "openvino_device": null,
+    "cpu_error": "RuntimeException: [ONNXRuntimeError] : 6 : RUNTIME_EXCEPTION : Exception during initialization: E:\\_work\\1\\s\\onnxrunti"
+   },
+   {
+    "stage": "Mask \u2014 RealityUX / BiSeNet",
+    "key": "mask_resnet18",
+    "calls_per_frame": 1.0,
+    "primary_provider": "Tensorrt",
+    "primary_ms": 12.473,
+    "cpu_ms": 30.54,
+    "openvino_ms": null,
+    "openvino_calls_per_s": null,
+    "openvino_device": null
+   }
+  ],
+  "warp_blend": {
+   "workload": "1 face, 512 crop -> 1280x720 frame (warpAffine x2 + alpha blend of the ROI)",
+   "backends": [
+    {
+     "key": "cv2_cpu",
+     "label": "cv2 (CPU)",
+     "available": true,
+     "ms": 10.588
+    },
+    {
+     "key": "cvcuda",
+     "label": "CV-CUDA",
+     "available": false,
+     "ms": null,
+     "reason": "the 'cvcuda' module is not importable here (NVIDIA publishes no CV-CUDA wheel for Windows / Python 3.10), so there is nothing to time"
+    }
+   ]
+  },
+  "optical_flow": {
+   "workload": "1280x720 gray pair, 3 px shift, 106 points",
+   "backends": [
+    {
+     "key": "cv",
+     "label": "cv2 LK (CPU)",
+     "available": true,
+     "ms": 2.711
+    },
+    {
+     "key": "torch",
+     "label": "torch LK (GPU)",
+     "available": true,
+     "ms": 24.656
+    },
+    {
+     "key": "nvof",
+     "label": "NVIDIA Optical Flow (NVOFA)",
+     "available": false,
+     "ms": null,
+     "reason": "this OpenCV build has no CUDA device (the opencv-python wheels ship without CUDA)"
+    }
+   ]
+  },
+  "arms": [
+   {
+    "key": "cpu",
+    "label": "CPU (ORT CPUExecutionProvider)",
+    "available": false,
+    "serial_ms_frame": null,
+    "serial_fps": null,
+    "reason": "a stage could not be built on the CPU provider"
+   },
+   {
+    "key": "primary",
+    "label": "Primary provider (Tensorrt)",
+    "available": true,
+    "serial_ms_frame": 50.18,
+    "serial_fps": 19.93,
+    "reason": null
+   },
+   {
+    "key": "trt_openvino_aux",
+    "label": "Primary + OpenVINO aux offload",
+    "available": false,
+    "serial_ms_frame": null,
+    "serial_fps": null,
+    "reason": "no Intel NPU / GPU with the openvino package on this machine"
+   },
+   {
+    "key": "trt_cvcuda_nvofa",
+    "label": "TRT + CV-CUDA + NVOFA",
+    "available": false,
+    "serial_ms_frame": null,
+    "serial_fps": null,
+    "reason": "cannot run here: CV-CUDA; NVIDIA Optical Flow (NVOFA)"
+   }
+  ],
+  "note": "serial_ms_frame = sum(ms/call x calls/frame) on one thread: a comparison between arms, not a pipeline fps. An unavailable arm has a reason and no number."
+ },
+ "warnings": [],
+ "summary": "Providers: Primary provider (Tensorrt) 50.18 ms/frame (3 arm(s) unavailable here - see reasons)",
+ "applied": null,
+ "recommend": {}
+}

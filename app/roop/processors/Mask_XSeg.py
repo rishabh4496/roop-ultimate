@@ -52,7 +52,9 @@ class Mask_XSeg():
             from roop.trt_bound_session import bound_mode, BoundStaticSession
             _bmode = None if self._cpu_only else bound_mode('xseg')
 
-            def _build(_i=0):
+            from roop import openvino_runner
+
+            def _build_ort(_i=0):
                 if _bmode:
                     try:
                         _in = onnxruntime.InferenceSession(model_path, _sess_opts, providers=providers).get_inputs()[0].name
@@ -76,8 +78,17 @@ class Mask_XSeg():
                 baseline_probe.log_session('mask:xseg', sess, providers, model_file=model_path)
                 return sess
 
+            def _build(_i=0):
+                # Opt-in native OpenVINO AsyncInferQueue runner (ROOP_OPENVINO_NATIVE) for the Intel iGPU / Arc /
+                # NPU; None - and the ORT chain above, unchanged - unless it routes this model to a usable device.
+                _native = openvino_runner.maybe_session('xseg', model_path)
+                return _native if _native is not None else _build_ort(_i)
+
             self.model_xseg = _build()
-            if not self._cpu_only and id(self.model_xseg) not in self._bound:
+            _native_xseg = getattr(self.model_xseg, 'native_runner', False)
+            if _native_xseg:
+                self._cpu_only = False
+            if not self._cpu_only and not _native_xseg and id(self.model_xseg) not in self._bound:
                 # Startup canary (roop/aux_canary.py): compare the live engine with a CUDA FP32 reference, cached by engine
                 # hash. On a failed verdict the session is rebuilt on TensorRT FP32, then CUDA/CPU; `providers` is rebound
                 # so the pool extras below are built on whatever the primary now runs on.
@@ -85,6 +96,8 @@ class Mask_XSeg():
                 self.model_xseg, providers, _verdict = aux_canary.guard(
                     'xseg', self.model_xseg, model_path, providers,
                     lambda chain: onnxruntime.InferenceSession(model_path, _sess_opts, providers=chain))
+            # With ROOP_OPENVINO_RECORD set, wrap the ORT session so real inputs are captured for INT8 calibration.
+            self.model_xseg = openvino_runner.adopt(model_path, self.model_xseg)
             self.model_inputs = self.model_xseg.get_inputs()
             self.model_outputs = self.model_xseg.get_outputs()
 
@@ -96,7 +109,9 @@ class Mask_XSeg():
             if session_pool.detmask_pooling_enabled():
                 n = session_pool.detmask_pool_size(
                     model_key='mask:xseg', input_shape=(1, 3, 512, 512))
-                extras = [_build(i) for i in range(n - 1)]
+                # One AsyncInferQueue session is already thread-safe and sized to the device; extra copies would
+                # only split its requests.
+                extras = [self.model_xseg if _native_xseg else _build(i) for i in range(n - 1)]
                 self.pool = session_pool.SessionPool(
                     lambda i, _e=([self.model_xseg] + extras): _e[i], n,
                     model_key='mask:xseg', input_shape=(1, 3, 512, 512))
@@ -133,9 +148,12 @@ class Mask_XSeg():
         bound = self._bound.get(id(sess))
         if bound is not None:
             return bound.run({self.model_inputs[0].name: temp_frame})
-        if getattr(self, '_cpu_only', False):
+        if getattr(sess, 'native_runner', False) or getattr(self, '_cpu_only', False):
             return sess.run([o.name for o in self.model_outputs],
                             {self.model_inputs[0].name: temp_frame})
+        _rec = getattr(sess, 'recorder', None)      # RecordingSession: run_with_iobinding bypasses .run
+        if _rec is not None:
+            _rec.offer({self.model_inputs[0].name: temp_frame})
         iob = self._get_io_binding(sess)
         iob.bind_cpu_input(self.model_inputs[0].name, temp_frame)
         sess.run_with_iobinding(iob)

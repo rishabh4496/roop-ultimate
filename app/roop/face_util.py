@@ -221,6 +221,28 @@ def _guard_aux_models(fa, chains):
         _swallowed("roop/face_util.py:_guard_aux_models", _degrade_error, "canary skipped")
 
 
+def _offload_aux_models(fa):
+    """Hand the bundle's SCRFD detector and w600k_r50 embedder to the native OpenVINO runner, when asked.
+
+    Off unless ROOP_OPENVINO_NATIVE names a usable device (see roop/openvino_runner.py for why it is opt-in and
+    why `auto` never takes the discrete NVIDIA card). Only the small per-face graphs move; the swapper and the
+    restorer stay on the primary provider. `model.session` is replaced in place, which is all insightface reads,
+    so `fa.det_model` (the same object) follows. With the variable unset this is a dict lookup per model.
+    With ROOP_OPENVINO_RECORD set the ORT session is wrapped to capture real INT8 calibration inputs instead."""
+    try:
+        from roop import openvino_runner
+        for _task, model in list(fa.models.items()):
+            model_file = getattr(model, 'model_file', None)
+            session = getattr(model, 'session', None)
+            if session is None or openvino_runner.family_for_file(model_file) not in ('scrfd', 'arcface'):
+                continue
+            adopted = openvino_runner.adopt(model_file, session)
+            if adopted is not session:
+                model.session = adopted
+    except Exception as _degrade_error:
+        _swallowed("roop/face_util.py:_offload_aux_models", _degrade_error, "aux models stay on the primary provider")
+
+
 def _build_face_analyser():
     model_path = resolve_relative_path('..')
     allowed_modules = roop.globals.g_desired_face_analysis
@@ -279,6 +301,7 @@ def _build_face_analyser():
         # them. See roop/nms.py.
         bind_instance_nms(fa.det_model)
     _guard_aux_models(fa, _bundle_chains)
+    _offload_aux_models(fa)
     _probe_analyser(fa, _requested_providers)
     try:
         from roop.model_lifecycle import register_model_lifecycle, format_shape_from_session

@@ -1,0 +1,170 @@
+{
+ "live": {
+  "stage": "STAGE_3_MAIN_SWAP",
+  "stages": {
+   "STAGE_1_SPARSE_PRESCAN": {
+    "state": "DONE",
+    "stage_progress_pct": 100.0,
+    "active_ranges_count": null,
+    "verified_target_frames": null,
+    "skipped_frames_pct": null,
+    "eta_seconds": 0.0,
+    "wall_s": 4.0,
+    "fps": 10.0,
+    "scene_cuts": 3
+   },
+   "STAGE_2_ACTIVE_PREPASS": {
+    "state": "DONE",
+    "stage_progress_pct": 100.0,
+    "active_ranges_count": null,
+    "verified_target_frames": null,
+    "skipped_frames_pct": null,
+    "eta_seconds": 0.0,
+    "wall_s": 5.0,
+    "fps": 20.0,
+    "neural_detected_frames": 25,
+    "flow_tracked_frames": 75,
+    "flow_ratio_pct": 75.0
+   },
+   "STAGE_3_MAIN_SWAP": {
+    "state": "RUNNING",
+    "stage_progress_pct": 50.0,
+    "active_ranges_count": null,
+    "verified_target_frames": null,
+    "skipped_frames_pct": null,
+    "eta_seconds": 10.0,
+    "wall_s": 10.0,
+    "fps": 30.0,
+    "ops": {
+     "decode": {
+      "ms": 2.001,
+      "calls": 5,
+      "backend": "ffmpeg / cv2"
+     },
+     "warp": {
+      "ms": 3.002,
+      "calls": 5,
+      "backend": "cv2 (CPU)"
+     },
+     "model": {
+      "ms": 11.004,
+      "calls": 5,
+      "backend": "TensorRT"
+     },
+     "restore": null,
+     "blend": {
+      "ms": 4.005,
+      "calls": 5,
+      "backend": "cv2 (CPU)"
+     },
+     "encode": {
+      "ms": 6.006,
+      "calls": 5,
+      "backend": "h264_nvenc"
+     }
+    }
+   }
+  },
+  "summary": {}
+ },
+ "summary": {
+  "schema": 1,
+  "ok": true,
+  "finished_at": 1019.0,
+  "video_io": null,
+  "aux_offload": null,
+  "total_frames": 600,
+  "videos_in_job": 1,
+  "total_wall_s": 19.0,
+  "effective_fps": 31.58,
+  "speedup": {
+   "multiplier": 0.79,
+   "estimated": true,
+   "baseline_s": 15.0,
+   "actual_s": 19.0,
+   "method": "this run's per-active-frame cost (Stage 2 + Stage 3 wall) scaled to every frame, divided by the 3-stage wall clock; a dense render is not run"
+  },
+  "vram": {
+   "peak_gb": null,
+   "base_gb": null,
+   "total_gb": null,
+   "samples": 0
+  },
+  "stages": {
+   "STAGE_1_SPARSE_PRESCAN": {
+    "state": "DONE",
+    "wall_s": 4.0,
+    "sampled_frames": 40,
+    "samples_total": 40,
+    "stride": null,
+    "workers": null,
+    "worker_utilization_pct": null,
+    "active_ranges_count": null,
+    "skipped_frames_pct": null,
+    "keyframes_per_sec": 10.0,
+    "scene_cuts": 3,
+    "scan_mode": "hardware-keyframe"
+   },
+   "STAGE_2_ACTIVE_PREPASS": {
+    "state": "DONE",
+    "wall_s": 5.0,
+    "active_ranges_count": null,
+    "grab_calls": null,
+    "set_calls": null,
+    "seek_walks": null,
+    "verified_target_frames": null,
+    "detect_interval": 4,
+    "detector_calls": 25,
+    "scan_frames": 100,
+    "coast_frames": 75,
+    "flow_backend": null,
+    "landmark_filter": null,
+    "trajectory_faces": null,
+    "neural_detected_frames": 25,
+    "flow_tracked_frames": 75,
+    "flow_ratio_pct": 75.0,
+    "fps": 20.0
+   },
+   "STAGE_3_MAIN_SWAP": {
+    "state": "DONE",
+    "wall_s": 10.0,
+    "frames": 600,
+    "passthrough_frames": null,
+    "gpu_frames": null,
+    "swapped_frames": 120,
+    "faces_swapped": 130,
+    "peak_vram_gb": null,
+    "processing_fps": 60.0,
+    "ops": {
+     "decode": {
+      "ms": 2.001,
+      "calls": 5,
+      "backend": "ffmpeg / cv2"
+     },
+     "warp": {
+      "ms": 3.002,
+      "calls": 5,
+      "backend": "cv2 (CPU)"
+     },
+     "model": {
+      "ms": 11.004,
+      "calls": 5,
+      "backend": "TensorRT"
+     },
+     "restore": null,
+     "blend": {
+      "ms": 4.005,
+      "calls": 5,
+      "backend": "cv2 (CPU)"
+     },
+     "encode": {
+      "ms": 6.006,
+      "calls": 5,
+      "backend": "h264_nvenc"
+     }
+    }
+   },
+   "STAGE_4_FINALIZE": null
+  }
+ }
+}

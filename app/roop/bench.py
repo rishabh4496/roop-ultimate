@@ -59,6 +59,7 @@ models instead of the selected ones):
 """
 from roop.degrade import swallowed as _swallowed
 
+import importlib.util
 import os
 import platform
 import threading
@@ -118,6 +119,25 @@ PROFILES = {
         # it is set a little long rather than a little short — a bar that
         # reaches 100% and keeps going reads as a hang.
         'est_sec': 450,
+    },
+    # "Which provider is each part of the pipeline actually faster on, HERE?" - per-stage cost on CPU, on the primary
+    # provider (TensorRT when active) and, where an Intel accelerator exists, on the native OpenVINO runner, plus the
+    # frame-level warp/blend and optical-flow backends. It never sweeps pools or threads and never writes the
+    # config: `run_benchmark` returns before the recommendation / apply step for it.
+    'providers': {
+        'measure_sec': 1.0,
+        'warm_sec': 0.3,
+        'reps': 1,
+        'pool_levels': (1,),
+        'sweep_pools': False,
+        'provider_ab': False,
+        'io': False,
+        'batch_swap': False,
+        'tile_upscale': False,
+        'providers_only': True,
+        # 70 s on the 4070 with a warm TensorRT engine cache; the FIRST run builds engines (631 s measured), after
+        # which it is cached. The CPU arm of a heavy stage (a 1024 enhancer) can add minutes on a slower CPU.
+        'est_sec': 120,
     },
     # A sustained, multi-face workload for validating stability rather than
     # finding a short peak. It keeps the active model catalogue and provider,
@@ -1407,6 +1427,197 @@ def measure_provider_ab(stages, cfg, report, cancelled):
     return rows
 
 
+# ── provider matrix: CPU vs TRT vs (OpenVINO) per stage, plus the frame-level backends ───────────────────────
+
+CVCUDA_MISSING = ("the 'cvcuda' module is not importable here (NVIDIA publishes no CV-CUDA wheel for Windows / "
+                  "Python 3.10), so there is nothing to time")
+
+
+def _time_calls(fn, seconds, warm, cancelled, min_calls=3):
+    """ms per call of ``fn()`` after a short warm-up; at least ``min_calls`` calls so a slow CPU stage reports."""
+    t0 = time.perf_counter()
+    while time.perf_counter() - t0 < warm:
+        fn()
+        if cancelled():
+            raise Cancelled()
+    n, t0 = 0, time.perf_counter()
+    while n < min_calls or time.perf_counter() - t0 < seconds:
+        fn()
+        n += 1
+        if cancelled():
+            raise Cancelled()
+    return 1000.0 * (time.perf_counter() - t0) / n
+
+
+def measure_warp_blend(cfg, cancelled):
+    """One face pasted back into a 720p frame on the host: ``cv2.warpAffine`` of a 512 crop + an alpha blend of the
+    warped region. This is the CLASS of work the production paste-back does (the real one adds feathering, a
+    hull, a temporal matte), so it is a floor for the host path, not the pipeline's exact blend cost."""
+    import cv2
+    rng = np.random.default_rng(0)
+    frame = rng.integers(0, 255, (720, 1280, 3), dtype=np.uint8)
+    crop = rng.integers(0, 255, (512, 512, 3), dtype=np.uint8)
+    mask = np.clip(cv2.GaussianBlur(rng.random((512, 512), dtype=np.float32), (0, 0), 24) * 2.0, 0, 1)
+    M = np.array([[0.55, 0.03, 420.0], [-0.03, 0.55, 150.0]], dtype=np.float32)
+
+    def once():
+        warped = cv2.warpAffine(crop, M, (1280, 720), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
+        a = cv2.warpAffine(mask, M, (1280, 720), flags=cv2.INTER_LINEAR)[:, :, None]
+        roi = (slice(120, 460), slice(400, 740))
+        out = frame.copy()
+        out[roi] = (warped[roi] * a[roi] + out[roi] * (1.0 - a[roi])).astype(np.uint8)
+        return out
+
+    cpu_ms = _time_calls(once, cfg['measure_sec'], cfg['warm_sec'], cancelled)
+    have_cvcuda = importlib.util.find_spec('cvcuda') is not None
+    return {
+        'workload': '1 face, 512 crop -> 1280x720 frame (warpAffine x2 + alpha blend of the ROI)',
+        'backends': [
+            {'key': 'cv2_cpu', 'label': 'cv2 (CPU)', 'available': True, 'ms': round(cpu_ms, 3)},
+            {'key': 'cvcuda', 'label': 'CV-CUDA', 'available': False, 'ms': None,
+             'reason': ('importable, but this runner has no CV-CUDA timing arm' if have_cvcuda else CVCUDA_MISSING)},
+        ],
+    }
+
+
+def measure_optical_flow(cfg, cancelled):
+    """Point-tracking backends of ``roop.flow_backend`` on a textured 720p pair shifted by 3 px, ~106 points
+    (one face's landmarks). Times the call only; it says nothing about tracking accuracy."""
+    import cv2
+    from roop import flow_backend
+    rng = np.random.default_rng(1)
+    base = cv2.GaussianBlur(rng.integers(0, 255, (720, 1280), dtype=np.uint8), (0, 0), 2.0)
+    nxt = np.roll(base, 3, axis=1)
+    pts = np.stack([rng.uniform(300, 900, 106), rng.uniform(150, 550, 106)], axis=1).astype(np.float32)
+    rows = []
+    for key, factory in (('cv', lambda: flow_backend.CvLK()), ('torch', lambda: flow_backend.TorchLK())):
+        label = {'cv': 'cv2 LK (CPU)', 'torch': 'torch LK (GPU)'}[key]
+        try:
+            tracker = factory()
+            ms = _time_calls(lambda: tracker.track(base, nxt, pts), cfg['measure_sec'], cfg['warm_sec'], cancelled)
+            rows.append({'key': key, 'label': label, 'available': True, 'ms': round(ms, 3)})
+        except Cancelled:
+            raise
+        except Exception as e:                      # noqa: BLE001
+            _swallowed("roop/bench.py:measure_optical_flow", e, "backend row recorded as unavailable")
+            rows.append({'key': key, 'label': label, 'available': False, 'ms': None,
+                         'reason': f'{type(e).__name__}: {str(e)[:100]}'})
+    reason = flow_backend.nvof_unavailable_reason()
+    rows.append({'key': 'nvof', 'label': 'NVIDIA Optical Flow (NVOFA)', 'available': False, 'ms': None,
+                 'reason': reason or 'available, but this runner has no NVOFA timing arm'})
+    return {'workload': '1280x720 gray pair, 3 px shift, 106 points', 'backends': rows}
+
+
+def measure_provider_matrix(stages, cfg, faces_per_frame, report, cancelled):
+    """Per-stage ms/call on CPU, on the primary provider, and on native OpenVINO when an Intel accelerator exists;
+    then the frame-level warp/blend and optical-flow backends; then the serial per-frame cost of each ARM.
+
+    An arm that cannot run on this machine is reported as unavailable WITH the reason; its number is None, never an
+    estimate. The per-frame figure is the SERIAL sum of per-stage costs (one thread, no overlap): a comparison
+    between arms, not a prediction of pipeline fps."""
+    from roop import openvino_runner
+    ov_device = openvino_runner.resolve_device('auto')
+    rows = []
+    unmeasured = []
+    for st in stages:
+        if st.error or not st.ms_call:
+            # Stays visible: a stage missing from the table would make every serial figure below quietly
+            # understate the frame cost.
+            unmeasured.append({'stage': st.label, 'reason': st.error or 'no timing was produced'})
+            continue
+        if cancelled():
+            raise Cancelled()
+        row = {'stage': st.label, 'key': st.key, 'calls_per_frame': round(st.calls_per_frame, 3),
+               'primary_provider': st.provider_used, 'primary_ms': round(st.ms_call, 3),
+               'cpu_ms': None, 'openvino_ms': None, 'openvino_calls_per_s': None, 'openvino_device': None}
+        report(status=f'CPU - {st.label}', stage=st.label, threads=1)
+        try:
+            sess = _build_session(st, providers=['CPUExecutionProvider'])
+            feeds = make_feeds(sess, st.shape_hint)
+            outs = [o.name for o in sess.get_outputs()]
+            row['cpu_ms'] = round(_time_calls(lambda: sess.run(outs, feeds), cfg['measure_sec'], cfg['warm_sec'],
+                                              cancelled, min_calls=2), 3)
+            del sess
+        except Cancelled:
+            raise
+        except Exception as e:                      # noqa: BLE001
+            _swallowed("roop/bench.py:measure_provider_matrix", e, "CPU arm recorded as an error")
+            row['cpu_error'] = f'{type(e).__name__}: {str(e)[:200]}'
+        family = openvino_runner.family_for_file(st.path)
+        if ov_device and family in openvino_runner.OFFLOADABLE:
+            report(status=f'OpenVINO {ov_device} - {st.label}', stage=st.label, threads=1)
+            try:
+                ov_sess = openvino_runner.OpenVinoAsyncSession(st.path, ov_device, precision='auto', model_key=family)
+                feeds = make_feeds(ov_sess, st.shape_hint)
+                outs = [o.name for o in ov_sess.get_outputs()]
+                row['openvino_ms'] = round(_time_calls(lambda: ov_sess.run(outs, feeds), cfg['measure_sec'],
+                                                       cfg['warm_sec'], cancelled), 3)
+                depth = max(2, (ov_sess.info()['queue_requests'] or [2])[0])
+                calls_s = _sampled_throughput(1, throughput, [ov_sess], [feeds], outs, depth, cfg['measure_sec'],
+                                                cfg['warm_sec'], cancelled)[0]
+                row['openvino_calls_per_s'] = round(calls_s, 2)
+                row['openvino_device'] = f'{ov_device} ({openvino_runner.device_name(ov_device)})'
+                del ov_sess
+            except Cancelled:
+                raise
+            except Exception as e:                  # noqa: BLE001
+                _swallowed("roop/bench.py:measure_provider_matrix", e, "OpenVINO arm recorded as an error")
+                row['openvino_error'] = f'{type(e).__name__}: {str(e)[:100]}'
+        rows.append(row)
+        _release_vram()
+        report(log=f"  {st.label}: {row['primary_provider'] or 'primary'} {row['primary_ms']} ms, "
+                   f"CPU {row['cpu_ms']} ms" + (f", OpenVINO {row['openvino_ms']} ms" if row['openvino_ms'] else ''))
+
+    report(status='Warp / blend backends', stage='warp-blend', threads=1)
+    warp = measure_warp_blend(cfg, cancelled)
+    report(status='Optical-flow backends', stage='optical-flow', threads=1)
+    flow = measure_optical_flow(cfg, cancelled)
+
+    def serial(key_ms):
+        # A frame costs EVERY stage: with one unmeasured or one that cannot run on this arm, the sum is not a
+        # frame cost, so the arm is unavailable (its reason names the stage) rather than partial.
+        vals = [(r.get(key_ms), r['calls_per_frame']) for r in rows]
+        if unmeasured or not vals or any(v is None for v, _ in vals):
+            return None
+        return round(sum(v * c for v, c in vals), 2)
+
+    def why_not(key_ms, error_key, what):
+        if unmeasured:
+            return 'not measured: ' + '; '.join(f"{u['stage']} ({u['reason'][:80]})" for u in unmeasured)
+        bad = [f"{r['stage']} ({r[error_key][:90]})" if r.get(error_key) else r['stage']
+               for r in rows if r.get(key_ms) is None]
+        return f'{what}: ' + '; '.join(bad) if bad else 'no stage measured'
+
+    def arm(key, label, ms, reason=None):
+        return {'key': key, 'label': label, 'available': ms is not None, 'serial_ms_frame': ms,
+                'serial_fps': round(1000.0 / ms, 2) if ms else None, 'reason': None if ms is not None else reason}
+
+    prim_ms = serial('primary_ms')
+    ov_rows = [r for r in rows if r.get('openvino_ms') is not None]
+    hybrid = None
+    if ov_rows and prim_ms is not None and not unmeasured:
+        hybrid = round(sum((r['openvino_ms'] if r.get('openvino_ms') is not None else r['primary_ms'])
+                           * r['calls_per_frame'] for r in rows), 2)
+    missing = [b['label'] for b in warp['backends'] + flow['backends']
+               if b['key'] in ('cvcuda', 'nvof') and not b['available']]
+    arms = [
+        arm('cpu', 'CPU (ORT CPUExecutionProvider)', serial('cpu_ms'),
+            why_not('cpu_ms', 'cpu_error', 'cannot run on the CPU provider')),
+        arm('primary', 'Primary provider (' + (rows[0]['primary_provider'] if rows else '?') + ')', prim_ms,
+            why_not('primary_ms', 'primary_error', 'no timing')),
+        arm('trt_openvino_aux', 'Primary + OpenVINO aux offload', hybrid,
+            'no Intel NPU / GPU with the openvino package on this machine' if not ov_device
+            else why_not('primary_ms', 'primary_error', 'no timing') if unmeasured
+            else 'no offloadable stage (SCRFD / ArcFace / XSeg) is in the active catalogue'),
+        arm('trt_cvcuda_nvofa', 'TRT + CV-CUDA + NVOFA', None,
+            'cannot run here: ' + ('; '.join(missing) if missing else 'a GPU warp/flow arm is not wired into the pipeline')),
+    ]
+    return {'kind': 'provider_matrix', 'faces_per_frame': faces_per_frame, 'openvino_device': ov_device,
+            'stages': rows, 'unmeasured': unmeasured, 'warp_blend': warp, 'optical_flow': flow, 'arms': arms,
+            'note': 'serial_ms_frame = sum(ms/call x calls/frame) on one thread: a comparison between arms, '
+                    'not a pipeline fps. An unavailable arm has a reason and no number.'}
+
+
 # ── phase 7: batched swap ────────────────────────────────────────────────────
 
 def measure_batch_swap(stages, cfg, report, cancelled):
@@ -2179,8 +2390,35 @@ def run_benchmark(profile='full', faces_per_frame=1.0, report=None,
                    status=f'Measuring {st.label}')
             measure_stage(st, cfg_profile, report, cancelled,
                           cfg_profile['sweep_pools'], max_level)
+            if st.error and cfg_profile.get('providers_only'):
+                # First call on a cold TensorRT cache can build an engine inside the measuring window and read
+                # as zero throughput (seen: XSeg after a 3 min build, then 384 calls/s when re-run). The engine is
+                # cached by now, so one retry is a different measurement, not a repeated one.
+                report(log=f'  ! {st.label}: {st.error} - retrying once')
+                st.error = ''
+                measure_stage(st, cfg_profile, report, cancelled,
+                              cfg_profile['sweep_pools'], max_level)
             if st.error:
                 report(log=f'  ! {st.label}: {st.error}')
+
+        if cfg_profile.get('providers_only'):
+            # The provider matrix replaces everything after the per-stage measurement and returns BEFORE the
+            # recommendation / apply step: this profile reports, it never writes the config.
+            report(phase='provider', pct=55, status='Provider matrix')
+            matrix = measure_provider_matrix(stages, cfg_profile, faces_per_frame, report, cancelled)
+            duration = time.perf_counter() - t_start
+            avail = [a for a in matrix['arms'] if a['available']]
+            summary = ('Providers: ' + '; '.join(
+                f"{a['label']} {a['serial_ms_frame']} ms/frame" for a in avail)
+                + ('' if len(avail) == len(matrix['arms']) else
+                   f" ({len(matrix['arms']) - len(avail)} arm(s) unavailable here - see reasons)"))
+            report(phase='done', pct=100, status='Benchmark complete', log=summary)
+            return {'status': 'success', 'version': 2, 'profile': profile,
+                    'ran_at': time.strftime('%Y-%m-%d %H:%M:%S'), 'duration_sec': round(duration, 1),
+                    'device': device, 'gpu_name': device['gpu_name'], 'total_vram_gb': device['total_vram_gb'],
+                    'faces_per_frame': faces_per_frame, 'stages': [st.as_dict() for st in stages],
+                    'provider_matrix': matrix, 'warnings': warnings, 'summary': summary,
+                    'applied': None, 'recommend': {}}
 
         # ── pool sizes ───────────────────────────────────────────────────────
         from roop import session_pool

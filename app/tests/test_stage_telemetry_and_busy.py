@@ -32,7 +32,11 @@ import project_checkpoint as pc  # noqa: E402
 
 # `wall_s` (seconds the stage has run / took) was added by Phase 9 with the per-job report.
 STAGE_KEYS = {"state", "stage_progress_pct", "active_ranges_count", "verified_target_frames",
-              "skipped_frames_pct", "eta_seconds", "wall_s"}
+              "skipped_frames_pct", "eta_seconds", "wall_s", "fps"}
+# Stage-specific live HUD fields (the per-stage rate `fps` is common). Stage 3's `ops` block appears only once
+# that stage has started - see test_snapshot_has_ops_only_once_stage3_started in test_stage_hud_telemetry.py.
+STAGE_EXTRAS = {st.STAGE_1_SPARSE_PRESCAN: {"scene_cuts"},
+                st.STAGE_2_ACTIVE_PREPASS: {"neural_detected_frames", "flow_tracked_frames", "flow_ratio_pct"}}
 
 
 class Registry(unittest.TestCase):
@@ -48,7 +52,7 @@ class Registry(unittest.TestCase):
     def test_every_stage_reports_every_field(self):
         st.begin_run(1000)
         for name, stage in st.snapshot()["stages"].items():
-            self.assertEqual(set(stage), STAGE_KEYS, name)
+            self.assertEqual(set(stage), STAGE_KEYS | STAGE_EXTRAS.get(name, set()), name)
         self.assertEqual(set(st.snapshot()["stages"]), set(st.STAGES))
 
     def test_stage1_progress_ranges_and_skipped_share(self):
@@ -165,7 +169,7 @@ class WireFormat(unittest.TestCase):
             hello = ws.receive_json()
         self.assertEqual(hello["stage"], st.STAGE_2_ACTIVE_PREPASS)
         s2 = hello["stages"][st.STAGE_2_ACTIVE_PREPASS]
-        self.assertEqual(set(s2), STAGE_KEYS)
+        self.assertEqual(set(s2), STAGE_KEYS | STAGE_EXTRAS[st.STAGE_2_ACTIVE_PREPASS])
         self.assertEqual(s2["stage_progress_pct"], 25.0)
         self.assertEqual(hello["stages"][st.STAGE_1_SPARSE_PRESCAN]["state"], st.SKIPPED)
 

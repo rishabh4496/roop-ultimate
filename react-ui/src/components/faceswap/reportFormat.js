@@ -33,6 +33,8 @@ export const fmtCount = (v) => (isNum(v) ? Math.round(v).toLocaleString('en-US')
 export const fmtPct = (v) => (isNum(v) ? `${v.toFixed(1)}%` : DASH);
 export const fmtGb = (v) => (isNum(v) ? `${v.toFixed(2)} GB` : DASH);
 export const fmtFps = (v) => (isNum(v) ? `${v.toFixed(1)} fps` : DASH);
+export const fmtMs = (v) => (isNum(v) ? `${v.toFixed(v >= 100 ? 0 : v >= 10 ? 1 : 2)} ms` : DASH);
+export const fmtRate = (v, unit) => (isNum(v) ? `${v.toFixed(1)} ${unit}` : DASH);
 
 /** done / running / failed / skipped / restored / pending, for a state chip. */
 export const stateTone = (state) => {
@@ -55,6 +57,42 @@ export const speedupText = (speedup) => {
 const row = (label, value, tone) => ({ label, value, tone: tone || '' });
 
 /**
+ * Stage 3's per-operation timings as HUD cells, in pipeline order. `ops` is `stage3.ops` from the backend: one
+ * entry per column with `{ms, calls, backend}`, or null for a column that never ran (shown as a dash, never 0).
+ * The labels follow the backend's own backend name: a TensorRT model column is "TRT", an *_nvenc encoder is
+ * "NVENC"; anything else keeps a neutral name rather than claiming hardware it did not use.
+ */
+export const OPS_ORDER = ['decode', 'warp', 'model', 'restore', 'blend', 'encode'];
+export function opsCells(ops) {
+  if (!ops || typeof ops !== 'object') return [];
+  return OPS_ORDER.map((key) => {
+    const o = ops[key] || null;
+    const backend = o && o.backend ? String(o.backend) : '';
+    let label = { decode: 'Decode', warp: 'Warp', model: 'Model', restore: 'Restore', blend: 'Blend', encode: 'Encode' }[key];
+    if (key === 'model' && /^tensorrt|^trt/i.test(backend)) label = 'TRT';
+    if (key === 'encode' && /nvenc/i.test(backend)) label = 'NVENC';
+    return {
+      key, label, backend,
+      value: o && isNum(o.ms) ? fmtMs(o.ms) : DASH,
+      calls: o && isNum(o.calls) ? o.calls : null,
+      title: o ? `${label}: ${fmtMs(o.ms)} per call over ${fmtCount(o.calls)} calls${backend ? ` on ${backend}` : ''}` : `${label}: did not run`,
+    };
+  });
+}
+
+/** "Decode 2.1 ms | Warp 3.4 ms | TRT 11 ms | ..." - the brief's one-line Stage 3 readout. Empty when no ops. */
+export const opsLine = (ops) => opsCells(ops).map((c) => `${c.label} ${c.value}`).join(' | ');
+
+/** The OpenVINO aux offload block (`report.aux_offload`) as one line, or '' when the runner never ran. */
+export function auxOffloadText(aux) {
+  if (!aux || !Array.isArray(aux.sessions) || !aux.sessions.length) return '';
+  return aux.sessions
+    .map((x) => `${x.model_key || 'model'} on ${x.device || '?'}${x.device_name ? ` (${x.device_name})` : ''}`
+      + `${x.precision ? ` ${x.precision}` : ''}${isNum(x.ms_per_call) ? ` · ${fmtMs(x.ms_per_call)}/call` : ''}`)
+    .join(' · ');
+}
+
+/**
  * Sections of label/value rows for a finished report. Returns [] for a missing / empty report so a caller
  * can render "no finished run yet" instead of a table of dashes.
  */
@@ -75,6 +113,8 @@ export function reportSections(report) {
         ? `${fmtCount(s1.sampled_frames)} / ${fmtCount(s1.samples_total)}` : fmtCount(s1.sampled_frames)),
       row('Worker pool utilization', isNum(s1.worker_utilization_pct) && isNum(s1.workers)
         ? `${fmtPct(s1.worker_utilization_pct)} of ${s1.workers} workers` : fmtPct(s1.worker_utilization_pct)),
+      row('Keyframes sampled / s', fmtRate(s1.keyframes_per_sec, '/s')),
+      row('Scene cuts found', fmtCount(s1.scene_cuts)),
       row('Active ranges', fmtCount(s1.active_ranges_count)),
       row('Frames skipped (no target)', fmtPct(s1.skipped_frames_pct)),
     ],
@@ -92,6 +132,10 @@ export function reportSections(report) {
       row('Detector calls', isNum(s2.detector_calls) && isNum(s2.scan_frames)
         ? `${fmtCount(s2.detector_calls)} of ${fmtCount(s2.scan_frames)} frames${isNum(s2.detect_interval) && s2.detect_interval > 1 ? ` (every ${s2.detect_interval}th)` : ''}`
         : '—'),
+      row('Neural-detected frames', fmtCount(s2.neural_detected_frames)),
+      row('Flow-tracked frames', isNum(s2.flow_tracked_frames) && isNum(s2.flow_ratio_pct)
+        ? `${fmtCount(s2.flow_tracked_frames)} (${fmtPct(s2.flow_ratio_pct)})` : fmtCount(s2.flow_tracked_frames)),
+      row('Pre-pass speed', fmtRate(s2.fps, 'fps')),
     ],
   });
 
@@ -104,6 +148,7 @@ export function reportSections(report) {
       row('Frames with a swapped face', fmtCount(s3.swapped_frames)),
       row('Faces swapped', fmtCount(s3.faces_swapped)),
       row('Peak VRAM', fmtGb(s3.peak_vram_gb)),
+      ...opsCells(s3.ops).map((c) => row(`${c.label} per call`, c.value + (c.backend ? ` · ${c.backend}` : ''))),
     ],
   });
 

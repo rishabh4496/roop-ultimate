@@ -151,5 +151,60 @@ store.setPipelineTelemetry({ progress: 1, desc: 'Done' });                 // a 
 ok('a later frame without stage data cannot clear the report',
   !!store.useTelemetryStore.getState().pipeline.summary.stages);
 
+// ── the per-stage HUD fields, from a fixture the REAL telemetry writers produced ─────────────────────────────
+// (tools/gen_hud_fixture.py drives stage_telemetry + procmgr_runtime._prof; a renamed backend field fails here.)
+{
+  const hud = JSON.parse(readFileSync(join(here, 'pipeline-hud.fixture.json'), 'utf8'));
+  const sum = hud.summary;
+  const cardTextOf = (r) => text(html(React.createElement(PipelineSummaryCard, { report: r })));
+  const secs = helpers.reportSections(sum);
+  const val = (key, label) => (secs.find((x) => x.key === key)?.rows || []).find((r) => r.label === label)?.value;
+
+  ok('Stage 1 shows keyframes per second and the scene cuts', val(S.STAGE_1, 'Keyframes sampled / s') === '10.0 /s'
+    && val(S.STAGE_1, 'Scene cuts found') === '3', JSON.stringify(secs[0].rows));
+  ok('Stage 2 splits flow-tracked from neural-detected frames',
+    val(S.STAGE_2, 'Neural-detected frames') === '25' && val(S.STAGE_2, 'Flow-tracked frames') === '75 (75.0%)',
+    JSON.stringify(secs[1].rows));
+  ok('Stage 2 pre-pass speed', val(S.STAGE_2, 'Pre-pass speed') === '20.0 fps', val(S.STAGE_2, 'Pre-pass speed'));
+  const cells = helpers.opsCells(sum.stages[S.STAGE_3].ops);
+  const byKeyCell = Object.fromEntries(cells.map((c) => [c.key, c]));
+  ok('Stage 3 ops are in pipeline order', cells.map((c) => c.key).join() === 'decode,warp,model,restore,blend,encode');
+  ok('Stage 3 labels the TensorRT model column TRT and the nvenc encoder NVENC',
+    byKeyCell.model.label === 'TRT' && byKeyCell.encode.label === 'NVENC', JSON.stringify(cells.map((c) => c.label)));
+  ok('warp and blend are labelled with the CPU backend they really ran on',
+    byKeyCell.warp.backend === 'cv2 (CPU)' && byKeyCell.blend.backend === 'cv2 (CPU)');
+  ok('a column that never ran is a dash, not 0 ms', byKeyCell.restore.value === '—' && byKeyCell.restore.calls === null);
+  ok('measured ops carry real milliseconds', /^\d/.test(byKeyCell.model.value) && byKeyCell.model.value.endsWith('ms'),
+    byKeyCell.model.value);
+  ok('the ops line is the brief\'s Decode | Warp | TRT | Blend | NVENC readout',
+    /^Decode .* \| Warp .* \| TRT .* \| Restore — \| Blend .* \| NVENC /.test(helpers.opsLine(sum.stages[S.STAGE_3].ops)),
+    helpers.opsLine(sum.stages[S.STAGE_3].ops));
+  ok('the finished card prints each op row', cardTextOf(sum).includes('TRT per call'));
+  ok('no ops block means no ops rows (a report from before this field)',
+    helpers.opsCells(undefined).length === 0 && helpers.opsLine(null) === '');
+
+  // live frame: store -> HUD
+  store.setPipelineTelemetry({ stage: S.STAGE_3, stages: hud.live.stages, summary: {} });
+  const liveHtml = view(store.useTelemetryStore.getState().pipeline);
+  const lt = text(liveHtml);
+  ok('the live HUD shows each stage rate', lt.includes('20.0 fps') && lt.includes('samples/s'), lt);
+  ok('the live HUD shows Stage 1 cuts and the Stage 2 flow split',
+    lt.includes('3 scene cuts') && lt.includes('75 flow') && lt.includes('25 neural'), lt);
+  ok('the live HUD shows the Stage 3 ops strip', liveHtml.includes('data-testid="stage3-ops"') && lt.includes('TRT '));
+  const noOps = JSON.parse(JSON.stringify(hud.live.stages));
+  delete noOps[S.STAGE_3].ops;
+  store.setPipelineTelemetry({ stage: S.STAGE_3, stages: noOps, summary: {} });
+  ok('a Stage 3 with no ops block renders no strip',
+    !view(store.useTelemetryStore.getState().pipeline).includes('data-testid="stage3-ops"'));
+
+  // OpenVINO aux offload
+  ok('no aux_offload prints nothing', helpers.auxOffloadText(null) === '' && helpers.auxOffloadText({ sessions: [] }) === ''
+    && !cardTextOf(sum).includes('OpenVINO aux offload'));
+  const withAux = { ...sum, aux_offload: { sessions: [
+    { model_key: 'scrfd', device: 'NPU', device_name: 'Intel AI Boost', precision: 'int8', ms_per_call: 3.21 }] } };
+  ok('an active OpenVINO session is named with its device and precision',
+    cardTextOf(withAux).includes('scrfd on NPU (Intel AI Boost) int8 · 3.21 ms/call'), cardTextOf(withAux));
+}
+
 console.log(failures === 0 ? '\nall pipeline-report checks passed' : `\n${failures} pipeline-report check(s) FAILED`);
 globalThis.__RENDER_CHECK_FAILURES__ = failures;

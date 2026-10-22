@@ -1601,7 +1601,8 @@ def _run_benchmark_worker(profile: str, faces: float):
             faces_per_frame=faces,
             report=_bench_report,
             cancelled=lambda: _benchmark_cancel_requested,
-            apply_to_config=True,
+            # A report-only profile (the provider matrix) never writes the config, whatever else changes.
+            apply_to_config=not bench.PROFILES.get(profile, {}).get('providers_only'),
         )
         with _benchmark_lock:
             _benchmark_state["result"] = result

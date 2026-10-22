@@ -1,0 +1,15 @@
+{
+  "model_key": "xseg",
+  "model_sha": "0b57328efcb839d85973164b617ceee9dfe6cfcb2c82e8a033bba9f4f09b27e5",
+  "ir": "xseg_0b57328efcb8_int8.xml",
+  "calibration_samples": 51,
+  "holdout_samples": 22,
+  "metric": "mean_mask_iou",
+  "value": 0.65074,
+  "passed": false,
+  "device_checked": "CPU",
+  "nncf_options": {
+    "max_num_iterations": 20
+  },
+  "created": 1792656920.700665
+}

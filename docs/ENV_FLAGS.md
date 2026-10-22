@@ -142,6 +142,23 @@ thing from a terminal and prints the tables without touching the config.
 | `ROOP_LIVE_PREVIEW_QUALITY` | 88 | JPEG quality of the live frame (40-100). Lower shows blocking on flat skin, which makes the live view look worse than the render it reports on. |
 | `ROOP_RESUME_KEEP` | 0 (off) | Keep the segment parts + manifest after a deliberate **Stop** so that run can be resumed later. Off = Stop merges the parts into one finished output and deletes them. Crash-resume is unaffected either way. |
 
+## Native OpenVINO offload (Intel NPU / iGPU / Arc)
+
+Opt-in. Moves the three small auxiliary networks (SCRFD `det_10g`, ArcFace `w600k_r50`, DFL XSeg) onto an Intel
+accelerator through `roop/openvino_runner.py` (`AsyncInferQueue`, throughput hint), so the NVIDIA card keeps the
+swapper and restorer. Off unless `ROOP_OPENVINO_NATIVE` is set. `auto` never picks the NVIDIA "GPU" OpenVINO also
+lists (it takes an NPU, then an Intel-named GPU); an explicit device name is honoured, so never name the NVIDIA card. `openvino` / `nncf` are **not** in the app venv
+(installing them would make `hardware_probe` report OpenVINO devices, including the NVIDIA GPU). Nothing here has
+been measured on a real Intel accelerator; on the 4070 box only OpenVINO's CPU device exists (parity test only).
+
+| Flag | Default | Effect |
+|------|---------|--------|
+| `ROOP_OPENVINO_NATIVE` | off | `auto` (NPU, then an Intel GPU), `NPU`, `GPU.1`, or `CPU` (tests/CI only). Routes SCRFD / ArcFace / XSeg to that device. A missing package or device falls back to ORT with a log line. |
+| `ROOP_OPENVINO_PRECISION` | `auto` | `auto`, `fp16`, `fp32` or `int8`. `int8` is used for a model only when a `.gate.json` sidecar next to its IR records a PASSED accuracy gate for that exact model file; otherwise the request falls back loudly. |
+| `ROOP_OPENVINO_CACHE` | `openvino_cache/` beside each model file | Where compiled IRs, INT8 IRs and their gate sidecars live. |
+| `ROOP_OPENVINO_RECORD` | unset | Directory: capture real live model inputs (`<family>.calib.npz`) for INT8 calibration. Real inputs only; never synthetic. |
+| `ROOP_OPENVINO_RECORD_EVERY` | 2 | Keep every Nth recorded call. |
+
 ## Runtime autotuning
 
 | Flag | Default | Effect |

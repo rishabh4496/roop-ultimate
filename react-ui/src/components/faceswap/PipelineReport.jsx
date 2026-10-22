@@ -1,7 +1,8 @@
 import React from 'react';
 import { useTelemetryStore } from '../../store/telemetryStore';
 import {
-  STAGE_ORDER, STAGE_LABEL, fmtSecs, fmtPct, headline, reportSections, stateTone,
+  STAGE_ORDER, STAGE_LABEL, STAGE_1, STAGE_2, STAGE_3, auxOffloadText, fmtCount, fmtPct, fmtRate, fmtSecs,
+  headline, opsCells, reportSections, stateTone,
 } from './reportFormat';
 
 // The 3-stage pipeline's live HUD and its finished report.
@@ -67,6 +68,11 @@ export function PipelineSummaryCard({ report, title = 'Pipeline report', default
       <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 px-3 pb-3">
         {sections.map((s) => <Section key={s.key} section={s} />)}
       </div>
+      {auxOffloadText(report.aux_offload) && (
+        <div className="px-3 pb-2.5 text-nano text-muted" data-testid="aux-offload">
+          OpenVINO aux offload: {auxOffloadText(report.aux_offload)}
+        </div>
+      )}
       {report.speedup && report.speedup.method && (
         <div className="px-3 pb-2.5 text-nano text-muted">
           Speedup: {report.speedup.reason || report.speedup.method}
@@ -77,7 +83,33 @@ export function PipelineSummaryCard({ report, title = 'Pipeline report', default
   );
 }
 
-/** One live row per stage while a render runs: state, stage-local progress, elapsed time. */
+/** The one stage-specific line under a live stage's progress bar: what that stage is doing right now. */
+function liveDetail(name, s) {
+  if (name === STAGE_1) {
+    return s.scene_cuts != null ? `${fmtCount(s.scene_cuts)} scene cuts` : '';
+  }
+  if (name === STAGE_2) {
+    if (s.neural_detected_frames == null && s.flow_tracked_frames == null) return '';
+    return `${fmtCount(s.flow_tracked_frames)} flow · ${fmtCount(s.neural_detected_frames)} neural`
+      + (s.flow_ratio_pct != null ? ` (${fmtPct(s.flow_ratio_pct)} flow)` : '');
+  }
+  return '';
+}
+
+/** Stage 3's per-operation ms line: Decode | Warp | TRT | Blend | NVENC, each with the backend it ran on. */
+function OpsStrip({ ops }) {
+  const cells = opsCells(ops).filter((c) => c.key !== 'restore' || c.calls != null);
+  if (!cells.length) return null;
+  return (
+    <div className="mt-1 flex flex-wrap gap-x-2.5 gap-y-0.5 text-nano font-mono text-white/70" data-testid="stage3-ops">
+      {cells.map((c) => (
+        <span key={c.key} title={c.title} className={c.calls == null ? 'text-muted' : ''}>{c.label} {c.value}</span>
+      ))}
+    </div>
+  );
+}
+
+/** One live row per stage while a render runs: state, stage-local progress, elapsed time, stage rate. */
 function LiveRows({ pipeline }) {
   const stages = pipeline.stages || {};
   return (
@@ -100,8 +132,12 @@ function LiveRows({ pipeline }) {
             </div>
             <div className="mt-1 flex justify-between text-micro font-mono text-muted">
               <span>{running ? fmtPct(s.stage_progress_pct) : s.state === 'SKIPPED' ? 'not run' : ''}</span>
-              <span>{fmtSecs(s.wall_s)}</span>
+              <span>{s.fps != null ? `${fmtRate(s.fps, name === STAGE_1 ? 'samples/s' : 'fps')} · ` : ''}{fmtSecs(s.wall_s)}</span>
             </div>
+            {liveDetail(name, s) && (
+              <div className="mt-0.5 text-nano font-mono text-white/70" data-testid={`${name}-detail`}>{liveDetail(name, s)}</div>
+            )}
+            {name === STAGE_3 && <OpsStrip ops={s.ops} />}
           </div>
         );
       })}
