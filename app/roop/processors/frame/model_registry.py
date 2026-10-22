@@ -155,10 +155,12 @@ DEFAULT_REGISTRY.register("hyperswap_1c_512", f"{_SWAPPERS}:HyperSwapSwapper", "
                           aliases=("hyperswap_512_1c",))
 DEFAULT_REGISTRY.register("alpha_256", f"{_SWAPPERS}:HyperSwapSwapper", "alpha_256",
                           aliases=("alphaface_256", "alpha"))
+DEFAULT_REGISTRY.register("reswapper", f"{_SWAPPERS}:OnnxSpecSwapper", "reswapper",
+                          aliases=())
 DEFAULT_REGISTRY.register("reswapper_128", f"{_SWAPPERS}:OnnxSpecSwapper", "reswapper_128",
                           aliases=())
 DEFAULT_REGISTRY.register("reswapper_256", f"{_SWAPPERS}:OnnxSpecSwapper", "reswapper_256",
-                          aliases=("reswapper",))
+                          aliases=())
 
 
 def get_registry() -> ModelRegistry:
@@ -186,5 +188,7 @@ def resolve_swap_model_key(name, known: Optional[Iterable[str]] = None) -> str:
     """
     if known is None:
         from roop.processors.FaceSwapInsightFace import SWAP_MODELS as known
+    if isinstance(name, str) and name in known:
+        return name
     key = canonical_swap_model(name)
     return key if isinstance(key, str) and key in known else FALLBACK_SWAP_MODEL

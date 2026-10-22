@@ -457,7 +457,7 @@ class TensorRTSessionConfig:
                 "trt_timing_cache_path": str(cache_dir),
                 "trt_fp16_enable": bool(self.fp16),
                 "trt_builder_optimization_level": int(self.builder_optimization_level),
-                "trt_max_workspace_size": min(int(self.resolved_workspace()), 536870912),
+                "trt_max_workspace_size": int(self.resolved_workspace()),
                 "trt_max_partition_iterations": 2000,
                 "trt_min_subgraph_size": 1,
                 "trt_force_sequential_engine_build": True,

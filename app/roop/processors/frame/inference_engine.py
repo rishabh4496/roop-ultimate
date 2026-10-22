@@ -379,7 +379,6 @@ class OptimizedInferenceSession:
             # ['CPUExecutionProvider']"). Found by this module's own smoke run.
             opts = {
                 "device_id": str(self.device_id),
-                "trt_max_workspace_size": "536870912",
                 "trt_fp16_enable": "True" if self.precision == "fp16" else "False",
                 "trt_engine_cache_enable": "True",
                 "trt_engine_cache_path": str(self.cache_dir),

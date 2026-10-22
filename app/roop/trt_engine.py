@@ -63,7 +63,7 @@ class TensorRTInferenceSession:
 
         trt_options: Dict[str, Any] = {
             "device_id": device_id,
-            "trt_max_workspace_size": min(int(workspace_size_gb * 1024 * 1024 * 1024), 536870912) if workspace_size_gb > 0 else 536870912,
+            "trt_max_workspace_size": int(workspace_size_gb * 1024 * 1024 * 1024) if workspace_size_gb > 0 else 2 * 1024 * 1024 * 1024,
             "trt_fp16_enable": enable_fp16,
             "trt_engine_cache_enable": True,
             "trt_engine_cache_path": self.cache_dir,

@@ -507,12 +507,14 @@ class Enhance_UltraMax:
             iob.bind_output(sess.get_outputs()[0].name, self.devicename)
             return (sess, iob)
 
-        def _build(_i=0):
-            # Reads `session_providers` at call time: the canary below may rebind it,
-            # and the pool extras must be built on whatever the primary now runs on.
-            return _bind(_session(session_providers))
+        from roop.backend_manager import build_session_with_fallback
+        def _build_raw(chain):
+            return _bind(_session(chain))
 
-        self.session, self.io_binding = _build()
+        (self.session, self.io_binding), session_providers = build_session_with_fallback(
+            _build_raw, session_providers, tag='enhancer:ultramax')
+        def _build(_i=0):
+            return _bind(_session(session_providers))
         # Startup canary (roop/aux_canary.py): two fixed noisy-skin inputs through the live engine and a one-off reference
         # (the same graph on the CPU EP), SSIM floor from docs/perf/aux_canary_enhancer_calibration.json, verdict cached by
         # engine hash. Non-finite output fails it outright. On failure the enhancer is rebuilt on TensorRT FP32, then CUDA/CPU.

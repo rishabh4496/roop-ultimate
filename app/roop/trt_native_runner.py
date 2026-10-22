@@ -1,4 +1,3 @@
-from roop.degrade import swallowed as _swallowed
 """Run a natively built TensorRT engine (``trt_graph_surgery.build_native_engine`` / ``tools/restorer_native_engine.py``).
 
 ONNX Runtime's TensorRT provider cannot take a per-layer precision constraint (its only hook is the LayerNorm
@@ -8,6 +7,7 @@ buffers owned by torch, FP32 linear I/O. It is NOT thread-safe: one instance per
 """
 from __future__ import annotations
 
+from roop.degrade import swallowed as _swallowed
 import os
 from typing import Optional
 

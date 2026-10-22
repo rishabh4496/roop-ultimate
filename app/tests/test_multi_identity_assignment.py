@@ -36,21 +36,7 @@ for p in (str(REPO_ROOT), str(APP_DIR)):
     if p not in sys.path:
         sys.path.insert(0, p)
 
-# Safe fallback mock for insightface if not installed in current Python environment
-try:
-    import insightface
-except ImportError:
-    from unittest.mock import MagicMock
-    mock_insightface = MagicMock()
-    class MockFace(dict):
-        def __getattr__(self, name):
-            return self.get(name, None)
-        def __setattr__(self, name, value):
-            self[name] = value
-    mock_insightface.app.common.Face = MockFace
-    sys.modules['insightface'] = mock_insightface
-    sys.modules['insightface.app'] = mock_insightface.app
-    sys.modules['insightface.app.common'] = mock_insightface.app.common
+# No insightface imports needed by this unit test suite
 
 from roop.identity_manager import (
     DEFAULT_ALPHA,

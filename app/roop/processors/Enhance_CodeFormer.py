@@ -84,13 +84,17 @@ class Enhance_CodeFormer():
             session_providers, _precision = providers_for(
                 'codeformer_fp16' if want_fp16 else 'codeformer',
                 roop.globals.execution_providers, model_path)
-            def _build(_i=0):
+            from roop.backend_manager import build_session_with_fallback
+            tag = 'enhancer:codeformer_fp16' if want_fp16 else 'enhancer:codeformer'
+            def _create(chain):
                 from roop.strict_session import create_strictly_accelerated_session
                 return create_strictly_accelerated_session(
-                    model_path, providers=session_providers, sess_options=opts,
-                    tag='enhancer:codeformer_fp16' if want_fp16 else 'enhancer:codeformer')
+                    model_path, providers=chain, sess_options=opts, tag=tag)
 
-            self.model_codeformer = _build()
+            self.model_codeformer, session_providers = build_session_with_fallback(
+                _create, session_providers, tag=tag)
+            def _build(_i=0):
+                return _create(session_providers)
             self.model_inputs = self.model_codeformer.get_inputs()
             self.model_outputs = self.model_codeformer.get_outputs()
             self.in_dtype = np.float16 if 'float16' in self.model_inputs[0].type else np.float32

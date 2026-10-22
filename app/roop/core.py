@@ -410,12 +410,12 @@ def decode_execution_providers(execution_providers: List[str]) -> List[str]:
                     # Guarded like every other env read here: an unparseable
                     # value is a tuning typo, and letting it raise would take
                     # provider setup — and so the whole app — down at startup.
-                    _default_cap = 536870912  # 512 MB cap
+                    _default_cap = 2 * 1024 * 1024 * 1024
                     try:
                         max_cap = int(os.environ.get('ROOP_TRT_MAX_WORKSPACE_BYTES', _default_cap))
                     except (TypeError, ValueError):
                         max_cap = _default_cap
-                    workspace_size = min(calc_size, max_cap) if calc_size > 0 else max_cap
+                    workspace_size = min(calc_size, max_cap) if calc_size > 0 else calc_size
 
                 print(f"[TRT] device {total_gb:.1f}GB VRAM -> workspace limit "
                       f"({workspace_size / (1024**3):.1f}GB), partition_iters from env/default")
@@ -508,9 +508,7 @@ def decode_execution_providers(execution_providers: List[str]) -> List[str]:
                     'trt_timing_cache_path': precision_cache,
                 }
                 if workspace_size > 0:
-                    trt_opts['trt_max_workspace_size'] = min(workspace_size, 536870912)
-                else:
-                    trt_opts['trt_max_workspace_size'] = 536870912
+                    trt_opts['trt_max_workspace_size'] = workspace_size
                 list_providers[i] = ('TensorrtExecutionProvider', trt_opts)
             elif list_providers[i] == 'DmlExecutionProvider':
                 dml_opts = {
@@ -983,6 +981,12 @@ def get_processing_plugins(masking_engine, swap_model='inswapper', target_face=N
     # every existing key passes through unchanged. See model_registry.
     from roop.processors.frame.model_registry import canonical_swap_model
     processors = {"faceswap": {"swap_model": canonical_swap_model(swap_model)}}
+
+    # Normalize alternate casing from UI/profiles (e.g. CodeFormer -> Codeformer)
+    if getattr(roop.globals, 'selected_enhancer', '') in ('CodeFormer', 'codeformer'):
+        roop.globals.selected_enhancer = 'Codeformer'
+    elif getattr(roop.globals, 'selected_enhancer', '') in ('CodeFormer (fp16)', 'codeformer (fp16)'):
+        roop.globals.selected_enhancer = 'Codeformer (fp16)'
 
     _adaptive_requested = roop.globals.selected_enhancer == 'Adaptive'
     if not _adaptive_requested and roop.globals.selected_enhancer == 'GFPGAN':

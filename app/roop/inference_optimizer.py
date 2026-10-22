@@ -791,7 +791,7 @@ class InferenceRuntimeBenchmarker:
             elif mode in (ExecutionMode.TRT_FP32, ExecutionMode.TRT_FP16, ExecutionMode.TRT_MIXED):
                 trt_opts = {
                     "device_id": self.device_id,
-                    "trt_max_workspace_size": min(self.hardware_profile.workspace_bytes, 536870912),
+                    "trt_max_workspace_size": self.hardware_profile.workspace_bytes,
                     "trt_builder_optimization_level": self.hardware_profile.builder_optimization_level,
                     "trt_fp16_enable": mode in (ExecutionMode.TRT_FP16, ExecutionMode.TRT_MIXED),
                     "trt_engine_cache_enable": True,
