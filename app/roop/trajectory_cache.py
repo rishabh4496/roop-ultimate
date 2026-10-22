@@ -51,6 +51,7 @@ FORMAT_VERSION = 1
 FLAG_INTERPOLATED = 1
 FLAG_FLOW = 2
 FLAG_COASTED = 4
+FLAG_REUSE_FLOW_WARP = 8
 
 ROW = np.dtype([
     ("frame", "<i4"), ("track", "<i4"), ("flags", "u1"),
@@ -125,7 +126,8 @@ def _flags_of(face: Any) -> int:
         except AttributeError:
             return bool(getattr(face, name, False))
     return (FLAG_INTERPOLATED if has("_interpolated") else 0) | (FLAG_FLOW if has("_flow_bridged") else 0) \
-        | (FLAG_COASTED if has("_coasted") else 0)
+        | (FLAG_COASTED if has("_coasted") else 0) \
+        | (FLAG_REUSE_FLOW_WARP if (has("_reuse_flow_warp") or has("reuse_flow_warp")) else 0)
 
 
 def _get(face: Any, name: str):

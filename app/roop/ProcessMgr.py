@@ -1635,6 +1635,11 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
 
 
     def process_frames(self, source_files: List[str], target_files: List[str], current_files, update: Callable[[], None]) -> None:
+        try:
+            from core.cpu_topology import pin_current_thread_to_p_cores
+            pin_current_thread_to_p_cores(high_priority=True)
+        except (ImportError, OSError, RuntimeError, AttributeError):
+            pass
         if gc.isenabled():
             gc.disable()
         for idx, f in enumerate(current_files):
@@ -1871,6 +1876,11 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     return
 
     def process_videoframes(self, threadindex, progress) -> None:
+        try:
+            from core.cpu_topology import pin_current_thread_to_p_cores
+            pin_current_thread_to_p_cores(high_priority=True)
+        except (ImportError, OSError, RuntimeError, AttributeError):
+            pass
         if gc.isenabled():
             gc.disable()
         frame_counter = 0
@@ -2749,6 +2759,11 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 self.read_wait = read_wait
 
         def _stab_worker(_wi):
+            try:
+                from core.cpu_topology import pin_current_thread_to_p_cores
+                pin_current_thread_to_p_cores(high_priority=True)
+            except (ImportError, OSError, RuntimeError, AttributeError):
+                pass
             if gc.isenabled():
                 gc.disable()
             while True:
@@ -6089,8 +6104,47 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 else:
                     _bp.count('stab.dedup.bypass')
 
+        # Temporal Smart-Skip (Lossless Static Reuse):
+        # When a near-static face is flagged REUSE_FLOW_WARP, bypass Swapper and Restorer
+        # neural inference and warp the previous frame's final composited patch forward
+        # using dense NVOFA optical flow.
+        _smart_skip_reused = False
+        _is_reuse_candidate = bool(
+            (target_face.get('reuse_flow_warp', False) if isinstance(target_face, dict)
+             else getattr(target_face, 'reuse_flow_warp', False))
+        )
+        if _is_reuse_candidate and _temporal_tid is not None:
+            try:
+                from roop.temporal_smart_skip import is_smart_skip_enabled, get_track_patch, get_dense_flow_warper
+                if is_smart_skip_enabled():
+                    _prev_entry = get_track_patch(_temporal_tid)
+                    if _prev_entry is not None and _prev_entry.get('patch') is not None:
+                        _prev_patch = _prev_entry['patch']
+                        _prev_aligned = _prev_entry.get('aligned_img')
+                        if _prev_aligned is None:
+                            _prev_aligned = _prev_patch
+                        _warper = get_dense_flow_warper()
+                        _flow = _warper.compute_dense_flow(aligned_img, _prev_aligned)
+                        _warped_patch = _warper.warp(_prev_patch, _flow, target_shape=aligned_img.shape[:2])
+                        fake_frame = _warped_patch
+                        if _prev_entry.get('has_enhanced'):
+                            enhanced_frame = _warped_patch
+                        if _prev_entry.get('swap_model_mask') is not None:
+                            try:
+                                self._tls.swap_model_mask = _warper.warp(
+                                    _prev_entry['swap_model_mask'], _flow, target_shape=aligned_img.shape[:2]
+                                )
+                            except (cv2.error, ValueError, TypeError, AttributeError):
+                                pass
+                        _smart_skip_reused = True
+                        scale_factor = float(_prev_entry.get('scale_factor', 0.0) or 0.0)
+            except Exception as _exc:
+                _swallowed('roop/ProcessMgr.py:smart_skip_warp', _exc, 'smart-skip warp failed; running full swap')
+
         for p in self.processors:
             if p.type == 'swap':
+              if _smart_skip_reused:
+                continue          # Swapper bypassed by Temporal Smart-Skip
               if _raw_hit is not None:
                 continue          # served by the neighbouring block (roop.stab_dedup)
               with _prof('swap'):
@@ -6332,6 +6386,8 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 # already correct. Counted and printed at the end of the render.
                 pass
             else:
+                if _smart_skip_reused:
+                    continue      # Restorer bypassed by Temporal Smart-Skip
                 if _raw_hit is not None:
                     continue      # served by the neighbouring block (roop.stab_dedup)
                 # Pooled (no global lock) ONLY when this enhancer built its own
@@ -6990,6 +7046,23 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             _composite_occlusion = 0.0
         _composite_motion = float(target_face.get('_temporal_motion', 0.0))
         _composite_tid = _temporal_tid
+
+        # Update Temporal Smart-Skip patch cache for this track
+        if _temporal_tid is not None:
+            try:
+                from roop.temporal_smart_skip import set_track_patch
+                _cur_patch = enhanced_frame if enhanced_frame is not None else fake_frame
+                set_track_patch(
+                    _temporal_tid,
+                    _cur_patch,
+                    aligned_img,
+                    _composite_frame_idx or 0,
+                    has_enhanced=(enhanced_frame is not None),
+                    scale_factor=scale_factor,
+                    swap_model_mask=getattr(self._tls, 'swap_model_mask', None),
+                )
+            except Exception as _exc:
+                _swallowed('roop/ProcessMgr.py:smart_skip_cache', _exc, 'patch cache update skipped')
 
         with _prof('blend'):
             if enhanced_frame is None:

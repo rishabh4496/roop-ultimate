@@ -45,6 +45,7 @@
     "prepass_detect_interval",
     "enhance_min_face_px",
     "auto_bypass_restorer_native_swap",
+    "temporal_smart_skip",
     "recognizer",
     "identity_confidence_threshold",
     "face_demarcate",
@@ -1328,6 +1329,18 @@
       },
       "env": {
         "var": "ROOP_AUTO_BYPASS_RESTORER_NATIVE_SWAP",
+        "kind": "bool"
+      }
+    },
+    "temporal_smart_skip": {
+      "default": false,
+      "type": "bool",
+      "ui": {
+        "label": "Temporal Smart-Skip (Lossless Static Reuse)",
+        "section": "Advanced performance"
+      },
+      "env": {
+        "var": "ROOP_TEMPORAL_SMART_SKIP",
         "kind": "bool"
       }
     },

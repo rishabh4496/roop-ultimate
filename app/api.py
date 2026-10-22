@@ -6558,6 +6558,12 @@ async def _spa_fallback(request, exc):
 
 
 def run_api():
+    # Pin FastAPI uvicorn loopback server thread strictly to Efficiency Cores (E-Cores)
+    try:
+        from core.cpu_topology import pin_current_thread_to_e_cores
+        pin_current_thread_to_e_cores()
+    except (ImportError, OSError, RuntimeError, AttributeError):
+        pass
     # A Chromium pre-connect that is aborted mid-accept used to CLOSE the
     # listening socket on Windows (WinError 64 in the proactor's accept
     # callback), leaving the process alive and the UI unreachable. See

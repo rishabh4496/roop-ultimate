@@ -43,6 +43,7 @@ UNMANAGED = {
     "roop/trt_bound_session.py": (2, "TensorRT bound/graph sessions: own provider check, opt-in ROOP_TRT_BOUND"),
     "roop/trt_engine.py": (1, "TensorrtInferenceSession: checks active_providers[0] itself"),
     "roop/trt_quant.py": (1, "offline calibration run"),
+    "core/trt_precision_surgeon.py": (2, "TRT precision surgeon probe sessions"),
     "roop/retinaface.py": (2, "CPU default in the constructor + a build_session_with_fallback lambda (detectors keep its printed, recorded CPU rung: get_all_faces swallows detector exceptions, so a raise there would give a silently unswapped render)"),
     "update_health.py": (1, "checks the chain it asked for against session.get_providers() itself"),
 

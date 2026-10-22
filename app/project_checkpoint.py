@@ -293,10 +293,12 @@ def new_project(*, job_id: str | None, name: str, payload: Mapping[str, Any],
 
 
 def save(record: Mapping[str, Any]) -> dict:
-    value = dict(record)
-    value["updated_at"] = time.time()
-    _atomic_write(project_path(value["id"]), value)
-    return value
+    from core.cpu_topology import e_core_scope
+    with e_core_scope():
+        value = dict(record)
+        value["updated_at"] = time.time()
+        _atomic_write(project_path(value["id"]), value)
+        return value
 
 
 def load(project_id: str) -> dict:

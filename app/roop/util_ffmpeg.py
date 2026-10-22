@@ -770,6 +770,12 @@ def restore_audio(intermediate_video: str, original_video: str, trim_frame_start
     stream-level rotation side data is deliberately left alone, see below.
     Returns True on success, False on failure.
     """
+    from core.cpu_topology import e_core_scope
+    with e_core_scope():
+        return _restore_audio_impl(intermediate_video, original_video, trim_frame_start, trim_frame_end, final_video)
+
+
+def _restore_audio_impl(intermediate_video: str, original_video: str, trim_frame_start, trim_frame_end, final_video: str) -> bool:
     fps = util.constant_frame_rate(util.detect_fps(original_video))
 
     # Seek the audio source to match any trim that was applied before processing.

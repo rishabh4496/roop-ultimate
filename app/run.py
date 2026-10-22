@@ -176,6 +176,17 @@ def _apply_perf_env():
 
 _apply_perf_env()
 
+# Detect and log CPU topology (Intel Hybrid P-cores vs. E-cores)
+try:
+    from core.cpu_topology import get_cpu_topology
+    _topo = get_cpu_topology()
+    print(f"[CPUTopology] detected {_topo.total_logical_cores} logical cores: "
+          f"{_topo.p_cores_count} P-cores ({_topo.p_logical_threads} threads, mask=0x{_topo.p_mask:x}), "
+          f"{_topo.e_cores_count} E-cores ({_topo.e_logical_threads} threads, mask=0x{_topo.e_mask:x}), "
+          f"hybrid={'YES' if _topo.is_hybrid else 'NO'}", flush=True)
+except Exception as _exc:
+    print(f"[CPUTopology] detection failed: {_exc}", flush=True)
+
 # Windows asyncio fixes (Python 3.10 ProactorEventLoop): a peer aborting an
 # accept must not close the LISTENING socket, and a pipe closing under a
 # transport must not raise from the loop's own callback. Both live in

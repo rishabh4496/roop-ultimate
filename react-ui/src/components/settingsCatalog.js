@@ -59,6 +59,7 @@ export const SETTINGS_CATALOG = [
   { key: 'prepass_detect_interval', label: 'Pre-pass detection interval (frames)', section: 'Advanced performance' },
   { key: 'enhance_min_face_px', label: 'Skip restorer below face size (px)', section: 'Advanced performance' },
   { key: 'auto_bypass_restorer_native_swap', label: 'Auto-Bypass Restorer on >=256px Native Swap', section: 'Advanced performance' },
+  { key: 'temporal_smart_skip', label: 'Temporal Smart-Skip (Lossless Static Reuse)', section: 'Advanced performance' },
 
   // Identity & tracking
   { key: 'recognizer', label: 'Recognition model', section: 'Identity & tracking' },

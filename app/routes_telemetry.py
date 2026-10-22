@@ -237,6 +237,11 @@ class TelemetryHub:
         self._sampler = None
 
     async def _sample_loop(self, snapshot: Callable[[], dict[str, Any]]) -> None:
+        try:
+            from core.cpu_topology import pin_current_thread_to_e_cores
+            pin_current_thread_to_e_cores()
+        except (ImportError, OSError, RuntimeError, AttributeError):
+            pass
         last: Optional[dict[str, Any]] = None
         last_sent = 0.0
         while True:

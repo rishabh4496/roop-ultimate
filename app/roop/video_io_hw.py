@@ -362,6 +362,11 @@ class NvZeroCopyReader:
 
     def __init__(self, path: str, *, gpu_id: int = 0, buffer_size: int = 16, start_frame: int = 0,
                  tag: str = "decode") -> None:
+        try:
+            from core.cpu_topology import pin_current_thread_to_p_cores
+            pin_current_thread_to_p_cores(high_priority=True)
+        except (ImportError, OSError, RuntimeError, AttributeError):
+            pass
         nvc, torch = _load_nvc()
         self._torch = torch
         self.path = path
@@ -951,6 +956,11 @@ class BackgroundKeyframeScan:
         self._thread.start()
 
     def _run(self) -> None:
+        try:
+            from core.cpu_topology import pin_current_thread_to_p_cores
+            pin_current_thread_to_p_cores(high_priority=True)
+        except (ImportError, OSError, RuntimeError, AttributeError):
+            pass
         try:
             for frame in self.source.keyframes_iter():
                 while not self._stop.is_set():

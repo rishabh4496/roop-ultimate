@@ -42,6 +42,11 @@ class BatchProcessingMixin:
     """Own the per-clip batch lifecycle separately from face operations."""
 
     def run_batch_inmem(self, output_method, source_video, target_video, frame_start, frame_end, fps, threads: int = 1, skip_audio=False):
+        try:
+            from roop.temporal_smart_skip import clear_track_patches
+            clear_track_patches()
+        except Exception:
+            pass
         self._writer_error = None
         # Workers count frames from 0 at the trim start; pose-adaptive source
         # routing looks the target's pose up by ABSOLUTE frame index.
@@ -1123,7 +1128,8 @@ class BatchProcessingMixin:
                 self._dispatch_ordered = (threads <= 1)
                 try:
                     with ChunkedProgress(total=self.total_frames, desc='Processing', unit='frames', dynamic_ncols=True, bar_format=progress_bar_format) as progress:
-                        with ThreadPoolExecutor(thread_name_prefix='swap_proc', max_workers=self.num_threads) as executor:
+                        from core.cpu_topology import pin_current_thread_to_p_cores
+                        with ThreadPoolExecutor(thread_name_prefix='swap_proc', max_workers=self.num_threads, initializer=pin_current_thread_to_p_cores) as executor:
                             futures = []
                             for threadindex in range(threads):
                                 future = executor.submit(self.process_videoframes, threadindex, lambda: self.update_progress(progress))

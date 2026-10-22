@@ -72,6 +72,11 @@ class ProjectStageCache:
 
     # -- Stage 1 --------------------------------------------------------------------------------
     def save_stage1(self, *, frame_start: int, frame_count: int, ranges, stats) -> bool:
+        from core.cpu_topology import e_core_scope
+        with e_core_scope():
+            return self._save_stage1_impl(frame_start=frame_start, frame_count=frame_count, ranges=ranges, stats=stats)
+
+    def _save_stage1_impl(self, *, frame_start: int, frame_count: int, ranges, stats) -> bool:
         mode = str((stats or {}).get("mode") or "")
         if mode not in _sc.CACHEABLE_STAGE1_MODES:
             self._log(f"[StageCache] Stage 1 not recorded (scan mode '{mode}' is not a settled result).")
@@ -126,6 +131,11 @@ class ProjectStageCache:
         return _sc.ranges_to_abs(getattr(pm, "_active_ranges", None), frame_start)
 
     def save_stage2(self, pm: Any, *, frame_start: int, frame_count: int) -> bool:
+        from core.cpu_topology import e_core_scope
+        with e_core_scope():
+            return self._save_stage2_impl(pm, frame_start=frame_start, frame_count=frame_count)
+
+    def _save_stage2_impl(self, pm: Any, *, frame_start: int, frame_count: int) -> bool:
         path = _pc.stage_sidecar_path(self.project_id, "stage2")
         try:
             entry = _sc.write_stage2(path, pm, frame_start=frame_start, frame_count=frame_count,
@@ -182,6 +192,12 @@ class ProjectStageCache:
 
     # -- trajectory (derived from Stage 2: roop/trajectory_cache.py) ----------------------------
     def save_trajectory(self, cache: Any) -> bool:
+        """Record the smoothed-trajectory cache beside Stage 2's. Never raises; what failed is printed."""
+        from core.cpu_topology import e_core_scope
+        with e_core_scope():
+            return self._save_trajectory_impl(cache)
+
+    def _save_trajectory_impl(self, cache: Any) -> bool:
         """Record the smoothed-trajectory cache beside Stage 2's. Never raises; what failed is printed."""
         if cache is None or not len(cache):
             return False

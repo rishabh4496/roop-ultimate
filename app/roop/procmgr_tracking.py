@@ -533,6 +533,19 @@ class TrackingMixin:
                 if _ada.ready():
                     for detected in faces or ():
                         _ada.face_embedding(detected, fr)
+                if fr is not None and isinstance(fr, np.ndarray):
+                    try:
+                        from roop.temporal_smart_skip import compute_roi_luma
+                        for detected in faces or ():
+                            try:
+                                detected['roi_luma'] = compute_roi_luma(fr, getattr(detected, 'bbox', None))
+                            except (TypeError, KeyError, AttributeError):
+                                try:
+                                    setattr(detected, 'roi_luma', compute_roi_luma(fr, getattr(detected, 'bbox', None)))
+                                except (TypeError, KeyError, AttributeError):
+                                    pass
+                    except (ImportError, AttributeError, ValueError):
+                        pass
                 return faces
 
             # Fresh slate per frame: the score recorded is the best ANY attempt on
@@ -2562,6 +2575,15 @@ class TrackingMixin:
         _origin = int(frame_start or 0)
         self._stage1_cut_hints = sorted({int(c) - _origin for c in (_s1.get('scene_cuts') or ())
                                          if isinstance(c, (int, np.integer)) and int(c) - _origin > 0})
+        _kf_set = set()
+        if source_video and os.path.isfile(source_video):
+            try:
+                from roop.video_io_hw import keyframe_display_indices
+                _kf_set = set(keyframe_display_indices(source_video))
+            except Exception as _exc:
+                _swallowed("procmgr_tracking.py:keyframes", _exc, "keyframe prescan unavailable")
+                _kf_set = set()
+        self._keyframe_indices = _kf_set
         tracks = self._precompute_tracks(source_video, frame_start, frame_end, frame_count,
                                          awebp_frames=awebp_frames, step=scan_step, collect_obs=True,
                                          desc='Analyzing faces')
@@ -2580,6 +2602,10 @@ class TrackingMixin:
         _fs = getattr(self, '_flow_stats', None) or {}
         n_flow = int(getattr(self, '_flow_bridged', 0) or 0)
         n_flow_refused = int(getattr(self, '_flow_refused', 0) or 0)
+        _smart_skips_tot = sum(1 for v in self._temporal_faces.values() for f in v if f.get('reuse_flow_warp'))
+        if _smart_skips_tot > 0:
+            print(f"[TemporalSmartSkip] {_smart_skips_tot} near-static face(s) marked REUSE_FLOW_WARP "
+                  f"(neural swap+enhance bypassed, forward flow warped).", flush=True)
         if _FLOW_ALIGN and _fs.get('aligned'):
             print(f'[FlowAlign] {_fs["aligned"]} detected face(s) of {_fs.get("occ_steps", 0)} chain step(s) '
                   f'had their keypoints replaced by optical-flow-carried ones (face partly covered, '
@@ -3343,6 +3369,22 @@ class TrackingMixin:
             # smoothing, so it reads the same keypoints the swap will.
             total_coasts += orientation.resolve_track_rolls(
                 [merged[i] for i in sorted(merged)])
+
+            # Motion-Compensated Temporal Smart-Skip (ROI Delta-Skipper)
+            try:
+                from roop.temporal_smart_skip import is_smart_skip_enabled, mark_smart_skips_in_track
+                if is_smart_skip_enabled():
+                    _sk_count = mark_smart_skips_in_track(
+                        merged,
+                        cuts=getattr(self, '_shot_boundaries', None),
+                        keyframes=getattr(self, '_keyframe_indices', None),
+                        max_consecutive=2,
+                        disp_threshold=0.15,
+                        illum_threshold=0.05,
+                    )
+                    self._total_smart_skips = getattr(self, '_total_smart_skips', 0) + _sk_count
+            except Exception as _exc:
+                _swallowed("procmgr_tracking.py:smart_skip", _exc, "smart-skip evaluation skipped")
 
             # Phase 5 pose/source decisions and Phase 6 temporal identity state
             # are made in this ordered per-track pass, after landmark smoothing
