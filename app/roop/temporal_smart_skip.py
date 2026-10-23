@@ -265,12 +265,22 @@ def set_track_patch(track_id: int, patch: np.ndarray, aligned_img: np.ndarray, f
         }
 
 
-def get_track_patch(track_id: int) -> Optional[Dict[str, Any]]:
-    """Retrieve previous frame's composited face patch for a track."""
+def get_track_patch(track_id: int, expected_frame_idx: Optional[int] = None) -> Optional[Dict[str, Any]]:
+    """Retrieve previous frame's composited face patch for a track.
+
+    If expected_frame_idx is provided, returns None unless the cached patch matches that frame index.
+    """
     if track_id is None:
         return None
     with _PATCH_LOCK:
-        return _PATCH_CACHE.get(int(track_id))
+        entry = _PATCH_CACHE.get(int(track_id))
+        if entry is None:
+            return None
+        if expected_frame_idx is not None:
+            entry_fidx = entry.get("frame_idx")
+            if entry_fidx is None or int(entry_fidx) != int(expected_frame_idx):
+                return None
+        return entry
 
 
 def clear_track_patches() -> None:

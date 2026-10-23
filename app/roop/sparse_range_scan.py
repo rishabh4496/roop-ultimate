@@ -45,7 +45,7 @@ from roop.degrade import swallowed as _swallowed
 STRIDE_FPS_FRACTION = 0.20      # S = floor(0.20 * fps) ...
 STRIDE_MAX = 12                 # ... capped here
 CUT_THUMB_SIZE = (64, 36)       # (w, h) of the luma thumbnail the cut test reads
-CUT_DELTA_Y = 28.0              # mean abs luma difference (0-255) that means a hard cut
+CUT_DELTA_Y = 22.0              # mean abs luma difference (0-255) that means a hard cut
 DET_RELAX = 0.15                # universal gate: det_thresh - 0.15 ...
 DET_FLOOR = 0.25                # ... but never below this
 SIM_RELAX = 0.12                # targeted gate: tau_swap - 0.12 ...
@@ -154,13 +154,20 @@ def frame_is_positive(faces: Sequence[Any], det_floor: float,
 
 def build_active_ranges(positives: Iterable[int], total_frames: int, stride: int,
                         trim_in: int = 0, trim_out: Optional[int] = None,
-                        merge_gap: int = MERGE_GAP) -> Tuple[List[Tuple[int, int]], np.ndarray]:
+                        merge_gap: int = MERGE_GAP,
+                        scene_cuts: Optional[Sequence[int]] = None) -> Tuple[List[Tuple[int, int]], np.ndarray]:
     """Positive sample indices -> dilated, coalesced inclusive ranges plus a bool mask.
 
     Indices are clip-relative (0 = first frame of the trimmed interval), so the trim bounds
     default to [0, total_frames - 1]. Positives closer than ``stride`` frames form one
-    island [a, b]; each island becomes [max(trim_in, a - M), min(trim_out, b + M)] and two
-    ranges whose gap ``next_start - prev_end`` is <= ``merge_gap`` are merged. No positives
+    island [a, b]; each island becomes [max(trim_in, a - M), min(trim_out, b + M)].
+
+    When ``scene_cuts`` are provided, any island containing positive sample(s) is expanded
+    to span the full shot(s) from the scene cut boundary where the shot started up to the
+    scene cut boundary where the shot ended, preventing face unswaps at the beginning and
+    end of cut scenes.
+
+    Two ranges whose gap ``next_start - prev_end`` is <= ``merge_gap`` are merged. No positives
     -> ``[]`` and an all-False mask, never an exception.
     """
     if total_frames <= 0:
@@ -184,9 +191,21 @@ def build_active_ranges(positives: Iterable[int], total_frames: int, stride: int
     islands.append((a, b))
 
     pad = dilation_pad(stride)
+    cuts_list = sorted({int(c) for c in (scene_cuts or ()) if lo <= int(c) <= hi})
+
     merged: List[Tuple[int, int]] = []
     for a, b in islands:
         start, end = max(lo, a - pad), min(hi, b + pad)
+        if cuts_list:
+            prior_cuts = [c for c in cuts_list if c <= a]
+            if prior_cuts:
+                shot_start = prior_cuts[-1]
+                start = min(start, shot_start)
+            post_cuts = [c for c in cuts_list if c > b]
+            if post_cuts:
+                shot_end = post_cuts[0] - 1
+                end = max(end, shot_end)
+
         if merged and start - merged[-1][1] <= merge_gap:
             merged[-1] = (merged[-1][0], max(merged[-1][1], end))
         else:
@@ -217,7 +236,7 @@ def run_demux(cap: Any, frame_start: int, total_frames: int, stride: int,
     single initial one to `frame_start`; there is no per-sample seeking. Returns telemetry.
     """
     info: Dict[str, Any] = dict(decoded=0, samples=0, mids=0, cuts=0, read_failures=0,
-                                stopped=False, start_mismatch=False)
+                                stopped=False, start_mismatch=False, scene_cuts=[])
     if frame_start > 0:
         cap.set(cv2.CAP_PROP_POS_FRAMES, frame_start)
         landed = cap.get(cv2.CAP_PROP_POS_FRAMES)
@@ -230,6 +249,7 @@ def run_demux(cap: Any, frame_start: int, total_frames: int, stride: int,
     mid_frame: Optional[np.ndarray] = None
     mid_idx: Optional[int] = None       # index of the frame held in mid_frame
     next_sample = 0
+    cuts_list: List[int] = []
 
     for off in range(total_frames):
         if stopped():
@@ -255,6 +275,7 @@ def run_demux(cap: Any, frame_start: int, total_frames: int, stride: int,
             thumb = luma_thumb(frame)
             if prev_thumb is not None and luma_delta(prev_thumb, thumb) > CUT_DELTA_Y:
                 info['cuts'] += 1
+                cuts_list.append(off)
                 if mid_frame is not None:
                     info['mids'] += 1
                     if not put(('mid', mid_idx, mid_frame)):
@@ -274,6 +295,7 @@ def run_demux(cap: Any, frame_start: int, total_frames: int, stride: int,
             gap = next_sample - off
             mid_off = next_sample - gap // 2 if gap >= 2 else None
 
+    info['scene_cuts'] = cuts_list
     return info
 
 
@@ -459,11 +481,16 @@ def _scan_active_ranges_hw(
                 break
             abs_idx = frame_start + s_idx
             is_cut = test_frame(abs_idx, s_idx)
-            # If a scene cut fell between samples, inspect the midpoint
+            # If a scene cut fell between samples, inspect the midpoint and boundary frames
             if is_cut and prev_idx is not None and (s_idx - prev_idx) >= 2:
                 mid_rel = prev_idx + (s_idx - prev_idx) // 2
                 mid_abs = frame_start + mid_rel
                 test_frame(mid_abs, mid_rel)
+                if (s_idx - prev_idx) > 8:
+                    if s_idx > 0 and (s_idx - 1) not in positives:
+                        test_frame(frame_start + s_idx - 1, s_idx - 1)
+                    if prev_idx + 1 < mid_rel and (prev_idx + 1) not in positives:
+                        test_frame(frame_start + prev_idx + 1, prev_idx + 1)
             prev_idx = s_idx
 
         elapsed = time.perf_counter() - t0
@@ -478,7 +505,16 @@ def _scan_active_ranges_hw(
             mode="nv_hardware_keyframes",
         )
 
-        ranges, mask = build_active_ranges(positives, total_frames, S)
+        sample_gaps = [scheduled_samples[i+1] - scheduled_samples[i] for i in range(len(scheduled_samples)-1)]
+        effective_stride = max(S, max(sample_gaps, default=S))
+        effective_merge_gap = max(MERGE_GAP, effective_stride + 5)
+        hw_cuts = [int(c) - frame_start for c in cut_detector.scene_cuts if frame_start <= int(c) < frame_end]
+
+        ranges, mask = build_active_ranges(
+            positives, total_frames, effective_stride,
+            merge_gap=effective_merge_gap,
+            scene_cuts=hw_cuts,
+        )
         active_count = int(np.sum(mask))
         percentage = round((active_count / total_frames) * 100.0, 1)
         stats = dict(common, active_frames=active_count, total_frames=total_frames,
@@ -726,7 +762,7 @@ def scan_active_ranges(
                   flush=True)
             return _full_range(total_frames, "fail_safe_full", reason=reason, **common)
 
-        ranges, mask = build_active_ranges(positives, total_frames, S)
+        ranges, mask = build_active_ranges(positives, total_frames, S, scene_cuts=info.get('scene_cuts'))
         active_count = int(np.sum(mask))
         percentage = round((active_count / total_frames) * 100.0, 1)
         stats = dict(common, active_frames=active_count, total_frames=total_frames,

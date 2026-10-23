@@ -221,6 +221,17 @@ class VideoSelectedPersonAdversarialTest(unittest.TestCase):
         self.assertNotIn('cand = exact[0]', source)
         self.assertIn('cand = exact if exact is not None else entries[best_j][1]', source)
 
+    def test_temporal_faces_empty_falls_back_to_live_detection(self):
+        process_mgr = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), '..', 'roop', 'ProcessMgr.py')
+        with open(process_mgr, encoding='utf-8') as handle:
+            source = handle.read()
+        # Verify that empty _tfaces from pre-pass triggers fallback to live detection
+        # instead of silently dropping the frame and returning it unswapped.
+        self.assertNotIn('_tfaces = self._temporal_faces.get(frame_idx) or []', source)
+        self.assertIn('_tfaces = self._temporal_faces.get(frame_idx)', source)
+        self.assertIn('if _tfaces:', source)
+
 
 if __name__ == '__main__':
     unittest.main()

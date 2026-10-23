@@ -199,6 +199,11 @@ def test_track_patch_cache():
     assert np.array_equal(entry["patch"], patch)
     assert np.array_equal(entry["aligned_img"], aligned)
 
+    # Frame index coherence checks
+    assert get_track_patch(42, expected_frame_idx=10) is not None
+    assert get_track_patch(42, expected_frame_idx=9) is None
+    assert get_track_patch(42, expected_frame_idx=11) is None
+
     clear_track_patches()
     assert get_track_patch(42) is None
 

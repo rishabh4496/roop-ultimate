@@ -3852,14 +3852,14 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             # of silently leaving it un-swapped (see the coverage guard in
             # _precompute_temporal).
             if frame_idx < self._temporal_covered:
-                _tfaces = self._temporal_faces.get(frame_idx) or []
+                _tfaces = self._temporal_faces.get(frame_idx)
 
         if self.options.swap_mode == "first":
             if not (0 <= self.options.selected_index < len(self.input_face_datas)):
                 _audit_hit('refused: no valid selected source')
                 return num_faces_found, frame
-            if _tfaces is not None:
-                face = min(_tfaces, key=lambda f: f.bbox[0]) if _tfaces else None
+            if _tfaces:
+                face = min(_tfaces, key=lambda f: f.bbox[0])
             else:
                 with _prof('detect'), _gpu_guard(pooled=analysis_pooled(), owner='analysis'):  # detect: lock-free when pooled
                     face = get_first_face(frame)
@@ -3887,7 +3887,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             # must not be, because the last face pasted wins wherever two of them
             # overlap, and match order changes frame to frame.
             pending = []
-            if _tfaces is not None:
+            if _tfaces:
                 faces = list(_tfaces)   # copy — faces.clear() below must not wipe the cache
             else:
                 with _prof('detect'), _gpu_guard(pooled=analysis_pooled(), owner='analysis'):  # detect: lock-free when pooled
@@ -3924,7 +3924,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                             _audit_hit('recovered via ROI redetect (partial miss)')
             self._tls.retry_detected_faces = list(faces) if faces else None
             _tracker, _may_coast = self._dispatch_tracker()
-            if _tfaces is None and _tracker is not None:
+            if (not _tfaces) and _tracker is not None:
                 # Detector order commonly follows x-coordinate.  Once two faces
                 # cross, that order swaps and ``all_input`` would otherwise paste
                 # each source onto the other person.  Hungarian association keeps
@@ -4479,10 +4479,11 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                         except Exception as _yp_err:
                             _swallowed("roop/ProcessMgr.py:face_yaw_pitch", _yp_err, "fallback continued")
 
+                        det_global_floor = float(getattr(roop.globals, 'face_detector_threshold', 0.50) or 0.50)
                         if _is_occ_or_contact:
-                            _eff_lock_floor = min(LOCK_MIN_DET, 0.55)
+                            _eff_lock_floor = min(LOCK_MIN_DET, 0.55, det_global_floor)
                         elif not _facing_away:
-                            _eff_lock_floor = min(LOCK_MIN_DET, 0.60)
+                            _eff_lock_floor = min(LOCK_MIN_DET, 0.60, det_global_floor)
                         if _lock_det is not None and float(_lock_det) < _eff_lock_floor:
                             low_conf_lock = True
                             src_index = None
@@ -6117,18 +6118,21 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             try:
                 from roop.temporal_smart_skip import is_smart_skip_enabled, get_track_patch, get_dense_flow_warper
                 if is_smart_skip_enabled():
-                    _prev_entry = get_track_patch(_temporal_tid)
+                    _cur_fi = getattr(self._tls, 'frame_idx', None)
+                    _exp_fi = (_cur_fi - 1) if _cur_fi is not None and _cur_fi > 0 else None
+                    _prev_entry = get_track_patch(_temporal_tid, expected_frame_idx=_exp_fi)
                     if _prev_entry is not None and _prev_entry.get('patch') is not None:
                         _prev_patch = _prev_entry['patch']
-                        _prev_aligned = _prev_entry.get('aligned_img')
-                        if _prev_aligned is None:
-                            _prev_aligned = _prev_patch
-                        _warper = get_dense_flow_warper()
-                        _flow = _warper.compute_dense_flow(aligned_img, _prev_aligned)
-                        _warped_patch = _warper.warp(_prev_patch, _flow, target_shape=aligned_img.shape[:2])
-                        fake_frame = _warped_patch
-                        if _prev_entry.get('has_enhanced'):
-                            enhanced_frame = _warped_patch
+                        if isinstance(_prev_patch, np.ndarray) and _prev_patch.size > 0:
+                            _prev_aligned = _prev_entry.get('aligned_img')
+                            if _prev_aligned is None or not (isinstance(_prev_aligned, np.ndarray) and _prev_aligned.size > 0):
+                                _prev_aligned = _prev_patch
+                            _warper = get_dense_flow_warper()
+                            _flow = _warper.compute_dense_flow(aligned_img, _prev_aligned)
+                            _warped_patch = _warper.warp(_prev_patch, _flow, target_shape=aligned_img.shape[:2])
+                            fake_frame = _warped_patch
+                            if _prev_entry.get('has_enhanced'):
+                                enhanced_frame = _warped_patch
                         if _prev_entry.get('swap_model_mask') is not None:
                             try:
                                 self._tls.swap_model_mask = _warper.warp(

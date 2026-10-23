@@ -217,6 +217,26 @@ class BuildRangesTest(unittest.TestCase):
         self.assertEqual(ranges, [])
         self.assertEqual(len(mask), 0)
 
+    def test_scene_cuts_expand_to_shot_boundaries(self):
+        # Island [40, 50], S=6 (pad=10) -> normally (30, 60).
+        # With scene cuts at 25 and 75, it expands to cover [25, 74].
+        ranges, mask = build_active_ranges([40, 50], 100, 6, scene_cuts=[25, 75])
+        self.assertEqual(ranges, [(25, 74)])
+        self.assertTrue(mask[25] and mask[74])
+        self.assertFalse(mask[24] or mask[75])
+
+    def test_scene_cuts_without_prior_cut_retains_dilation_pad(self):
+        # Island [40, 50], S=6 (pad=10) -> normally (30, 60).
+        # Cut at 75 (post only): start stays max(0, 40-10)=30, end expands to 75-1=74.
+        ranges, _ = build_active_ranges([40, 50], 100, 6, scene_cuts=[75])
+        self.assertEqual(ranges, [(30, 74)])
+
+    def test_scene_cuts_without_post_cut_retains_dilation_pad(self):
+        # Island [40, 50], S=6 (pad=10) -> normally (30, 60).
+        # Cut at 25 (prior only): start expands to 25, end stays min(99, 50+10)=60.
+        ranges, _ = build_active_ranges([40, 50], 100, 6, scene_cuts=[25])
+        self.assertEqual(ranges, [(25, 60)])
+
 
 class DemuxTest(unittest.TestCase):
     def _run(self, values, stride, frame_start=0, total=None):

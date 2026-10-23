@@ -300,7 +300,7 @@ class TemporalFaceTracker:
             stable_hits=_int("ROOP_TEMPORAL_STABLE_HITS", 2),
             max_misses=prepass_policy.max_misses_for(interval, _int("ROOP_TEMPORAL_MAX_MISSES", 3)),
             reid_age=_int("ROOP_TEMPORAL_REID_AGE", 45),
-            stable_pad=_float("ROOP_TEMPORAL_STABLE_ROI_PAD", 0.55),
+            stable_pad=_float("ROOP_TEMPORAL_STABLE_ROI_PAD", 0.85),
             uncertain_pad=_float("ROOP_TEMPORAL_UNCERTAIN_ROI_PAD", 1.35),
             min_roi=_int("ROOP_TEMPORAL_MIN_ROI", 160),
             roi_interval=roi_interval,
