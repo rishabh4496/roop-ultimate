@@ -3853,6 +3853,11 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             # _precompute_temporal).
             if frame_idx < self._temporal_covered:
                 _tfaces = self._temporal_faces.get(frame_idx)
+                if not _tfaces:
+                    self._tls.retry_detected_faces = None
+                    self._tls.last_found_bboxes = None
+                    _audit_hit('frames with no face detected at all')
+                    return num_faces_found, frame
 
         if self.options.swap_mode == "first":
             if not (0 <= self.options.selected_index < len(self.input_face_datas)):
