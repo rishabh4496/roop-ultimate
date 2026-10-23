@@ -511,13 +511,12 @@ class TrackingMixin:
         # frames are consumed strictly in order, so what the backoff has seen
         # when frame N is submitted is a fixed function of N, whatever the worker
         # timing. A card of 7GB+ never reaches this.
-        rescue_backoff = None
+        try:
+            _every = int(os.environ.get('ROOP_PREPASS_RESCUE_EVERY', '8'))
+        except ValueError:
+            _every = 8
+        rescue_backoff = RescueBackoff(every=_every)
         if small_card_scan:
-            try:
-                _every = int(os.environ.get('ROOP_SMALL_CARD_PREPASS_RESCUE_EVERY', '8'))
-            except ValueError:
-                _every = 8
-            rescue_backoff = RescueBackoff(every=_every)
             print(f'[Track] small-card scan: ROI crops skip the rescue ladder '
                   f'(full-frame fallback covers a miss); a futile full-frame rescue '
                   f'backs off to every {rescue_backoff.every} frames. '
@@ -553,10 +552,10 @@ class TrackingMixin:
             audit_detect_frame_begin()
             if crop_bbox is not None:
                 # Only a track last seen rolled carries a hint; for everyone else the
-                # call is exactly what it always was.
+                # call is exactly what it always was. ROI crops skip the rescue ladder
+                # across all tiers; full-frame fallback below covers a miss.
                 _hint = {'rotation_action': rotation_action} if rotation_action else {}
-                faces = (get_all_faces_in_roi(fr, crop_bbox, rescue=False, **_hint)
-                         if small_card_scan else get_all_faces_in_roi(fr, crop_bbox, **_hint))
+                faces = get_all_faces_in_roi(fr, crop_bbox, rescue=False, **_hint)
                 if faces:
                     return _DetectionResult(_cache_identity_embeddings(faces), mode='roi')
             _stamp = None

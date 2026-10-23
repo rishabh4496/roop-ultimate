@@ -879,7 +879,7 @@ def get_all_faces_in_roi(frame, bbox, pad_ratio=1.0, min_crop=160, rescue=True,
             for face in hinted:
                 _offset_face_coords(face, cx1, cy1)
             return hinted
-    faces = (get_all_faces(crop) if rescue else get_all_faces(crop, rescue=False)) or []
+    faces = (get_all_faces(crop, expected_count=1) if rescue else get_all_faces(crop, rescue=False)) or []
     for face in faces:
         _offset_face_coords(face, cx1, cy1)
     return faces

@@ -505,9 +505,8 @@ def _scan_active_ranges_hw(
             mode="nv_hardware_keyframes",
         )
 
-        sample_gaps = [scheduled_samples[i+1] - scheduled_samples[i] for i in range(len(scheduled_samples)-1)]
-        effective_stride = max(S, max(sample_gaps, default=S))
-        effective_merge_gap = max(MERGE_GAP, effective_stride + 5)
+        effective_stride = S
+        effective_merge_gap = MERGE_GAP
         hw_cuts = [int(c) - frame_start for c in cut_detector.scene_cuts if frame_start <= int(c) < frame_end]
 
         ranges, mask = build_active_ranges(
