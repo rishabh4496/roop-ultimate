@@ -231,3 +231,106 @@ def test_smart_skip_enabled_toggle(monkeypatch):
 
     monkeypatch.setenv("ROOP_TEMPORAL_SMART_SKIP", "1")
     assert is_smart_skip_enabled() is True
+
+
+def test_mark_smart_skips_illumination_threshold_0_5_percent():
+    kps = np.array([
+        [100.0, 100.0],
+        [150.0, 100.0],
+        [125.0, 130.0],
+        [110.0, 160.0],
+        [140.0, 160.0],
+    ], dtype=np.float32)
+
+    # Frame 0 -> 1: delta 0.002 (< 0.5% = 0.005) -> Skip allowed
+    # Frame 1 -> 2: delta 0.008 (> 0.5% = 0.005) -> Skip refused due to illumination change!
+    merged = {
+        0: {"kps": kps.copy(), "roi_luma": 0.500},
+        1: {"kps": kps.copy(), "roi_luma": 0.502},
+        2: {"kps": kps.copy(), "roi_luma": 0.510},
+    }
+    count = mark_smart_skips_in_track(merged, disp_threshold=0.15, illum_threshold=ILLUMINATION_DELTA_THRESHOLD)
+    assert count == 1
+    assert merged[0]["reuse_flow_warp"] is False
+    assert merged[1]["reuse_flow_warp"] is True
+    assert merged[2]["reuse_flow_warp"] is False
+
+
+def test_trajectory_cache_identify_delta_skips():
+    kps = np.array([
+        [100.0, 100.0],
+        [150.0, 100.0],
+        [125.0, 130.0],
+        [110.0, 160.0],
+        [140.0, 160.0],
+    ], dtype=np.float32)
+
+    faces_by_frame = {}
+    for i in range(10, 16):
+        cur_kps = kps.copy()
+        cur_kps[[0, 1, 3, 4]] += 0.05 * (i - 10)
+        faces_by_frame[i] = [{
+            "_track_id": 1,
+            "kps": cur_kps,
+            "bbox": [50, 50, 200, 200],
+            "roi_luma": 0.5 + 0.001 * (i - 10),
+        }]
+
+    cache = TrajectoryCache.build(faces_by_frame, frame_start=0)
+    assert len(cache) == 6
+
+    cuts = {13}
+    keyframes = set()
+    roi_lumas = {(i, 1): 0.5 + 0.001 * (i - 10) for i in range(10, 16)}
+
+    flagged = cache.identify_delta_skips(
+        cuts=cuts,
+        keyframes=keyframes,
+        max_consecutive=2,
+        disp_threshold=0.15,
+        illum_threshold=0.005,
+        roi_lumas=roi_lumas,
+    )
+
+    assert (11, 1) in flagged
+    assert (12, 1) in flagged
+    assert (13, 1) not in flagged
+    assert (14, 1) in flagged
+    assert (15, 1) in flagged
+
+    row_11 = cache.at(11)
+    assert bool(row_11[0]["flags"] & FLAG_REUSE_FLOW_WARP) is True
+    row_13 = cache.at(13)
+    assert bool(row_13[0]["flags"] & FLAG_REUSE_FLOW_WARP) is False
+
+
+def test_dense_flow_warper_nvof_dispatch_and_warp():
+    class MockNvofEngine:
+        def __init__(self, size):
+            self.size = size
+
+        def calc(self, cur, prev, hint=None):
+            h, w = cur.shape[:2]
+            flow = np.zeros((h, w, 2), dtype=np.float32)
+            flow[..., 0] = 3.0
+            flow[..., 1] = -2.0
+            return flow
+
+        def convertToFloat(self, raw, out=None):
+            return raw
+
+    warper = DenseFlowWarper(flow_tier="nvof", engine_factory=lambda sz: MockNvofEngine(sz))
+    img_prev = np.zeros((64, 64, 3), dtype=np.uint8)
+    img_cur = np.zeros((64, 64, 3), dtype=np.uint8)
+
+    flow = warper.compute_dense_flow(img_cur, img_prev)
+    assert warper.last_flow_tier == "nvof"
+    assert flow.shape == (64, 64, 2)
+    assert flow[0, 0, 0] == 3.0
+    assert flow[0, 0, 1] == -2.0
+
+    source = np.zeros((64, 64, 3), dtype=np.uint8)
+    source[30:35, 30:35] = 255
+    warped = warper.warp(source, flow)
+    assert warped.shape == source.shape
+    assert warped.dtype == np.uint8

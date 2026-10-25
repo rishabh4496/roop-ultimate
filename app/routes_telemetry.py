@@ -298,6 +298,11 @@ async def websocket_telemetry(websocket: WebSocket) -> None:
     client CAN prove liveness through an intermediary that would otherwise time
     out an idle upgrade.
     """
+    try:
+        from core.cpu_topology import pin_current_thread_to_e_cores
+        pin_current_thread_to_e_cores()
+    except (ImportError, OSError, RuntimeError, AttributeError):
+        pass
     await hub.connect(websocket)
     try:
         # Send current state immediately so a client that attaches mid-render

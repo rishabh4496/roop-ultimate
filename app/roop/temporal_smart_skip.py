@@ -29,7 +29,7 @@ from roop.degrade import swallowed as _swallowed
 INNER_LANDMARK_INDICES = (0, 1, 3, 4)
 MAX_CONSECUTIVE_SKIPS = 2
 DISPLACEMENT_THRESHOLD_PX = 0.15
-ILLUMINATION_DELTA_THRESHOLD = 0.05
+ILLUMINATION_DELTA_THRESHOLD = 0.005  # < 0.5% local illumination change
 
 
 def is_smart_skip_enabled() -> bool:
@@ -97,9 +97,10 @@ class DenseFlowWarper:
 
     FLOW_TIERS = ("nvof", "cuda_farneback", "dis")
 
-    def __init__(self, flow_tier: str = "auto") -> None:
+    def __init__(self, flow_tier: str = "auto", engine_factory=None) -> None:
         self.flow_tier = flow_tier
         self.last_flow_tier: Optional[str] = None
+        self._engine_factory = engine_factory
         self._tls = threading.local()
 
     @staticmethod
@@ -118,12 +119,14 @@ class DenseFlowWarper:
         )
 
     def _nvof_engine(self, shape: Tuple[int, int]) -> Optional[Any]:
+        key = (int(shape[1]), int(shape[0]))  # (width, height)
+        if self._engine_factory is not None:
+            return self._engine_factory(key)
         if not self._cuda_available():
             return None
         nvof_cls = self._nvof_class()
         if nvof_cls is None:
             return None
-        key = (int(shape[1]), int(shape[0]))  # (width, height)
         engines = getattr(self._tls, "nvof", None)
         if engines is None:
             engines = {}
@@ -147,18 +150,28 @@ class DenseFlowWarper:
         if engine is None:
             return None
         try:
-            gpu_mat_cls = getattr(cv2, "cuda_GpuMat", getattr(getattr(cv2, "cuda", None), "GpuMat", None))
-            cur_gpu = gpu_mat_cls()
-            prev_gpu = gpu_mat_cls()
-            cur_gpu.upload(cur_small)
-            prev_gpu.upload(prev_small)
-            raw = engine.calc(cur_gpu, prev_gpu, None)
-            float_gpu = gpu_mat_cls()
-            converted = engine.convertToFloat(raw, float_gpu)
-            if converted is None:
-                converted = float_gpu
-            flow = converted.download()
-            return np.asarray(flow, dtype=np.float32)
+            if self._cuda_available():
+                gpu_mat_cls = getattr(cv2, "cuda_GpuMat", getattr(getattr(cv2, "cuda", None), "GpuMat", None))
+                if gpu_mat_cls is not None:
+                    cur_gpu = gpu_mat_cls()
+                    prev_gpu = gpu_mat_cls()
+                    cur_gpu.upload(cur_small)
+                    prev_gpu.upload(prev_small)
+                    raw = engine.calc(cur_gpu, prev_gpu, None)
+                    float_gpu = gpu_mat_cls()
+                    converted = engine.convertToFloat(raw, float_gpu)
+                    if converted is None:
+                        converted = float_gpu
+                    flow = converted.download()
+                    return np.asarray(flow, dtype=np.float32)
+            if hasattr(engine, "calc"):
+                raw = engine.calc(cur_small, prev_small, None)
+                if hasattr(engine, "convertToFloat"):
+                    flow = engine.convertToFloat(raw, None)
+                else:
+                    flow = raw
+                return np.asarray(flow, dtype=np.float32)
+            return None
         except Exception as exc:
             _swallowed('roop/temporal_smart_skip.py:nvof', exc, 'NVOF failed; falling back')
             return None

@@ -3379,7 +3379,7 @@ class TrackingMixin:
                         keyframes=getattr(self, '_keyframe_indices', None),
                         max_consecutive=2,
                         disp_threshold=0.15,
-                        illum_threshold=0.05,
+                        illum_threshold=0.005,
                     )
                     self._total_smart_skips = getattr(self, '_total_smart_skips', 0) + _sk_count
             except Exception as _exc:

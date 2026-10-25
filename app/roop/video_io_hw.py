@@ -497,6 +497,11 @@ class NvSparseKeyframeReader:
                  start_frame: int = 0, end_frame: Optional[int] = None,
                  in_point: Optional[int] = None, out_point: Optional[int] = None,
                  trim_in: Optional[float] = None, trim_out: Optional[float] = None) -> None:
+        try:
+            from core.cpu_topology import pin_current_thread_to_p_cores
+            pin_current_thread_to_p_cores(high_priority=True)
+        except (ImportError, OSError, RuntimeError, AttributeError):
+            pass
         nvc, torch = _load_nvc()
         self._nvc, self._torch = nvc, torch
         self.path = path
@@ -1137,6 +1142,11 @@ class NvZeroCopyWriter:
                  bitrate: Optional[int] = None, gop: Optional[int] = None, preset: str = "P4", gpu_id: int = 0,
                  matrix: Optional[Tuple[float, float]] = None, tag: str = "encode",
                  quality: Optional[Any] = None) -> None:
+        try:
+            from core.cpu_topology import pin_current_thread_to_p_cores
+            pin_current_thread_to_p_cores(high_priority=True)
+        except (ImportError, OSError, RuntimeError, AttributeError):
+            pass
         nvc, torch = _load_nvc()
         # Opt-in multipass / spatial AQ / temporal AQ (roop.nvenc_quality; default OFF, see its docstring for the
         # measurements and for why only these kwarg spellings count). `quality` overrides the environment.

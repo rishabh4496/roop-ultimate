@@ -8,6 +8,7 @@ records; media and model files remain in their existing locations.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
@@ -90,29 +91,35 @@ def _atomic_write(path: str, value: Mapping[str, Any]) -> None:
     read-only directory, a real permissions problem) still raises, so this
     cannot mask a broken projects directory.
     """
-    directory = os.path.dirname(os.path.abspath(path)) or "."
-    os.makedirs(directory, exist_ok=True)
-    fd, temporary = tempfile.mkstemp(prefix=".checkpoint-", suffix=".tmp", dir=directory)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            json.dump(value, fh, indent=1, sort_keys=True, default=_json_default)
-            fh.flush()
-            os.fsync(fh.fileno())
-        delay = 0.02
-        for attempt in range(_REPLACE_ATTEMPTS):
-            try:
-                os.replace(temporary, path)
-                break
-            except PermissionError:
-                if attempt == _REPLACE_ATTEMPTS - 1:
-                    raise
-                time.sleep(delay)
-                delay = min(delay * 2, 0.4)
-    finally:
+        from core.cpu_topology import e_core_scope
+        _ctx = e_core_scope()
+    except (ImportError, AttributeError):
+        _ctx = contextlib.nullcontext()
+    with _ctx:
+        directory = os.path.dirname(os.path.abspath(path)) or "."
+        os.makedirs(directory, exist_ok=True)
+        fd, temporary = tempfile.mkstemp(prefix=".checkpoint-", suffix=".tmp", dir=directory)
         try:
-            os.remove(temporary)
-        except OSError:
-            pass
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                json.dump(value, fh, indent=1, sort_keys=True, default=_json_default)
+                fh.flush()
+                os.fsync(fh.fileno())
+            delay = 0.02
+            for attempt in range(_REPLACE_ATTEMPTS):
+                try:
+                    os.replace(temporary, path)
+                    break
+                except PermissionError:
+                    if attempt == _REPLACE_ATTEMPTS - 1:
+                        raise
+                    time.sleep(delay)
+                    delay = min(delay * 2, 0.4)
+        finally:
+            try:
+                os.remove(temporary)
+            except OSError:
+                pass
 
 
 def file_sha256(path: str, chunk_size: int = 1024 * 1024) -> str:

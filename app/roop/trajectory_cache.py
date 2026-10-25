@@ -326,6 +326,89 @@ class TrajectoryCache:
                 "pitch": [_num(v) for v in sub["pose"][:, 1]],
                 "roll": [_num(v) for v in sub["pose"][:, 2]]}
 
+    def identify_delta_skips(
+        self,
+        cuts: Optional[set[int]] = None,
+        keyframes: Optional[set[int]] = None,
+        max_consecutive: int = 2,
+        disp_threshold: float = 0.15,
+        illum_threshold: float = 0.005,
+        roi_lumas: Optional[Mapping[Tuple[int, int], float]] = None,
+    ) -> List[Tuple[int, int]]:
+        """Identify frames in this trajectory cache where inner landmark displacement
+        (delta_eyes_mouth_px) is < disp_threshold (0.15 px) and local illumination
+        change is < illum_threshold (0.5%), capped at max_consecutive skips, never on
+        keyframes or scene cuts.
+
+        Flags matching rows with FLAG_REUSE_FLOW_WARP and returns list of (frame, track).
+        """
+        cuts = cuts or set()
+        keyframes = keyframes or set()
+        if len(self.rows) < 2:
+            return []
+
+        from roop.temporal_smart_skip import compute_inner_landmark_displacement
+
+        tracks = np.unique(self.rows["track"])
+        flagged: List[Tuple[int, int]] = []
+
+        for tid in tracks:
+            mask = self.rows["track"] == tid
+            track_indices = np.where(mask)[0]
+            if len(track_indices) < 2:
+                continue
+
+            order = np.argsort(self.rows["frame"][track_indices])
+            sorted_indices = track_indices[order]
+
+            consecutive_skips = 0
+            for idx_pos in range(len(sorted_indices)):
+                curr_idx = sorted_indices[idx_pos]
+                curr_frame = int(self.rows["frame"][curr_idx])
+
+                if idx_pos == 0:
+                    self.rows["flags"][curr_idx] &= ~FLAG_REUSE_FLOW_WARP
+                    consecutive_skips = 0
+                    continue
+
+                prev_idx = sorted_indices[idx_pos - 1]
+                prev_frame = int(self.rows["frame"][prev_idx])
+
+                if curr_frame != prev_frame + 1:
+                    self.rows["flags"][curr_idx] &= ~FLAG_REUSE_FLOW_WARP
+                    consecutive_skips = 0
+                    continue
+
+                if curr_frame in cuts or curr_frame in keyframes:
+                    self.rows["flags"][curr_idx] &= ~FLAG_REUSE_FLOW_WARP
+                    consecutive_skips = 0
+                    continue
+
+                if consecutive_skips >= max_consecutive:
+                    self.rows["flags"][curr_idx] &= ~FLAG_REUSE_FLOW_WARP
+                    consecutive_skips = 0
+                    continue
+
+                curr_kps = self.rows["kps"][curr_idx]
+                prev_kps = self.rows["kps"][prev_idx]
+                disp = compute_inner_landmark_displacement(curr_kps, prev_kps)
+
+                delta_illum = 0.0
+                if roi_lumas is not None:
+                    curr_luma = float(roi_lumas.get((curr_frame, int(tid)), 0.5))
+                    prev_luma = float(roi_lumas.get((prev_frame, int(tid)), 0.5))
+                    delta_illum = abs(curr_luma - prev_luma)
+
+                if disp < disp_threshold and delta_illum < illum_threshold:
+                    self.rows["flags"][curr_idx] |= FLAG_REUSE_FLOW_WARP
+                    consecutive_skips += 1
+                    flagged.append((curr_frame, int(tid)))
+                else:
+                    self.rows["flags"][curr_idx] &= ~FLAG_REUSE_FLOW_WARP
+                    consecutive_skips = 0
+
+        return flagged
+
     def summary(self) -> Dict[str, Any]:
         out = dict(self.meta)
         out["faces"], out["bytes"] = len(self), self.nbytes
