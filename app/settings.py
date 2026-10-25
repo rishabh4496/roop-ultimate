@@ -49,6 +49,13 @@ UI_SETTINGS = (
     ('detector_scale_pyramid', 'Detector scale pyramid', 'Performance'),
     ('max_threads', 'Max threads', 'Performance'),
     ('memory_limit', 'Max memory (GB)', 'Performance'),
+    # 3-stage pipeline (react-ui PipelineControls.jsx: shared with the Face Swap tab). The restorer mode is one control over
+    # selected_enhancer / restore_ultra_frequency_blend / auto_bypass_restorer_native_swap, catalogued under the first.
+    ('swap_model', 'Swapper model', '3-stage pipeline'),
+    ('selected_enhancer', 'Restorer mode', '3-stage pipeline'),
+    ('auto_bypass_restorer_native_swap', 'Auto-Bypass Restorer on >=256px Native Swap', '3-stage pipeline'),
+    ('prepass_detect_interval', 'Pre-pass optical-flow stride (K)', '3-stage pipeline'),
+    ('temporal_smart_skip', 'Temporal Smart-Skip (Lossless Static Reuse)', '3-stage pipeline'),
     # Advanced performance
     ('perf_trt_pool', 'Swapper TRT pool', 'Advanced performance'),
     ('trt_builder_optimization_level', 'TensorRT builder optimization', 'Advanced performance'),
@@ -74,10 +81,7 @@ UI_SETTINGS = (
     ('perf_gpu_affine', 'CUDA affine warp', 'Advanced performance'),
     ('perf_pinned_buffers', 'Pinned host buffers (zero-copy)', 'Advanced performance'),
     ('temporal_step', 'Face tracking interval (frames)', 'Advanced performance'),
-    ('prepass_detect_interval', 'Pre-pass detection interval (frames)', 'Advanced performance'),
     ('enhance_min_face_px', 'Skip restorer below face size (px)', 'Advanced performance'),
-    ('auto_bypass_restorer_native_swap', 'Auto-Bypass Restorer on >=256px Native Swap', 'Advanced performance'),
-    ('temporal_smart_skip', 'Temporal Smart-Skip (Lossless Static Reuse)', 'Advanced performance'),
     # Identity & tracking
     ('recognizer', 'Recognition model', 'Identity & tracking'),
     ('identity_confidence_threshold', 'Identity confidence threshold', 'Identity & tracking'),

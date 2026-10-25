@@ -24,7 +24,8 @@
     "fps": 20.0,
     "neural_detected_frames": 25,
     "flow_tracked_frames": 75,
-    "flow_ratio_pct": 75.0
+    "flow_ratio_pct": 75.0,
+    "flow_backend": null
    },
    "STAGE_3_MAIN_SWAP": {
     "state": "RUNNING",
@@ -42,23 +43,23 @@
       "backend": "ffmpeg / cv2"
      },
      "warp": {
-      "ms": 3.002,
+      "ms": 3.001,
       "calls": 5,
       "backend": "cv2 (CPU)"
      },
      "model": {
-      "ms": 11.004,
+      "ms": 11.003,
       "calls": 5,
       "backend": "TensorRT"
      },
      "restore": null,
      "blend": {
-      "ms": 4.005,
+      "ms": 4.002,
       "calls": 5,
       "backend": "cv2 (CPU)"
      },
      "encode": {
-      "ms": 6.006,
+      "ms": 6.003,
       "calls": 5,
       "backend": "h264_nvenc"
      }
@@ -142,23 +143,23 @@
       "backend": "ffmpeg / cv2"
      },
      "warp": {
-      "ms": 3.002,
+      "ms": 3.001,
       "calls": 5,
       "backend": "cv2 (CPU)"
      },
      "model": {
-      "ms": 11.004,
+      "ms": 11.003,
       "calls": 5,
       "backend": "TensorRT"
      },
      "restore": null,
      "blend": {
-      "ms": 4.005,
+      "ms": 4.002,
       "calls": 5,
       "backend": "cv2 (CPU)"
      },
      "encode": {
-      "ms": 6.006,
+      "ms": 6.003,
       "calls": 5,
       "backend": "h264_nvenc"
      }

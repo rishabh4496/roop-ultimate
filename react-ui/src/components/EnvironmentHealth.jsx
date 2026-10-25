@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { useApi } from '../useApi';
 import { Section } from './ui';
 import { Icon } from '../icons';
-import { PipelineSummaryCard } from './faceswap/PipelineReport';
+import { CanaryPrecisionPanel, PipelineSummaryCard } from './faceswap/PipelineReport';
 
 // ── Environment health & update compatibility ────────────────────────────────
 //
@@ -89,6 +89,7 @@ function LastRunReport({ runtime }) {
             : 'No finished render has a report yet.'}
       </div>
       {report ? <PipelineSummaryCard report={report} title="Last run" /> : null}
+      <CanaryPrecisionPanel precision={runtime?.sections?.PRECISION?.values} className="mt-2.5" />
     </Section>
   );
 }

@@ -6,6 +6,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { createServer as createViteServer } from 'vite';
 import multer from 'multer';
 import { installMockQueue } from './mockQueue';
+import { buildStages, precisionSection } from './pipelineTypes';
 
 // This is a MOCK of app/api.py: simulated swaps, invented telemetry, SVG
 // placeholders instead of frames. It exists so the React UI can be developed
@@ -241,6 +242,11 @@ let appSettings: Record<string, any> = {
   selected_enhancer: 'UltraMax',
   swap_model: 'realswap',
   mask_engine: 'RealityUX',
+  // 3-stage pipeline controls (react-ui PipelineControls.jsx); the same names and defaults as app/settings.py.
+  prepass_detect_interval: 1,
+  temporal_smart_skip: false,
+  auto_bypass_restorer_native_swap: false,
+  restore_ultra_frequency_blend: true,
   mask_engine_2: 'None',
   mask_clip_text: 'cup,hands,hair,banana',
   face_detection_mode: 'Selected face',
@@ -302,6 +308,7 @@ function getHardwareTelemetry(isProcessing = false) {
           hard_cap_mb: { value: isDesktop ? '4096 MB' : '1536 MB' },
         },
       },
+      PRECISION: precisionSection(String(appSettings.trt_precision || 'mixed'), String(appSettings.trt_precision || 'mixed')),
       STABILIZATION: {
         values: {
           blend_ratio: { value: 0.85 },
@@ -467,7 +474,10 @@ async function startServer() {
 
   // /api/v1/pipeline/status, as app/routes_pipeline_status.py serves it: a snapshot on connect and
   // another whenever the registry changes. The e2e suite drives it through POST /__mock/pipeline.
-  const pipeline = { seq: 0, active: [] as Array<Record<string, unknown>> };
+  // One row of the backend registry (app/roop/pipeline_status.py). `kind` is a STAGE_* name; any other field the
+  // e2e suite posts (model, tag, ...) rides along untouched.
+  interface PipelineActive { kind: string; since: number; [field: string]: unknown }
+  const pipeline = { seq: 0, active: [] as PipelineActive[] };
   const pipelineSnapshot = () => {
     const nowS = Date.now() / 1000;
     const active = pipeline.active.map((a) => ({ ...a, elapsed_s: Math.max(0, nowS - Number(a.since)) }));
@@ -494,7 +504,7 @@ async function startServer() {
   app.get('/api/v1/pipeline/status', (req, res) => res.json(pipelineSnapshot()));
   app.post('/__mock/pipeline', (req, res) => {
     const rows: Array<Record<string, unknown>> = Array.isArray(req.body?.active) ? req.body.active : [];
-    pipeline.active = rows.map((a) => ({ since: Date.now() / 1000 - Number(a.elapsed_s || 0), ...a }));
+    pipeline.active = rows.map((a): PipelineActive => ({ since: Date.now() / 1000 - Number(a.elapsed_s || 0), kind: String(a.kind ?? ''), ...a }));
     pipeline.seq += 1;
     res.json({ ok: true, seq: pipeline.seq });
   });
@@ -514,6 +524,8 @@ async function startServer() {
           temp_c: 56,
           active_workers: progressState.processing ? (isDesktop ? 10 : 4) : 0,
           status: progressState.desc,
+          // stage / stages / summary, as stage_telemetry.snapshot() puts them on the real frame.
+          ...buildStages(progressState.progress, progressState.processing, progressState.fps),
         }));
       }
     }, 500);
@@ -567,6 +579,18 @@ async function startServer() {
         'instyleswapper_b',
         'instyleswapper_c',
         'cscs',
+        'alpha_256',
+        'alphaface_256',
+        'hyperswap_1a_256',
+        'hyperswap_1b_256',
+        'hyperswap_1c_256',
+        'hyperswap_256',
+        'hyperswap_1a_512',
+        'hyperswap_1b_512',
+        'hyperswap_1c_512',
+        'hyperswap_512',
+        'reswapper_128',
+        'reswapper_256',
       ],
       face_detection_modes: [
         'First found',
@@ -1220,7 +1244,7 @@ async function startServer() {
   }));
   app.get('/api/storage', (req, res) => res.json({ total_gb: 512, used_gb: 128, temp_gb: 4.2 }));
   app.post('/api/storage/delete', (req, res) => res.json({ ok: true }));
-  app.get('/api/runtime/state', (req, res) => res.json({ state: 'ready', initialized: true }));
+  app.get('/api/runtime/state', (req, res) => res.json({ state: 'ready', initialized: true, ...getHardwareTelemetry(progressState.processing) }));
 
   // ── Hardware Benchmark & Optimization Suite ─────────────────────────
   interface BenchmarkProgressState {

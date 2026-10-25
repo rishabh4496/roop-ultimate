@@ -535,7 +535,10 @@ def snapshot() -> Dict[str, Any]:
         out[STAGE_1_SPARSE_PRESCAN]["scene_cuts"] = c1.get("scene_cuts")
         out[STAGE_2_ACTIVE_PREPASS].update(
             neural_detected_frames=c2.get("detector_calls"), flow_tracked_frames=c2.get("coast_frames"),
-            flow_ratio_pct=_ratio_pct(c2.get("coast_frames"), c2.get("detector_calls")))
+            flow_ratio_pct=_ratio_pct(c2.get("coast_frames"), c2.get("detector_calls")),
+            # Which optical-flow engine carried the frames between detections ('nvof' | 'cv' | 'torch'); the UI names
+            # the engine from this and says plain "flow" when it is absent, so it never claims NVOFA unreported.
+            flow_backend=c2.get("flow_backend"))
         return {"stage": current, "stages": out, "summary": dict(_summary)}
 
 

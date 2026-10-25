@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { useApi } from '../useApi';
 import { Section, Select, Slider, Toggle, TextInput } from './ui';
+import PipelineControls from './faceswap/PipelineControls';
 import ThemeGallery from './ThemeGallery';
 import ThemeStudio from './ThemeStudio';
 import { allThemes } from '../themes';
@@ -43,10 +44,11 @@ function FilterSection({ title, icon, query, onlyModified, onResetKeys, children
   // Reset offers the section's FULL key set, not just what survived filtering —
   // resetting "everything in Output" should not silently depend on what a
   // search box happens to be showing.
+  // A control that groups several settings (PipelineControls) lists its changed keys in `modifiedKeys`.
   const modifiedKeys = all
     .map((c) => c?.props)
-    .filter((pr) => pr?.modified && pr?.settingKey)
-    .map((pr) => pr.settingKey);
+    .flatMap((pr) => (Array.isArray(pr?.modifiedKeys) ? pr.modifiedKeys
+      : (pr?.modified && pr?.settingKey ? [pr.settingKey] : [])));
 
   const action = modifiedKeys.length > 0 && onResetKeys ? (
     <button
@@ -169,6 +171,18 @@ export default function Settings({ meta, settings, setSettings, notify }) {
     modified: isModified(k),
     onReset: () => resetKeys([k]),
   });
+
+  // The 3-stage pipeline controls (PipelineControls.jsx) are shared with the Face Swap tab. They take only the marker
+  // fields of these (settingKey / modified / onReset); what each control reads and writes is the component's own.
+  // Written as literal bind('<key>') calls because test_ui_settings_catalog.py reads the panel's keys from them.
+  const pipelineBind = {
+    swap_model: bind('swap_model', 'realswap'),
+    selected_enhancer: bind('selected_enhancer', 'UltraMax'),
+    auto_bypass_restorer_native_swap: bindToggle('auto_bypass_restorer_native_swap'),
+    prepass_detect_interval: bind('prepass_detect_interval', 1),
+    temporal_smart_skip: bindToggle('temporal_smart_skip'),
+  };
+  const pipelineModified = Object.values(pipelineBind).filter((b) => b.modified).map((b) => b.settingKey);
 
   const modifiedCount = defaults
     ? Object.keys(defaults).filter((k) => isModified(k)).length
@@ -635,6 +649,20 @@ export default function Settings({ meta, settings, setSettings, notify }) {
 
         </FilterSection>
 
+        <FilterSection title="3-stage pipeline" icon={Icon.meter} query={query} onlyModified={onlyModified} onResetKeys={resetKeys}>
+          <PipelineControls
+            label="Swapper model Restorer mode Auto-Bypass Restorer on >=256px Native Swap Pre-pass optical-flow stride Temporal Smart-Skip"
+            modified={pipelineModified.length > 0}
+            modifiedKeys={pipelineModified}
+            values={p}
+            models={m.swap_models}
+            onChange={set}
+            onChangeMany={setMany}
+            bind={pipelineBind}
+          />
+          <p className="text-note text-muted">The same four controls sit on the Face Swap tab. Stride, Smart-Skip and the restorer bypass take effect on the next render; they are re-exported when the setting is saved.</p>
+        </FilterSection>
+
         <FilterSection title="Advanced performance (restart to apply)" icon={Icon.meter} query={query} onlyModified={onlyModified} onResetKeys={resetKeys}>
           <p className="text-xs text-muted -mt-2">These override the launcher env and the VRAM auto-tuner. Leave on "auto" unless you know what you're tuning. Changes take effect after restarting the app.</p>
           {showTrtSettings && <>
@@ -686,10 +714,7 @@ export default function Settings({ meta, settings, setSettings, notify }) {
           <Select label="CUDA affine warp" info="ROOP_GPU_AFFINE -- warp the swapper's secondary crop on the GPU (bicubic) instead of OpenCV (Lanczos). 'auto' = on, as shipped. 'off' is for an exact-pixel comparison against OpenCV. Takes effect on the next render." {...bind('perf_gpu_affine', 'auto')} options={m.tristate || ['auto', 'on', 'off']} />
           <Select label="Pinned host buffers (zero-copy)" info="ROOP_PINNED_BUFFERS -- page-locked host memory for decoded frames and crops, so GPU uploads skip a staging copy. 'auto' = on whenever CUDA is present. 'off' falls back to ordinary memory (useful if the system is short of RAM). Takes effect on the next render." {...bind('perf_pinned_buffers', 'auto')} options={m.tristate || ['auto', 'on', 'off']} />
           <Slider label="Skip restorer below face size (px)" info={`ROOP_ENHANCE_MIN_FACE_PX -- do not run the face restorer on faces whose shorter detected-box side is under this many pixels in the frame; the swapped crop is pasted as-is. A 512px restoration of a 70px face is detail the paste throws away, and the restorer is the one stage that costs its network's full GPU time. 0 = off (default) because this changes how small faces look; 96 is a sensible start. A face has to grow 15% past the limit before it is restored again, so one at the edge does not flicker. The terminal prints how many faces were skipped. Takes effect on the next render.${Number(p.enhance_min_face_px ?? 0) > 0 ? ' CURRENTLY ON.' : ''}`} min={0} max={256} step={8} {...bind('enhance_min_face_px', 0)} />
-          <Toggle label="Auto-Bypass Restorer on >=256px Native Swap" info="ROOP_AUTO_BYPASS_RESTORER_NATIVE_SWAP -- When using Alpha 256 or HyperSwap and face bbox height is <= 320px, skip full neural restorers (CodeFormer, GFPGAN, RF++) and apply a fast GPU Difference-of-Gaussians (DoG) unsharp mask instead, boosting Stage 3 throughput by up to 3x." {...bindToggle('auto_bypass_restorer_native_swap')} />
-          <Toggle label="Temporal Smart-Skip (Lossless Static Reuse)" info="ROOP_TEMPORAL_SMART_SKIP -- During Stage 2 Pre-Pass, detects near-static faces (displacement < 0.15px and stable illumination) across consecutive frames and bypasses Swapper + Restorer neural inference in Stage 3 by warping the previous frame's composited face patch forward using dense NVOFA optical flow, up to 2 consecutive frames." {...bindToggle('temporal_smart_skip')} />
           <Slider label="Face tracking interval (frames)" info={`ROOP_TEMPORAL_STEP -- detect faces every Nth frame in the tracking pre-pass and INTERPOLATE the ones between. Leave it at 1: at 2, landmark error on turned heads measured 6x worse (13.9% of eye distance at p95), and interpolated faces skip the identity checks. Raise it only for static, near-frontal footage.${Number(p.temporal_step ?? 1) > 1 ? ' CURRENTLY ABOVE 1.' : ''}`} min={1} max={10} step={1} {...bind('temporal_step', 1)} />
-          <Slider label="Pre-pass detection interval (frames)" info={`ROOP_PREPASS_DETECT_INTERVAL -- run the face detector on every Nth frame of the tracking pre-pass and carry the faces in between by optical flow, bridging each hole between two real detections. Unlike "Face tracking interval" it still reads every frame's pixels. Measured on three 900-frame clips against detecting every frame: N=2 saves 11-14% of the pre-pass, N=4 saves 21-26%, N=8 about 30% - and in exchange finds fewer faces (N=4: 3-10% fewer; N=8: 9-20% fewer) and binds fewer of them to your source (N=4: up to 25% fewer frames matched; N=8: up to 31% fewer), because a track seen only every Nth frame has fewer chances to match. The frames the flow follows land within about 1% of an eye distance (median); the ones it could not follow are placed by plain interpolation and sit 13-40% off. Leave it at 1 unless the footage is steady and the person is near-frontal.${Number(p.prepass_detect_interval ?? 1) > 1 ? ' CURRENTLY ABOVE 1.' : ''}`} min={1} max={8} step={1} {...bind('prepass_detect_interval', 1)} />
         </FilterSection>
 
         <FilterSection title="Identity &amp; tracking (restart to apply)" icon={Icon.users ?? Icon.meter} query={query} onlyModified={onlyModified} onResetKeys={resetKeys}>

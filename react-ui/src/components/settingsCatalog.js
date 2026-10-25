@@ -31,6 +31,13 @@ export const SETTINGS_CATALOG = [
   { key: 'max_threads', label: 'Max threads', section: 'Performance' },
   { key: 'memory_limit', label: 'Max memory (GB)', section: 'Performance' },
 
+  // 3-stage pipeline
+  { key: 'swap_model', label: 'Swapper model', section: '3-stage pipeline' },
+  { key: 'selected_enhancer', label: 'Restorer mode', section: '3-stage pipeline' },
+  { key: 'auto_bypass_restorer_native_swap', label: 'Auto-Bypass Restorer on >=256px Native Swap', section: '3-stage pipeline' },
+  { key: 'prepass_detect_interval', label: 'Pre-pass optical-flow stride (K)', section: '3-stage pipeline' },
+  { key: 'temporal_smart_skip', label: 'Temporal Smart-Skip (Lossless Static Reuse)', section: '3-stage pipeline' },
+
   // Advanced performance
   { key: 'perf_trt_pool', label: 'Swapper TRT pool', section: 'Advanced performance' },
   { key: 'trt_builder_optimization_level', label: 'TensorRT builder optimization', section: 'Advanced performance' },
@@ -56,10 +63,7 @@ export const SETTINGS_CATALOG = [
   { key: 'perf_gpu_affine', label: 'CUDA affine warp', section: 'Advanced performance' },
   { key: 'perf_pinned_buffers', label: 'Pinned host buffers (zero-copy)', section: 'Advanced performance' },
   { key: 'temporal_step', label: 'Face tracking interval (frames)', section: 'Advanced performance' },
-  { key: 'prepass_detect_interval', label: 'Pre-pass detection interval (frames)', section: 'Advanced performance' },
   { key: 'enhance_min_face_px', label: 'Skip restorer below face size (px)', section: 'Advanced performance' },
-  { key: 'auto_bypass_restorer_native_swap', label: 'Auto-Bypass Restorer on >=256px Native Swap', section: 'Advanced performance' },
-  { key: 'temporal_smart_skip', label: 'Temporal Smart-Skip (Lossless Static Reuse)', section: 'Advanced performance' },
 
   // Identity & tracking
   { key: 'recognizer', label: 'Recognition model', section: 'Identity & tracking' },

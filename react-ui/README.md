@@ -124,6 +124,8 @@ npm run lint       # oxlint: react hooks, exhaustive-deps and jsx-a11y are error
 npm run check      # lint + lint:unreachable + build + e2e + every .render-check script
 npm run lint:unreachable
 npm run lint:api-timeouts    # every API call states its deadline (see "Requests")
+npm run verify:offline       # the built dist/ names no origin but its own (needs `npm run build`); test:offline-bundle proves the scan can fail
+(cd .. && npm run typecheck) # the mock server (root package): tsc --noEmit, zero errors
 npm run test:e2e   # Playwright + axe only (needs a fresh `npm run build`)
 npm run test:render-checks   # node-only checks of real components and pure modules
 npm run test:e2e:baseline    # re-record e2e/allowlist.json
@@ -151,6 +153,7 @@ real backend. The suite refuses to run if `dist/` is missing or older than `src/
 | `compile-banner.spec.js` | the banner names model + precision, survives hash-route changes and clears; a request is not timed out at 15 s while compiling and gets a fresh deadline after |
 | `canvas-tools.spec.js` | on pixels: the Mask Brush lands under the pointer (sub-pixel, 100% and 2.5x, letterboxed media in `.render-check/brush-mapping-check.mjs`), Erase clears; alpha blend 25/50/75%, difference map, wipe; the 3.5x Lens |
 | `offline.spec.js` | no tab requests a foreign origin and the bundled font is the one loaded; Settings "Check compatibility" reports UNVERIFIED offline |
+| `pipeline-controls.spec.js` | the four 3-stage pipeline controls on Face Swap and Settings (swapper, restorer mode, pre-pass stride K, Temporal Smart-Skip): each writes the setting the render reads, keyboard-only, one Start control; the live HUD's keyframes/s, flow-engine, TRT Graph / Triton Blend labels and the canary precision status (PASSED / FAILED / RUNNING / NONE); axe on all of it |
 | `idle-cpu.spec.js` | idle CPU with a failing preview is within 2x of the valid-frame case |
 | `tab-stops.spec.js` | Tab presses to walk the Face Swap tab (real key presses) |
 | `contrast-themes.spec.js` | **opt-in** (`test:e2e:themes`): text below AA under each of the 37 presets, as a per-theme ceiling |
@@ -167,6 +170,28 @@ regressions: a new axe rule, a newly clipped tab (empty today), more tab stops, 
 with more low-contrast text. Improvements do not fail; they print a `tighten allowlist` annotation, so run
 `npm run test:e2e:baseline` and commit the diff. Read that diff first: whatever it records stops failing the
 suite. Entries should shrink over time, not grow.
+
+### 3-stage pipeline controls and telemetry
+
+`components/faceswap/PipelineControls.jsx` is one component on two tabs (Face Swap, in "Swap settings"; Settings,
+under "3-stage pipeline"). Both edit the same settings object, so a change on one is the other's value. It is built
+from the shared `Select` / `Slider` / `Toggle` (12px body text, 24px range hit area) and has no run button: the
+Face Swap run bar stays the one Start control.
+
+| Control | Writes | Notes |
+| --- | --- | --- |
+| Swapper model | `swap_model` | the five named models first (`inswapper_128`, ReSwapper 256, Alpha 256, HyperSwap 256 / 512), then `realswap`, then every other model `/api/meta` lists, as `<optgroup>`s |
+| Restorer mode | `selected_enhancer`, `restore_ultra_frequency_blend`, `auto_bypass_restorer_native_swap` | *Off / Auto-Bypass >=256px* only turns the bypass on; *Laplacian Split RF++* = Restore Ultra with the frequency blend; *Full RF++* = Restoreformer++. Any other restorer (UltraMax...) reads as **Custom**. Rules and round-trips: `faceswap/pipelineRules.js` |
+| Pre-pass optical-flow stride K | `prepass_detect_interval` | 1..8; applies on the next render |
+| Temporal Smart-Skip | `temporal_smart_skip` | applies on the next render |
+
+Telemetry: `#/processing` shows, from `/ws/telemetry`, Stage 1 in keyframes/s, Stage 2's tracked share named for
+its engine (`flow_backend`: "NVOFA tracked" only when `nvof` was reported, plain "flow" otherwise) and Stage 3's
+Decode | Warp | TRT (or TRT Graph) | Blend (or Triton Blend) | NVENC ms. The labels follow the backend's own
+backend names, so a CPU blend is never called Triton. The **Canary precision** block reads
+`runtime.sections.PRECISION.values.canary_verdicts` plus the live `engine_state`, and says PASSED / FAILED /
+RUNNING / NONE: no recorded verdict is NONE, never PASSED. It is also in the Settings "Last run report" and leads the
+PRECISION card of the 14-section Structured Runtime Report.
 
 ### Type scale and colour tokens
 

@@ -35,6 +35,12 @@ jobs:
         working-directory: react-ui
       - name: built UI is present
         run: test -f react-ui/dist/index.html
+      - name: the built bundle makes no request to another origin (offline-first)
+        run: npm run verify:offline
+        working-directory: react-ui
+      - name: the offline-bundle scan can fail (self-test)
+        run: npm run test:offline-bundle
+        working-directory: react-ui
 
   typecheck:
     name: root typecheck (mock server)

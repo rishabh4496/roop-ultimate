@@ -1,8 +1,9 @@
 import React from 'react';
 import { useTelemetryStore } from '../../store/telemetryStore';
+import { useEngineRun } from './useEngineRun';
 import {
-  STAGE_ORDER, STAGE_LABEL, STAGE_1, STAGE_2, STAGE_3, auxOffloadText, fmtCount, fmtPct, fmtRate, fmtSecs,
-  headline, opsCells, reportSections, stateTone,
+  STAGE_ORDER, STAGE_LABEL, STAGE_1, STAGE_2, STAGE_3, auxOffloadText, canaryTone, canaryView, flowEngineLabel,
+  fmtCount, fmtPct, fmtRate, fmtSecs, headline, opsCells, reportSections, stateTone,
 } from './reportFormat';
 
 // The 3-stage pipeline's live HUD and its finished report.
@@ -90,8 +91,10 @@ function liveDetail(name, s) {
   }
   if (name === STAGE_2) {
     if (s.neural_detected_frames == null && s.flow_tracked_frames == null) return '';
+    // "NVOFA tracked" only when the backend reported that engine; an unreported one stays the neutral word "flow".
+    const engine = flowEngineLabel(s.flow_backend);
     return `${fmtCount(s.flow_tracked_frames)} flow · ${fmtCount(s.neural_detected_frames)} neural`
-      + (s.flow_ratio_pct != null ? ` (${fmtPct(s.flow_ratio_pct)} flow)` : '');
+      + (s.flow_ratio_pct != null ? ` (${fmtPct(s.flow_ratio_pct)} ${engine ? `${engine} tracked` : 'flow'})` : '');
   }
   return '';
 }
@@ -132,7 +135,7 @@ function LiveRows({ pipeline }) {
             </div>
             <div className="mt-1 flex justify-between text-micro font-mono text-muted">
               <span>{running ? fmtPct(s.stage_progress_pct) : s.state === 'SKIPPED' ? 'not run' : ''}</span>
-              <span>{s.fps != null ? `${fmtRate(s.fps, name === STAGE_1 ? 'samples/s' : 'fps')} · ` : ''}{fmtSecs(s.wall_s)}</span>
+              <span>{s.fps != null ? `${fmtRate(s.fps, name === STAGE_1 ? 'keyframes/s' : 'fps')} · ` : ''}{fmtSecs(s.wall_s)}</span>
             </div>
             {liveDetail(name, s) && (
               <div className="mt-0.5 text-nano font-mono text-white/70" data-testid={`${name}-detail`}>{liveDetail(name, s)}</div>
@@ -149,20 +152,75 @@ function LiveRows({ pipeline }) {
  * The Diagnostics HUD for #/processing. Renders nothing while the backend has reported no run at all (an idle
  * app), the live stage rows while one runs, and the finished report once `summary` arrives.
  */
-export function PipelineHud({ className = '' }) {
+export function PipelineHud({ runtime = null, className = '' }) {
   const pipeline = useTelemetryStore((s) => s.pipeline);
-  return <PipelineHudView pipeline={pipeline} className={className} />;
+  const run = useEngineRun();
+  return <PipelineHudView pipeline={pipeline} runtime={runtime} run={run} className={className} />;
+}
+
+/** `CanaryPrecisionStatus` wired to the live engine state, for tabs that have the runtime report but not the HUD. */
+export function CanaryPrecisionPanel({ precision, className = '' }) {
+  return <CanaryPrecisionStatus precision={precision} run={useEngineRun()} className={className} />;
+}
+
+/**
+ * Canary precision status: the fidelity canaries' verdicts per model (roop/aux_canary.py, via the structured runtime
+ * report's PRECISION section) and whether one is running right now. States and their meaning are `canaryView`'s.
+ */
+export function CanaryPrecisionStatus({ precision, run, className = '' }) {
+  const v = canaryView(precision, run);
+  return (
+    <div className={`rounded-xl border border-white/[0.08] bg-black/40 px-3 py-2 min-w-0 ${className}`} data-testid="canary-status" data-state={v.state}>
+      <div className="flex items-center justify-between gap-2 border-b border-white/5 pb-1.5">
+        <span className="text-nano font-bold tracking-[0.14em] text-white/70 uppercase truncate">Canary precision</span>
+        <span className={`text-nano font-semibold uppercase ${canaryTone(v.state)}`} data-testid="canary-state">{v.state}</span>
+      </div>
+      <div className="mt-1.5 space-y-0.5 text-note">
+        {v.configured || v.effective ? (
+          <div className="flex items-baseline justify-between gap-2">
+            <span className="min-w-0 truncate text-muted">Precision (configured → effective)</span>
+            <span className="min-w-0 text-right font-mono text-white/80">{v.configured || '—'} → {v.effective || '—'}</span>
+          </div>
+        ) : null}
+        {v.live && (
+          <div className="flex items-baseline justify-between gap-2" data-testid="canary-live">
+            <span className="min-w-0 truncate text-muted">Verifying now</span>
+            <span className="min-w-0 text-right font-mono text-[var(--accent)]">{v.live.model}{v.live.precision ? ` · ${v.live.precision}` : ''}</span>
+          </div>
+        )}
+        {v.rows.map((r) => (
+          <div key={r.stem} className="flex items-baseline justify-between gap-2" data-canary={r.stem}>
+            <span className="min-w-0 truncate text-muted">{r.stem}</span>
+            <span className={`min-w-0 text-right font-mono ${r.result === 'PASS' ? 'text-emerald-400' : r.result === 'FAIL' ? 'text-red-300' : 'text-muted'}`}
+                  title={r.reason || undefined}>
+              {r.result === 'PASS' ? '✓ pass' : r.result === 'FAIL' ? `✗ fail${r.reason ? ` · ${r.reason}` : ''}` : 'unknown'}
+            </span>
+          </div>
+        ))}
+        {!v.rows.length && !v.live && (
+          <div className="text-muted italic">No canary verdict recorded yet — they are written the first time each engine is verified.</div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 /** The HUD as a pure function of the store's `pipeline` slice (what the render-check drives directly). */
-export function PipelineHudView({ pipeline, className = '' }) {
+export function PipelineHudView({ pipeline, runtime = null, run = null, className = '' }) {
   const hasStages = pipeline && pipeline.stages && Object.keys(pipeline.stages).length > 0;
   const summary = pipeline && pipeline.summary && pipeline.summary.stages ? pipeline.summary : null;
-  if (!hasStages && !summary) return null;
+  const precision = runtime && runtime.sections && runtime.sections.PRECISION ? runtime.sections.PRECISION.values : null;
+  // The canary block is shown whenever the backend has said anything about canaries (a verdict, or one running), even
+  // between runs, and during any run: "no verdict recorded yet" while a render is going is a fact worth stating, not
+  // one to hide. It is the only part of the HUD that is not a statement about the current job.
+  const canary = canaryView(precision, run);
+  const showCanary = canary.state !== 'NONE' || hasStages || !!summary;
+  if (!hasStages && !summary && !showCanary) return null;
   return (
     <div className={`flex flex-col gap-2.5 ${className}`} data-testid="pipeline-hud">
       {hasStages && !summary && <LiveRows pipeline={pipeline} />}
       {summary && <PipelineSummaryCard report={summary} />}
+      {showCanary && <CanaryPrecisionStatus precision={precision} run={run} />}
     </div>
   );
 }

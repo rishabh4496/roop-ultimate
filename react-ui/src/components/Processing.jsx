@@ -208,7 +208,7 @@ export default function Processing({ progress, settings, notify, setTab,
       {/* Diagnostics HUD: the backend's three stages live, then its finished report (stage wall clocks, seek
           counts, passthrough / GPU frames, peak VRAM, Stage 4 verification, speedup estimate). Above the
           live/finished split on purpose: the report arrives when the run ENDS, i.e. in the finished view. */}
-      <PipelineHud />
+      <PipelineHud runtime={progress.runtime} />
       {/* 1-click CPU vs TensorRT vs OpenVINO provider matrix; report-only, needs an idle GPU. */}
       <ProviderBenchmark processing={!!processing} />
 

@@ -69,7 +69,11 @@ export function opsCells(ops) {
     const o = ops[key] || null;
     const backend = o && o.backend ? String(o.backend) : '';
     let label = { decode: 'Decode', warp: 'Warp', model: 'Model', restore: 'Restore', blend: 'Blend', encode: 'Encode' }[key];
-    if (key === 'model' && /^tensorrt|^trt/i.test(backend)) label = 'TRT';
+    // The label follows the backend's own name for what ran, never the other way round: a CUDA-graph replay is "TRT
+    // Graph", a fused Triton kernel is "Triton Blend", and anything else (today the blend is cv2 on the CPU) keeps
+    // its neutral name rather than claiming hardware it did not use.
+    if (key === 'model' && /^tensorrt|^trt/i.test(backend)) label = /graph/i.test(backend) ? 'TRT Graph' : 'TRT';
+    if (key === 'blend' && /triton/i.test(backend)) label = 'Triton Blend';
     if (key === 'encode' && /nvenc/i.test(backend)) label = 'NVENC';
     return {
       key, label, backend,
@@ -79,6 +83,14 @@ export function opsCells(ops) {
     };
   });
 }
+
+/**
+ * Stage 2's optical-flow engine as the backend names it (`flow_backend`, roop/flow_backend.py): `nvof` is the NVIDIA
+ * optical-flow ASIC, `cv` OpenCV on the CPU, `torch` a GPU fallback. '' for an unknown / absent name, so a caller can
+ * fall back to the neutral word "flow" instead of asserting an engine nobody reported.
+ */
+export const FLOW_ENGINE_LABEL = { nvof: 'NVOFA', cv: 'CPU flow', torch: 'GPU flow' };
+export const flowEngineLabel = (backend) => FLOW_ENGINE_LABEL[String(backend || '').toLowerCase()] || '';
 
 /** "Decode 2.1 ms | Warp 3.4 ms | TRT 11 ms | ..." - the brief's one-line Stage 3 readout. Empty when no ops. */
 export const opsLine = (ops) => opsCells(ops).map((c) => `${c.label} ${c.value}`).join(' | ');
@@ -135,6 +147,7 @@ export function reportSections(report) {
       row('Neural-detected frames', fmtCount(s2.neural_detected_frames)),
       row('Flow-tracked frames', isNum(s2.flow_tracked_frames) && isNum(s2.flow_ratio_pct)
         ? `${fmtCount(s2.flow_tracked_frames)} (${fmtPct(s2.flow_ratio_pct)})` : fmtCount(s2.flow_tracked_frames)),
+      ...(flowEngineLabel(s2.flow_backend) ? [row('Flow engine', flowEngineLabel(s2.flow_backend))] : []),
       row('Pre-pass speed', fmtRate(s2.fps, 'fps')),
     ],
   });
@@ -187,3 +200,43 @@ export function headline(report) {
     frames: fmtCount(report.total_frames),
   };
 }
+
+/**
+ * Canary precision status: what the fidelity canaries (roop/aux_canary.py, swap_canary.py) decided about the engines
+ * this machine runs. `precision` is `runtime.sections.PRECISION.values` (configured / effective precision plus
+ * `canary_verdicts`, `{stem: {passed, reason}}`); `run` is the telemetry store's `run` slice, which says whether a canary
+ * is running RIGHT NOW. Pure, so it can be checked without a render.
+ *
+ *   RUNNING    a canary is verifying an engine now (`engine_state === 'RUNNING_CANARY'`)
+ *   FAILED     at least one verdict is `passed === false` - that engine was stepped down
+ *   PASSED     every recorded verdict passed
+ *   NONE       no verdict recorded: not "passed", the canaries simply have not run (or none is persisted yet)
+ *
+ * A verdict whose `passed` is neither true nor false (a skipped canary) is listed as UNKNOWN and counts toward neither
+ * PASSED nor FAILED, so it can never make a run look verified.
+ */
+export function canaryView(precision, run) {
+  const values = precision && typeof precision === 'object' ? precision : {};
+  const verdicts = values.canary_verdicts && typeof values.canary_verdicts === 'object' ? values.canary_verdicts : {};
+  const rows = Object.entries(verdicts)
+    .map(([stem, v]) => ({
+      stem,
+      result: v && v.passed === true ? 'PASS' : v && v.passed === false ? 'FAIL' : 'UNKNOWN',
+      reason: v && typeof v.reason === 'string' ? v.reason : '',
+    }))
+    .sort((a, b) => (a.result === b.result ? a.stem.localeCompare(b.stem) : a.result === 'FAIL' ? -1 : b.result === 'FAIL' ? 1 : 0));
+  const failed = rows.filter((r) => r.result === 'FAIL').length;
+  const passed = rows.filter((r) => r.result === 'PASS').length;
+  const live = run && run.engine_state === 'RUNNING_CANARY'
+    ? { model: run.engine_model || 'model', precision: run.engine_precision || '' } : null;
+  let state = 'NONE';
+  if (live) state = 'RUNNING';
+  else if (failed) state = 'FAILED';
+  else if (passed && passed === rows.length) state = 'PASSED';
+  else if (rows.length) state = 'UNKNOWN';
+  const pick = (k) => (values[k] === undefined || values[k] === null || values[k] === '' ? null : String(values[k]));
+  return { state, rows, passed, failed, live, configured: pick('configured'), effective: pick('effective') };
+}
+
+export const canaryTone = (state) => (state === 'PASSED' ? 'text-emerald-400' : state === 'FAILED' ? 'text-red-300'
+  : state === 'RUNNING' ? 'text-[var(--accent)]' : 'text-muted');

@@ -18,6 +18,11 @@
     "detector_scale_pyramid",
     "max_threads",
     "memory_limit",
+    "swap_model",
+    "selected_enhancer",
+    "auto_bypass_restorer_native_swap",
+    "prepass_detect_interval",
+    "temporal_smart_skip",
     "perf_trt_pool",
     "trt_builder_optimization_level",
     "trt_auxiliary_streams",
@@ -42,10 +47,7 @@
     "perf_gpu_affine",
     "perf_pinned_buffers",
     "temporal_step",
-    "prepass_detect_interval",
     "enhance_min_face_px",
-    "auto_bypass_restorer_native_swap",
-    "temporal_smart_skip",
     "recognizer",
     "identity_confidence_threshold",
     "face_demarcate",
@@ -480,7 +482,11 @@
     },
     "selected_enhancer": {
       "default": "UltraMax",
-      "type": "str"
+      "type": "str",
+      "ui": {
+        "label": "Restorer mode",
+        "section": "3-stage pipeline"
+      }
     },
     "adaptive_enhancer_profile": {
       "default": "BALANCED",
@@ -652,7 +658,11 @@
     },
     "swap_model": {
       "default": "realswap",
-      "type": "str"
+      "type": "str",
+      "ui": {
+        "label": "Swapper model",
+        "section": "3-stage pipeline"
+      }
     },
     "recognition_model": {
       "default": "default",
@@ -1288,8 +1298,8 @@
       "default": 1,
       "type": "int",
       "ui": {
-        "label": "Pre-pass detection interval (frames)",
-        "section": "Advanced performance"
+        "label": "Pre-pass optical-flow stride (K)",
+        "section": "3-stage pipeline"
       },
       "env": {
         "var": "ROOP_PREPASS_DETECT_INTERVAL",
@@ -1325,7 +1335,7 @@
       "type": "bool",
       "ui": {
         "label": "Auto-Bypass Restorer on >=256px Native Swap",
-        "section": "Advanced performance"
+        "section": "3-stage pipeline"
       },
       "env": {
         "var": "ROOP_AUTO_BYPASS_RESTORER_NATIVE_SWAP",
@@ -1337,7 +1347,7 @@
       "type": "bool",
       "ui": {
         "label": "Temporal Smart-Skip (Lossless Static Reuse)",
-        "section": "Advanced performance"
+        "section": "3-stage pipeline"
       },
       "env": {
         "var": "ROOP_TEMPORAL_SMART_SKIP",

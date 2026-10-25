@@ -228,6 +228,13 @@ export const Field = ({ label, info, children, modified, onReset, settingKey }) 
   </label>
 );
 
+// Accept plain strings (value === label) or {value, label} objects.
+const selectOption = (o) => {
+  const val = typeof o === 'object' && o !== null ? o.value : o;
+  const lbl = typeof o === 'object' && o !== null ? o.label : o;
+  return <option key={val} value={val} className="bg-[#121420]">{lbl}</option>;
+};
+
 export const Select = ({ label, info, value, onChange, options = [], modified, onReset, settingKey, disabled }) => (
   <Field label={label} info={info} modified={modified} onReset={onReset} settingKey={settingKey}>
     <select
@@ -237,10 +244,12 @@ export const Select = ({ label, info, value, onChange, options = [], modified, o
       className={`w-full px-3 py-2.5 rounded-xl glass-input text-white text-compact focus:outline-none ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
     >
       {(options || []).map((o) => {
-        // Accept plain strings (value === label) or {value, label} objects.
-        const val = typeof o === 'object' && o !== null ? o.value : o;
-        const lbl = typeof o === 'object' && o !== null ? o.label : o;
-        return <option key={val} value={val} className="bg-[#121420]">{lbl}</option>;
+        // A {group, options} entry becomes an <optgroup>, so a short recommended list and the full list can share
+        // one selector without the full list being lost behind it.
+        if (o && typeof o === 'object' && Array.isArray(o.options)) {
+          return <optgroup key={o.group} label={o.group}>{o.options.map(selectOption)}</optgroup>;
+        }
+        return selectOption(o);
       })}
     </select>
   </Field>

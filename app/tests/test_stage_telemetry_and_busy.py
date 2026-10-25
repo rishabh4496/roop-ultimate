@@ -36,7 +36,7 @@ STAGE_KEYS = {"state", "stage_progress_pct", "active_ranges_count", "verified_ta
 # Stage-specific live HUD fields (the per-stage rate `fps` is common). Stage 3's `ops` block appears only once
 # that stage has started - see test_snapshot_has_ops_only_once_stage3_started in test_stage_hud_telemetry.py.
 STAGE_EXTRAS = {st.STAGE_1_SPARSE_PRESCAN: {"scene_cuts"},
-                st.STAGE_2_ACTIVE_PREPASS: {"neural_detected_frames", "flow_tracked_frames", "flow_ratio_pct"}}
+                st.STAGE_2_ACTIVE_PREPASS: {"neural_detected_frames", "flow_tracked_frames", "flow_ratio_pct", "flow_backend"}}
 
 
 class Registry(unittest.TestCase):

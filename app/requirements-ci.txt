@@ -16,4 +16,5 @@ rich>=13
 omegaconf>=2.3
 hydra-core>=1.3
 orjson>=3.9
+requests>=2.31         # roop/recognition_registry.py and its test import it at module top
 pytest>=8.0

@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { Icon } from '../../icons';
+import { canaryView } from './reportFormat';
 
 /**
  * Terminal-style live feed shown inside the Preview box while a job runs.
@@ -136,9 +137,19 @@ function RuntimeSection({ name, section }) {
   const values = section?.values || {};
   // `pipeline_report` is a whole nested report with its own panel (PipelineReport.jsx); flattened here it
   // would spend the ten rows this card has on its first keys.
-  const rows = flattenValues(values)
-    .filter(([key]) => key !== 'items' && !key.startsWith('pipeline_report'))
-    .slice(0, 10);
+  let rows = flattenValues(values)
+    .filter(([key]) => key !== 'items' && !key.startsWith('pipeline_report'));
+  if (name === 'PRECISION') {
+    // The canary verdicts are a nested map that flattens to two rows per model and fell off the end of the ten-row
+    // card. Lead with the one-line status and any FAILED engine, then the rest.
+    const v = canaryView(values);
+    rows = [
+      ['canary precision', v.state === 'NONE' ? 'no verdict recorded' : `${v.state} (${v.passed} pass, ${v.failed} fail)`],
+      ...v.rows.filter((r) => r.result === 'FAIL').map((r) => [`canary.${r.stem}`, `fail${r.reason ? ` · ${r.reason}` : ''}`]),
+      ...rows.filter(([key]) => !key.startsWith('canary_verdicts')),
+    ];
+  }
+  rows = rows.slice(0, 10);
   const status = section?.status || 'UNKNOWN';
   const statusTone = status === 'AVAILABLE'
     ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/25'

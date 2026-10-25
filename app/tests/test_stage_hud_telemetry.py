@@ -180,6 +180,16 @@ class Stage1And2(_Base):
         self.assertEqual(live["flow_ratio_pct"], 75.0)
         self.assertIsNone(st.snapshot()["stages"][S3]["fps"])      # a pending stage has no rate
 
+    def test_live_snapshot_names_the_flow_engine_only_when_one_was_reported(self):
+        # The HUD labels Stage 2's tracked share "NVOFA tracked" from this field; without it, plain "flow".
+        st.begin_run(600)
+        st.enter(S2)
+        st.put(S2, detector_calls=10, coast_frames=30)
+        self.assertIsNone(st.snapshot()["stages"][S2]["flow_backend"])
+        st.put(S2, flow_backend="nvof")
+        self.assertEqual(st.snapshot()["stages"][S2]["flow_backend"], "nvof")
+        self.assertEqual(st.build_summary()["stages"][S2]["flow_backend"], "nvof")   # the finished report agrees
+
 
 class AuxOffload(_Base):
     def test_absent_when_the_runner_was_never_loaded(self):

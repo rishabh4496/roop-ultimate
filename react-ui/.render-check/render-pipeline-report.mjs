@@ -187,7 +187,7 @@ ok('a later frame without stage data cannot clear the report',
   store.setPipelineTelemetry({ stage: S.STAGE_3, stages: hud.live.stages, summary: {} });
   const liveHtml = view(store.useTelemetryStore.getState().pipeline);
   const lt = text(liveHtml);
-  ok('the live HUD shows each stage rate', lt.includes('20.0 fps') && lt.includes('samples/s'), lt);
+  ok('the live HUD shows each stage rate (Stage 1 in keyframes/s)', lt.includes('20.0 fps') && lt.includes('keyframes/s') && !lt.includes('samples/s'), lt);
   ok('the live HUD shows Stage 1 cuts and the Stage 2 flow split',
     lt.includes('3 scene cuts') && lt.includes('75 flow') && lt.includes('25 neural'), lt);
   ok('the live HUD shows the Stage 3 ops strip', liveHtml.includes('data-testid="stage3-ops"') && lt.includes('TRT '));
