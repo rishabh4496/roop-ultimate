@@ -54,9 +54,11 @@ from roop import utilities as util
 from roop.face_util import extract_face_images, get_all_faces
 from roop.FaceSet import FaceSet
 from roop.capturer import get_video_frame, get_video_frame_total, get_image_frame, FrameSuperseded
+from roop import preview_provider as _preview_provider
 from roop.ProcessEntry import ProcessEntry
 from roop import capture_seed
 from roop import segment_writer
+from roop import segment_output as _segment_output
 from roop import live_preview
 from roop import stage_telemetry as _stage_telemetry
 from roop import render_policy as _render_policy
@@ -833,8 +835,24 @@ def _clear_output_folder(has_checkpoint=False):
         return False
     if has_checkpoint:
         return False
-    shutil.rmtree(roop_globals.output_path, ignore_errors=True)
-    os.makedirs(roop_globals.output_path, exist_ok=True)
+    out = roop_globals.output_path
+    keep = _segment_output.SEGMENTS_DIRNAME
+    if os.path.isdir(os.path.join(out, keep)):
+        # Finished slices of a split render live here until their join exists; an ordinary job queued
+        # between two slices must not take them with it.
+        for name in os.listdir(out):
+            if name != keep:
+                path = os.path.join(out, name)
+                if os.path.isdir(path) and not os.path.islink(path):
+                    shutil.rmtree(path, ignore_errors=True)
+                else:
+                    try:
+                        os.remove(path)
+                    except OSError:
+                        pass
+        return True
+    shutil.rmtree(out, ignore_errors=True)
+    os.makedirs(out, exist_ok=True)
     return True
 
 
@@ -2656,26 +2674,48 @@ def _encode_frame(frame_img, width: int, fmt: str, quality: int = 90):
     return buf.tobytes(), media
 
 
-def _read_target_frame(filename: str, frame: int, cancel=None):
+def _preview_decode(path: str, frame: int, cancel=None):
+    """The provider's decoder. `get_video_frame` is looked up at CALL time, and `cancel` is passed only when
+    there is one, so callers (and tests) that replace get_video_frame with a two-argument stand-in work."""
+    if cancel is not None:
+        return get_video_frame(path, frame, cancel=cancel)
+    return get_video_frame(path, frame)
+
+
+# Interactive HTTP frame requests (#/faceswap and #/extras: raw frame, loupe, split wipe, diff map, filmstrip)
+# go through this and never wait longer than its deadline; see roop/preview_provider.py.
+_preview_frames = _preview_provider.InteractiveFramePreviewProvider(decode=_preview_decode)
+
+
+def _preview_timeout_response(exc, **extra):
+    """503 Busy for a frame that did not arrive inside the provider's deadline: the same shape as
+    `_preview_busy_response`, which the React frame requester reads as "ask again", not as a failure.
+    The decode keeps running and lands in the cache, so the retry is normally a hit."""
+    ms = int(getattr(exc, "retry_after_ms", _preview_provider.RETRY_AFTER_MS))
+    return JSONResponse(status_code=503, headers={"Retry-After": str(max(1, round(ms / 1000))),
+                                                  "Cache-Control": "no-store"},
+                        content={"status": "busy", "busy": True, "stage": "decode",
+                                 "retry_after_ms": ms,
+                                 "message": "The frame decoder did not answer in time; retry shortly.", **extra})
+
+
+def _read_target_frame(filename: str, frame: int, cancel=None, deadline_s=None):
     if util.is_video(filename) or filename.lower().endswith("gif") or util.is_animated_webp(filename):
-        # `cancel` is passed only when there is one: callers (and tests) that replace
-        # get_video_frame with a two-argument stand-in keep working.
-        if cancel is not None:
-            return get_video_frame(filename, frame, cancel=cancel)
-        return get_video_frame(filename, frame)
+        return _preview_frames.get_frame(filename, frame, cancel=cancel, deadline_s=deadline_s)
     return get_image_frame(filename)
 
 
-def _still(filename: str, frame: int, width: int, fmt: str, quality: int, cancel=None):
+def _still(filename: str, frame: int, width: int, fmt: str, quality: int, cancel=None, deadline_s=None):
     """One encoded still, from cache when we have it. Returns (tag, data, media);
     data is None when the frame could not be read. Raises FrameSuperseded when
-    `cancel` says a newer frame was asked for while this one waited its turn."""
+    `cancel` says a newer frame was asked for while this one waited its turn, and
+    `preview_provider.PreviewTimeout` when no frame arrived inside the deadline."""
     tag = _frame_etag(filename, frame, width, fmt, quality)
     hit = _encoded_get(tag)
     if hit is not None:
         return tag, hit[0], hit[1]
-    frame_img = (_read_target_frame(filename, frame, cancel) if cancel is not None
-                 else _read_target_frame(filename, frame))
+    args = (filename, frame) if cancel is None else (filename, frame, cancel)
+    frame_img = _read_target_frame(*args, **({} if deadline_s is None else {"deadline_s": deadline_s}))
     if frame_img is None:
         return tag, None, None
     data, media = _encode_frame(frame_img, width, fmt, quality)
@@ -2692,6 +2732,8 @@ def _still(filename: str, frame: int, width: int, fmt: str, quality: int, cancel
 # quality that go into the key.
 _SCRUB_MAX_HEIGHT = 720
 _SCRUB_JPEG_QUALITY = 85
+# The filmstrip decodes up to 64 stills in ONE request; this is its whole budget (the client gives up at 15 s).
+_GRID_BUDGET_S = 8.0
 
 # Newest `frame_seq_id` seen per target index, and when. The client numbers its
 # frame requests (wall-clock ms, so two tabs order correctly); a request that
@@ -2781,6 +2823,8 @@ def target_preview(request: Request, index: int = 0, frame: int = 1, width: int 
         _, data, media = _still(filename, frame, width, fmt, quality, superseded)
     except FrameSuperseded:
         return JSONResponse(status_code=409, content={"superseded": True, "message": "a newer frame was requested"})
+    except _preview_provider.PreviewTimeout as exc:
+        return _preview_timeout_response(exc)
     if data is None:
         return JSONResponse(status_code=404, content={"message": "no frame"})
     if util.is_video(filename):
@@ -2892,11 +2936,25 @@ def target_preview_grid(index: int = 0, frames: str = "", width: int = 200,
         except Exception as exc:
             _swallowed("api.py:target_preview_grid_hw", exc, "HW filmstrip downscale failed; falling back to CPU")
 
+    # One budget for the whole strip, not one deadline per frame: 64 stalled frames at the per-frame deadline
+    # would be 128 s against the client's 15 s. What did not arrive in time goes out as a zero-length slot
+    # (the client keeps its place); if NOTHING arrived the answer is "busy, ask again", not an empty strip.
+    budget_end = time.monotonic() + _GRID_BUDGET_S
+    timed_out = None
     for f in uncached:
         if f not in encoded:
-            _, data, _media = _still(filename, f, width, "jpg", quality)
+            remaining = budget_end - time.monotonic()
+            if remaining <= 0:
+                break
+            try:
+                _, data, _media = _still(filename, f, width, "jpg", quality, deadline_s=remaining)
+            except _preview_provider.PreviewTimeout as exc:
+                timed_out = exc
+                break
             if data is not None:
                 encoded[f] = data
+    if timed_out is not None and not any(encoded.get(f) for f in wanted):
+        return _preview_timeout_response(timed_out)
 
     parts = []
     for f in wanted:
@@ -4760,7 +4818,10 @@ def preview(payload: dict = Body(...)):
             target_info = _probe_video(filename)
             if target_info and "sar_val" in target_info:
                 roop_globals.video_sar = float(target_info["sar_val"])
-            current_frame = get_video_frame(filename, frame)
+            try:
+                current_frame = _preview_frames.get_frame(filename, frame)
+            except _preview_provider.PreviewTimeout as exc:
+                return _preview_timeout_response(exc, **echo)
         else:
             roop_globals.video_sar = 1.0
             current_frame = get_image_frame(filename)

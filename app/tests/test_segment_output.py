@@ -46,29 +46,44 @@ def _has_audio(path):
 
 
 class Naming(unittest.TestCase):
+    def test_layout_is_hidden_folder_per_split_then_numbered_range(self):
+        spec = so.SegmentSpec("job-7", 2, 3, 201, 400)
+        dest = so.segment_destination("out", spec)
+        self.assertEqual(dest.replace("\\", "/"), "out/.segments/job-7/seg_0002_201_400.mp4")
+
     def test_zero_padded_unique_and_sortable(self):
-        names = [so.segment_filename("clip.mp4", i, s, e) for i, (s, e) in
+        names = [so.segment_filename(i, s, e) for i, (s, e) in
                  enumerate([(1, 200), (201, 400), (401, 600)], 1)]
-        self.assertEqual(names[0], "clip_segment0001_000001_000200.mp4")
+        self.assertEqual(names[0], "seg_0001_1_200.mp4")
         self.assertEqual(len(set(names)), 3)
         self.assertEqual(sorted(names), names)
 
     def test_round_trip(self):
-        n = so.segment_filename("My Clip.mov", 12, 4001, 5000, "mp4")
-        self.assertEqual(so.parse_segment_filename(n),
-                         {"stem": "My Clip", "index": 12, "start": 4001, "end": 5000, "ext": "mp4"})
+        n = so.segment_filename(12, 4001, 5000, "mp4")
+        self.assertEqual(so.parse_segment_filename(n), {"index": 12, "start": 4001, "end": 5000, "ext": "mp4"})
         self.assertIsNone(so.parse_segment_filename("clip_2026-10-18.mp4"))
+        self.assertIsNone(so.parse_segment_filename("clip_segment0001_000001_000010.mp4"))   # the old layout
 
     def test_rejects_nonsense_ranges(self):
         for bad in ((0, 1, 2), (1, -1, 5), (1, 9, 3)):
             with self.assertRaises(ValueError):
-                so.segment_filename("c", *bad)
+                so.segment_filename(*bad)
 
-    def test_unsafe_characters_cannot_escape_the_folder(self):
-        name = so.segment_filename('..\\evil:"x".mp4', 1, 1, 2)
-        self.assertNotIn("\\", name)
-        self.assertNotIn("/", name)
-        self.assertNotIn(":", name)
+    def test_a_hostile_group_id_cannot_escape_the_segments_folder(self):
+        root = os.path.abspath(os.path.join("out", ".segments"))
+        for group in ('..\\evil:"x"', "../../etc", "a/b", "", "auto:clip.mp4", "..", "."):
+            dest = os.path.abspath(so.segment_destination("out", so.SegmentSpec(group, 1, 2, 1, 2)))
+            self.assertEqual(os.path.dirname(os.path.dirname(dest)), root, group)
+
+    def test_ids_that_sanitise_alike_still_get_different_folders(self):
+        self.assertNotEqual(so.safe_group_id("auto:a/b"), so.safe_group_id("auto:a_b"))
+        self.assertEqual(so.safe_group_id("3f2a9c"), "3f2a9c")           # ordinary ids pass through
+
+    def test_two_splits_of_clips_with_one_file_name_do_not_meet(self):
+        """The collision the earlier `{stem}_segment...` layout still had: same file name, same ranges."""
+        a = so.segment_destination("out", so.SegmentSpec("split-A", 1, 2, 1, 10))
+        b = so.segment_destination("out", so.SegmentSpec("split-B", 1, 2, 1, 10))
+        self.assertNotEqual(a, b)
 
     def test_the_old_template_naming_collided_and_segment_naming_does_not(self):
         """The bug, reproduced against the real template function."""
@@ -86,7 +101,7 @@ class Naming(unittest.TestCase):
             g.CFG, g.output_path = saved_cfg, saved_out
         self.assertEqual(len(old), 1, "three segments mapped to ONE path: only the last survives")
         specs = [so.SegmentSpec("g", i, 3, s, e) for i, (s, e) in enumerate([(1, 10), (11, 20), (21, 30)], 1)]
-        new = {so.segment_destination("out", "clip.mp4", sp) for sp in specs}
+        new = {so.segment_destination("out", sp) for sp in specs}
         self.assertEqual(len(new), 3)
 
 
@@ -107,10 +122,11 @@ class RealFfmpeg(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.mkdtemp(prefix="segout_")
 
-    def _segments(self, counts=(12, 8, 10), audio=True):
+    def _segments(self, counts=(12, 8, 10), audio=True, group="G"):
         paths, start = [], 1
         for i, n in enumerate(counts, 1):
-            p = os.path.join(self.dir, so.segment_filename("clip.mp4", i, start, start + n - 1))
+            p = so.segment_destination(self.dir, so.SegmentSpec(group, i, len(counts), start, start + n - 1))
+            os.makedirs(os.path.dirname(p), exist_ok=True)
             _make_clip(p, n, audio=audio)
             paths.append(p)
             start += n
@@ -156,6 +172,20 @@ class RealFfmpeg(unittest.TestCase):
             self.assertEqual(os.path.getsize(p), before[p])
         self.assertTrue(os.path.isfile(so.concat_list_path(self.dir, "clip")))
         self.assertFalse(os.path.exists(out + ".part.mp4"))
+
+    def test_two_splits_of_the_same_ranges_retain_all_six_and_each_joins_cleanly(self):
+        """Regression: multi-segment renders keep every segment and join to the right frame count.
+        Same ranges, same clip, two split ids - the case a `{stem}_segment...` name still overwrote."""
+        a = self._segments((12, 8, 10), group="split-A")
+        b = self._segments((12, 8, 10), group="split-B")
+        self.assertEqual(len({os.path.abspath(p) for p in a + b}), 6, "six distinct files, none overwritten")
+        for group, paths in (("A", a), ("B", b)):
+            out = so.join_segments(paths, os.path.join(self.dir, f"final_{group}.mp4"),
+                                   os.path.join(self.dir, f"concat_{group}.txt"))
+            self.assertEqual(_frames(out), 30, group)
+            self.assertTrue(_has_audio(out), group)
+        self.assertTrue(all(os.path.isfile(p) and os.path.getsize(p) > 0 for p in a + b),
+                        "a join (or the other split's join) removed a segment")
 
     def test_join_with_the_sources_own_audio(self):
         paths = self._segments((12, 8, 10), audio=False)

@@ -276,6 +276,35 @@ class PureLogic(unittest.TestCase):
             self.assertEqual(info["frames"], 3)
             self.assertEqual(hw.snapshot()["encoders"]["encode"], hw.BACKEND_CPU)
 
+    def test_trim_seconds_become_a_half_open_frame_window(self):
+        self.assertEqual(hw.trim_range(1.0, 2.0, 25.0), (25, 50))
+        self.assertEqual(hw.trim_range(None, 2.0, 25.0), (0, 50))
+        self.assertEqual(hw.trim_range(1.0, None, 25.0), (25, None))
+        self.assertEqual(hw.trim_range(1.0, None, 25.0, total=150), (25, 150))
+        self.assertEqual(hw.trim_range(1.0, 99.0, 25.0, total=150), (25, 150), "trim_out past the end clamps")
+        self.assertEqual(hw.trim_range(100.0, None, 25.0, total=150), (150, 150), "trim_in past the end is empty")
+        self.assertEqual(hw.timecode_to_frame(1.001, 30000 / 1001), 30)
+        with self.assertRaises(ValueError):
+            hw.trim_range(3.0, 1.0, 25.0)
+        with self.assertRaises(ValueError):
+            hw.timecode_to_frame(1.0, 0)
+
+    @_need_clips
+    def test_the_fallback_rung_honours_the_same_window_as_the_hardware_rung(self):
+        """LegacyCaptureReader is what every machine without NVDEC reads through: same [start, end) contract."""
+        with mock.patch.dict(os.environ, {"ROOP_HW_IO": "0"}):
+            r = hw.open_reader(_CLIPS["idr"], start_frame=40, end_frame=50)
+            try:
+                got = list(r)
+            finally:
+                r.close()
+            self.assertEqual([f.index for f in got], list(range(40, 50)))
+            r = hw.open_reader(_CLIPS["idr"], trim_in=2.0, trim_out=2.4)          # 25 fps -> frames 50..59
+            try:
+                self.assertEqual([f.index for f in r], list(range(50, 60)))
+            finally:
+                r.close()
+
     def test_matrix_rule_matches_what_a_decoder_assumes(self):
         self.assertEqual(hw.default_matrix(1920, 1080), hw._MATRIX_BT709)
         self.assertEqual(hw.default_matrix(1280, 720), hw._MATRIX_BT709)
@@ -387,6 +416,51 @@ class HardwarePaths(unittest.TestCase):
             got = r.read()
             self.assertEqual(got.index, 40)
             self.assertTrue(bool(self.torch.equal(got.tensor, truth)), "start_frame=40 did not land on frame 40")
+
+    def test_trim_window_is_bit_exact_and_hands_out_nothing_past_trim_out(self):
+        """[trim_in, trim_out) = [45, 50): frame 45 sits 15 pictures after the preceding IDR (30), so the decoder must
+        decode 30..44 and DISCARD them; nothing after 49 may be handed out (ThreadedDecoder reads ahead inside its own
+        2-surface ring, which the reader never exposes - the counter below is frames handed out)."""
+        with hw.NvZeroCopyReader(_CLIPS["idr"]) as full:
+            truth = {f.index: f.tensor.clone() for f in full if 45 <= f.index < 50}
+        hw.telemetry.reset()
+        with hw.NvZeroCopyReader(_CLIPS["idr"], start_frame=45, end_frame=50, buffer_size=16) as r:
+            got = []
+            while True:
+                batch = r.read_batch(3)
+                if not batch:
+                    break
+                got.extend((f.index, f.tensor.clone()) for f in batch)
+            self.assertIsNone(r.read(), "read() past trim_out")
+        self.assertEqual([i for i, _ in got], [45, 46, 47, 48, 49])
+        for index, tensor in got:
+            self.assertTrue(bool(self.torch.equal(tensor, truth[index])), f"frame {index} differs from a full decode")
+        self.assertEqual(hw.snapshot()["pcie_saved_bytes"], 5 * 360 * 640 * 3,
+                         "a post-trim frame was handed out")
+
+    def test_the_first_batch_after_open_is_exact(self):
+        """Regression: the frame fetched at open is recycled by the decoder call that completes the batch, so
+        `read_batch` on a fresh reader returned a wrong first frame (single `read()` and later batches were fine).
+        Found by the trim-window test; reproduced at start_frame 0, 30, 45 before the fix."""
+        with hw.NvZeroCopyReader(_CLIPS["idr"]) as full:
+            truth = [f.tensor.clone() for f, _ in zip(full, range(8))]
+        for start in (0, 30, 45):
+            with hw.NvZeroCopyReader(_CLIPS["idr"], start_frame=start) as r:
+                batch = r.read_batch(4)
+                self.assertEqual([f.index for f in batch], [start + i for i in range(4)])
+                got = [f.tensor.clone() for f in batch]
+            if start == 0:
+                for i in range(4):
+                    self.assertTrue(bool(self.torch.equal(got[i], truth[i])), f"first batch, frame {i}")
+            else:
+                with hw.NvZeroCopyReader(_CLIPS["idr"]) as full:
+                    want = {f.index: f.tensor.clone() for f in full if start <= f.index < start + 4}
+                for f, t in zip(batch, got):
+                    self.assertTrue(bool(self.torch.equal(t, want[f.index])), f"start {start}, frame {f.index}")
+
+    def test_an_inverted_window_is_refused(self):
+        with self.assertRaises(ValueError):
+            hw.NvZeroCopyReader(_CLIPS["idr"], start_frame=50, end_frame=40)
 
     # ---- sparse keyframes ----------------------------------------------------------------------------------
     def _full_decode(self, clip, wanted):

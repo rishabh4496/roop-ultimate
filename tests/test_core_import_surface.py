@@ -145,8 +145,9 @@ def test_destination_for_a_slice_is_numbered_ranged_and_beats_the_template_and_p
     core, g = core_globals
     from roop.segment_output import SegmentSpec
     g._project_output_file = "fixed.mp4"
-    names = set()
+    dests = []
     for i, (s, e) in enumerate([(1, 200), (201, 400)], 1):
         g._segment_spec = SegmentSpec("G", i, 2, s, e)
-        names.add(os.path.basename(core.final_video_destination("clip__temp.mp4", "C:/media/clip.mp4", 0)))
-    assert names == {"clip_segment0001_000001_000200.mp4", "clip_segment0002_000201_000400.mp4"}
+        dests.append(core.final_video_destination("clip__temp.mp4", "C:/media/clip.mp4", 0))
+    assert [os.path.basename(d) for d in dests] == ["seg_0001_1_200.mp4", "seg_0002_201_400.mp4"]
+    assert {os.path.dirname(d) for d in dests} == {os.path.join(g.output_path, ".segments", "G")}

@@ -195,7 +195,7 @@ class BusyPreview(unittest.TestCase):
         self.reads = []
         api = self.api
 
-        def read(filename, frame):
+        def read(filename, frame, cancel=None, deadline_s=None):     # api._read_target_frame's signature
             self.reads.append(frame)
             return np.full((32, 48, 3), frame % 255, dtype=np.uint8)
 

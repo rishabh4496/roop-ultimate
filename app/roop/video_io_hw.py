@@ -356,12 +356,19 @@ class NvZeroCopyReader:
     """Sequential NVDEC reader returning CUDA tensors (single consumer thread).
 
     ``read()`` -> HwFrame | None at end of stream. ``read_batch(n)`` -> list (n <= buffer_size); the whole batch
-    is valid until the NEXT read of either kind. ``start_frame`` seeks at open (ThreadedDecoder's own seek)."""
+    is valid until the NEXT read of either kind.
+
+    Trim window ``[start_frame, end_frame)``: ``start_frame`` seeks at open through ThreadedDecoder's own seek, which
+    lands on the preceding IDR and decodes forward discarding the pre-trim P/B pictures inside the decoder, so the
+    first frame handed out IS ``start_frame`` (``test_start_frame_seek_lands_on_the_requested_frame``: bit-identical
+    to a full decode). ``end_frame`` (exclusive; None = to the end of the stream) makes ``read`` / ``read_batch``
+    stop there, so the decoder is never asked for, and VRAM never holds, a post-trim frame. Frame numbers, not
+    timecodes: ``trim_range`` converts seconds."""
 
     backend = BACKEND_NVDEC_DLPACK
 
     def __init__(self, path: str, *, gpu_id: int = 0, buffer_size: int = 16, start_frame: int = 0,
-                 tag: str = "decode") -> None:
+                 end_frame: Optional[int] = None, tag: str = "decode") -> None:
         try:
             from core.cpu_topology import pin_current_thread_to_p_cores
             pin_current_thread_to_p_cores(high_priority=True)
@@ -373,6 +380,9 @@ class NvZeroCopyReader:
         self.buffer_size = max(1, int(buffer_size))
         self._gen = 0
         self._pos = int(start_frame)
+        self._end = None if end_frame is None else int(end_frame)
+        if self._end is not None and self._end < self._pos:
+            raise ValueError(f"end_frame {self._end} is before start_frame {self._pos}")
         self._closed = False
         try:
             self._dec = nvc.CreateThreadedDecoder(
@@ -410,7 +420,7 @@ class NvZeroCopyReader:
         return frame
 
     def read(self) -> Optional[HwFrame]:
-        if self._closed:
+        if self._closed or (self._end is not None and self._pos >= self._end):
             return None
         self._gen += 1                      # everything handed out before this call is now stale
         t0 = time.perf_counter()
@@ -426,15 +436,25 @@ class NvZeroCopyReader:
         if self._closed:
             return []
         n = max(1, min(int(n), self.buffer_size))
+        if self._end is not None:
+            n = min(n, self._end - self._pos)          # never ask the decoder for a post-trim frame
+            if n <= 0:
+                return []
         self._gen += 1
         t0 = time.perf_counter()
-        raw: List[Any] = []
+        frames: List[HwFrame] = []
         if self._peek is not None:
-            raw, self._peek = list(self._peek), None
-        if len(raw) < n:
-            raw += list(self._dec.get_batch_frames(n - len(raw)) or [])
+            peeked, self._peek = list(self._peek), None
+            frames = [self._wrap(f) for f in peeked]
+            if n > len(frames):
+                # The frame fetched at open lives in a decoder surface that the NEXT get_batch_frames call
+                # recycles (measured: the first frame of the first batch differed from a full decode at every
+                # offset, while single read() and the rest of the batch were exact). Copy it on the device first.
+                frames = [f.detach() for f in frames]
+        if len(frames) < n:
+            frames += [self._wrap(f) for f in (self._dec.get_batch_frames(n - len(frames)) or [])]
         telemetry.note_read(time.perf_counter() - t0)
-        return [self._wrap(f) for f in raw]
+        return frames
 
     def __iter__(self) -> Iterator[HwFrame]:
         while True:
@@ -835,7 +855,8 @@ class LegacyCaptureReader:
     (an ``ffmpeg -hwaccel cuda`` pipe when it probes, software ffmpeg or plain cv2 otherwise). ``wrap_capture``
     registers which of those it chose with the telemetry, so the label here is the truth, not a guess."""
 
-    def __init__(self, path: str, *, start_frame: int = 0, tag: str = "decode") -> None:
+    def __init__(self, path: str, *, start_frame: int = 0, end_frame: Optional[int] = None,
+                 tag: str = "decode") -> None:
         import cv2
         from roop.nvdec_reader import wrap_capture
         cap = cv2.VideoCapture(path)
@@ -848,6 +869,7 @@ class LegacyCaptureReader:
         self._cv2 = cv2
         self._cap = wrap_capture(cap, path, self.width, self.height, self.fps, tag=tag)
         self._pos = int(start_frame)
+        self._end = None if end_frame is None else int(end_frame)
         self._gen = 0
         self._frame_bytes = self.width * self.height * 3
         if start_frame:
@@ -858,6 +880,8 @@ class LegacyCaptureReader:
         return telemetry.snapshot()["decoders"].get("decode", BACKEND_CPU)
 
     def read(self) -> Optional[HwFrame]:
+        if self._end is not None and self._pos >= self._end:
+            return None
         ok, frame = self._cap.read()
         if not ok or frame is None:
             return None
@@ -889,15 +913,46 @@ class LegacyCaptureReader:
 # Ladders
 # --------------------------------------------------------------------------------------------------------------
 
-def open_reader(path: str, *, start_frame: int = 0, buffer_size: int = 16, gpu_id: int = 0, tag: str = "decode"):
+def timecode_to_frame(seconds: float, fps: float) -> int:
+    """The frame whose presentation time is nearest ``seconds`` (constant frame rate; on a VFR clip this is the
+    CFR approximation the app's own range maths uses, UNVERIFIED against a VFR seek)."""
+    if fps <= 0:
+        raise ValueError(f"fps must be positive, got {fps}")
+    return max(0, int(round(float(seconds) * float(fps))))
+
+
+def trim_range(trim_in: Optional[float], trim_out: Optional[float], fps: float,
+               total: int = 0) -> Tuple[int, Optional[int]]:
+    """``[trim_in, trim_out)`` in SECONDS -> ``(start_frame, end_frame_exclusive)`` for the readers.
+    None for ``trim_out`` (or 0) means "to the end"; ``total`` (frames in the stream, 0 = unknown) clamps both."""
+    start = timecode_to_frame(trim_in, fps) if trim_in else 0
+    end = timecode_to_frame(trim_out, fps) if trim_out else None
+    if total:
+        start = min(start, total)
+        end = total if end is None else min(end, total)
+    if end is not None and end < start:
+        raise ValueError(f"trim_out ({trim_out}s) is before trim_in ({trim_in}s)")
+    return start, end
+
+
+def open_reader(path: str, *, start_frame: int = 0, end_frame: Optional[int] = None,
+                trim_in: Optional[float] = None, trim_out: Optional[float] = None,
+                buffer_size: int = 16, gpu_id: int = 0, tag: str = "decode"):
     """Main-pass reader: NVDEC zero-copy, else the app's existing capture pipeline. Never raises for a missing
-    accelerator; raises only if even the fallback cannot open the file."""
+    accelerator; raises only if even the fallback cannot open the file.
+
+    The window is ``[start_frame, end_frame)`` in frames, or ``[trim_in, trim_out)`` in seconds (converted with the
+    file's own frame rate; seconds win when both are given). Both ladder rungs honour it identically."""
+    if trim_in is not None or trim_out is not None:
+        fps = probe_geometry(path)[2]
+        start_frame, end_frame = trim_range(trim_in, trim_out, fps)
     if hw_io_wanted():
         try:
-            return NvZeroCopyReader(path, gpu_id=gpu_id, buffer_size=buffer_size, start_frame=start_frame, tag=tag)
+            return NvZeroCopyReader(path, gpu_id=gpu_id, buffer_size=buffer_size, start_frame=start_frame,
+                                    end_frame=end_frame, tag=tag)
         except HwUnavailable as exc:
             telemetry.note_fallback(f"{tag}: NVDEC-DLPack -> existing pipeline ({exc})")
-    return LegacyCaptureReader(path, start_frame=start_frame, tag=tag)
+    return LegacyCaptureReader(path, start_frame=start_frame, end_frame=end_frame, tag=tag)
 
 
 def open_keyframe_reader(path: str, *, gpu_id: int = 0, tag: str = "stage1-keyframes"):

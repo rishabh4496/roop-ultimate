@@ -165,6 +165,20 @@ class ClearOutput(unittest.TestCase):
         self.assertFalse(self.api._clear_output_folder(has_checkpoint=True))
         self.assertEqual(os.listdir(self.dir), ["keep.mp4"])
 
+    def test_an_ordinary_run_clears_everything_except_finished_slices(self):
+        """An ordinary job queued between two slices used to take the finished slices with it."""
+        slice_dir = so.segments_dir(self.dir, "G1")
+        os.makedirs(slice_dir)
+        kept = os.path.join(slice_dir, "seg_0001_1_10.mp4")
+        with open(kept, "wb") as fh:
+            fh.write(b"slice")
+        os.makedirs(os.path.join(self.dir, "folder"))
+        with open(os.path.join(self.dir, "folder", "old.mp4"), "wb") as fh:
+            fh.write(b"x")
+        self.assertTrue(self.api._clear_output_folder())
+        self.assertEqual(os.listdir(self.dir), [".segments"])
+        self.assertTrue(os.path.isfile(kept))
+
     def test_off_means_off(self):
         self.api.roop_globals.CFG = _Cfg(False)
         self.assertFalse(self.api._clear_output_folder())
@@ -202,7 +216,8 @@ class SplitThroughTheRunner(QueueTestBase):
         spec = g._segment_spec
         if spec is None:
             raise AssertionError("a split slice reached the renderer without its spec")
-        dest = so.segment_destination(g.output_path, self.src, spec, ".mp4")
+        dest = so.segment_destination(g.output_path, spec, ".mp4")
+        os.makedirs(os.path.dirname(dest), exist_ok=True)      # core.batch_process_regular does the same
         _make_clip(dest, spec.end_frame - spec.start_frame + 1, audio=True)
         self.progress["progress"] = 1.0
         self.progress["processing"] = False
@@ -220,18 +235,21 @@ class SplitThroughTheRunner(QueueTestBase):
         states = [j["state"] for j in q._queue["jobs"]]
         self.assertEqual(states, ["COMPLETED"] * 3, [j["error"] for j in q._queue["jobs"]])
         names = sorted(os.listdir(self.out))
-        for i, (s, e) in enumerate([(1, 10), (11, 20), (21, 30)], 1):
-            self.assertIn(so.segment_filename("clip.mp4", i, s, e), names)
+        seg_dir = so.segments_dir(self.out, "G1")
+        self.assertEqual(sorted(os.listdir(seg_dir)),
+                         ["seg_0001_1_10.mp4", "seg_0002_11_20.mp4", "seg_0003_21_30.mp4"])
         self.assertIn("clip_concat_list.txt", names)
         self.assertIn("clip_joined.mp4", names)
+        self.assertNotIn("clip_segment0001_000001_000010.mp4", names, "slices live under .segments, not beside the joined file")
         joined = os.path.join(self.out, "clip_joined.mp4")
         self.assertEqual(_frames(joined), 30)
         self.assertTrue(_has_audio(joined))
         result = q._queue["jobs"][0]["group_join"]
         self.assertTrue(result["ok"], result)
         self.assertTrue(result["source_audio"], "slices cover the whole source: use its own audio")
-        for sp in ("clip_segment0001_000001_000010.mp4", "clip_segment0003_000021_000030.mp4"):
-            self.assertGreater(os.path.getsize(os.path.join(self.out, sp)), 0)
+        self.assertEqual(result["segments"], [os.path.join(seg_dir, n) for n in sorted(os.listdir(seg_dir))])
+        for name in os.listdir(seg_dir):
+            self.assertGreater(os.path.getsize(os.path.join(seg_dir, name)), 0)
 
     def test_the_status_channel_saw_each_slice_and_the_join(self):
         self._queue_split()
@@ -262,10 +280,11 @@ class SplitThroughTheRunner(QueueTestBase):
         self._drain(timeout=60)
         states = [j["state"] for j in q._queue["jobs"]]
         self.assertEqual(states, ["COMPLETED", "FAILED", "COMPLETED"])
-        names = os.listdir(self.out)
-        self.assertNotIn("clip_joined.mp4", names)
-        self.assertIn("clip_segment0001_000001_000010.mp4", names)
-        self.assertIn("clip_segment0003_000021_000030.mp4", names)
+        self.assertNotIn("clip_joined.mp4", os.listdir(self.out))
+        kept = os.listdir(so.segments_dir(self.out, "G1"))
+        self.assertIn("seg_0001_1_10.mp4", kept)
+        self.assertIn("seg_0003_21_30.mp4", kept)
+        self.assertNotIn("seg_0002_11_20.mp4", kept)
 
 
 if __name__ == "__main__":

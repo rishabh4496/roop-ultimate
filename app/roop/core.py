@@ -1997,7 +1997,7 @@ def final_video_destination(temp_video: str, source_path: str, index: int = 0) -
     if segment_spec is not None:
         from roop import segment_output
         return segment_output.segment_destination(
-            roop.globals.output_path, source_path, segment_spec, os.path.splitext(temp_video)[1])
+            roop.globals.output_path, segment_spec, os.path.splitext(temp_video)[1])
     fixed_output = getattr(roop.globals, '_project_output_file', None)
     if fixed_output and index == 0:
         return os.path.join(roop.globals.output_path, fixed_output)

@@ -457,6 +457,7 @@ def _read_via_pipe(video_path: str, target: int):
 # Frames the fallback has already pulled, held in RAM. Bounded: a scrub session
 # revisits a handful of positions, and each entry is one decoded frame.
 _FALLBACK_CACHE_MAX = 8
+_FALLBACK_TIMEOUT_S = 10.0
 _fallback_cache: "OrderedDict[tuple, Frame]" = OrderedDict()
 _fallback_cache_lock = threading.Lock()
 
@@ -495,7 +496,11 @@ def _extract_fallback_frame(video_path: str, target: int) -> Optional[Frame]:
         kwargs = {}
         if os.name == "nt":
             kwargs["creationflags"] = 0x08000000  # CREATE_NO_WINDOW
-        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **kwargs)
+        # A bound, because this runs under _capture_lock: a hung ffmpeg here held every later preview until
+        # the React client's 15 s deadline ("Frame unavailable"). run() kills the child on expiry; the
+        # handler below turns the TimeoutExpired into "no frame".
+        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                             timeout=_FALLBACK_TIMEOUT_S, **kwargs)
         if res.returncode == 0 and res.stdout:
             frame = cv2.imdecode(np.frombuffer(res.stdout, dtype=np.uint8), cv2.IMREAD_COLOR)
             if frame is not None and getattr(frame, "size", 0) > 0:
@@ -531,8 +536,10 @@ def get_image_frame(filename: str):
     return None
 
 
-class FrameSuperseded(Exception):
-    """A queued frame request was dropped because the caller asked for a newer frame meanwhile."""
+# Defined in preview_provider (no cv2 dependency, so it is testable in the light profile) and re-exported
+# here: `capturer.FrameSuperseded` and `preview_provider.FrameSuperseded` are ONE class, so an `except` on
+# either catches what the other raises.
+from roop.preview_provider import FrameSuperseded  # noqa: E402,F401
 
 
 def get_video_frame(video_path: str, frame_number: int = 0,

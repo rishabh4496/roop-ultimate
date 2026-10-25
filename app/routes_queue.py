@@ -617,7 +617,7 @@ def _announce_segment(job, spec, state, **detail):
 def _segment_path(job, spec):
     from roop.segment_output import segment_destination
     ext = "." + str(getattr(roop_globals.CFG, "output_video_format", "mp4") or "mp4")
-    return segment_destination(roop_globals.output_path, job.get("target_name") or "output", spec, ext)
+    return segment_destination(roop_globals.output_path, spec, ext)
 
 
 def _join_if_group_done(job_id):

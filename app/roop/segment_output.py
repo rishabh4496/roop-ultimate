@@ -9,10 +9,16 @@ which knows nothing about the range: with a template that has no time token (`{f
 default template two segments finishing inside the same second collided too, and even the
 survivors carried no order to join them by.
 
-THE RULES (all pure functions here, wired by `core.batch_process_regular` and `routes_queue`):
+THE RULES (all pure functions here, wired by `core.final_video_destination` and `routes_queue`):
 
-* A segment job writes `{stem}_segment{idx:04d}_{start:06d}_{end:06d}.mp4`: unique per
-  (group, index, range) and sortable. Re-rendering the SAME segment overwrites only itself.
+* A segment job writes `{output_dir}/.segments/{group}/seg_{idx:04d}_{start}_{end}.mp4`.
+  `{group}` is the queue's split id (the brief's "job id": one split render = one id, stamped by
+  Batch Matrix on every slice), so two splits of two clips that share a file name, or two splits of
+  one clip rendered with different settings, cannot meet in one folder. The earlier layout put
+  `{stem}_segment{idx}_{start}_{end}.mp4` straight in the output folder, where exactly those two
+  cases overwrote each other. Re-rendering the SAME slice of the SAME split overwrites only itself.
+* The `.segments` folder survives `clear_output` (`api._clear_output_folder`): an ordinary job
+  queued between two slices used to wipe the finished ones.
 * Completed segment files are never deleted while a group is open, and are kept after the
   join: the joined file is an addition, not a replacement.
 * Joining writes `{stem}_concat_list.txt` (concat-demuxer manifest) after checking that
@@ -25,6 +31,7 @@ THE RULES (all pure functions here, wired by `core.batch_process_regular` and `r
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -34,7 +41,8 @@ from typing import Iterable, List, Optional, Sequence
 
 from roop.ffmpeg_path import ffmpeg_binary, ffprobe_binary
 
-_SEG_RE = re.compile(r"^(?P<stem>.+)_segment(?P<idx>\d{4})_(?P<start>\d{6})_(?P<end>\d{6})\.(?P<ext>[A-Za-z0-9]+)$")
+SEGMENTS_DIRNAME = ".segments"
+_SEG_RE = re.compile(r"^seg_(?P<idx>\d{4,})_(?P<start>\d+)_(?P<end>\d+)\.(?P<ext>[A-Za-z0-9]+)$")
 
 
 @dataclass(frozen=True)
@@ -54,24 +62,39 @@ def safe_stem(name: str) -> str:
     return stem or "output"
 
 
-def segment_filename(stem: str, index: int, start_frame: int, end_frame: int, ext: str = "mp4") -> str:
+def safe_group_id(group: str) -> str:
+    """A folder name for a split id. Ids the queue stamps (`uuid`-like) pass through unchanged; anything
+    with a separator or other unsafe character is sanitised AND suffixed with a short digest of the raw
+    id, so `auto:a/b` and `auto:a_b` cannot land in one folder."""
+    raw = str(group or "")
+    clean = re.sub(r"[^A-Za-z0-9._-]+", "_", raw).strip("._")
+    if clean and clean == raw:
+        return clean
+    digest = hashlib.sha1(raw.encode("utf-8", "replace")).hexdigest()[:8]
+    return f"{clean[:48]}-{digest}" if clean else f"split-{digest}"
+
+
+def segments_dir(output_dir: str, group: str) -> str:
+    return os.path.join(output_dir, SEGMENTS_DIRNAME, safe_group_id(group))
+
+
+def segment_filename(index: int, start_frame: int, end_frame: int, ext: str = "mp4") -> str:
     if index < 1 or start_frame < 0 or end_frame < start_frame:
         raise ValueError(f"bad segment {index} range {start_frame}-{end_frame}")
-    return (f"{safe_stem(stem)}_segment{int(index):04d}_{int(start_frame):06d}_"
-            f"{int(end_frame):06d}.{ext.lstrip('.')}")
+    return f"seg_{int(index):04d}_{int(start_frame)}_{int(end_frame)}.{ext.lstrip('.')}"
 
 
-def segment_destination(output_dir: str, target_path: str, spec: SegmentSpec, ext: str = "mp4") -> str:
-    return os.path.join(output_dir, segment_filename(target_path, spec.index, spec.start_frame,
-                                                     spec.end_frame, ext))
+def segment_destination(output_dir: str, spec: SegmentSpec, ext: str = "mp4") -> str:
+    """Where one slice is written. The folder is NOT created here (the caller that writes owns that)."""
+    return os.path.join(segments_dir(output_dir, spec.group),
+                        segment_filename(spec.index, spec.start_frame, spec.end_frame, ext))
 
 
 def parse_segment_filename(name: str) -> Optional[dict]:
     m = _SEG_RE.match(os.path.basename(name))
     if not m:
         return None
-    return {"stem": m["stem"], "index": int(m["idx"]), "start": int(m["start"]),
-            "end": int(m["end"]), "ext": m["ext"]}
+    return {"index": int(m["idx"]), "start": int(m["start"]), "end": int(m["end"]), "ext": m["ext"]}
 
 
 def concat_list_path(output_dir: str, stem: str) -> str:

@@ -633,7 +633,7 @@ def run_segments(ctx: Ctx, P: Probe, clip: str, workdir: str) -> dict:
         jobs.append(job)
         specs.append(q._segment_spec_for(job))
     ext = '.mp4'
-    expected = [so.segment_destination(out_dir, clip, s, ext) for s in specs]
+    expected = [so.segment_destination(out_dir, s, ext) for s in specs]
     prior_exist = []
     old_clear = getattr(g.CFG, 'clear_output', None) if getattr(g, 'CFG', None) is not None else None
     for i, (job, spec) in enumerate(zip(jobs, specs)):
