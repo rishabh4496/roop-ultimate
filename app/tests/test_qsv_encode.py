@@ -101,8 +101,11 @@ class TestProbe:
         assert cmd[cmd.index("-pix_fmt") + 1] == "nv12"
 
     def test_the_real_ffmpeg_reports_a_missing_qsv_encoder_instead_of_hanging(self):
-        listing = subprocess.run([ffmpeg_writer.FFMPEG_BINARY, "-hide_banner", "-encoders"], capture_output=True,
-                                 timeout=30).stdout.decode("utf-8", "replace")
+        try:
+            listing = subprocess.run([ffmpeg_writer.FFMPEG_BINARY, "-hide_banner", "-encoders"], capture_output=True,
+                                     timeout=30).stdout.decode("utf-8", "replace")
+        except FileNotFoundError:
+            pytest.skip("no ffmpeg binary on this machine (the CI light job installs one)")
         if " hevc_qsv " in listing:
             pytest.skip("this ffmpeg lists hevc_qsv; whether it can open depends on an Intel GPU (UNVERIFIED here)")
         ok, message = ffmpeg_writer.probe_encoder("hevc_qsv", 23)

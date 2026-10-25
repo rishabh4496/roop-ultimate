@@ -85,5 +85,15 @@ jobs:
         # install on the previous commit. Never hand-written: regenerate with
         # python tools/gen_update_manifest.py (the .githooks/pre-commit hook does).
         run: python tools/gen_update_manifest.py --check
+      # ~30 tests drive a REAL ffmpeg / ffprobe (finalize_output, segment_output, queue_segments, distributed_render,
+      # the stage-12 video I/O pipeline). The runners ship neither, so those tests used to fail with FileNotFoundError --
+      # hidden behind an earlier collection error. Installed rather than skipped: a skip would say nothing about
+      # whether the mux / join code still works.
+      - name: ffmpeg + ffprobe (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+      - name: ffmpeg + ffprobe (Windows)
+        if: runner.os == 'Windows'
+        run: choco install ffmpeg -y --no-progress
       - name: pytest (both trees, GPU tests skipped)
         run: python -m pytest -m "not gpu" -q -p no:cacheprovider -rfE

@@ -95,7 +95,7 @@ class WindowsRuntimeCompatibilityTests(unittest.TestCase):
              patch.object(compat, "_module_file", side_effect=lambda name: modules.get(name)), \
              patch.object(compat, "_load_native", return_value=(True, None)), \
              patch.object(compat.sys, "platform", "win32"), \
-             patch.object(compat.os, "add_dll_directory", side_effect=lambda value: object()), \
+             patch.object(compat.os, "add_dll_directory", create=True, side_effect=lambda value: object()), \
              patch.dict(compat.sys.modules, {"torch": self._fake_torch()}), \
              patch.object(compat.importlib.metadata, "version", side_effect=lambda name: "1.23.2" if name == "onnxruntime-gpu" else "10.9.0.34"):
             report = compat.verify_windows_nvidia_runtime(hardware=hardware, require_tensorrt=True)
@@ -118,7 +118,7 @@ class WindowsRuntimeCompatibilityTests(unittest.TestCase):
              patch.object(compat, "_module_file", side_effect=lambda name: modules.get(name)), \
              patch.object(compat, "_load_native", return_value=(True, None)), \
              patch.object(compat.sys, "platform", "win32"), \
-             patch.object(compat.os, "add_dll_directory", side_effect=lambda value: object()), \
+             patch.object(compat.os, "add_dll_directory", create=True, side_effect=lambda value: object()), \
              patch.dict(compat.sys.modules, {"torch": self._fake_torch()}), \
              patch.object(compat.importlib.metadata, "version", return_value="1"):
             report = compat.verify_windows_nvidia_runtime(hardware=hardware, require_tensorrt=True)
@@ -137,7 +137,7 @@ class WindowsRuntimeCompatibilityTests(unittest.TestCase):
              patch.object(compat, "_module_file", side_effect=lambda name: modules.get(name)), \
              patch.object(compat, "_load_native", return_value=(True, None)), \
              patch.object(compat.sys, "platform", "win32"), \
-             patch.object(compat.os, "add_dll_directory", side_effect=lambda value: object()), \
+             patch.object(compat.os, "add_dll_directory", create=True, side_effect=lambda value: object()), \
              patch.dict(compat.sys.modules, {"torch": self._fake_torch()}), \
              patch.object(compat.importlib.metadata, "version", return_value="1"):
             report = compat.verify_windows_nvidia_runtime(hardware=hardware, require_tensorrt=True)
@@ -159,7 +159,7 @@ class WindowsRuntimeCompatibilityTests(unittest.TestCase):
              patch.object(compat, "_module_file", side_effect=lambda name: modules.get(name)), \
              patch.object(compat, "_load_native", return_value=(True, None)), \
              patch.object(compat.sys, "platform", "win32"), \
-             patch.object(compat.os, "add_dll_directory", side_effect=lambda value: object()), \
+             patch.object(compat.os, "add_dll_directory", create=True, side_effect=lambda value: object()), \
              patch.dict(compat.sys.modules, {"torch": self._fake_torch()}), \
              patch.object(compat.importlib.metadata, "version", return_value="1"):
             report = compat.verify_windows_nvidia_runtime(hardware=hardware, require_tensorrt=True)

@@ -31,6 +31,21 @@ if APP not in sys.path:
 
 import yaml                                                   # noqa: E402
 import settings as settings_mod                               # noqa: E402
+import pytest                                                 # noqa: E402
+import psutil                                                 # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _a_thirty_two_thread_machine(monkeypatch):
+    """These tests model the desktop (24C/32T) and a laptop that is at least as wide as the numbers they use.
+
+    Settings caps `max_threads` at the machine's LOGICAL core count ("capped to this machine's logical core count"), so
+    on a 4-core CI runner every `max_threads=10` / `derived + 6` expectation came back as 4 (5 failures on both
+    runners, 2026-10-26). The file is about how hardware-derived values move between machines, not about the host it
+    happens to run on, so the host's core count is pinned like the GPU is.
+    """
+    monkeypatch.setattr(psutil, 'cpu_count', lambda logical=True: 32 if logical else 24)
+    monkeypatch.setattr(os, 'cpu_count', lambda: 32)
 
 
 # The two real machines this has to serve.
