@@ -1,13 +1,20 @@
 """One-kernel Stage 3 post-processing on the GPU: LAB colour transfer, frequency-split blend, mask feather, grain, composite.
 
     out_roi = composite(target_roi, face, alpha)
-    face    = clamp( blur(CT(swapped)) + w * (restored - blur(restored)) ) + grain
-    alpha   = blur(xseg_mask)
+    face    = clamp( lw * blur(CT(swapped)) + (1 - lw) * blur(restored) + w * (restored - blur(restored)) ) + grain
+    alpha   = blur(xseg_mask) * (1 - keep)
 
 All four tensors are planar ``[B, 3|1, H, W]`` in the SAME (ROI) pixel space; resampling the crops into the ROI is the
 caller's earlier step (``CudaAffineBatch.paste_faces_roi``). ``CT`` is a per-channel Reinhard transfer in CIE L*a*b* using
 precomputed per-face statistics, so a per-Face-ID EMA lives OUTSIDE the kernel (``LabStatsEMA``): the kernel is handed
 ``(src_mean, scale, tgt_mean)``.
+
+``keep`` is the "show the ORIGINAL pixels here" matte: the manual Mask Brush and the mouth/eye restore overrides. It
+multiplies the feathered alpha, which is what ``ProcessMgr`` (the "Apply manual mask in canonical face-crop space" block)
+does in crop space when the original crop equals the plate: ``fake' = fake*(1-c) + aligned*c`` then composite with alpha is
+``out = tgt + alpha*(1-c)*(fake - tgt)``. THE SIGN MATTERS: production's painted (exclude) region KEEPS the original and the
+include brush only cancels an exclusion (``manual_keep_mask``); neither can switch the swap ON where XSeg said no, so the
+brief's ``xseg*feather + paint - erase`` (paint ADDS swap) is deliberately not what this computes.
 
 HOW IT IS ONE PASS. A Gaussian is a stencil, and Triton exposes no shared memory, so a scratch buffer in global memory would
 undo the point. Instead each program loads one haloed tile of every input (reflect-indexed, so the image border matches
@@ -171,10 +178,32 @@ def grain_deficit(sigma_target: torch.Tensor, sigma_face: torch.Tensor, strength
     return (sigma_target.square() - sigma_face.square()).clamp_min(0).sqrt() * float(strength)
 
 
+def manual_keep_mask(exclude: Optional[torch.Tensor] = None, include: Optional[torch.Tensor] = None,
+                     *overrides: Optional[torch.Tensor]) -> Optional[torch.Tensor]:
+    """The ``keep`` matte (1 = show the original) from the Mask Brush and the restore overrides, all ``[B, 1, H, W]`` in [0, 1].
+
+    Production order (``ProcessMgr``): ``combined = exclude; combined *= (1 - include)`` - the include brush only cancels the
+    painted exclusion. Mouth / eye restore overrides are separate steps in production and are UNIONED after it (max), so the
+    include brush cannot cancel them. Returns None when nothing is given (the kernel then takes its no-keep path).
+    """
+    keep = None
+    if exclude is not None:
+        keep = exclude.float().clamp(0.0, 1.0)
+        if include is not None:
+            keep = keep * (1.0 - include.float().clamp(0.0, 1.0))
+    for extra in overrides:
+        if extra is not None:
+            e = extra.float().clamp(0.0, 1.0)
+            keep = e if keep is None else torch.maximum(keep, e)
+    return keep
+
+
 def reference_postprocess(swapped, restored, xseg_mask, target_roi, *, lab=None, detail_weight=0.75, blur_sigma=2.0,
                           feather_sigma=2.0, grain_sigma=None, seed=0, bgr=False, radius=None, feather_radius=None,
-                          noise: Optional[torch.Tensor] = None):
-    """The SAME maths as the kernel, as a chain of ordinary torch ops. The parity oracle and the unfused benchmark arm.
+                          noise: Optional[torch.Tensor] = None, keep_mask: Optional[torch.Tensor] = None,
+                          low_weight: float = 1.0):
+    """The SAME maths as the kernel, as a chain of ordinary torch ops. The parity oracle, the unfused benchmark arm and the
+    non-Triton fallback (any device).
 
     ``noise`` (``[B, 1, H, W]`` unit normal) lets a test feed the kernel's own random numbers; without it no grain is added.
     """
@@ -184,11 +213,14 @@ def reference_postprocess(swapped, restored, xseg_mask, target_roi, *, lab=None,
     if lab is not None:
         sm, sc, tm = (t.float()[..., None, None] for t in lab)
         sw = lab_to_rgb((rgb_to_lab(sw) - sm) * sc + tm)
-    face = blur_reference(sw, blur_sigma, radius) + detail_weight * (rs - blur_reference(rs, blur_sigma, radius))
+    lo_rs = blur_reference(rs, blur_sigma, radius)
+    face = low_weight * blur_reference(sw, blur_sigma, radius) + (1.0 - low_weight) * lo_rs + detail_weight * (rs - lo_rs)
     face = face.clamp(0.0, 1.0)
     if grain_sigma is not None and noise is not None:
         face = face + noise * (grain_sigma.float()[:, None, None, None] / 255.0)
     alpha = blur_reference(xseg_mask.float(), feather_sigma, feather_radius).clamp(0.0, 1.0)
+    if keep_mask is not None:
+        alpha = alpha * (1.0 - keep_mask.float().clamp(0.0, 1.0))
     tgt = target_roi.float() / (255.0 if target_roi.dtype == torch.uint8 else 1.0)
     if bgr:
         face = face.flip(-3)
@@ -229,11 +261,11 @@ if HAVE_TRITON:
 
     @triton.jit
     def _fused_post_kernel(
-        swap_ptr, rest_ptr, mask_ptr, tgt_ptr, out_ptr, sm_ptr, sc_ptr, tm_ptr, gs_ptr,
-        H, W, t_sb, t_sc, t_sy, t_sx, o_sb, o_sc, o_sy, o_sx, w_detail, seed,
+        swap_ptr, rest_ptr, mask_ptr, keep_ptr, tgt_ptr, out_ptr, sm_ptr, sc_ptr, tm_ptr, gs_ptr,
+        H, W, t_sb, t_sc, t_sy, t_sx, o_sb, o_sc, o_sy, o_sx, w_detail, w_low, seed,
         BLOCK: tl.constexpr, R: tl.constexpr, SIGMA: tl.constexpr, NORM: tl.constexpr,
         RM: tl.constexpr, SIGMA_M: tl.constexpr, NORM_M: tl.constexpr, HALO: tl.constexpr,
-        DO_CT: tl.constexpr, DO_GRAIN: tl.constexpr, T_U8: tl.constexpr, O_U8: tl.constexpr, BGR: tl.constexpr,
+        DO_CT: tl.constexpr, DO_GRAIN: tl.constexpr, DO_KEEP: tl.constexpr, T_U8: tl.constexpr, O_U8: tl.constexpr, BGR: tl.constexpr,
     ):
         TILE: tl.constexpr = BLOCK - 2 * HALO
         b = tl.program_id(0)
@@ -288,12 +320,17 @@ if HAVE_TRITON:
             rr, rg, rb = r2, r1, r0
         else:
             rr, rg, rb = r0, r1, r2
-        fr = tl.minimum(tl.maximum(lo_r + w_detail * (rr - _blur_k(rr, g)), 0.0), 1.0)
-        fg = tl.minimum(tl.maximum(lo_g + w_detail * (rg - _blur_k(rg, g)), 0.0), 1.0)
-        fb = tl.minimum(tl.maximum(lo_b + w_detail * (rb - _blur_k(rb, g)), 0.0), 1.0)
+        br = _blur_k(rr, g)                       # the restorer's own low band: subtracted for the detail, mixed in for w_low < 1
+        bg = _blur_k(rg, g)
+        bb = _blur_k(rb, g)
+        fr = tl.minimum(tl.maximum(w_low * lo_r + (1.0 - w_low) * br + w_detail * (rr - br), 0.0), 1.0)
+        fg = tl.minimum(tl.maximum(w_low * lo_g + (1.0 - w_low) * bg + w_detail * (rg - bg), 0.0), 1.0)
+        fb = tl.minimum(tl.maximum(w_low * lo_b + (1.0 - w_low) * bb + w_detail * (rb - bb), 0.0), 1.0)
 
         m = tl.load(mask_ptr + mbase + off).to(tl.float32)
         alpha = tl.minimum(tl.maximum(_blur_k(m, _band(BLOCK, RM, SIGMA_M, NORM_M)), 0.0), 1.0)
+        if DO_KEEP:                                                        # manual brush / mouth / eye: show the original here
+            alpha = alpha * (1.0 - tl.minimum(tl.maximum(tl.load(keep_ptr + mbase + off).to(tl.float32), 0.0), 1.0))
 
         gi = tl.arange(0, BLOCK)
         inner = ((gi[:, None] >= HALO) & (gi[:, None] < BLOCK - HALO) & (gi[None, :] >= HALO) & (gi[None, :] < BLOCK - HALO)
@@ -330,21 +367,30 @@ if HAVE_TRITON:
 def fused_postprocess(swapped: torch.Tensor, restored: torch.Tensor, xseg_mask: torch.Tensor, target_roi: torch.Tensor,
                       *, lab=None, detail_weight: float = 0.75, blur_sigma: float = 2.0, feather_sigma: float = 2.0,
                       grain_sigma: Optional[torch.Tensor] = None, seed: int = 0, bgr: bool = False,
+                      keep_mask: Optional[torch.Tensor] = None, low_weight: float = 1.0,
                       out: Optional[torch.Tensor] = None, block: int = 32, num_warps: Optional[int] = None) -> torch.Tensor:
     """Run the fused kernel. ``swapped`` / ``restored`` ``[B, 3, H, W]`` and ``xseg_mask`` ``[B, 1, H, W]`` are contiguous
     float16 / float32 in [0, 1]; ``target_roi`` is ``[B, 3, H, W]`` (any strides; uint8 in [0, 255] or float in [0, 1]).
     ``out`` (default: a new tensor like ``target_roi``) may be a strided VIEW of the destination frame, e.g.
     ``frame[:, :, y0:y1, x0:x1]``, so the composite lands in the frame with no copy. ``lab`` = ``(src_mean, scale, tgt_mean)``
     ``[B, 3]`` float32 (``reinhard_params``); ``grain_sigma`` ``[B]`` in 8-bit levels (``grain_deficit``).
+    ``keep_mask`` (``[B, 1, H, W]``, same ROI space and dtype rules as ``xseg_mask``; see ``manual_keep_mask``) multiplies the
+    feathered alpha by ``1 - keep``. ``low_weight`` is the share of the SWAPPER's low band in the result (1.0 = today's
+    behaviour, 0.8 = "keep 80% of the swapper's lighting, take the rest from the restorer"); ``detail_weight`` scales the
+    restorer's high band (1.0 = all of it).
     """
     if not HAVE_TRITON:
         raise RuntimeError("triton is not installed (pip install triton-windows on Windows, triton on Linux)")
-    for name, t in (("swapped", swapped), ("restored", restored), ("xseg_mask", xseg_mask)):
+    for name, t in (("swapped", swapped), ("restored", restored), ("xseg_mask", xseg_mask), ("keep_mask", keep_mask)):
+        if t is None:
+            continue
         if not (t.is_cuda and t.is_contiguous() and t.dtype in (torch.float16, torch.float32)):
             raise ValueError(f"{name} must be a contiguous float16/float32 CUDA tensor")
     B, C, H, W = swapped.shape
     if C != 3 or restored.shape != swapped.shape or tuple(xseg_mask.shape) != (B, 1, H, W) or tuple(target_roi.shape) != (B, 3, H, W):
         raise ValueError("expected swapped/restored/target_roi [B,3,H,W] and xseg_mask [B,1,H,W] in one pixel space")
+    if keep_mask is not None and tuple(keep_mask.shape) != (B, 1, H, W):
+        raise ValueError("keep_mask must be [B,1,H,W] in the same pixel space as xseg_mask")
     if target_roi.dtype not in (torch.uint8, torch.float16, torch.float32):
         raise ValueError("target_roi must be uint8, float16 or float32")
     if out is None:
@@ -365,9 +411,54 @@ def fused_postprocess(swapped: torch.Tensor, restored: torch.Tensor, xseg_mask: 
         num_warps = 4 if halo <= 4 else 8            # measured: halo 6 at 4 warps spills (8.97 ms vs 1.23 ms at B=4, 512x512)
     grid = (B, triton.cdiv(H, tile), triton.cdiv(W, tile))
     _fused_post_kernel[grid](
-        swapped, restored, xseg_mask, target_roi, out, sm, sc, tm, gs, H, W,
-        *target_roi.stride(), *out.stride(), float(detail_weight), int(seed),
+        swapped, restored, xseg_mask, xseg_mask if keep_mask is None else keep_mask, target_roi, out, sm, sc, tm, gs, H, W,
+        *target_roi.stride(), *out.stride(), float(detail_weight), float(low_weight), int(seed),
         BLOCK=block, R=r, SIGMA=float(blur_sigma), NORM=norm, RM=rm, SIGMA_M=float(feather_sigma), NORM_M=norm_m, HALO=halo,
-        DO_CT=lab is not None, DO_GRAIN=grain_sigma is not None, T_U8=target_roi.dtype == torch.uint8,
+        DO_CT=lab is not None, DO_GRAIN=grain_sigma is not None, DO_KEEP=keep_mask is not None, T_U8=target_roi.dtype == torch.uint8,
         O_U8=out.dtype == torch.uint8, BGR=bool(bgr), num_warps=num_warps)
+    return out
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# One entry point for every device
+# ---------------------------------------------------------------------------------------------------------------------
+def select_backend(tensor: torch.Tensor, backend: str = "auto") -> str:
+    """``"triton"`` or ``"torch"`` for this tensor. ``"auto"`` takes Triton on a CUDA tensor when Triton imports, else the eager
+    torch reference (CPU, AMD/Intel/Apple devices, a machine without a Triton build). A forced ``"triton"`` that cannot run
+    RAISES instead of quietly falling back: a forced backend that silently ran the other one is the failure this repo keeps hitting.
+
+    There is no ``torch.compile`` rung: Inductor needs a C++ compiler this Windows install does not have, so that rung could
+    not be tested here, and an untested fallback is "unverified", not "shipped".
+    """
+    if backend not in ("auto", "triton", "torch"):
+        raise ValueError(f"backend must be auto, triton or torch, not {backend!r}")
+    can_triton = HAVE_TRITON and tensor.is_cuda and getattr(torch.version, "hip", None) is None
+    if backend == "triton" and not can_triton:
+        raise RuntimeError("backend='triton' needs triton and an NVIDIA CUDA tensor")
+    return "triton" if (can_triton and backend != "torch") else "torch"
+
+
+def postprocess(swapped: torch.Tensor, restored: torch.Tensor, xseg_mask: torch.Tensor, target_roi: torch.Tensor,
+                *, backend: str = "auto", out: Optional[torch.Tensor] = None, **kwargs) -> torch.Tensor:
+    """``fused_postprocess`` where Triton runs, the torch reference everywhere else; same arguments, same result contract
+    (``out`` / the return value has ``target_roi``'s dtype and layout, uint8 rounded). Grain comes from the backend's own RNG, so
+    the two backends agree statistically (same sigma, zero mean), not bit for bit.
+    """
+    if select_backend(swapped, backend) == "triton":
+        return fused_postprocess(swapped, restored, xseg_mask, target_roi, out=out, **kwargs)
+    kwargs.pop("block", None)
+    kwargs.pop("num_warps", None)
+    grain = kwargs.get("grain_sigma")
+    if grain is not None:
+        gen = torch.Generator(device=swapped.device).manual_seed(int(kwargs.get("seed", 0)))
+        kwargs["noise"] = torch.randn((swapped.shape[0], 1, *swapped.shape[-2:]), generator=gen, device=swapped.device)
+        kwargs["grain_sigma"] = grain.to(swapped.device)
+    result = reference_postprocess(swapped, restored, xseg_mask, target_roi, **kwargs)
+    if target_roi.dtype == torch.uint8:
+        result = (result.clamp(0.0, 1.0) * 255.0 + 0.5).to(torch.uint8)
+    else:
+        result = result.to(target_roi.dtype)
+    if out is None:
+        return result
+    out.copy_(result)
     return out

@@ -184,6 +184,92 @@ class TestRefusals:
             fp.fused_postprocess(sw, rs, m, tgt, out=torch.empty(1, 3, 64, 64, device=DEV))   # dtype mismatch with target
 
 
+class TestKeepMaskAndLowWeight:
+    def _keep(self, B, H, W):
+        k = torch.zeros(B, 1, H, W, device=DEV)
+        k[:, :, H // 4:H // 2, W // 3:2 * W // 3] = 1.0
+        return fp.manual_keep_mask(k, None)
+
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.float16])
+    def test_keep_mask_equals_reference(self, dtype):
+        sw, rs, m, tgt = _case(dtype=dtype, seed=12)
+        keep = self._keep(2, 96, 112).to(dtype).contiguous()
+        lab = _lab(sw.float(), tgt)
+        got = fp.fused_postprocess(sw, rs, m, tgt, lab=lab, keep_mask=keep)
+        ref = fp.reference_postprocess(sw, rs, m, tgt, lab=lab, keep_mask=keep)
+        ok, worst = _close(got.float() / 255.0, ref, 1.5 / 255.0)
+        assert ok, f"{worst * 255:.2f} levels"
+
+    def test_keep_one_returns_the_plate_and_keep_zero_changes_nothing(self):
+        sw, rs, m, tgt = _case(seed=13)
+        ones, zeros = torch.ones_like(m), torch.zeros_like(m)
+        assert torch.equal(fp.fused_postprocess(sw, rs, m, tgt, keep_mask=ones), tgt)
+        assert torch.equal(fp.fused_postprocess(sw, rs, m, tgt, keep_mask=zeros), fp.fused_postprocess(sw, rs, m, tgt))
+
+    def test_keep_region_is_original_and_the_rest_still_swapped(self):
+        sw, rs, m, tgt = _case(B=1, H=128, W=128, seed=14)
+        keep = torch.zeros(1, 1, 128, 128, device=DEV)
+        keep[:, :, 40:90, 40:70] = 1.0
+        got = fp.fused_postprocess(sw, rs, m, tgt, keep_mask=keep)
+        assert torch.equal(got[:, :, 44:86, 44:66], tgt[:, :, 44:86, 44:66])            # inside the brush, away from its edge
+        free = fp.fused_postprocess(sw, rs, m, tgt)
+        assert not torch.equal(got[:, :, 40:90, 80:110], tgt[:, :, 40:90, 80:110])         # outside it the swap is intact
+        assert torch.equal(got[:, :, 40:90, 80:110], free[:, :, 40:90, 80:110])
+
+    @pytest.mark.parametrize("low,detail", [(0.8, 1.0), (0.5, 0.75), (0.0, 1.0), (1.0, 0.75)])
+    def test_low_weight_equals_reference(self, low, detail):
+        sw, rs, m, tgt = _case(seed=15)
+        got = fp.fused_postprocess(sw, rs, m, tgt.float() / 255.0, low_weight=low, detail_weight=detail)
+        ref = fp.reference_postprocess(sw, rs, m, tgt.float() / 255.0, low_weight=low, detail_weight=detail)
+        assert _close(got, ref, 3e-4)[0]
+
+    def test_all_restorer_when_low_zero_detail_one(self):
+        sw, rs, _, tgt = _case(B=1, H=96, W=96, seed=16)
+        ones = torch.ones(1, 1, 96, 96, device=DEV)
+        got = fp.fused_postprocess(sw, rs, ones, tgt.float() / 255.0, low_weight=0.0, detail_weight=1.0)
+        assert _close(got[:, :, 12:-12, 12:-12], rs[:, :, 12:-12, 12:-12], 3e-4)[0]
+
+    def test_keep_shape_is_refused(self):
+        sw, rs, m, tgt = _case(B=1, H=64, W=64)
+        with pytest.raises(ValueError):
+            fp.fused_postprocess(sw, rs, m, tgt, keep_mask=torch.zeros(1, 1, 8, 8, device=DEV))
+
+
+class TestDispatcher:
+    def test_auto_on_cuda_runs_the_kernel_not_the_fallback(self, monkeypatch):
+        sw, rs, m, tgt = _case(B=1, seed=17)
+        calls = {"kernel": 0, "reference": 0}
+        real_k, real_r = fp.fused_postprocess, fp.reference_postprocess
+        monkeypatch.setattr(fp, "fused_postprocess", lambda *a, **k: (calls.__setitem__("kernel", calls["kernel"] + 1), real_k(*a, **k))[1])
+        monkeypatch.setattr(fp, "reference_postprocess", lambda *a, **k: (calls.__setitem__("reference", calls["reference"] + 1), real_r(*a, **k))[1])
+        assert fp.select_backend(sw) == "triton"
+        fp.postprocess(sw, rs, m, tgt)
+        assert calls == {"kernel": 1, "reference": 0}
+        fp.postprocess(sw, rs, m, tgt, backend="torch")
+        assert calls == {"kernel": 1, "reference": 1}
+
+    def test_both_backends_agree_with_grain_off_and_statistically_with_it_on(self):
+        sw, rs, m, tgt = _case(seed=18)
+        keep = self._keep(sw, m)
+        a = fp.postprocess(sw, rs, m, tgt, keep_mask=keep, low_weight=0.8)
+        b = fp.postprocess(sw, rs, m, tgt, keep_mask=keep, low_weight=0.8, backend="torch")
+        assert _close(a.float() / 255.0, b.float() / 255.0, 1.5 / 255.0)[0]
+        flat = torch.full((1, 3, 160, 160), 0.5, device=DEV)
+        ones = torch.ones(1, 1, 160, 160, device=DEV)
+        gs = torch.full((1,), 4.0, device=DEV)
+        for backend in ("auto", "torch"):
+            out = fp.postprocess(flat, flat, ones, flat.clone(), blur_sigma=1.0, feather_sigma=1.0, grain_sigma=gs, seed=5,
+                                 backend=backend)[:, :, 20:-20, 20:-20]
+            noise = (out - 0.5) * 255.0
+            assert abs(float(noise.mean())) < 0.15 and abs(float(noise.std()) - 4.0) < 0.25, backend
+
+    @staticmethod
+    def _keep(sw, m):
+        k = torch.zeros_like(m)
+        k[:, :, 20:50, 30:60] = 1.0
+        return k
+
+
 def load_tests(loader, tests, pattern):
     from tests.unittest_shim import load_tests_for
     return load_tests_for(globals())
