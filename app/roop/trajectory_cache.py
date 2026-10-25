@@ -291,6 +291,53 @@ class TrajectoryCache:
         col = self.rows["frame"]
         return int(np.searchsorted(col, frame, side="left")), int(np.searchsorted(col, frame, side="right"))
 
+    def __contains__(self, frame_idx: Any) -> bool:
+        """Bounds check: whether frame_idx is within the timeline trim range of this cache.
+        Enforces that frame_idx is within valid bounds whether indexed canonically as 0-based
+        [0, total_frames) or as absolute frame [frame_start, frame_start + total_frames).
+        """
+        try:
+            f = int(frame_idx)
+        except (TypeError, ValueError):
+            return False
+        total = self.meta.get("total_frames")
+        start = int(self.meta.get("frame_start", 0) or 0)
+        if total is not None and total > 0:
+            if 0 <= f < total:
+                return True
+            if start <= f < start + total:
+                return True
+            return False
+        rng = self.frame_range
+        if rng is not None:
+            if rng[0] <= f <= rng[1]:
+                return True
+            if 0 <= f <= (rng[1] - start):
+                return True
+        return False
+
+    def get_frame(self, canonical_frame_idx: int) -> np.ndarray:
+        """Enforce canonical indexing contract with explicit bounds assertion.
+        Whether trim_in is frame 0 or frame 1500, Stage 2 and Stage 3 address the exact
+        same canonical frame index with an explicit bounds assertion:
+            assert canonical_frame_idx in self
+        Returns the structured array view of rows for canonical_frame_idx.
+        """
+        assert canonical_frame_idx in self, (
+            f"Frame index {canonical_frame_idx} out of bounds for trajectory cache "
+            f"(frame_start={self.meta.get('frame_start')}, total_frames={self.meta.get('total_frames')})"
+        )
+        start = int(self.meta.get("frame_start", 0) or 0)
+        total = self.meta.get("total_frames")
+        f = int(canonical_frame_idx)
+        # If given as 0-based relative index within [0, total), map to absolute frame
+        if start > 0 and 0 <= f < (total if total else float("inf")):
+            abs_frame = f + start
+        else:
+            abs_frame = f
+        lo, hi = self._span(abs_frame)
+        return self.rows[lo:hi]
+
     def at(self, frame: int, absolute: bool = True) -> np.ndarray:
         """The rows of one frame (a view). `absolute=False` takes a frame counted from the job's first frame."""
         f = int(frame) + (0 if absolute else int(self.meta.get("frame_start", 0)))

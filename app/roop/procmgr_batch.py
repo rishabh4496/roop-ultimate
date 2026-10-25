@@ -1172,6 +1172,18 @@ class BatchProcessingMixin:
                         if failed and hasattr(writer, 'abort'):
                             writer.abort()
                         else:
+                            if not failed and bool(roop.globals.processing) and getattr(self, 'total_frames', None):
+                                expected_count = int(self.total_frames)
+                                encoded_count = getattr(self, '_encoded_frame_count', None)
+                                if encoded_count is None and hasattr(writer, 'total_encoded'):
+                                    encoded_count = writer.total_encoded
+                                if encoded_count is None and hasattr(writer, 'frames_written'):
+                                    encoded_count = writer.frames_written
+                                if encoded_count is not None and expected_count > 0:
+                                    assert encoded_count == expected_count, (
+                                        f"Stage 3 frame count parity mismatch: encoded {encoded_count} frames, "
+                                        f"expected {expected_count} frames for trim range"
+                                    )
                             writer.close()
                 except Exception as exc:
                     if failed:

@@ -432,6 +432,10 @@ class SegmentedVideoWriter:
         self._cur_seg_file = None
         self._cur_frames = 0
 
+    @property
+    def total_encoded(self) -> int:
+        return sum(int(s.get("frames", 0) or 0) for s in self.segments)
+
     # ── finish ───────────────────────────────────────────────────────────────
     def close(self):
         finalize_error = None
@@ -458,6 +462,16 @@ class SegmentedVideoWriter:
         # parts + manifest after a Stop so the run can be resumed later instead.
         # A hard crash never reaches this code at all, so crash-resume is unaffected.
         completed = bool(roop.globals.processing)
+        if completed:
+            fs = int(self._identity.get("frame_start", 0) or 0)
+            fe = int(self._identity.get("frame_end", 0) or 0)
+            if fe > fs:
+                expected_trim_frames = fe - fs
+                assert self.total_encoded == expected_trim_frames, (
+                    f"SegmentedVideoWriter frame-count parity failure: "
+                    f"encoded {self.total_encoded} frames, expected {expected_trim_frames} frames "
+                    f"for trim range [{fs}, {fe})"
+                )
         keep_after_stop = os.environ.get("ROOP_RESUME_KEEP", "0") == "1"
         preserve_parts = not completed and keep_after_stop
         # A single segment is already a complete MP4. Promote it directly to

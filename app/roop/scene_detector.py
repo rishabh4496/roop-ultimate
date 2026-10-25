@@ -58,6 +58,8 @@ def flush_pipeline_temporal_buffers(mgr: Optional[Any] = None) -> Dict[str, bool
         'hf_stabilizer': False,
         'target_appearance': False,
         'occlusion_mask': False,
+        'smart_skip_patches': False,
+        'temporal_color': False,
     }
 
     # 1. Flush face_swapper's global smoother, motion blur, and injected maskers
@@ -68,7 +70,15 @@ def flush_pipeline_temporal_buffers(mgr: Optional[Any] = None) -> Dict[str, bool
     except Exception as _exc:
         _swallowed("scene_detector.py:flush_face_swapper", _exc, "fallback continued")
 
-    # 2. Flush ProcessMgr smoothers and stabilizers if provided
+    # 2. Flush Temporal ROI Delta-Skipper warped patch cache
+    try:
+        from roop.temporal_smart_skip import clear_track_patches
+        clear_track_patches()
+        flushed['smart_skip_patches'] = True
+    except Exception as _exc:
+        _swallowed("scene_detector.py:flush_smart_skip", _exc, "fallback continued")
+
+    # 3. Flush ProcessMgr smoothers, stabilizers, and per-face EMA LAB color transfer
     if mgr is not None:
         landmark_smoother = getattr(mgr, '_landmark_smoother', None)
         if landmark_smoother is not None and hasattr(landmark_smoother, 'reset'):
@@ -93,6 +103,14 @@ def flush_pipeline_temporal_buffers(mgr: Optional[Any] = None) -> Dict[str, bool
                 flushed['target_appearance'] = True
             except Exception as _exc:
                 _swallowed("scene_detector.py:flush_target_appearance", _exc, "fallback continued")
+
+        temporal_color = getattr(mgr, '_temporal_color', None)
+        if temporal_color is not None and hasattr(temporal_color, 'reset'):
+            try:
+                temporal_color.reset()
+                flushed['temporal_color'] = True
+            except Exception as _exc:
+                _swallowed("scene_detector.py:flush_temporal_color", _exc, "fallback continued")
 
     return flushed
 

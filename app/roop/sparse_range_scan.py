@@ -502,20 +502,23 @@ def _scan_active_ranges_hw(
             prev_idx = s_idx
 
         elapsed = time.perf_counter() - t0
+        effective_stride = S
+        effective_merge_gap = MERGE_GAP
+        hw_cuts = [int(c) - frame_start for c in cut_detector.scene_cuts if frame_start <= int(c) < frame_end]
+
         common = dict(
             stride=S, pad=M, workers=worker_count, det_floor=det_floor,
             sim_floor=sim_floor, targeted=bool(getattr(probe, 'targeted', target_matrix is not None)),
             samples_total=total_samples, samples_done=samples_done,
-            cuts=len(cut_detector.scene_cuts), scene_cuts=list(cut_detector.scene_cuts),
+            cuts=len(cut_detector.scene_cuts),
+            scene_cuts=list(cut_detector.scene_cuts),
+            scene_cuts_abs=list(cut_detector.scene_cuts),
+            scene_cuts_canonical=hw_cuts,
             detector_errors=detector_errors, hits_count=len(positives),
             elapsed_s=round(elapsed, 3),
             scan_fps=round(samples_done / elapsed, 1) if elapsed > 0 else None,
             mode="nv_hardware_keyframes",
         )
-
-        effective_stride = S
-        effective_merge_gap = MERGE_GAP
-        hw_cuts = [int(c) - frame_start for c in cut_detector.scene_cuts if frame_start <= int(c) < frame_end]
 
         ranges, mask = build_active_ranges(
             positives, total_frames, effective_stride,
@@ -743,10 +746,15 @@ def scan_active_ranges(
         elapsed = time.perf_counter() - t0
 
         info = dict(info_box)
+        canonical_cuts = [int(c) for c in (info.get('scene_cuts') or ()) if 0 <= int(c) < total_frames]
+        abs_cuts = [c + frame_start for c in canonical_cuts]
         common = dict(stride=S, pad=M, workers=worker_count, det_floor=det_floor,
                       sim_floor=sim_floor, targeted=bool(getattr(probe, 'targeted', target_matrix is not None)),
                       samples_total=total_samples, samples_done=samples_done,
-                      cuts=info.get('cuts', 0), mids_inspected=info.get('mids', 0),
+                      cuts=info.get('cuts', len(canonical_cuts)), mids_inspected=info.get('mids', 0),
+                      scene_cuts=abs_cuts,
+                      scene_cuts_abs=abs_cuts,
+                      scene_cuts_canonical=canonical_cuts,
                       decoded_frames=info.get('decoded', 0), read_failures=info.get('read_failures', 0),
                       detector_errors=detector_errors, hits_count=len(positives),
                       start_mismatch=bool(info.get('start_mismatch')),
@@ -778,7 +786,7 @@ def scan_active_ranges(
                   flush=True)
             return _full_range(total_frames, "fail_safe_full", reason=reason, **common)
 
-        ranges, mask = build_active_ranges(positives, total_frames, S, scene_cuts=info.get('scene_cuts'))
+        ranges, mask = build_active_ranges(positives, total_frames, S, scene_cuts=canonical_cuts)
         active_count = int(np.sum(mask))
         percentage = round((active_count / total_frames) * 100.0, 1)
         stats = dict(common, active_frames=active_count, total_frames=total_frames,

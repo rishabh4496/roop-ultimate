@@ -157,23 +157,35 @@ class TemporalColorEMA:
         self.restarts += 1
         return entry
 
-    def smooth(self, track_id, frame_index, kind: str, src, tgt):
+    def smooth(self, track_id, frame_index, kind: str, src, tgt, cuts: Optional[set[int]] = None):
         """Return the ``(A, b)`` to apply for this frame.
 
         ``kind`` ('lct' / 'rct') and the statistics ``src`` / ``tgt`` come from the ``*_stats`` helpers. With no
         track id, with the engine off or unordered, the answer is just this frame's own transform.
+        Keyed strictly by persistent (segment_id, track_id, kind) - never raw box index.
         """
         affine = lct_affine if kind == "lct" else rct_affine
         if not self.enabled or track_id is None or not self.ordered:
             return affine(src, tgt)
-        try:
-            key = (int(track_id), kind)
-        except (TypeError, ValueError):
-            return affine(src, tgt)
+        if isinstance(track_id, tuple) and len(track_id) == 2:
+            try:
+                key = (int(track_id[0]), int(track_id[1]), str(kind))
+            except (TypeError, ValueError):
+                return affine(src, tgt)
+        else:
+            try:
+                import roop.globals
+                seg = int(getattr(getattr(roop.globals, '_segment_spec', None), 'index', 0) or 0)
+                key = (seg, int(track_id), str(kind))
+            except (TypeError, ValueError):
+                return affine(src, tgt)
         with self._lock:
             prev = self.states.get(key)
             A_now, b_now = affine(src, tgt)
             fresh = {"src": src, "tgt": tgt, "A": A_now, "b": b_now, "frame": frame_index}
+            if cuts is not None and frame_index is not None and frame_index in cuts:
+                self._restart(key, fresh, frame_index)
+                return A_now, b_now
             if prev is None or frame_index is None or prev["frame"] is None:
                 self._restart(key, fresh, frame_index)
                 return A_now, b_now

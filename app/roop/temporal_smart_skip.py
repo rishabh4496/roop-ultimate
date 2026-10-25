@@ -261,16 +261,47 @@ def get_dense_flow_warper() -> DenseFlowWarper:
 
 
 # ── Track patch cache for Stage 3 ──────────────────────────────────────────
-_PATCH_CACHE: Dict[int, Dict[str, Any]] = {}
+_PATCH_CACHE: Dict[Tuple[int, int], Dict[str, Any]] = {}
 _PATCH_LOCK = threading.Lock()
 
 
-def set_track_patch(track_id: int, patch: np.ndarray, aligned_img: np.ndarray, frame_idx: int, **kwargs) -> None:
-    """Record final composited face patch for a track."""
+def _normalize_track_key(track_id: Any, segment_id: Optional[int] = None) -> Optional[Tuple[int, int]]:
+    """Normalize track identifier to a persistent (segment_id, track_id) tuple.
+    Never binds to raw box index (0, 1, 2) or None.
+    """
     if track_id is None:
+        return None
+    if isinstance(track_id, tuple) and len(track_id) == 2:
+        try:
+            return (int(track_id[0]), int(track_id[1]))
+        except (ValueError, TypeError):
+            return None
+    try:
+        tid = int(track_id)
+    except (ValueError, TypeError):
+        return None
+    seg = 0
+    if segment_id is not None:
+        try:
+            seg = int(segment_id)
+        except (ValueError, TypeError):
+            seg = 0
+    else:
+        try:
+            seg = int(getattr(getattr(roop.globals, '_segment_spec', None), 'index', 0) or 0)
+        except Exception:
+            seg = 0
+    return (seg, tid)
+
+
+def set_track_patch(track_id: Any, patch: np.ndarray, aligned_img: np.ndarray, frame_idx: int,
+                    segment_id: Optional[int] = None, **kwargs) -> None:
+    """Record final composited face patch for persistent (segment_id, track_id)."""
+    key = _normalize_track_key(track_id, segment_id=segment_id)
+    if key is None:
         return
     with _PATCH_LOCK:
-        _PATCH_CACHE[int(track_id)] = {
+        _PATCH_CACHE[key] = {
             "patch": patch.copy(),
             "aligned_img": aligned_img.copy() if aligned_img is not None else None,
             "frame_idx": int(frame_idx),
@@ -278,15 +309,17 @@ def set_track_patch(track_id: int, patch: np.ndarray, aligned_img: np.ndarray, f
         }
 
 
-def get_track_patch(track_id: int, expected_frame_idx: Optional[int] = None) -> Optional[Dict[str, Any]]:
-    """Retrieve previous frame's composited face patch for a track.
+def get_track_patch(track_id: Any, expected_frame_idx: Optional[int] = None,
+                    segment_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
+    """Retrieve previous frame's composited face patch for persistent (segment_id, track_id).
 
     If expected_frame_idx is provided, returns None unless the cached patch matches that frame index.
     """
-    if track_id is None:
+    key = _normalize_track_key(track_id, segment_id=segment_id)
+    if key is None:
         return None
     with _PATCH_LOCK:
-        entry = _PATCH_CACHE.get(int(track_id))
+        entry = _PATCH_CACHE.get(key)
         if entry is None:
             return None
         if expected_frame_idx is not None:
@@ -297,7 +330,7 @@ def get_track_patch(track_id: int, expected_frame_idx: Optional[int] = None) -> 
 
 
 def clear_track_patches() -> None:
-    """Clear all track patches between jobs."""
+    """Clear all track patches between jobs or on scene cuts."""
     with _PATCH_LOCK:
         _PATCH_CACHE.clear()
 

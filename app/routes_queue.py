@@ -652,6 +652,19 @@ def _join_if_group_done(job_id):
     use_source_audio = bool(source and segment_output.covers_whole_source(ranges, total)
                             and not getattr(roop_globals, "skip_audio", False))
     try:
+        # Exact frame-count parity assertion across segments before Batch Matrix concatenation
+        for p, s in zip(paths, specs):
+            expected = int(s.end_frame) - int(s.start_frame) + 1
+            if os.path.exists(p):
+                from roop.finalize_output import probe_container, _frames_of
+                probe = probe_container(p)
+                if probe and probe.get("video"):
+                    actual = _frames_of(probe["video"])
+                    if actual is not None and actual != expected:
+                        raise ValueError(
+                            f"Segment frame count mismatch for {os.path.basename(p)}: "
+                            f"has {actual} frames, expected {expected} [{s.start_frame}, {s.end_frame}]"
+                        )
         joined = segment_output.join_segments(
             paths, segment_output.joined_path(out_dir, stem, ext),
             segment_output.concat_list_path(out_dir, stem),

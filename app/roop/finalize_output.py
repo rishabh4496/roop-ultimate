@@ -258,6 +258,14 @@ def finalize_render(temp_video: str, destination: str, *,
     ref_video = reference["video"]
     result["reference_frames"] = _frames_of(ref_video)
 
+    if not stopped and expected_frames is not None:
+        ref_frames = result.get("reference_frames")
+        if ref_frames is not None and ref_frames != expected_frames:
+            result["problems"].append(f"frame count {ref_frames} != the {expected_frames} the trim implies")
+            result["wall_s"] = round(time.perf_counter() - t_all, 3)
+            result["kept_intermediate"] = temp_video if os.path.exists(temp_video) else None
+            return result
+
     expect_audio = False
     if not skip_audio and audio_source:
         if source_has_audio is None:

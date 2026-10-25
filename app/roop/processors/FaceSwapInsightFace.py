@@ -33,6 +33,21 @@ def pose_embedding_for_target(source_faceset, target_face):
             value = (target_face.get(name, default) if isinstance(target_face, dict)
                      else getattr(target_face, name, default))
             return float(value if value is not None else default)
+
+        # Bind strictly by persistent (segment_id, track_id) — never raw box index
+        tid = target_face.get('_track_id') if isinstance(target_face, dict) else getattr(target_face, '_track_id', None)
+        if tid is not None:
+            _seg_id = getattr(getattr(roop.globals, '_segment_spec', None), 'index', 0) or 0
+            if isinstance(target_face, dict):
+                target_face['_segment_id'] = _seg_id
+                target_face['_track_key'] = (_seg_id, int(tid))
+            else:
+                try:
+                    setattr(target_face, '_segment_id', _seg_id)
+                    setattr(target_face, '_track_key', (_seg_id, int(tid)))
+                except Exception:
+                    pass
+
         pose = (field('_adaptive_yaw'), field('_adaptive_pitch'))
         # Folder-upload banks have per-reference embeddings but no archive
         # metadata. Prefer their closest pose (or boundary blend) before the

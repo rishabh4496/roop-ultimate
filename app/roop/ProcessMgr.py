@@ -2015,6 +2015,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                         with _prof('encode'):
                             if self.output_to_file:
                                 self.videowriter.write_frame(frame)
+                                self._encoded_frame_count = getattr(self, '_encoded_frame_count', 0) + 1
                             if self.output_to_cam:
                                 self.streamwriter.WriteToStream(frame)
                             if self._temporal_faces is not None:
@@ -3828,6 +3829,12 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                         _stab.reset()
                 bar_write(f'[Stabilize] scene cut at frame {frame_idx}; rolling history reset')
                 gc.collect()
+        if getattr(self, '_trajectory', None) is not None and frame_idx is not None:
+            assert frame_idx in self._trajectory, (
+                f"Processing frame {frame_idx} is out of bounds for Stage 2 Trajectory Cache "
+                f"(range={self._trajectory.frame_range}, total={self._trajectory.meta.get('total_frames')})"
+            )
+            _ = self._trajectory.get_frame(frame_idx)
         cuts = getattr(self, '_shot_boundaries', None)
         if cuts and frame_idx is not None and frame_idx in cuts:
             from roop.scene_detector import flush_pipeline_temporal_buffers
@@ -5599,16 +5606,15 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 plate, target_face, subsample_size, swap_template, dst=crop_dst)
         fake_frame = aligned_img
         target_face.matrix = M
+        _seg_id = getattr(getattr(roop.globals, '_segment_spec', None), 'index', 0) or 0
         if self._stab_history is not None:
             _stab_track = self._temporal_track_id(target_face)
-            if _stab_track is None:
-                _stab_track = face_index
-            self._stab_history.record_affine(_stab_track, M, self._cur_stab_t())
+            if _stab_track is not None:
+                self._stab_history.record_affine((_seg_id, _stab_track), M, self._cur_stab_t())
         _temporal_mgr = self._temporal_engine('temporal_identity')
         _temporal_tid = self._temporal_track_id(target_face)
         _quality_mgr = self._temporal_engine('temporal_quality')
-        _quality_tid = (_temporal_tid if _temporal_tid is not None else
-                        target_face.get('_track_id', face_index))
+        _quality_tid = (_seg_id, _temporal_tid) if _temporal_tid is not None else None
         _quality_frame_idx = getattr(self._tls, 'frame_idx',
                                      getattr(self._tls, 't', None))
         _quality_pre_decision = None
@@ -6366,9 +6372,10 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                             _img_mask, aligned_img, _pre_mask_enhanced)
                 if self._stab_history is not None and _img_mask is not None:
                     _stab_track = self._temporal_track_id(target_face)
-                    self._stab_history.record_mask(
-                        face_index if _stab_track is None else _stab_track,
-                        _img_mask, self._cur_stab_t())
+                    if _stab_track is not None:
+                        self._stab_history.record_mask(
+                            (_seg_id, _stab_track),
+                            _img_mask, self._cur_stab_t())
                 if any(getattr(_p, 'processorname', None) == 'adaptive_enhancer'
                        for _p in self.processors):
                     try:
@@ -6382,11 +6389,10 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                         bar_write(f"[ProcessMgr] adaptive face metrics failed: {e}")
             elif (p.type == 'enhance'
                   and getattr(self, '_enhance_gate', None) is not None
+                  and _temporal_tid is not None
                   and self._enhance_gate.should_skip(
                       target_face,
-                      self._temporal_track_id(target_face)
-                      if self._temporal_track_id(target_face) is not None
-                      else face_index)):
+                      (_seg_id, _temporal_tid))):
                 # Face too small for a 512 restoration to survive the paste back
                 # down: leave `enhanced_frame` as it is (None unless an earlier
                 # restorer produced one) so the swap crop itself is pasted. This

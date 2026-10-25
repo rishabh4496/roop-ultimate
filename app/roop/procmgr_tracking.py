@@ -2572,8 +2572,12 @@ class TrackingMixin:
         # `_precompute_tracks`). Only a Stage 1 that ran in THIS job leaves any.
         _s1 = getattr(self, '_active_ranges_stats', None) or {}
         _origin = int(frame_start or 0)
-        self._stage1_cut_hints = sorted({int(c) - _origin for c in (_s1.get('scene_cuts') or ())
-                                         if isinstance(c, (int, np.integer)) and int(c) - _origin > 0})
+        if _s1.get('scene_cuts_canonical') is not None:
+            self._stage1_cut_hints = sorted({int(c) for c in _s1.get('scene_cuts_canonical')
+                                             if isinstance(c, (int, np.integer)) and int(c) > 0})
+        else:
+            self._stage1_cut_hints = sorted({int(c) - _origin for c in (_s1.get('scene_cuts') or ())
+                                             if isinstance(c, (int, np.integer)) and int(c) - _origin > 0})
         _kf_set = set()
         if source_video and os.path.isfile(source_video):
             try:
@@ -2742,6 +2746,12 @@ class TrackingMixin:
                     fps=getattr(self, '_video_fps', None), total_frames=frame_count)
             self._trajectory = cache
             _tc.set_active(cache, getattr(stage_cache, 'project_id', None))
+            if cache is not None:
+                assert 0 in cache, f'Canonical frame 0 must be in trajectory cache {cache.frame_range}'
+                if frame_count is not None and frame_count > 0:
+                    assert (frame_count - 1) in cache, (
+                        f'Canonical frame {frame_count - 1} must be in trajectory cache {cache.frame_range}'
+                    )
             meta = cache.meta
             print(f'[Trajectory] {len(cache)} face(s) on {meta.get("frames", 0)} frame(s), '
                   f'{meta.get("tracks", 0)} track(s): smoothed alignment M / M_inv and head pose yaw/pitch/roll '
@@ -3229,19 +3239,22 @@ class TrackingMixin:
             if stab_on:
                 # Per-track sequential smoothing. Explicit local dictionaries keep
                 # each track's filter state cleanly isolated and resettable.
+                _seg_id = getattr(getattr(roop.globals, '_segment_spec', None), 'index', 0) or 0
                 _filters = {}
                 _state = {}
                 if method == 'ema':
                     def _smooth(key, val, _t):
-                        prev_v = _state.get(key)
+                        full_key = (_seg_id, t['id'], key)
+                        prev_v = _state.get(full_key)
                         cur = val if prev_v is None else 0.3 * val + 0.7 * prev_v
-                        _state[key] = cur
+                        _state[full_key] = cur
                         return cur
                 else:
                     def _smooth(key, val, _t):
-                        flt = _filters.get(key)
+                        full_key = (_seg_id, t['id'], key)
+                        flt = _filters.get(full_key)
                         if flt is None:
-                            flt = _filters[key] = OneEuroFilter(min_cutoff=mc, beta=bt)
+                            flt = _filters[full_key] = OneEuroFilter(min_cutoff=mc, beta=bt)
                         return flt(val, _t)
                 # COUPLED kps + lm106, when `stabilize_landmarks` is on.
                 #
@@ -3621,6 +3634,7 @@ class TrackingMixin:
                 # from a single frame's centroids whenever they were off.
                 try:
                     f['_track_id'] = t['id']
+                    f['_segment_id'] = getattr(getattr(roop.globals, '_segment_spec', None), 'index', 0) or 0
                 except Exception as _degrade_error:
                     _swallowed("roop/procmgr_tracking.py:2199", _degrade_error, "fallback continued")
                     pass
