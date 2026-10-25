@@ -24,6 +24,7 @@ from roop.ffmpeg_path import (NVENC_PRESET_DEFAULT, NVENC_PRESETS,
                               ffmpeg_binary, frame_rate_arg)
 from roop.env import env_str
 from roop import nvenc_quality as _nvenc_quality
+from roop import qsv_encode as _qsv_encode
 
 # Resolved rather than assumed: a bare "ffmpeg" only works inside a
 # Pinokio-managed shell, and outside one the encoder pre-flight aborted
@@ -61,9 +62,11 @@ def probe_encoder(codec="libx265", crf=14, timeout=30):
     ]
     if codec in ('h264_nvenc', 'hevc_nvenc'):
         cmd.extend(['-rc', 'vbr', '-cq', str(crf), '-preset', 'p5', '-tune', 'hq'])
+    elif _qsv_encode.is_qsv(codec):
+        cmd.extend(_qsv_encode.rate_control_args(codec, crf))
     else:
         cmd.extend(['-crf', str(crf)])
-    cmd.extend(['-pix_fmt', 'yuv420p', tmp])
+    cmd.extend(['-pix_fmt', _qsv_encode.PIX_FMT if _qsv_encode.is_qsv(codec) else 'yuv420p', tmp])
 
     popen_params = {"stdout": sp.PIPE, "stderr": sp.PIPE, "stdin": DEVNULL}
     if os.name == "nt":
@@ -161,7 +164,7 @@ class FFMPEG_VideoWriter:
     # on a 16 GB / RTX 3060 box died at frame 5001, the sixth segment boundary.
     _SW_FALLBACK = {
         'hevc_nvenc': 'libx265', 'h264_nvenc': 'libx264', 'av1_nvenc': 'libx265',
-        'hevc_qsv': 'libx265', 'h264_qsv': 'libx264',
+        'hevc_qsv': 'libx265', 'h264_qsv': 'libx264', 'av1_qsv': 'libx265',
         'hevc_amf': 'libx265', 'h264_amf': 'libx264',
     }
 
@@ -247,6 +250,7 @@ class FFMPEG_VideoWriter:
         from roop.util_ffmpeg import clamp_quality
         crf = clamp_quality(codec, self._crf)
         is_nvenc = codec in ('h264_nvenc', 'hevc_nvenc')
+        is_qsv = _qsv_encode.is_qsv(codec)
         if is_nvenc:
             # NVENC has no -crf; -cq is the constant-quality equivalent (same 0-51
             # scale), so reuse the configured quality directly. Preset p1(fastest)
@@ -260,6 +264,9 @@ class FFMPEG_VideoWriter:
             nvenc_preset = _nvenc_quality.preset_override(nvenc_quality) or nvenc_preset
             cmd.extend(['-rc', 'vbr', '-cq', str(crf), '-preset', nvenc_preset, '-tune', 'hq'])
             cmd.extend(_nvenc_quality.ffmpeg_args(codec, nvenc_quality))      # opt-in; [] unless asked for
+        elif is_qsv:
+            # QuickSync has neither -crf nor NVENC's -rc/-cq: constant quality is -global_quality (ICQ).
+            cmd.extend(_qsv_encode.rate_control_args(codec, crf))
         else:
             cmd.extend(['-crf', str(crf)])
 
@@ -342,7 +349,8 @@ class FFMPEG_VideoWriter:
             cmd.extend(["-threads", str(threads)])
 
         cmd.extend([
-            '-pix_fmt', 'yuv420p',
+            # QuickSync encoders take NV12, not planar yuv420p (same 8-bit 4:2:0 sampling).
+            '-pix_fmt', _qsv_encode.PIX_FMT if is_qsv else 'yuv420p',
         ])
         if self.filename.lower().endswith(('.mp4', '.mov', '.m4v')):
             cmd.extend(['-movflags', '+faststart'])

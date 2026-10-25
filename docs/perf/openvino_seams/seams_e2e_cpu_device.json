@@ -1,0 +1,16 @@
+{
+ "frames": 24,
+ "faces_off": 28,
+ "faces_ov": 29,
+ "frames_with_different_face_count": 1,
+ "max_bbox_diff_px": 2.4147,
+ "xseg_mean_abs": 6e-06,
+ "xseg_max_abs": 0.1001,
+ "xseg_iou": 1.0,
+ "runner_calls": [
+  24,
+  12,
+  12
+ ],
+ "problems": []
+}

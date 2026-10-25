@@ -649,8 +649,10 @@ class TheEncoderRecommendationIsApplied(unittest.TestCase):
         with open(os.path.join(APP, 'api.py'), encoding='utf-8') as fh:
             m = re.search(r'^_VIDEO_CODECS\s*=\s*\[(.*?)\]', fh.read(), re.M | re.S)
         self.assertIsNotNone(m, '_VIDEO_CODECS not found in api.py')
-        self.assertEqual(sorted(re.findall(r'"([^"]+)"', m.group(1))),
-                         sorted(bench.APP_CODECS))
+        # The *_qsv encoders are offered by the UI (roop/qsv_encode.py) but never benchmarked, so the bench must not
+        # recommend them: it is the UI list minus the QuickSync codecs.
+        offered = [c for c in re.findall(r'"([^"]+)"', m.group(1)) if not c.endswith('_qsv')]
+        self.assertEqual(sorted(offered), sorted(bench.APP_CODECS))
 
 
 class PerInstanceVramIsMarginal(unittest.TestCase):

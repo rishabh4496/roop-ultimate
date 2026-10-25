@@ -1937,7 +1937,9 @@ def get_meta():
     }
 
 
-_VIDEO_CODECS = ["libx264", "libx265", "libvpx-vp9", "h264_nvenc", "hevc_nvenc"]
+# The *_qsv encoders (Intel QuickSync, roop/qsv_encode.py) are offered only where this ffmpeg lists them.
+_VIDEO_CODECS = ["libx264", "libx265", "libvpx-vp9", "h264_nvenc", "hevc_nvenc",
+                 "h264_qsv", "hevc_qsv", "av1_qsv"]
 _codec_cache = {"list": None}
 
 

@@ -1,0 +1,2 @@
+RESULT: render DIED at frame 51 -> OSError [Errno 32] Broken pipe  Roop Ultimate error: FFMPEG encountered the following error while 
+writers made: ['h264_nvenc', 'h264_nvenc'] | committed segments: 1

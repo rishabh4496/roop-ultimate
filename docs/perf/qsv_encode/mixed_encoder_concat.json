@@ -1,0 +1,108 @@
+{
+ "ffmpeg": "ffmpeg version 8.1.2 Copyright (c) 2000-2026 the FFmpeg developers",
+ "frames_per_segment": 60,
+ "hevc": {
+  "encoders": [
+   "hevc_nvenc",
+   "libx265",
+   "hevc_nvenc"
+  ],
+  "expected_frames": 180,
+  "control_same_encoder (X+X)": {
+   "mp4-concat-copy": {
+    "exit": 0,
+    "frames": 120,
+    "decoder_error_lines": 0,
+    "first_error": ""
+   },
+   "raw-annexb": {
+    "frames": 120,
+    "decoder_error_lines": 0,
+    "first_error": ""
+   },
+   "annexb->mp4 hvc1": {
+    "exit": 0,
+    "frames": 118,
+    "decoder_error_lines": 3,
+    "first_error": "[null @ 000001D7EDD896C0] Application provided invalid, non monotonically increasing dts to muxer in stream 0: 58 >= 58"
+   },
+   "annexb->mp4 hev1": {
+    "exit": 0,
+    "frames": 118,
+    "decoder_error_lines": 3,
+    "first_error": "[null @ 0000026E5DA21E40] Application provided invalid, non monotonically increasing dts to muxer in stream 0: 58 >= 58"
+   }
+  },
+  "mixed (X+Y+X)": {
+   "mp4-concat-copy": {
+    "exit": 0,
+    "frames": 120,
+    "decoder_error_lines": 71,
+    "first_error": "[hevc @ 00000253411973C0] alignment_bit_equal_to_one=0"
+   },
+   "raw-annexb": {
+    "frames": 180,
+    "decoder_error_lines": 0,
+    "first_error": ""
+   },
+   "annexb->mp4 hvc1": {
+    "exit": 0,
+    "frames": 118,
+    "decoder_error_lines": 74,
+    "first_error": "[hevc @ 000001AB9A93DD80] alignment_bit_equal_to_one=0"
+   },
+   "annexb->mp4 hev1": {
+    "exit": 0,
+    "frames": 178,
+    "decoder_error_lines": 4,
+    "first_error": "[null @ 000001BC15423980] Application provided invalid, non monotonically increasing dts to muxer in stream 0: 58 >= 58"
+   }
+  }
+ },
+ "h264": {
+  "encoders": [
+   "h264_nvenc",
+   "libx264",
+   "h264_nvenc"
+  ],
+  "expected_frames": 180,
+  "control_same_encoder (X+X)": {
+   "mp4-concat-copy": {
+    "exit": 0,
+    "frames": 120,
+    "decoder_error_lines": 0,
+    "first_error": ""
+   },
+   "raw-annexb": {
+    "frames": 120,
+    "decoder_error_lines": 0,
+    "first_error": ""
+   },
+   "annexb->mp4 avc1": {
+    "exit": 0,
+    "frames": 118,
+    "decoder_error_lines": 2,
+    "first_error": "[null @ 000002F680C1C6C0] Application provided invalid, non monotonically increasing dts to muxer in stream 0: 117 >= 11"
+   }
+  },
+  "mixed (X+Y+X)": {
+   "mp4-concat-copy": {
+    "exit": 0,
+    "frames": 180,
+    "decoder_error_lines": 0,
+    "first_error": ""
+   },
+   "raw-annexb": {
+    "frames": 180,
+    "decoder_error_lines": 0,
+    "first_error": ""
+   },
+   "annexb->mp4 avc1": {
+    "exit": 0,
+    "frames": 178,
+    "decoder_error_lines": 2,
+    "first_error": "[null @ 0000017C6C1DD880] Application provided invalid, non monotonically increasing dts to muxer in stream 0: 177 >= 17"
+   }
+  }
+ }
+}

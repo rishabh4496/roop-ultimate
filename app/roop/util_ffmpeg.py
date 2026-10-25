@@ -222,6 +222,9 @@ def _rate_control(codec: str, quality) -> List[str]:
         if preset not in NVENC_PRESETS:
             preset = NVENC_PRESET_DEFAULT
         return ['-rc', 'vbr', '-cq', str(q), '-preset', preset, '-tune', 'hq']
+    from roop import qsv_encode
+    if qsv_encode.is_qsv(codec):
+        return qsv_encode.rate_control_args(codec, quality)
     return ['-crf', str(q)]
 
 

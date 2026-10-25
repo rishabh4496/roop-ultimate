@@ -261,7 +261,12 @@ def log_session(tag: str, sess, requested=None, model_file=None) -> None:
             _sessions[sig] = rec
         note = ''
         if req and bound != req[0]:
-            note = '  !! bound %s but %s was requested first' % (bound, req[0])
+            if getattr(sess, 'native_runner', False):
+                # Routed on purpose (ROOP_OPENVINO_NATIVE), not a silent drop: say so instead of raising the alarm
+                # reserved for a session ORT could not build on the requested provider.
+                note = '  (routed to %s by ROOP_OPENVINO_NATIVE)' % bound
+            else:
+                note = '  !! bound %s but %s was requested first' % (bound, req[0])
         print('[Session] %s file=%s provider=%s trt_fp16=%s input=%s requested=%s%s'
               % (tag, model_file, bound, fp16, shapes or '-',
                  ','.join(r.replace('ExecutionProvider', '') for r in req) or '-',

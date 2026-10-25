@@ -1746,13 +1746,7 @@ def batch_process(output_method, files:list[ProcessEntry], use_new_method) -> No
             # ffmpeg in seconds instead of silently hanging the frame pipe partway
             # through a render and wasting the whole analysis. Most common cause on
             # Windows: Smart App Control blocking an unsigned ffmpeg DLL.
-            from roop.ffmpeg_writer import probe_encoder
-            enc_ok, enc_msg = probe_encoder(roop.globals.video_encoder, roop.globals.video_quality)
-            if not enc_ok:
-                update_status(
-                    f"Video encoder '{roop.globals.video_encoder}' is not working, aborting. "
-                    f"{enc_msg}"
-                )
+            if not ensure_video_encoder():
                 end_processing('Processing stopped: video encoder unavailable.')
                 return
 
@@ -2002,6 +1996,26 @@ def final_video_destination(temp_video: str, source_path: str, index: int = 0) -
     if fixed_output and index == 0:
         return os.path.join(roop.globals.output_path, fixed_output)
     return util.replace_template(temp_video, index=index)
+
+
+def ensure_video_encoder() -> bool:
+    """Job-start encoder pre-flight. True when ``roop.globals.video_encoder`` can encode.
+
+    A configured NVENC encoder that cannot start (sessions saturated by other applications, out of memory, no
+    NVIDIA device) used to abort the job here. Its Intel QuickSync counterpart is now tried first, for THIS render
+    only and for the whole file -- never per segment: stream-copy joining of two different encoders' segments
+    drops frames with exit code 0 (``roop/qsv_encode.py``). Config is not touched.
+    """
+    from roop.ffmpeg_writer import probe_encoder
+    from roop import qsv_encode
+    choice = qsv_encode.choose_encoder(roop.globals.video_encoder, roop.globals.video_quality, probe_encoder)
+    if choice.ok:
+        if choice.swapped:
+            roop.globals.video_encoder = choice.codec
+            update_status(choice.message)
+        return True
+    update_status(f"Video encoder '{roop.globals.video_encoder}' is not working, aborting. {choice.message}")
+    return False
 
 
 def end_processing(msg:str):

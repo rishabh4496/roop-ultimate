@@ -159,6 +159,19 @@ been measured on a real Intel accelerator; on the 4070 box only OpenVINO's CPU d
 | `ROOP_OPENVINO_RECORD` | unset | Directory: capture real live model inputs (`<family>.calib.npz`) for INT8 calibration. Real inputs only; never synthetic. |
 | `ROOP_OPENVINO_RECORD_EVERY` | 2 | Keep every Nth recorded call. |
 
+## Intel QuickSync encode (`roop/qsv_encode.py`)
+
+`h264_qsv` / `hevc_qsv` / `av1_qsv` as the output codec, and as the job-start fallback when the configured NVENC
+encoder cannot start. ONE encoder for the whole file: HEVC segments from two different encoders join by stream copy
+with exit code 0 and lose frames (`docs/perf/qsv_encode/mixed_encoder_concat.json`), so there is no per-segment
+split. Not a speed-up (the render is GPU-bound and NVENC encodes ~440 fps at 720p). **No QuickSync frame has been
+encoded yet**: the bundled ffmpeg 8.1.2 has no `*_qsv` encoder and no Intel GPU is enabled on either machine.
+
+| Flag | Default | Effect |
+|------|---------|--------|
+| `ROOP_QSV` | on | `0` removes QuickSync from the encode fallback and from the Stage 1 keyframe decode rung (`video_io_hw.qsv_wanted`). |
+| `ROOP_QSV_PRESET` | `medium` | `veryfast` ... `veryslow`; a typo falls back to `medium`. Quality is the app's `video_quality`, sent as `-global_quality`. |
+
 ## Runtime autotuning
 
 | Flag | Default | Effect |

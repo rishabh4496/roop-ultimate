@@ -221,6 +221,17 @@ def test_a_pool_extra_on_a_different_provider_gets_its_own_line(capsys):
     assert '!! bound CPUExecutionProvider but TensorrtExecutionProvider was requested first' in out
 
 
+def test_a_deliberately_routed_native_runner_is_not_reported_as_a_downgrade(capsys):
+    # Found by tests/probe_openvino_seams_e2e.py: SCRFD adopted by the OpenVINO runner logged "!! bound
+    # OpenVINOExecutionProvider but Tensorrt... was requested first", the line meant for a silent drop to CPU.
+    class Routed(FakeSess):
+        native_runner = True
+    bp.log_session('retinaface:10g', Routed(['OpenVINOExecutionProvider']), [TRT, CPU])
+    out = capsys.readouterr().out
+    assert '!!' not in out
+    assert 'routed to OpenVINOExecutionProvider by ROOP_OPENVINO_NATIVE' in out
+
+
 def test_no_session_is_a_noop_not_a_swallowed_error(capsys):
     bp.log_session('detector', None, [CPU])
     assert capsys.readouterr().out == ''
