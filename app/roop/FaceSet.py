@@ -3,7 +3,7 @@ import numpy as np
 
 from roop.faceset_v2 import (FORMAT_NAME, FORMAT_VERSION, measure_lighting,
                               parse_pose_matrix_key, pose_matrix_cell,
-                              select_reference_index)
+                              select_reference_index, get_pose_matched_embedding)
 
 class FaceSet:
     faces = []
@@ -46,6 +46,7 @@ class FaceSet:
         self.reference_rejected = []
         self.faceset_valid = True
         self.faceset_migration = None
+        self.mean_embedding = None
 
     def AverageEmbeddings(self):
         # V2 deliberately keeps each pose-specific face embedding intact.  The
@@ -94,6 +95,14 @@ class FaceSet:
             if norm > 1e-8 and np.isfinite(arr).all():
                 self.identity_embedding = (arr / norm).astype(np.float32)
                 self.normalized_embedding = self.identity_embedding.copy()
+
+        mean_val = metadata.get('mean_embedding')
+        if mean_val is None:
+            mean_val = identity.get('mean_embedding')
+        if mean_val is None:
+            mean_val = value
+        if mean_val is not None:
+            self.mean_embedding = self._unit_vector(mean_val)
         poses = []
         for entry in self.face_metadata:
             geo = entry.get('geometry') or {}
@@ -151,6 +160,10 @@ class FaceSet:
         if not vectors or len({v.shape for v in vectors}) != 1:
             return None
         return self._unit_vector(np.mean(np.asarray(vectors), axis=0))
+
+    def get_pose_matched_embedding(self, target_yaw: float, target_pitch: float, device=None):
+        """Fast GPU helper computing inverse-distance weighted SLERP across top-3 closest angle embeddings."""
+        return get_pose_matched_embedding(self, target_yaw, target_pitch, device=device)
 
     def pose_bin_embedding(self, pose=None, fallback=True):
         """Return the 3x3 pose-cell centroid for `pose`.

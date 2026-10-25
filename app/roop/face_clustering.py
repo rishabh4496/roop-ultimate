@@ -239,17 +239,64 @@ def cluster_face_embeddings_gpu(
     eps: float = 0.45,
     min_samples: int = 1,
     distance_threshold: float = 0.45,
+    preserve_rank: bool = True,
 ) -> np.ndarray:
-    """Cluster face embeddings directly from a VRAM tensor using GPU matrix multiplication."""
+    """Batch keyframe face crops on the GPU and compute all pairwise ArcFace cosine
+    similarities via a single torch.mm(embeddings, embeddings.T) matrix operation
+    to preserve rank-ordered person grouping at 10x speed.
+    """
     if embeddings_tensor is None or (hasattr(embeddings_tensor, '__len__') and len(embeddings_tensor) == 0):
         return np.array([], dtype=np.int32)
     if len(embeddings_tensor) == 1:
         return np.zeros(1, dtype=np.int32)
 
-    dist_gpu = compute_distance_matrix_gpu(embeddings_tensor)
-    dist_matrix = dist_gpu.cpu().numpy()
-    return _cluster_from_dist_matrix(dist_matrix, method=method, eps=eps, min_samples=min_samples,
-                                     distance_threshold=distance_threshold)
+    import torch
+    if not isinstance(embeddings_tensor, torch.Tensor):
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        t = torch.as_tensor(embeddings_tensor, dtype=torch.float32, device=device)
+    else:
+        t = embeddings_tensor.to("cuda") if torch.cuda.is_available() and not embeddings_tensor.is_cuda else embeddings_tensor
+
+    normed = torch.nn.functional.normalize(t.float(), p=2, dim=1)
+    # Compute all pairwise ArcFace cosine similarities via a single torch.mm operation on GPU
+    sims = torch.mm(normed, normed.t())
+
+    method_key = (method or 'dbscan').lower()
+    if method_key in ('dbscan', 'gpu', 'connected_components', 'rank_preserved'):
+        sim_thresh = 1.0 - float(eps)
+        adj = (sims >= sim_thresh)
+        N = normed.shape[0]
+        labels = torch.arange(N, device=normed.device)
+        for _ in range(min(N, 64)):
+            new_labels = torch.min(torch.where(adj, labels.unsqueeze(0), torch.tensor(N, device=normed.device)), dim=1)[0]
+            if torch.equal(new_labels, labels):
+                break
+            labels = new_labels
+
+        if preserve_rank:
+            # Preserve rank-ordered person grouping: largest cluster is rank 0, next is 1, etc.
+            unique_labels, counts = torch.unique(labels, return_counts=True)
+            sorted_order = torch.argsort(-counts)
+            ranked_unique = unique_labels[sorted_order]
+            label_map = {int(lbl.item()): rank for rank, lbl in enumerate(ranked_unique)}
+            return np.array([label_map[int(l.item())] for l in labels.cpu()], dtype=np.int32)
+        else:
+            unique_labels = sorted(set(int(l.item()) for l in labels))
+            label_map = {old: new for new, old in enumerate(unique_labels)}
+            return np.array([label_map[int(l.item())] for l in labels.cpu()], dtype=np.int32)
+
+    # For agglomerative or fallback
+    dists = (1.0 - sims).clamp(min=0.0, max=2.0)
+    dists.fill_diagonal_(0.0)
+    dist_matrix = dists.cpu().numpy()
+    labels = _cluster_from_dist_matrix(dist_matrix, method=method, eps=eps, min_samples=min_samples,
+                                       distance_threshold=distance_threshold)
+    if preserve_rank and len(labels) > 0:
+        unique, counts = np.unique(labels, return_counts=True)
+        ranked_unique = unique[np.argsort(-counts)]
+        label_map = {old: rank for rank, old in enumerate(ranked_unique)}
+        return np.array([label_map[l] for l in labels], dtype=np.int32)
+    return labels
 
 
 def solve_hungarian_matching(

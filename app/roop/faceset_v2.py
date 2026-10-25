@@ -582,6 +582,7 @@ def _entry(face, image, source_index):
         "identity_details": _identity_details(crop, sharp_score, image=image, face=face),
         "pose_bin": _pose_bin(pose),
         "pose_cell": pose_matrix_key(pose_matrix_cell(pose)),
+        "pose": [_json_float(pose[0]), _json_float(pose[1]), _json_float(pose[2])] if pose else None,
     }
 
 
@@ -913,6 +914,7 @@ def prepare_faceset_v2(faces, images, source_name="", min_quality=None,
             "arcface_embedding": _json_array(global_embedding),
             "embedding": _json_array(global_embedding),
             "normalized_embedding": _json_array(global_embedding),
+            "mean_embedding": _json_array(global_embedding),
             "aggregation": "quality_weighted_mean_of_pose_specific_embeddings",
         },
         "identity_details": global_details,
@@ -924,6 +926,7 @@ def prepare_faceset_v2(faces, images, source_name="", min_quality=None,
         # beside them because `final_quality_gate` requires the key and
         # `pose_source_selector` drives runtime selection from `sources`.
         "default_embedding": _json_array(global_embedding),
+        "mean_embedding": _json_array(global_embedding),
         "pose_bins": pose_bins,
         "dermal_patch": dermal_patch,
         "pose_bank": pose_bank,
@@ -1075,6 +1078,10 @@ def validate_metadata(metadata):
     if default_embedding is not None and _normalised(default_embedding) is None:
         raise ValueError("FaceSet default embedding is invalid")
 
+    mean_embedding = metadata.get("mean_embedding")
+    if mean_embedding is not None and _normalised(mean_embedding) is None:
+        raise ValueError("FaceSet mean embedding is invalid")
+
     pose_bins = metadata.get("pose_bins")
     if pose_bins is not None:
         if not isinstance(pose_bins, dict):
@@ -1217,6 +1224,165 @@ def measure_lighting(image, bbox=None):
     return _appearance(crop)
 
 
+
+
+def slerp_vectors(v0: Any, v1: Any, t: float, eps: float = 1e-7) -> Any:
+    """Spherical linear interpolation between two normalized vectors on GPU/CPU."""
+    import torch
+    is_tensor = isinstance(v0, torch.Tensor)
+    if not is_tensor:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        t0 = torch.as_tensor(v0, dtype=torch.float32, device=device)
+        t1 = torch.as_tensor(v1, dtype=torch.float32, device=device)
+    else:
+        t0 = v0.float()
+        t1 = v1.float()
+
+    t0_norm = torch.nn.functional.normalize(t0, p=2, dim=-1)
+    t1_norm = torch.nn.functional.normalize(t1, p=2, dim=-1)
+
+    dot = torch.clamp(torch.sum(t0_norm * t1_norm, dim=-1, keepdim=True), -1.0, 1.0)
+    if torch.abs(dot) > 0.9995:
+        res = (1.0 - t) * t0_norm + t * t1_norm
+        out = torch.nn.functional.normalize(res, p=2, dim=-1)
+        return out if is_tensor else out.cpu().numpy()
+
+    theta_0 = torch.acos(dot)
+    sin_theta_0 = torch.sin(theta_0)
+    theta_t = theta_0 * t
+    sin_theta_t = torch.sin(theta_t)
+
+    s0 = torch.sin(theta_0 - theta_t) / (sin_theta_0 + eps)
+    s1 = sin_theta_t / (sin_theta_0 + eps)
+
+    res = (s0 * t0_norm) + (s1 * t1_norm)
+    out = torch.nn.functional.normalize(res, p=2, dim=-1)
+    return out if is_tensor else out.cpu().numpy()
+
+
+def get_pose_matched_embedding(
+    fsz_bank: Any,
+    target_yaw: float,
+    target_pitch: float,
+    device: Optional[str] = None
+) -> Any:
+    """Fast GPU helper that computes inverse-distance weighted spherical interpolation (SLERP)
+    across the top-3 closest angle embeddings in the .fsz bank so profile/angled shots in Stage 3
+    use angle-matched source features instead of a flat frontal average.
+    """
+    if fsz_bank is None:
+        return None
+
+    import torch
+    dev = device or ("cuda" if torch.cuda.is_available() else "cpu")
+
+    vectors = []
+    poses = []
+
+    # 1. Extract from FaceSet instance
+    if hasattr(fsz_bank, "face_metadata") and fsz_bank.face_metadata:
+        for entry in fsz_bank.face_metadata:
+            ident = entry.get("identity") or {}
+            emb = ident.get("normalized_embedding") or ident.get("arcface_embedding") or ident.get("embedding")
+            geo = entry.get("geometry") or {}
+            yaw = geo.get("yaw", 0.0)
+            pitch = geo.get("pitch", 0.0)
+            if emb is not None:
+                vectors.append(np.asarray(emb, dtype=np.float32))
+                poses.append((float(yaw or 0.0), float(pitch or 0.0)))
+    elif hasattr(fsz_bank, "faces") and fsz_bank.faces:
+        canonical_fn = getattr(fsz_bank, "canonical_poses", None)
+        face_poses = canonical_fn() if callable(canonical_fn) else (getattr(fsz_bank, "face_poses", None) or [])
+        for i, face in enumerate(fsz_bank.faces):
+            emb = getattr(face, "normed_embedding", None)
+            if emb is None:
+                emb = getattr(face, "embedding", None)
+            if emb is None and isinstance(face, dict):
+                emb = face.get("normed_embedding", face.get("embedding"))
+            pose = face_poses[i] if face_poses and i < len(face_poses) and face_poses[i] is not None else (0.0, 0.0)
+            if emb is not None:
+                vectors.append(np.asarray(emb, dtype=np.float32))
+                poses.append((float(pose[0] or 0.0), float(pose[1] or 0.0)))
+    # 2. Extract from metadata dict (loaded from .fsz)
+    elif isinstance(fsz_bank, dict):
+        if "sources" in fsz_bank:
+            for entry in fsz_bank["sources"]:
+                ident = entry.get("identity") or {}
+                emb = ident.get("normalized_embedding") or ident.get("arcface_embedding") or ident.get("embedding")
+                geo = entry.get("geometry") or {}
+                yaw = geo.get("yaw", 0.0)
+                pitch = geo.get("pitch", 0.0)
+                if emb is not None:
+                    vectors.append(np.asarray(emb, dtype=np.float32))
+                    poses.append((float(yaw or 0.0), float(pitch or 0.0)))
+        elif "embeddings" in fsz_bank and "poses" in fsz_bank:
+            for emb, p in zip(fsz_bank["embeddings"], fsz_bank["poses"]):
+                if emb is not None:
+                    vectors.append(np.asarray(emb, dtype=np.float32))
+                    poses.append((float(p[0] or 0.0), float(p[1] or 0.0)))
+    elif isinstance(fsz_bank, (list, tuple)):
+        for item in fsz_bank:
+            if isinstance(item, dict):
+                emb = item.get("embedding") or item.get("normed_embedding")
+                yaw = item.get("yaw", 0.0) or (item.get("pose", [0.0, 0.0])[0])
+                pitch = item.get("pitch", 0.0) or (item.get("pose", [0.0, 0.0])[1])
+                if emb is not None:
+                    vectors.append(np.asarray(emb, dtype=np.float32))
+                    poses.append((float(yaw or 0.0), float(pitch or 0.0)))
+
+    # Fallback to default/mean embedding if no valid vectors found
+    if not vectors:
+        default_emb = getattr(fsz_bank, "default_embedding", None)
+        if default_emb is None and isinstance(fsz_bank, dict):
+            default_emb = fsz_bank.get("mean_embedding") or fsz_bank.get("default_embedding")
+        if default_emb is not None:
+            t = torch.as_tensor(default_emb, dtype=torch.float32, device=dev)
+            return torch.nn.functional.normalize(t.flatten(), p=2, dim=0)
+        return None
+
+    # If only 1 face in bank, return its normalized embedding
+    if len(vectors) == 1:
+        t = torch.as_tensor(vectors[0], dtype=torch.float32, device=dev)
+        return torch.nn.functional.normalize(t.flatten(), p=2, dim=0)
+
+    # Compute angular Euclidean distances to target (target_yaw, target_pitch)
+    ty = float(target_yaw)
+    tp = float(target_pitch)
+    dists = [math.hypot(y - ty, p - tp) for y, p in poses]
+
+    # Pick top-3 closest angle embeddings
+    k = min(3, len(vectors))
+    sorted_order = sorted(range(len(dists)), key=lambda idx: dists[idx])[:k]
+
+    # Exact match fast-path: if closest distance is virtually 0
+    if dists[sorted_order[0]] < 1e-4:
+        t = torch.as_tensor(vectors[sorted_order[0]], dtype=torch.float32, device=dev)
+        return torch.nn.functional.normalize(t.flatten(), p=2, dim=0)
+
+    # Inverse-distance weights across top-3
+    inv_weights = [1.0 / (dists[idx] + 1e-5) for idx in sorted_order]
+    sum_w = sum(inv_weights)
+    norm_weights = [w / sum_w for w in inv_weights]
+
+    vec_tensors = [torch.nn.functional.normalize(
+        torch.as_tensor(vectors[idx], dtype=torch.float32, device=dev).flatten(), p=2, dim=0)
+        for idx in sorted_order]
+
+    # Hierarchical spherical linear interpolation (SLERP) across the top-3 closest
+    if k == 2:
+        res = slerp_vectors(vec_tensors[0], vec_tensors[1], norm_weights[1])
+    else:
+        # k == 3: Interpolate first two, then interpolate with third
+        w01 = norm_weights[0] + norm_weights[1]
+        t12 = norm_weights[1] / max(w01, 1e-6)
+        v01 = slerp_vectors(vec_tensors[0], vec_tensors[1], t12)
+        res = slerp_vectors(v01, vec_tensors[2], norm_weights[2])
+
+    if not isinstance(res, torch.Tensor):
+        res = torch.as_tensor(res, dtype=torch.float32, device=dev)
+    return torch.nn.functional.normalize(res.flatten(), p=2, dim=0)
+
+
 def select_reference_index(metadata, pose=None, appearance=None, embedding=None):
     """Select a cached source index using pose, identity, quality and lighting."""
     sources = list((metadata or {}).get("sources") or [])
@@ -1251,5 +1417,5 @@ __all__ = [
     "FORMAT_NAME", "FORMAT_VERSION", "METADATA_MEMBER", "POSE_BINS",
     "prepare_faceset_v2", "write_faceset_v2", "read_faceset_archive",
     "validate_metadata", "migrate_legacy_fsz", "measure_lighting",
-    "select_reference_index",
+    "select_reference_index", "get_pose_matched_embedding", "slerp_vectors",
 ]

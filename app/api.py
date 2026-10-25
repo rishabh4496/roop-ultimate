@@ -2922,9 +2922,11 @@ def target_preview_grid(index: int = 0, frames: str = "", width: int = 200,
                                 mode="bilinear",
                                 align_corners=False
                             )[0].clamp(0, 255).byte()
+                            w_eff = width
                         else:
                             t_down = t
                             h_out = h_in
+                            w_eff = w_in
                         bgr = t_down[[2, 1, 0], :, :].permute(1, 2, 0).contiguous().cpu().numpy()
                         ok, buf = cv2.imencode(".jpg", bgr, [int(cv2.IMWRITE_JPEG_QUALITY), int(quality)])
                         if ok:
@@ -2932,7 +2934,7 @@ def target_preview_grid(index: int = 0, frames: str = "", width: int = 200,
                             encoded[f] = data
                             tag = _frame_etag(filename, f, width, "jpg", quality)
                             _encoded_put(tag, data, "image/jpeg")
-                            telemetry.note_decoded(h_out * width * 3, device=True)
+                            telemetry.note_decoded(h_out * w_eff * 3, device=True)
         except Exception as exc:
             _swallowed("api.py:target_preview_grid_hw", exc, "HW filmstrip downscale failed; falling back to CPU")
 

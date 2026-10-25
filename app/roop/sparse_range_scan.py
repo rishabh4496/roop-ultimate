@@ -395,8 +395,18 @@ def _scan_active_ranges_hw(
     import torch
 
     t0 = time.perf_counter()
-    with NvSparseKeyframeReader(source_video, adaptive_midpoints=True, max_gop_gap=60, enable_decode_stats=True) as reader:
-        table = reader.keyframe_table()
+    with NvSparseKeyframeReader(
+        source_video,
+        adaptive_midpoints=True,
+        max_gop_gap=60,
+        enable_decode_stats=True,
+        start_frame=frame_start,
+        end_frame=frame_end,
+        in_point=frame_start,
+        out_point=frame_end,
+    ) as reader:
+        # Pre-scan packets to discover keyframes and exact stream length
+        reader.keyframe_table()
         total_packets = reader._total_packet_count or (frame_count or 0)
         actual_fps = reader.fps if reader.fps > 0 else (fps or 25.0)
         if frame_end is None or frame_end <= 0:
@@ -429,7 +439,9 @@ def _scan_active_ranges_hw(
         samples_done = 0
         detector_errors = 0
 
-        # Build sample schedule: sample GOP keyframes (plus adaptive midpoints when GOP > 60)
+        # Build sample schedule using PyNvVideoCodec demuxer packet filtering:
+        # decode only IDR/I-frames (plus midpoint frames only if GOP > 60 frames) within the active trim range [frame_start, frame_end)
+        table = reader.keyframe_table(start_frame=frame_start, end_frame=frame_end)
         rel_kfs = [k - frame_start for k, _ in table if frame_start <= k < frame_end]
         gaps = [rel_kfs[i+1] - rel_kfs[i] for i in range(len(rel_kfs)-1)] if len(rel_kfs) > 1 else [total_frames]
         median_gap = np.median(gaps) if gaps else total_frames
@@ -439,14 +451,10 @@ def _scan_active_ranges_hw(
             if (total_frames - 1) not in scheduled_samples:
                 scheduled_samples.append(total_frames - 1)
         else:
-            scheduled_samples = list(rel_kfs) if rel_kfs else [0]
-            expanded = []
-            for i, idx in enumerate(scheduled_samples):
-                expanded.append(idx)
-                next_idx = scheduled_samples[i+1] if i + 1 < len(scheduled_samples) else total_frames
-                if next_idx - idx > 60:
-                    expanded.append(idx + (next_idx - idx) // 2)
-            scheduled_samples = sorted(set(expanded))
+            sample_tbl = reader.sample_table(max_gop_gap=60, start_frame=frame_start, end_frame=frame_end)
+            scheduled_samples = [idx - frame_start for idx, pts, is_key in sample_tbl if frame_start <= idx < frame_end]
+            if not scheduled_samples:
+                scheduled_samples = [0]
 
         dec = nvc.CreateSimpleDecoder(source_video, reader.gpu_id, 0, 0, True, 0, 0, False, 1,
                                      nvc.OutputColorType.RGBP, False, reader.enable_decode_stats)
@@ -516,6 +524,15 @@ def _scan_active_ranges_hw(
         )
         active_count = int(np.sum(mask))
         percentage = round((active_count / total_frames) * 100.0, 1)
+        # Auto-populate timeline chapter markers at scene cuts
+        try:
+            from roop.face_bank import get_face_bank
+            bank = get_face_bank()
+            if bank is not None:
+                bank.scene_cuts.update(int(c) for c in cut_detector.scene_cuts)
+        except Exception as exc:
+            _swallowed("sparse_range_scan:update_bank_cuts", exc, "scene cuts bank sync fallback")
+
         stats = dict(common, active_frames=active_count, total_frames=total_frames,
                      skipped_frames=total_frames - active_count, percentage=percentage,
                      ranges=ranges,

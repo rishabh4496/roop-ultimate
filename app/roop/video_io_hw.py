@@ -493,7 +493,10 @@ class NvSparseKeyframeReader:
 
     def __init__(self, path: str, *, gpu_id: int = 0, tag: str = "stage1-keyframes",
                  adaptive_midpoints: bool = True, max_gop_gap: int = 60,
-                 enable_decode_stats: bool = True) -> None:
+                 enable_decode_stats: bool = True,
+                 start_frame: int = 0, end_frame: Optional[int] = None,
+                 in_point: Optional[int] = None, out_point: Optional[int] = None,
+                 trim_in: Optional[float] = None, trim_out: Optional[float] = None) -> None:
         nvc, torch = _load_nvc()
         self._nvc, self._torch = nvc, torch
         self.path = path
@@ -514,6 +517,15 @@ class NvSparseKeyframeReader:
                                 f"{type(exc).__name__}: {exc}") from exc
         self.codec = _codec_name(nvc, self._codec_id)
         self._table: Optional[List[Tuple[int, int]]] = None
+
+        if in_point is not None:
+            start_frame = int(in_point)
+        if out_point is not None:
+            end_frame = int(out_point)
+        if trim_in is not None or trim_out is not None:
+            start_frame, end_frame = trim_range(trim_in, trim_out, self.fps)
+        self.start_frame = max(0, int(start_frame or 0))
+        self.end_frame = int(end_frame) if end_frame is not None and int(end_frame) > 0 else None
         telemetry.register_decoder(tag, self.backend)
 
     def _classify(self, packet) -> bool:
@@ -543,31 +555,54 @@ class NvSparseKeyframeReader:
         self._pts_by_rank = {i: pts for i, pts in enumerate(sorted_pts)}
         return keys, pts_all
 
-    def keyframe_table(self) -> List[Tuple[int, int]]:
-        """``[(display_index, pts)]`` of the accepted keyframes."""
+    def keyframe_table(self, start_frame: Optional[int] = None, end_frame: Optional[int] = None) -> List[Tuple[int, int]]:
+        """``[(display_index, pts)]`` of the accepted keyframes within the active trim range."""
         if self._table is None:
             keys, pts_all = self._scan()
             rank = self._rank_by_pts
             self._table = [(rank[pts], pts) for pts, ok in keys if ok]
-        return list(self._table)
+        table = list(self._table)
+        sf = self.start_frame if start_frame is None else max(0, int(start_frame))
+        ef = self.end_frame if end_frame is None else int(end_frame)
+        if sf > 0 or ef is not None:
+            table = [(idx, pts) for idx, pts in table if idx >= sf and (ef is None or idx < ef)]
+        return table
 
-    def sample_table(self, max_gop_gap: Optional[int] = None) -> List[Tuple[int, int, bool]]:
+    def sample_table(self, max_gop_gap: Optional[int] = None, start_frame: Optional[int] = None, end_frame: Optional[int] = None) -> List[Tuple[int, int, bool]]:
         """``[(display_index, pts, is_keyframe)]`` of keyframes plus adaptive midpoint frames
-        whenever the gap between keyframes exceeds max_gop_gap (default 60)."""
-        table = self.keyframe_table()
-        if not table:
-            return []
+        whenever the gap between keyframes exceeds max_gop_gap (default 60) within the active trim range."""
+        table = self.keyframe_table(start_frame=start_frame, end_frame=end_frame)
+        sf = self.start_frame if start_frame is None else max(0, int(start_frame))
+        ef = self.end_frame if end_frame is None else (int(end_frame) if int(end_frame) > 0 else (self._total_packet_count or None))
         gap_limit = self.max_gop_gap if max_gop_gap is None else max(1, int(max_gop_gap))
         samples: List[Tuple[int, int, bool]] = []
+        if not table:
+            if ef is not None and ef > sf:
+                mid_idx = sf + (ef - sf) // 2
+                mid_pts = self._pts_by_rank.get(mid_idx, mid_idx)
+                samples.append((mid_idx, mid_pts, False))
+            return samples
+
+        first_idx, first_pts = table[0]
+        if first_idx - sf > gap_limit:
+            mid_idx = sf + (first_idx - sf) // 2
+            mid_pts = self._pts_by_rank.get(mid_idx, int(round((sf + first_pts) / 2)))
+            samples.append((mid_idx, mid_pts, False))
+
         for i, (idx, pts) in enumerate(table):
             samples.append((idx, pts, True))
             if i + 1 < len(table):
                 next_idx, next_pts = table[i + 1]
                 gap = next_idx - idx
                 if gap > gap_limit:
-                    # Adaptive midpoint frame only when GOP length exceeds 60 frames
                     mid_idx = idx + gap // 2
                     mid_pts = self._pts_by_rank.get(mid_idx, int(round((pts + next_pts) / 2)))
+                    samples.append((mid_idx, mid_pts, False))
+            elif ef is not None:
+                gap = ef - idx
+                if gap > gap_limit:
+                    mid_idx = idx + gap // 2
+                    mid_pts = self._pts_by_rank.get(mid_idx, pts + 1)
                     samples.append((mid_idx, mid_pts, False))
             elif self._total_packet_count > 0:
                 gap = self._total_packet_count - idx
@@ -583,15 +618,20 @@ class NvSparseKeyframeReader:
                 deduped.append(item)
         return deduped
 
-    def sample_frames(self, max_frames: Optional[int] = None, enable_stats: Optional[bool] = None) -> Iterator[HwFrame]:
+    def sample_frames(self, max_frames: Optional[int] = None, enable_stats: Optional[bool] = None,
+                      start_frame: Optional[int] = None, end_frame: Optional[int] = None) -> Iterator[HwFrame]:
         """Decode keyframes plus adaptive midpoints directly into VRAM, attaching decode statistics."""
-        return self.keyframes(max_frames=max_frames, sample_midpoints=True, enable_stats=enable_stats)
+        return self.keyframes(max_frames=max_frames, sample_midpoints=True, enable_stats=enable_stats,
+                              start_frame=start_frame, end_frame=end_frame)
 
     def keyframes(self, max_frames: Optional[int] = None, sample_midpoints: bool = False,
-                  enable_stats: Optional[bool] = None) -> Iterator[HwFrame]:
+                  enable_stats: Optional[bool] = None,
+                  start_frame: Optional[int] = None, end_frame: Optional[int] = None) -> Iterator[HwFrame]:
         nvc, torch = self._nvc, self._torch
         use_stats = bool(self.enable_decode_stats if enable_stats is None else enable_stats)
-        table = self.sample_table() if sample_midpoints else [(idx, pts, True) for idx, pts in self.keyframe_table()]
+        table = (self.sample_table(start_frame=start_frame, end_frame=end_frame)
+                 if sample_midpoints
+                 else [(idx, pts, True) for idx, pts in self.keyframe_table(start_frame=start_frame, end_frame=end_frame)])
         if not table:
             return
 

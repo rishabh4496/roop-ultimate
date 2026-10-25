@@ -42,6 +42,19 @@ def pose_embedding_for_target(source_faceset, target_face):
             return direct
         if int(getattr(source_faceset, 'format_version', 1) or 1) < 2:
             return None
+        # V2 Pose-matched embedding via inverse-distance weighted SLERP across top-3 closest angle embeddings
+        if hasattr(source_faceset, 'get_pose_matched_embedding'):
+            try:
+                matched = source_faceset.get_pose_matched_embedding(pose[0], pose[1])
+                if matched is not None:
+                    if hasattr(matched, 'cpu'):
+                        matched = matched.cpu().numpy()
+                    vector = np.asarray(matched, dtype=np.float32).reshape(-1)
+                    norm = float(np.linalg.norm(vector))
+                    if norm > 1e-8 and np.isfinite(vector).all():
+                        return vector / norm
+            except Exception:
+                pass
         embedding = source_faceset.pose_bin_embedding(pose, fallback=False)
         if embedding is None:
             embedding = source_faceset.default_embedding
