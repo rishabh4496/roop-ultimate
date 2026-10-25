@@ -1,0 +1,113 @@
+{
+ "clip": "G:\\pinokio\\roop-keep\\Weeds.mp4",
+ "frames": 600,
+ "arms": [
+  "base",
+  "k4",
+  "k4r",
+  "k4r",
+  "k4",
+  "base",
+  "base"
+ ],
+ "results": [
+  {
+   "arm": "base",
+   "tag": "base_0",
+   "path": "G:\\pinokio\\api\\roop-ultimate\\app\\output\\ab_phase14\\base_0\\Weeds_21-00-06.mp4",
+   "wall": 492.66420245170593,
+   "elapsed": 451.1928448677063,
+   "swapped": 442,
+   "swap_pct": 56.7,
+   "seen": 779,
+   "noface_pct": null,
+   "plan_frames": 429,
+   "detector_calls": null,
+   "px_diff": null
+  },
+  {
+   "arm": "k4",
+   "tag": "k4_1",
+   "path": "G:\\pinokio\\api\\roop-ultimate\\app\\output\\ab_phase14\\k4_1\\Weeds_21-01-40.mp4",
+   "wall": 94.3431658744812,
+   "elapsed": 65.50236320495605,
+   "swapped": 478,
+   "swap_pct": 61.9,
+   "seen": 772,
+   "noface_pct": null,
+   "plan_frames": 473,
+   "detector_calls": 154,
+   "px_diff": 0.5732469045380014
+  },
+  {
+   "arm": "k4r",
+   "tag": "k4r_2",
+   "path": "G:\\pinokio\\api\\roop-ultimate\\app\\output\\ab_phase14\\k4r_2\\Weeds_21-03-15.mp4",
+   "wall": 95.44002389907837,
+   "elapsed": 67.11057305335999,
+   "swapped": 478,
+   "swap_pct": 61.9,
+   "seen": 772,
+   "noface_pct": null,
+   "plan_frames": 473,
+   "detector_calls": 154,
+   "px_diff": 0.5575389268663195
+  },
+  {
+   "arm": "k4r",
+   "tag": "k4r_3",
+   "path": "G:\\pinokio\\api\\roop-ultimate\\app\\output\\ab_phase14\\k4r_3\\Weeds_21-04-54.mp4",
+   "wall": 98.60926413536072,
+   "elapsed": 68.88015103340149,
+   "swapped": 478,
+   "swap_pct": 61.9,
+   "seen": 772,
+   "noface_pct": null,
+   "plan_frames": 473,
+   "detector_calls": 154,
+   "px_diff": 0.5667619267216435
+  },
+  {
+   "arm": "k4",
+   "tag": "k4_4",
+   "path": "G:\\pinokio\\api\\roop-ultimate\\app\\output\\ab_phase14\\k4_4\\Weeds_21-06-34.mp4",
+   "wall": 100.22036480903625,
+   "elapsed": 70.03841233253479,
+   "swapped": 478,
+   "swap_pct": 61.9,
+   "seen": 772,
+   "noface_pct": null,
+   "plan_frames": 473,
+   "detector_calls": 154,
+   "px_diff": 0.5736670434268905
+  },
+  {
+   "arm": "base",
+   "tag": "base_5",
+   "path": "G:\\pinokio\\api\\roop-ultimate\\app\\output\\ab_phase14\\base_5\\Weeds_21-08-13.mp4",
+   "wall": 99.6197440624237,
+   "elapsed": 69.0666732788086,
+   "swapped": 442,
+   "swap_pct": 56.7,
+   "seen": 779,
+   "noface_pct": null,
+   "plan_frames": 429,
+   "detector_calls": null,
+   "px_diff": 0.10413887080439815
+  },
+  {
+   "arm": "base",
+   "tag": "base_6",
+   "path": "G:\\pinokio\\api\\roop-ultimate\\app\\output\\ab_phase14\\base_6\\Weeds_21-09-54.mp4",
+   "wall": 101.21461963653564,
+   "elapsed": 71.06893992424011,
+   "swapped": 442,
+   "swap_pct": 56.7,
+   "seen": 779,
+   "noface_pct": null,
+   "plan_frames": 429,
+   "detector_calls": null,
+   "px_diff": 0.0
+  }
+ ]
+}

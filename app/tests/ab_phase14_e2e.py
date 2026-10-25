@@ -38,6 +38,9 @@ ARMS = {
     'k2': {'ROOP_PREPASS_FILTER': 'adaptive', 'ROOP_PREPASS_DETECT_INTERVAL': '2'},
     'k4': {'ROOP_PREPASS_FILTER': 'adaptive', 'ROOP_PREPASS_DETECT_INTERVAL': '4'},
     'k8': {'ROOP_PREPASS_FILTER': 'adaptive', 'ROOP_PREPASS_DETECT_INTERVAL': '8'},
+    # K=4 with the landmark net re-measuring every flow-placed face (roop/landmark_refresh.py)
+    'k4r': {'ROOP_PREPASS_FILTER': 'adaptive', 'ROOP_PREPASS_DETECT_INTERVAL': '4',
+            'ROOP_PREPASS_LANDMARK_REFRESH': '1'},
 }
 
 SWAPPED_RE = re.compile(r'swapped \([^)]*\)\s+(\d+)\s+([\d.]+)%')
@@ -50,8 +53,8 @@ CALLS_RE = re.compile(r'prepass_detect_interval (\d+): (\d+) detector call')
 def run_arm(name, args, swapper, mask, threads, tag):
     import compare_enhancers_video as C
     import sample_bench as sb
-    for k in ('ROOP_PREPASS_FILTER', 'ROOP_PREPASS_DETECT_INTERVAL'):
-        os.environ[k] = ARMS[name][k]
+    for k in ('ROOP_PREPASS_FILTER', 'ROOP_PREPASS_DETECT_INTERVAL', 'ROOP_PREPASS_LANDMARK_REFRESH'):
+        os.environ[k] = ARMS[name].get(k, '0')
     out_dir = os.path.join(APP, 'output', 'ab_phase14', tag)
     buf = io.StringIO()
     orig = sb.run_swap
