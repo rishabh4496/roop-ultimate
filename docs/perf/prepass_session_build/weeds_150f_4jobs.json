@@ -1,0 +1,458 @@
+{
+ "clip": "G:\\pinokio\\roop-keep\\Weeds.mp4",
+ "frames": 150,
+ "jobs": [
+  {
+   "job": 0,
+   "job_wall_s": 61.486,
+   "release_resources": [
+    {
+     "at": 34.18,
+     "dur": 1.539,
+     "detail": "freed_mib=1400"
+    }
+   ],
+   "build_face_analyser": [
+    {
+     "at": 4.686,
+     "dur": 5.831
+    },
+    {
+     "at": 10.516,
+     "dur": 2.134
+    },
+    {
+     "at": 54.848,
+     "dur": 2.079
+    },
+    {
+     "at": 56.927,
+     "dur": 1.916
+    }
+   ],
+   "session_init": {
+    "count": 37,
+    "total_s": 22.783,
+    "inside_prepass_count": 12,
+    "inside_prepass_s": 4.258,
+    "slowest": [
+     {
+      "model": "<bytes> via strict_session.py:330",
+      "dur": 5.066,
+      "in_prepass": false
+     },
+     {
+      "model": "1k3d68.onnx",
+      "dur": 4.03,
+      "in_prepass": false
+     },
+     {
+      "model": "<bytes> via strict_session.py:330",
+      "dur": 1.308,
+      "in_prepass": false
+     },
+     {
+      "model": "w600k_r50.onnx",
+      "dur": 0.948,
+      "in_prepass": false
+     },
+     {
+      "model": "<bytes> via strict_session.py:330",
+      "dur": 0.875,
+      "in_prepass": false
+     },
+     {
+      "model": "<bytes> via strict_session.py:330",
+      "dur": 0.836,
+      "in_prepass": false
+     }
+    ]
+   },
+   "first_run": {
+    "count": 22,
+    "total_s": 2.443,
+    "inside_prepass_s": 0.638,
+    "slowest": [
+     {
+      "model": "?",
+      "dur": 0.489,
+      "in_prepass": false
+     },
+     {
+      "model": "?",
+      "dur": 0.467,
+      "in_prepass": false
+     },
+     {
+      "model": "1k3d68.onnx",
+      "dur": 0.176,
+      "in_prepass": true
+     },
+     {
+      "model": "1k3d68.onnx",
+      "dur": 0.172,
+      "in_prepass": true
+     },
+     {
+      "model": "1k3d68.onnx",
+      "dur": 0.157,
+      "in_prepass": false
+     },
+     {
+      "model": "1k3d68.onnx",
+      "dur": 0.131,
+      "in_prepass": false
+     }
+    ]
+   },
+   "prepass": {
+    "start_at": 54.484,
+    "wall_s": 7.0,
+    "analyser_builds_inside": 2,
+    "analyser_build_inside_s": 3.995,
+    "build_share_of_prepass": 0.571,
+    "prepass_minus_build_s": 3.005,
+    "build_offsets_after_start_s": [
+     0.36,
+     2.44
+    ],
+    "setup_before_prepass_s": 54.484
+   },
+   "detector_calls": 150,
+   "frames": 150
+  },
+  {
+   "job": 1,
+   "job_wall_s": 39.688,
+   "release_resources": [
+    {
+     "at": 17.698,
+     "dur": 2.15,
+     "detail": "freed_mib=3928"
+    }
+   ],
+   "build_face_analyser": [
+    {
+     "at": 33.005,
+     "dur": 2.078
+    },
+    {
+     "at": 35.083,
+     "dur": 1.95
+    }
+   ],
+   "session_init": {
+    "count": 25,
+    "total_s": 14.494,
+    "inside_prepass_count": 12,
+    "inside_prepass_s": 4.235,
+    "slowest": [
+     {
+      "model": "<bytes> via strict_session.py:330",
+      "dur": 5.015,
+      "in_prepass": false
+     },
+     {
+      "model": "<bytes> via strict_session.py:330",
+      "dur": 1.327,
+      "in_prepass": false
+     },
+     {
+      "model": "<bytes> via strict_session.py:330",
+      "dur": 0.886,
+      "in_prepass": false
+     },
+     {
+      "model": "<bytes> via strict_session.py:330",
+      "dur": 0.843,
+      "in_prepass": false
+     },
+     {
+      "model": "w600k_r50.onnx",
+      "dur": 0.648,
+      "in_prepass": true
+     },
+     {
+      "model": "1k3d68.onnx",
+      "dur": 0.647,
+      "in_prepass": true
+     }
+    ]
+   },
+   "first_run": {
+    "count": 12,
+    "total_s": 1.444,
+    "inside_prepass_s": 0.644,
+    "slowest": [
+     {
+      "model": "?",
+      "dur": 0.517,
+      "in_prepass": false
+     },
+     {
+      "model": "1k3d68.onnx",
+      "dur": 0.174,
+      "in_prepass": true
+     },
+     {
+      "model": "1k3d68.onnx",
+      "dur": 0.171,
+      "in_prepass": true
+     },
+     {
+      "model": "?",
+      "dur": 0.143,
+      "in_prepass": false
+     },
+     {
+      "model": "?",
+      "dur": 0.085,
+      "in_prepass": false
+     },
+     {
+      "model": "w600k_r50.onnx",
+      "dur": 0.081,
+      "in_prepass": true
+     }
+    ]
+   },
+   "prepass": {
+    "start_at": 32.73,
+    "wall_s": 6.957,
+    "analyser_builds_inside": 2,
+    "analyser_build_inside_s": 4.028,
+    "build_share_of_prepass": 0.579,
+    "prepass_minus_build_s": 2.93,
+    "build_offsets_after_start_s": [
+     0.28,
+     2.35
+    ],
+    "setup_before_prepass_s": 32.73
+   },
+   "detector_calls": 150,
+   "frames": 150
+  },
+  {
+   "job": 2,
+   "job_wall_s": 40.977,
+   "release_resources": [
+    {
+     "at": 18.031,
+     "dur": 2.563,
+     "detail": "freed_mib=3928"
+    }
+   ],
+   "build_face_analyser": [
+    {
+     "at": 34.293,
+     "dur": 1.962
+    },
+    {
+     "at": 36.255,
+     "dur": 2.067
+    }
+   ],
+   "session_init": {
+    "count": 25,
+    "total_s": 15.097,
+    "inside_prepass_count": 12,
+    "inside_prepass_s": 4.456,
+    "slowest": [
+     {
+      "model": "<bytes> via strict_session.py:330",
+      "dur": 5.399,
+      "in_prepass": false
+     },
+     {
+      "model": "<bytes> via strict_session.py:330",
+      "dur": 1.317,
+      "in_prepass": false
+     },
+     {
+      "model": "<bytes> via strict_session.py:330",
+      "dur": 0.886,
+      "in_prepass": false
+     },
+     {
+      "model": "<bytes> via strict_session.py:330",
+      "dur": 0.852,
+      "in_prepass": false
+     },
+     {
+      "model": "1k3d68.onnx",
+      "dur": 0.651,
+      "in_prepass": true
+     },
+     {
+      "model": "1k3d68.onnx",
+      "dur": 0.63,
+      "in_prepass": true
+     }
+    ]
+   },
+   "first_run": {
+    "count": 12,
+    "total_s": 1.469,
+    "inside_prepass_s": 0.658,
+    "slowest": [
+     {
+      "model": "?",
+      "dur": 0.535,
+      "in_prepass": false
+     },
+     {
+      "model": "1k3d68.onnx",
+      "dur": 0.175,
+      "in_prepass": true
+     },
+     {
+      "model": "1k3d68.onnx",
+      "dur": 0.172,
+      "in_prepass": true
+     },
+     {
+      "model": "?",
+      "dur": 0.141,
+      "in_prepass": false
+     },
+     {
+      "model": "w600k_r50.onnx",
+      "dur": 0.087,
+      "in_prepass": true
+     },
+     {
+      "model": "w600k_r50.onnx",
+      "dur": 0.081,
+      "in_prepass": true
+     }
+    ]
+   },
+   "prepass": {
+    "start_at": 33.886,
+    "wall_s": 7.09,
+    "analyser_builds_inside": 2,
+    "analyser_build_inside_s": 4.029,
+    "build_share_of_prepass": 0.568,
+    "prepass_minus_build_s": 3.061,
+    "build_offsets_after_start_s": [
+     0.41,
+     2.37
+    ],
+    "setup_before_prepass_s": 33.886
+   },
+   "detector_calls": 150,
+   "frames": 150
+  },
+  {
+   "job": 3,
+   "job_wall_s": 41.467,
+   "release_resources": [
+    {
+     "at": 18.325,
+     "dur": 2.641,
+     "detail": "freed_mib=3928"
+    }
+   ],
+   "build_face_analyser": [
+    {
+     "at": 34.604,
+     "dur": 2.107
+    },
+    {
+     "at": 36.711,
+     "dur": 2.062
+    }
+   ],
+   "session_init": {
+    "count": 25,
+    "total_s": 15.351,
+    "inside_prepass_count": 12,
+    "inside_prepass_s": 4.664,
+    "slowest": [
+     {
+      "model": "<bytes> via strict_session.py:330",
+      "dur": 5.426,
+      "in_prepass": false
+     },
+     {
+      "model": "<bytes> via strict_session.py:330",
+      "dur": 1.307,
+      "in_prepass": false
+     },
+     {
+      "model": "<bytes> via strict_session.py:330",
+      "dur": 0.882,
+      "in_prepass": false
+     },
+     {
+      "model": "<bytes> via strict_session.py:330",
+      "dur": 0.849,
+      "in_prepass": false
+     },
+     {
+      "model": "1k3d68.onnx",
+      "dur": 0.662,
+      "in_prepass": true
+     },
+     {
+      "model": "w600k_r50.onnx",
+      "dur": 0.649,
+      "in_prepass": true
+     }
+    ]
+   },
+   "first_run": {
+    "count": 12,
+    "total_s": 1.477,
+    "inside_prepass_s": 0.655,
+    "slowest": [
+     {
+      "model": "?",
+      "dur": 0.541,
+      "in_prepass": false
+     },
+     {
+      "model": "1k3d68.onnx",
+      "dur": 0.176,
+      "in_prepass": true
+     },
+     {
+      "model": "1k3d68.onnx",
+      "dur": 0.173,
+      "in_prepass": true
+     },
+     {
+      "model": "?",
+      "dur": 0.149,
+      "in_prepass": false
+     },
+     {
+      "model": "w600k_r50.onnx",
+      "dur": 0.086,
+      "in_prepass": true
+     },
+     {
+      "model": "2d106det.onnx",
+      "dur": 0.079,
+      "in_prepass": true
+     }
+    ]
+   },
+   "prepass": {
+    "start_at": 34.321,
+    "wall_s": 7.144,
+    "analyser_builds_inside": 2,
+    "analyser_build_inside_s": 4.169,
+    "build_share_of_prepass": 0.584,
+    "prepass_minus_build_s": 2.975,
+    "build_offsets_after_start_s": [
+     0.28,
+     2.39
+    ],
+    "setup_before_prepass_s": 34.321
+   },
+   "detector_calls": 150,
+   "frames": 150
+  }
+ ]
+}
