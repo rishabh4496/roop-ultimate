@@ -38,6 +38,34 @@ class CpuTopology:
     p_core_cpus: tuple[int, ...]
     e_core_cpus: tuple[int, ...]
 
+    @property
+    def total_logical_cores(self) -> int:
+        return self.total_logical_cpus
+
+    @property
+    def p_cores_count(self) -> int:
+        return self.p_core_count
+
+    @property
+    def e_cores_count(self) -> int:
+        return self.e_core_count
+
+    @property
+    def p_logical_threads(self) -> int:
+        return len(self.p_core_cpus)
+
+    @property
+    def e_logical_threads(self) -> int:
+        return len(self.e_core_cpus)
+
+    @property
+    def p_mask(self) -> int:
+        return self.p_core_mask
+
+    @property
+    def e_mask(self) -> int:
+        return self.e_core_mask
+
     def summary(self) -> str:
         if not self.is_hybrid:
             return (f"Homogeneous CPU: {self.total_logical_cpus} logical threads "
@@ -226,6 +254,9 @@ def detect_topology() -> CpuTopology:
 def get_topology() -> CpuTopology:
     """Get the cached CpuTopology singleton."""
     return detect_topology()
+
+
+get_cpu_topology = get_topology
 
 
 def set_current_thread_affinity(mask: int) -> Optional[int]:

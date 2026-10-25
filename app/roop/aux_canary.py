@@ -215,20 +215,65 @@ def compare(stem: str, candidate: np.ndarray, reference: np.ndarray, crop: int =
     a = np.asarray(candidate, np.float64)
     b = np.asarray(reference, np.float64)
     bad = float("inf")
-    if a.shape != b.shape or not np.isfinite(a).all():
-        return {k: (-1.0 if k in _LOWER_BOUNDS else bad) for k, _ in spec.floors}
+    if a.shape != b.shape or not np.isfinite(a).all() or not np.isfinite(b).all():
+        res = {k: (-1.0 if k in _LOWER_BOUNDS else bad) for k, _ in spec.floors}
+        res["nan_inf_free"] = 0.0
+        return res
+
+    diff = a - b
+    mse = float(np.mean(diff ** 2))
+    ptp = float(np.ptp(b))
+    dr = ptp if ptp > 0 else 1.0
+    psnr = float("inf") if mse <= 1e-15 else float(10.0 * np.log10((dr ** 2) / mse))
+    cos_val = _cosine(a, b)
+
     if spec.kind == "image":
         from roop.swap_canary import _compare
-        return {"ssim": float(_compare(a.astype(np.float32), b.astype(np.float32))), "cosine": _cosine(a, b)}
+        return {
+            "ssim": float(_compare(a.astype(np.float32), b.astype(np.float32))),
+            "cosine": cos_val,
+            "psnr": round(float(psnr), 2),
+            "nan_inf_free": 1.0,
+        }
     if spec.kind == "mask":
         ma, mb = a > 0.5, b > 0.5
         union = np.logical_or(ma, mb).sum()
-        return {"soft_mean_abs": float(np.abs(a - b).mean()),
-                "iou": 1.0 if union == 0 else float(np.logical_and(ma, mb).sum() / union), "cosine": _cosine(a, b)}
+        return {
+            "soft_mean_abs": float(np.abs(a - b).mean()),
+            "iou": 1.0 if union == 0 else float(np.logical_and(ma, mb).sum() / union),
+            "cosine": cos_val,
+            "psnr": round(float(psnr), 2),
+            "nan_inf_free": 1.0,
+        }
     if spec.kind == "embedding":
-        return {"cosine": _cosine(a, b)}
+        return {
+            "cosine": cos_val,
+            "psnr": round(float(psnr), 2),
+            "nan_inf_free": 1.0,
+        }
     d = np.linalg.norm(_decode_points(spec, a, crop) - _decode_points(spec, b, crop), axis=1)
-    return {"mean_px": float(d.mean()), "max_px": float(d.max()), "cosine": _cosine(a, b)}
+    return {
+        "mean_px": float(d.mean()),
+        "max_px": float(d.max()),
+        "cosine": cos_val,
+        "psnr": round(float(psnr), 2),
+        "nan_inf_free": 1.0,
+    }
+
+
+def verify_strict_canary_assertions(
+    metrics: Dict[str, float], psnr_min: float = 48.0, cosine_min: float = 0.9995
+) -> bool:
+    """Strict verification asserting no NaN/Inf, PSNR > 48 dB, and Cosine > 0.9995."""
+    if metrics.get("nan_inf_free", 1.0) < 1.0:
+        return False
+    cosine = metrics.get("cosine")
+    if cosine is not None and cosine < cosine_min:
+        return False
+    psnr = metrics.get("psnr")
+    if psnr is not None and not np.isinf(psnr) and psnr < psnr_min:
+        return False
+    return True
 
 
 def judge(stem: str, metrics: Dict[str, float]) -> bool:
@@ -362,10 +407,21 @@ def verdict_key(stem: str, session, model_file: str, store: dict) -> Optional[Tu
         if not engines:
             return None
     from roop.precision_policy import _model_digest
+    try:
+        from core.trt_precision_surgeon import surgeon_version_salt
+        surgeon_salt = surgeon_version_salt()
+    except Exception:
+        try:
+            from app.core.trt_precision_surgeon import surgeon_version_salt
+            surgeon_salt = surgeon_version_salt()
+        except Exception:
+            surgeon_salt = "v1"
+
     spec = SPECS[stem]          # the floors are part of the identity: edit one and every verdict made under the old one is a miss
     identity = {"v": VERSION, "stem": stem, "spec": [spec.kind, [list(f) for f in spec.floors], spec.points, spec.dim,
                                                        spec.in_lo, spec.in_hi, [list(c) for c in spec.cases]],
                 "model": _model_digest(model_file),
+                "surgeon_salt": surgeon_salt,
                 **({"aux": [list(spec.aux_inputs), spec.ref_extended]} if spec.aux_inputs or spec.ref_extended else {}),
                 "engines": engines, "cache": os.path.basename(str(cache_dir)),
                 "runtime": runtime_stamp(),
@@ -555,4 +611,4 @@ def guard(stem: str, session, model_file: str, providers: Sequence[Any],
 
 
 __all__ = ["CANARY_ENV", "SPECS", "VERSION", "build_feeds", "check_session", "compare", "enabled", "engine_hashes",
-           "guard", "judge", "stem_of", "verdict_key"]
+           "guard", "judge", "stem_of", "verdict_key", "verify_strict_canary_assertions"]

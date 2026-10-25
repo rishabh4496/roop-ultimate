@@ -212,6 +212,7 @@ def fidelity(stem, got, ref):
     """Higher-is-better components, each as {'mean','worst'} so the gate can compare like with like."""
     metric = MODELS[stem]["metric"]
     n = len(ref[0])
+    res = {}
     if metric == "ssim":
         from roop import swap_canary
         s = []
@@ -219,19 +220,19 @@ def fidelity(stem, got, ref):
             a = np.clip((got[0][i].transpose(1, 2, 0) + 1.0) * 127.5, 0, 255)
             b = np.clip((ref[0][i].transpose(1, 2, 0) + 1.0) * 127.5, 0, 255)
             s.append(swap_canary.ssim(a, b, 255.0))
-        return {"ssim": {"mean": float(np.mean(s)), "worst": float(np.min(s))}}
-    if metric == "mask_iou":
+        res = {"ssim": {"mean": float(np.mean(s)), "worst": float(np.min(s))}}
+    elif metric == "mask_iou":
         s = []
         for i in range(n):
             a, b = got[0][i] > 0.5, ref[0][i] > 0.5
             u = np.logical_or(a, b).sum()
             s.append(1.0 if u == 0 else float(np.logical_and(a, b).sum() / u))
-        return {"mask_iou": {"mean": float(np.mean(s)), "worst": float(np.min(s))}}
-    if metric == "cosine":
+        res = {"mask_iou": {"mean": float(np.mean(s)), "worst": float(np.min(s))}}
+    elif metric == "cosine":
         s = [float(np.dot(got[0][i], ref[0][i]) / (np.linalg.norm(got[0][i]) * np.linalg.norm(ref[0][i]) + 1e-12))
              for i in range(n)]
-        return {"cosine": {"mean": float(np.mean(s)), "worst": float(np.min(s))}}
-    if metric in ("lm2d", "lm3d"):
+        res = {"cosine": {"mean": float(np.mean(s)), "worst": float(np.min(s))}}
+    elif metric in ("lm2d", "lm3d"):
         def pts(v):
             if metric == "lm2d":
                 p = v.reshape(-1, 2)
@@ -240,31 +241,60 @@ def fidelity(stem, got, ref):
             return (p + 1.0) * 96.0
         e = [float(np.linalg.norm(pts(got[0][i]) - pts(ref[0][i]), axis=1).mean()) for i in range(n)]
         w = [float(np.linalg.norm(pts(got[0][i]) - pts(ref[0][i]), axis=1).max()) for i in range(n)]
-        return {"lm_px_neg": {"mean": -float(np.mean(e)), "worst": -float(np.max(w))}}
-    # boxes: per sample, match reference faces to the engine's by IoU
-    ious, kp_err, missing, extra, n_ref = [], [], 0, 0, 0
+        res = {"lm_px_neg": {"mean": -float(np.mean(e)), "worst": -float(np.max(w))}}
+    else:
+        # boxes: per sample, match reference faces to the engine's by IoU
+        ious, kp_err, missing, extra, n_ref = [], [], 0, 0, 0
+        for i in range(n):
+            rb, rk = _r50_faces(ref[0][i], ref[1][i], ref[2][i])
+            gb, gk = _r50_faces(got[0][i], got[1][i], got[2][i])
+            n_ref += len(rb)
+            used = set()
+            for a, ka in zip(rb, rk):
+                best, bj = 0.0, None
+                for j, b in enumerate(gb):
+                    if j not in used and _iou(a, b) > best:
+                        best, bj = _iou(a, b), j
+                if bj is None or best < 0.5:
+                    missing += 1
+                else:
+                    used.add(bj)
+                    ious.append(best)
+                    kp_err.append(float(np.linalg.norm(ka - gk[bj], axis=1).mean() * 1.0))
+            extra += len(gb) - len(used)
+        res = {"box_iou": {"mean": float(np.mean(ious)) if ious else 0.0, "worst": float(np.min(ious)) if ious else 0.0},
+               "kps_px_neg": {"mean": -float(np.mean(kp_err)) if kp_err else 0.0,
+                              "worst": -float(np.max(kp_err)) if kp_err else 0.0},
+               "faces_kept_frac": {"mean": 1.0 - missing / max(1, n_ref), "worst": 1.0 - missing / max(1, n_ref)},
+               "no_extra_faces": {"mean": -float(extra), "worst": -float(extra)}}
+
+    # Strict Canary assertions (NaN/Inf check, PSNR > 48 dB, Cosine > 0.9995)
+    psnrs, cosines = [], []
+    nan_inf_free = 1.0
     for i in range(n):
-        rb, rk = _r50_faces(ref[0][i], ref[1][i], ref[2][i])
-        gb, gk = _r50_faces(got[0][i], got[1][i], got[2][i])
-        n_ref += len(rb)
-        used = set()
-        for a, ka in zip(rb, rk):
-            best, bj = 0.0, None
-            for j, b in enumerate(gb):
-                if j not in used and _iou(a, b) > best:
-                    best, bj = _iou(a, b), j
-            if bj is None or best < 0.5:
-                missing += 1
-            else:
-                used.add(bj)
-                ious.append(best)
-                kp_err.append(float(np.linalg.norm(ka - gk[bj], axis=1).mean() * 1.0))
-        extra += len(gb) - len(used)
-    return {"box_iou": {"mean": float(np.mean(ious)) if ious else 0.0, "worst": float(np.min(ious)) if ious else 0.0},
-            "kps_px_neg": {"mean": -float(np.mean(kp_err)) if kp_err else 0.0,
-                           "worst": -float(np.max(kp_err)) if kp_err else 0.0},
-            "faces_kept_frac": {"mean": 1.0 - missing / max(1, n_ref), "worst": 1.0 - missing / max(1, n_ref)},
-            "no_extra_faces": {"mean": -float(extra), "worst": -float(extra)}}
+        g_arr = np.asarray(got[0][i], np.float64)
+        r_arr = np.asarray(ref[0][i], np.float64)
+        if not np.isfinite(g_arr).all() or not np.isfinite(r_arr).all():
+            nan_inf_free = 0.0
+            continue
+        g_flat, r_flat = g_arr.reshape(-1), r_arr.reshape(-1)
+        dot = float(np.dot(g_flat, r_flat))
+        gnorm = float(np.linalg.norm(g_flat))
+        rnorm = float(np.linalg.norm(r_flat))
+        c_val = dot / (gnorm * rnorm + 1e-12) if gnorm > 0 and rnorm > 0 else 1.0
+        cosines.append(c_val)
+
+        diff = g_flat - r_flat
+        mse = float(np.mean(diff ** 2))
+        ptp = float(np.ptp(r_flat))
+        dr = ptp if ptp > 0 else 1.0
+        psnr_val = 100.0 if mse <= 1e-15 else float(10.0 * np.log10((dr ** 2) / mse))
+        psnrs.append(psnr_val)
+
+    res["psnr"] = {"mean": float(np.mean(psnrs)) if psnrs else 0.0, "worst": float(np.min(psnrs)) if psnrs else 0.0}
+    res["strict_cosine"] = {"mean": float(np.mean(cosines)) if cosines else 0.0, "worst": float(np.min(cosines)) if cosines else 0.0}
+    res["nan_inf_free"] = {"mean": nan_inf_free, "worst": nan_inf_free}
+    return res
 
 
 # ── one build ─────────────────────────────────────────────────────────────────────────────────────
@@ -296,6 +326,13 @@ def build_one(stem, cfg, rep, data):
     from roop import precision_policy as pp
     from roop.utilities import get_onnx_session_options
     spec, path = MODELS[stem], model_path(stem)
+    try:
+        from core.trt_precision_surgeon import get_or_create_surgical_model, canonical_model_family
+        fam = canonical_model_family(path)
+        if fam in ("2d106det", "1k3d68", "xseg", "restoreformer_pp") and os.environ.get("ROOP_SURGICAL_PRECISION", "1") == "1":
+            path = get_or_create_surgical_model(path)
+    except Exception:
+        pass
     tag = tag_of(stem, cfg, rep)
     os.environ[pp.BUILD_OVERRIDE_ENV] = "%s:h=%d,l=%d,tag=%s" % (stem, cfg[0], cfg[1], tag)
     del pp.override_log[:]

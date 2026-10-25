@@ -291,6 +291,49 @@ def _pipeline_report() -> Any:
         return UNKNOWN
 
 
+def _surgeon_info() -> dict:
+    try:
+        from core.trt_precision_surgeon import surgeon_version_salt, DEFAULT_PSNR_GATE_DB, DEFAULT_COSINE_GATE
+        salt = surgeon_version_salt()
+        psnr_gate = DEFAULT_PSNR_GATE_DB
+        cos_gate = DEFAULT_COSINE_GATE
+    except Exception:
+        try:
+            from app.core.trt_precision_surgeon import surgeon_version_salt, DEFAULT_PSNR_GATE_DB, DEFAULT_COSINE_GATE
+            salt = surgeon_version_salt()
+            psnr_gate = DEFAULT_PSNR_GATE_DB
+            cos_gate = DEFAULT_COSINE_GATE
+        except Exception:
+            salt = "v2"
+            psnr_gate = 48.0
+            cos_gate = 0.9995
+
+    canary_summary = {}
+    try:
+        from roop.aux_canary import _load_store
+        store = _load_store()
+        verdicts = store.get("verdicts", {})
+        for k, v in verdicts.items():
+            stem = v.get("stem") or k[:8]
+            canary_summary[stem] = {
+                "passed": v.get("passed", False),
+                "reason": v.get("reason", ""),
+            }
+    except Exception:
+        pass
+
+    return {
+        "surgeon_version": salt,
+        "surgical_models": ["xseg", "2d106det", "1k3d68", "restoreformer_pp", "codeformer"],
+        "verification_gates": {
+            "psnr_min_db": psnr_gate,
+            "cosine_min": cos_gate,
+            "nan_inf_free": True,
+        },
+        "canary_verdicts": canary_summary,
+    }
+
+
 def _section(status: str, values: Mapping[str, Any], source: str) -> dict:
     """Build the stable named section shape used by terminal and React."""
     return {"status": status, "source": source, "values": dict(values)}
@@ -707,6 +750,7 @@ def snapshot(progress: Optional[Mapping[str, Any]] = None,
         "PRECISION": _section("AVAILABLE" if available(effective_precision) else "UNKNOWN", {
             "configured": configured_precision,
             "effective": effective_precision,
+            **_surgeon_info(),
         }, "runtime configuration/profile"),
         "PROCESSING": _section("AVAILABLE", processing_values, "progress controller"),
         "POOLING": _section("AVAILABLE" if available(pooling_values) else "UNKNOWN",

@@ -31,7 +31,9 @@ import numpy as np
 # Ensure app path is in sys.path
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _APP_ROOT = _REPO_ROOT / "app"
-for _p in (str(_REPO_ROOT), str(_APP_ROOT)):
+_TESTS_ROOT = _REPO_ROOT / "tests"
+_APP_TESTS = _APP_ROOT / "tests"
+for _p in (str(_REPO_ROOT), str(_APP_ROOT), str(_TESTS_ROOT), str(_APP_TESTS)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
@@ -221,6 +223,59 @@ class PolygraphyVerificationGateTests(unittest.TestCase):
 
         self.assertLess(cos_sim, tps.DEFAULT_COSINE_GATE)
         self.assertLess(mse, 10.0)
+
+
+class CanaryAndMatrixIntegrationTests(unittest.TestCase):
+    def test_surgeon_version_salt_exported(self):
+        salt = tps.surgeon_version_salt()
+        self.assertIn("trt_precision_surgeon_v", salt)
+
+    def test_strict_canary_assertions(self):
+        from roop.aux_canary import verify_strict_canary_assertions
+
+        # Passing metrics
+        ok_metrics = {"psnr": 52.4, "cosine": 0.9998, "nan_inf_free": 1.0}
+        self.assertTrue(verify_strict_canary_assertions(ok_metrics))
+
+        # Rejects NaN / Inf
+        nan_metrics = {"psnr": 52.4, "cosine": 0.9998, "nan_inf_free": 0.0}
+        self.assertFalse(verify_strict_canary_assertions(nan_metrics))
+
+        # Rejects low PSNR (< 48 dB)
+        low_psnr = {"psnr": 42.1, "cosine": 0.9998, "nan_inf_free": 1.0}
+        self.assertFalse(verify_strict_canary_assertions(low_psnr))
+
+        # Rejects low Cosine (< 0.9995)
+        low_cos = {"psnr": 55.0, "cosine": 0.9850, "nan_inf_free": 1.0}
+        self.assertFalse(verify_strict_canary_assertions(low_cos))
+
+    def test_runtime_state_precision_section(self):
+        from roop.runtime_state import snapshot
+        snap = snapshot()
+        sections = snap.get("sections", {})
+        self.assertIn("PRECISION", sections)
+        prec_sec = sections["PRECISION"]
+        vals = prec_sec.get("values", {})
+        self.assertIn("surgeon_version", vals)
+        self.assertIn("surgical_models", vals)
+        self.assertIn("verification_gates", vals)
+        self.assertEqual(vals["verification_gates"]["psnr_min_db"], 48.0)
+        self.assertEqual(vals["verification_gates"]["cosine_min"], 0.9995)
+
+    def test_trt_matrix_fidelity_strict_metrics(self):
+        try:
+            from app.tests.trt_matrix import fidelity
+        except ImportError:
+            from trt_matrix import fidelity
+        # Mock got and ref arrays
+        ref = [np.ones((2, 10), dtype=np.float32)]
+        got = [np.ones((2, 10), dtype=np.float32)]
+        res = fidelity("w600k_r50", got, ref)
+        self.assertIn("psnr", res)
+        self.assertIn("strict_cosine", res)
+        self.assertIn("nan_inf_free", res)
+        self.assertGreaterEqual(res["strict_cosine"]["mean"], 0.9999)
+        self.assertEqual(res["nan_inf_free"]["mean"], 1.0)
 
 
 class CliTests(unittest.TestCase):

@@ -68,6 +68,13 @@ DEFAULT_PSNR_GATE_DB = 48.0
 DEFAULT_COSINE_GATE = 0.9995
 CALIBRATION_CACHE_FACES = 64
 FP8_E4M3_MAX = 448.0
+SURGEON_VERSION = 2
+SURGEON_SALT = f"trt_precision_surgeon_v{SURGEON_VERSION}"
+
+
+def surgeon_version_salt() -> str:
+    """Return stable version salt string for canary verdict hashing."""
+    return SURGEON_SALT
 
 # Canonical model keys
 SUPPORTED_MODEL_FAMILIES = (
@@ -233,48 +240,50 @@ class PrecisionSurgeon:
         clamped_names: list[str] = []
         head_names: list[str] = []
 
-        norm_tokens = ("norm", "variance", "adain", "demod", "__in_")
+        norm_tokens = ("norm", "variance", "adain", "demod", "__in_", "std", "var")
         attention_tokens = ("attention", "self_attn", "cross_attn", "qkv", "attn")
 
         for node in graph.nodes:
             name_lower = node.name.lower()
 
-            # 1. Normalization operations
+            # 1. Normalization operations (LayerNorm, GroupNorm, InstanceNorm)
             if node.op in NORMALIZATION_OPS:
                 clamped_names.append(node.name)
                 continue
 
-            # 2. AdaIN variance blocks (ReduceMean, Sqrt, Div, Pow, GlobalAveragePool, Reciprocal)
-            if node.op in ADAIN_VARIANCE_OPS:
-                # Check for structural variance calculation or explicit token
-                if any(tok in name_lower for tok in norm_tokens) or node.op in ("ReduceMean", "Sqrt", "Div", "GlobalAveragePool"):
+            # 2. Normalization / AdaIN variance blocks (ReduceMean, Sqrt, Div, Pow, Sub, Add, GlobalAveragePool, Reciprocal)
+            if node.op in ADAIN_VARIANCE_OPS or (node.op in ("Sub", "Pow", "Add", "Div", "Mul") and any(tok in name_lower for tok in norm_tokens)):
+                if any(tok in name_lower for tok in norm_tokens) or node.op in ("ReduceMean", "Sqrt", "Div", "GlobalAveragePool", "Reciprocal"):
                     clamped_names.append(node.name)
                     continue
 
-            # 3. Attention Softmax & Exp operations
-            if node.op in ATTENTION_OPS:
-                if model_family in ("restoreformer_pp", "codeformer") or any(tok in name_lower for tok in attention_tokens):
+            # 3. Attention Multi-Head MatMul(Q, K^T) -> Scale -> Softmax islands in RF++ and CodeFormer
+            if model_family in ("restoreformer_pp", "codeformer") or any(tok in name_lower for tok in attention_tokens):
+                if node.op in ATTENTION_OPS:
+                    clamped_names.append(node.name)
+                    continue
+                if any(tok in name_lower for tok in attention_tokens) and node.op in ("MatMul", "Mul", "Div", "Scale"):
                     clamped_names.append(node.name)
                     continue
 
-            # Check attention-named nodes
-            if any(tok in name_lower for tok in attention_tokens) and node.op in ("Softmax", "Exp", "Div", "Mul"):
-                clamped_names.append(node.name)
-                continue
-
-            # 4. Final coordinate regression layers in 2d106det / 1k3d68
+            # 4. Final coordinate regression FC/projection head in 2d106det / 1k3d68 (Conv backbone stays in FP16!)
             if model_family in ("2d106det", "1k3d68"):
-                # fc1 is the final landmark regression Gemm layer
-                if node.name in ("fc1", "fc1_weight", "conv2", "bn2", "relu2", "flatten0", "flatten_441", "flatten_258"):
+                if node.name in ("fc1", "flatten0", "flatten_441", "flatten_258", "conv2", "bn2", "relu2"):
                     clamped_names.append(node.name)
                     head_names.append(node.name)
                     continue
 
-            # 5. Final Sigmoid mask probability head in xseg
+            # 5. Final Sigmoid mask probability head in xseg (allowing 94% of xseg Conv/UNet blocks to run in fast FP16)
             if model_family == "xseg":
                 if node.op == "Sigmoid" or "sigmoid" in name_lower or node.name in ("Sigmoid_4", "Conv__514", "Conv2D_48__128"):
                     clamped_names.append(node.name)
                     head_names.append(node.name)
+                    continue
+
+            # 6. AdaIN style modulation division islands in swapper networks
+            if model_family in ("inswapper", "alpha_256", "hyperswap"):
+                if node.op in ("Div", "Sqrt", "ReduceMean", "Reciprocal") or (node.op in ("Mul", "Add", "Sub") and any(tok in name_lower for tok in norm_tokens)):
+                    clamped_names.append(node.name)
                     continue
 
         # Trace direct producers of graph outputs to preserve output head precision
@@ -324,8 +333,7 @@ class PrecisionSurgeon:
             model_family = canonical_model_family(getattr(model_proto, "doc_string", ""))
 
         if use_bf16_adain is None:
-            # Enable strongly typed BF16 execution on Ada Lovelace (SM89+) or Ampere (SM80+)
-            use_bf16_adain = self.hardware["is_bf16_supported"]
+            use_bf16_adain = False
 
         logger.info(
             "Performing precision surgery on %s (target=%s, bf16_adain=%s, SM=%s)...",
@@ -352,7 +360,7 @@ class PrecisionSurgeon:
         )
 
         # If BF16 for AdaIN / normalization is enabled, upgrade the normalization Casts to BFLOAT16
-        if use_bf16_adain and self.hardware["is_bf16_supported"]:
+        if use_bf16_adain and self.hardware["is_bf16_supported"] and model_family in ("inswapper", "alpha_256", "hyperswap"):
             converted_proto = self._upgrade_adain_to_bf16(converted_proto, clamped_names)
 
         # Ensure coordinate regression outputs and mask probability heads remain FP32
@@ -403,8 +411,28 @@ class PrecisionSurgeon:
 
         graph = gs.import_onnx(model_proto)
         head_set = set(head_names)
-        output_names = {o.name for o in graph.outputs}
 
+        # For every output in graph.outputs, if its producer is a Cast to float16,
+        # but the input to that Cast was produced by a head node or is FP32,
+        # remove the Cast and connect the graph output directly to the FP32 variable.
+        for out in list(graph.outputs):
+            producers = [n for n in graph.nodes if any(o.name == out.name for o in n.outputs)]
+            if producers and producers[0].op == "Cast":
+                cast_node = producers[0]
+                inp_var = cast_node.inputs[0]
+                prev_producers = [n for n in graph.nodes if any(o.name == inp_var.name for o in n.outputs)]
+                if (
+                    inp_var.dtype in (np.float32, np.float64)
+                    or (prev_producers and (prev_producers[0].name in head_set or prev_producers[0].op in ("Gemm", "Sigmoid", "Reshape")))
+                ):
+                    cast_node.outputs.clear()
+                    for p in graph.nodes:
+                        for idx, o_var in enumerate(p.outputs):
+                            if o_var.name == inp_var.name:
+                                p.outputs[idx] = out
+                                out.dtype = np.float32
+
+        output_names = {o.name for o in graph.outputs}
         for node in graph.nodes:
             if node.name in head_set:
                 for out_var in node.outputs:
@@ -413,6 +441,47 @@ class PrecisionSurgeon:
 
         graph.cleanup().toposort()
         return gs.export_onnx(graph)
+
+
+def get_or_create_surgical_model(
+    model_name_or_path: str | os.PathLike[str],
+    target_precision: str = "fp16",
+    use_bf16_adain: bool | None = None,
+    output_dir: str | os.PathLike[str] | None = None,
+    device_id: int = 0,
+) -> str:
+    """Return path to cached surgically transformed ONNX model, generating it if needed."""
+    model_path = Path(model_name_or_path)
+    if not model_path.is_file():
+        candidate = _APP_ROOT / "models" / model_name_or_path
+        if candidate.is_file():
+            model_path = candidate
+        else:
+            raise FileNotFoundError(f"ONNX model file not found: {model_name_or_path}")
+
+    model_family = canonical_model_family(model_path)
+    if output_dir is None:
+        output_dir = _APP_ROOT / "models" / "trt_cache" / "surgical"
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    salt = surgeon_version_salt()
+    cached_name = f"{model_path.stem}_{salt}_{target_precision}.onnx"
+    cached_path = output_dir / cached_name
+
+    # If already exists and is newer than source, return immediately
+    if cached_path.is_file() and cached_path.stat().st_mtime >= model_path.stat().st_mtime:
+        return str(cached_path)
+
+    surgeon = PrecisionSurgeon(device_id=device_id)
+    surgeon.surgical_transform(
+        model_path,
+        model_family=model_family,
+        target_precision=target_precision,
+        use_bf16_adain=use_bf16_adain,
+        output_path=cached_path,
+    )
+    return str(cached_path)
 
 
 # ── ModelOpt & Calibrated FP8 Integration ────────────────────────────────────
