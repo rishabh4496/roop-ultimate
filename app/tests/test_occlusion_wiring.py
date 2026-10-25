@@ -128,7 +128,7 @@ class CoastingIsReachedTest(unittest.TestCase):
         # instance was found coasting off another worker's frame; see
         # tests/test_dispatch_tracker_ordering.py.
         coast_at = source.index('_tracker.coast(')
-        bail_at = source.index("_audit_hit('frames with no face detected at all')")
+        bail_at = source.index("_audit_hit('frames with no face detected at all')", coast_at)
         self.assertLess(coast_at, bail_at)
 
 

@@ -134,7 +134,8 @@ def _facemgr_ingest(face, crop_bgr, restore):
         try:
             solved = solve_pose_5pt(kps)
             yaw, pitch, roll = (float(solved[0]), float(solved[1]), float(solved[2])) if solved else (0.0, 0.0, 0.0)
-        except Exception:
+        except Exception as _pose_err:
+            _swallowed("routes_facemgr.py:solve_pose_5pt", _pose_err)
             yaw, pitch, roll = 0.0, 0.0, 0.0
     else:
         yaw, pitch, roll = 0.0, 0.0, 0.0
@@ -154,8 +155,8 @@ def _facemgr_ingest(face, crop_bgr, restore):
             setattr(face, "yaw", yaw)
             setattr(face, "pitch", pitch)
             setattr(face, "roll", roll)
-        except Exception:
-            pass
+        except Exception as _attr_err:
+            _swallowed("routes_facemgr.py:setattr_face", _attr_err)
 
     if isinstance(breakdown, dict):
         breakdown["yaw"] = round(yaw, 2)
@@ -364,8 +365,8 @@ def facemgr_build():
     try:
         from ui.main import prepare_environment
         prepare_environment()
-    except Exception:
-        pass
+    except Exception as _env_err:
+        _swallowed("routes_facemgr.py:prepare_environment", _env_err)
     if not roop_globals.output_path:
         roop_globals.output_path = os.path.abspath(os.path.join(os.getcwd(), "output"))
     os.makedirs(roop_globals.output_path, exist_ok=True)

@@ -410,11 +410,11 @@ def verdict_key(stem: str, session, model_file: str, store: dict) -> Optional[Tu
     try:
         from core.trt_precision_surgeon import surgeon_version_salt
         surgeon_salt = surgeon_version_salt()
-    except Exception:
+    except (ImportError, AttributeError, ModuleNotFoundError):
         try:
             from app.core.trt_precision_surgeon import surgeon_version_salt
             surgeon_salt = surgeon_version_salt()
-        except Exception:
+        except (ImportError, AttributeError, ModuleNotFoundError):
             surgeon_salt = "v1"
 
     spec = SPECS[stem]          # the floors are part of the identity: edit one and every verdict made under the old one is a miss

@@ -13,6 +13,7 @@ Face instances, keeping the existing extraction and provider paths intact.
 """
 
 from __future__ import annotations
+from typing import Any, Optional
 from roop.degrade import swallowed as _swallowed
 
 import hashlib

@@ -137,6 +137,10 @@ class TestSwapperRegistryAndDynamicTrt(unittest.TestCase):
         self.assertEqual(tc.ENGINE_SPECS["xseg_3"].batch, (1, 8, 16))
         self.assertEqual(tc.ENGINE_SPECS["xseg"].batch, (1, 8, 16))
 
+        # Restorer dynamic batch
+        self.assertEqual(tc.ENGINE_SPECS["restoreformer_plus_plus"].batch, (1, 8, 16))
+        self.assertEqual(tc.ENGINE_SPECS["codeformer_fp16"].batch, (1, 8, 16))
+
     def test_precision_isolation_and_fp16_fp8(self):
         # Strict FP32 isolation for sensitive models
         self.assertEqual(precision_policy.PRECISION_OVERRIDES.get("xseg"), "fp32")

@@ -297,13 +297,13 @@ def _surgeon_info() -> dict:
         salt = surgeon_version_salt()
         psnr_gate = DEFAULT_PSNR_GATE_DB
         cos_gate = DEFAULT_COSINE_GATE
-    except Exception:
+    except (ImportError, AttributeError, ModuleNotFoundError):
         try:
             from app.core.trt_precision_surgeon import surgeon_version_salt, DEFAULT_PSNR_GATE_DB, DEFAULT_COSINE_GATE
             salt = surgeon_version_salt()
             psnr_gate = DEFAULT_PSNR_GATE_DB
             cos_gate = DEFAULT_COSINE_GATE
-        except Exception:
+        except (ImportError, AttributeError, ModuleNotFoundError):
             salt = "v2"
             psnr_gate = 48.0
             cos_gate = 0.9995
@@ -319,8 +319,8 @@ def _surgeon_info() -> dict:
                 "passed": v.get("passed", False),
                 "reason": v.get("reason", ""),
             }
-    except Exception:
-        pass
+    except Exception as _canary_err:
+        _swallowed("roop/runtime_state.py:canary_summary", _canary_err)
 
     return {
         "surgeon_version": salt,

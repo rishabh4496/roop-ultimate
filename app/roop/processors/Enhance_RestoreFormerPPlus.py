@@ -223,6 +223,12 @@ class Enhance_RestoreFormerPPlus():
     def Run(self, source_faceset: FaceSet, target_face: Face, temp_frame: Frame) -> Frame:
         if temp_frame is None or getattr(temp_frame, 'size', 0) == 0:
             return temp_frame, 1
+        from roop.smart_restorer_bypass import should_bypass_restorer, apply_dog_unsharp_mask
+        _cfg = getattr(roop.globals, 'CFG', None)
+        _bypass_toggle = getattr(_cfg, 'auto_bypass_restorer_native_swap', False) if _cfg else False
+        _swap_m = getattr(roop.globals, 'swap_model', None)
+        if should_bypass_restorer(target_face, _swap_m, self, enabled=_bypass_toggle, max_height_px=320.0):
+            return apply_dog_unsharp_mask(temp_frame), 1
         input_size = temp_frame.shape[1]
         if temp_frame.shape[0] != 512 or temp_frame.shape[1] != 512:
             src = cv2.resize(temp_frame, (512, 512), interpolation=cv2.INTER_CUBIC)

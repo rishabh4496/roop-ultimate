@@ -53,8 +53,8 @@ def pose_embedding_for_target(source_faceset, target_face):
                     norm = float(np.linalg.norm(vector))
                     if norm > 1e-8 and np.isfinite(vector).all():
                         return vector / norm
-            except Exception:
-                pass
+            except Exception as _pose_err:
+                _swallowed("roop/processors/FaceSwapInsightFace.py:pose_matched", _pose_err)
         embedding = source_faceset.pose_bin_embedding(pose, fallback=False)
         if embedding is None:
             embedding = source_faceset.default_embedding
@@ -979,8 +979,8 @@ class FaceSwapInsightFace():
                     init_time="initialized",
                     session_id=id(self.model_swap_insightface),
                 )
-            except Exception:
-                pass
+            except Exception as _reg_err:
+                _swallowed("roop/processors/FaceSwapInsightFace.py:runtime_state_register", _reg_err)
 
             self._load_quantized(model_path, swap_model)
 

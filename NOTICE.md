@@ -96,6 +96,23 @@ did not settle (InStyleSwapper's alignment template, and its input/output
 normalization) were determined by measurement here; the evidence is recorded
 beside the entries in `app/roop/processors/FaceSwapInsightFace.py`.
 
+### FaceFusion (HyperSwap & Alpha)
+
+The `HyperSwap 1a/1b/1c` (256px and 512px variants) and `Alpha 256` face swapper models
+are obtained from upstream FaceFusion model releases (e.g. `facefusion/models-3.3.0`
+at <https://huggingface.co/facefusion/models-3.3.0>). They carry the FaceFusion model
+licence terms (research and non-commercial usage restrictions as specified upstream).
+The model weights are downloaded lazily at runtime and are not distributed as part
+of this repository.
+
+### ReSwapper
+
+The `ReSwapper 128` and `ReSwapper 256` swap models are open reproductions developed
+by netrunner-exe (<https://huggingface.co/netrunner-exe/Insight-Swap-models-onnx>),
+trained to operate with InsightFace identity embeddings and licensed under InsightFace
+non-commercial research terms. These models are downloaded at runtime into local storage
+and are not bundled with this source tree.
+
 ## Intended use
 
 This software performs face replacement in images and video. Use it only on

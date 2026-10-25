@@ -36,8 +36,13 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-SwapperName = Literal["hyperswap_1a_256", "hyperswap_1b_256", "hyperswap_1c_256", "alphaface_256",
-                      "inswapper_128"]
+SwapperName = Literal[
+    "hyperswap_1a_256", "hyperswap_1b_256", "hyperswap_1c_256", "hyperswap_256",
+    "hyperswap_1a_512", "hyperswap_1b_512", "hyperswap_1c_512", "hyperswap_512",
+    "alpha_256", "alphaface_256",
+    "reswapper_128", "reswapper_256", "reswapper",
+    "inswapper_128", "inswapper_128_fp16",
+]
 PixelBoost = Literal["none", "256x256", "512x512", "1024x1024"]
 MaskType = Literal["box", "occlusion", "region"]
 EnhancerName = Literal["none", "gpen_bfr_512", "gpen_bfr_1024", "restoreformer_plus_plus"]

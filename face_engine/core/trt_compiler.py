@@ -124,6 +124,8 @@ ENGINE_SPECS: dict[str, EngineSpec] = {s.model: s for s in (
     # below FP16's smallest normal). Those two blocks run FP32.
     EngineSpec("gpen_bfr_1024", "enhancer", {"input": (3, 1024, 1024)}, (1, 1, 1), False,
                fp32_layers=("/final_linear/", "/generator/style/style.0/")),
+    EngineSpec("restoreformer_plus_plus", "enhancer", {"input": (3, 512, 512)}, (1, 8, 16), True),
+    EngineSpec("codeformer_fp16", "enhancer", {"x": (3, 512, 512)}, (1, 8, 16), False),
     EngineSpec("xseg_3", "masker", {"input": (256, 256, 3)}, (1, 8, 16), False),
     EngineSpec("xseg", "masker", {"xseg_input:0": (256, 256, 3)}, (1, 8, 16), False),
     # The boosted pipeline's detector (face_engine/boosted): fixed 640, batch <= 2.
