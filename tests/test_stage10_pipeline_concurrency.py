@@ -34,6 +34,7 @@ import os
 import sys
 import threading
 import time
+import statistics
 import unittest
 from pathlib import Path
 
@@ -279,37 +280,34 @@ class TestBenchmarkFiveConfigurations(unittest.TestCase):
     def test_benchmark_sweep_execution(self):
         profile = PipelineHardwareProfile.rtx_4070()
         num_frames = 15
+        modes = ["1_worker", "cpu_worker_pool", "gpu_serialized", "gpu_overlapped", "producer_consumer_pipeline"]
 
-        res = run_concurrency_benchmark(
-            profile=profile,
-            num_frames=num_frames,
-            modes=[
-                "1_worker",
-                "cpu_worker_pool",
-                "gpu_serialized",
-                "gpu_overlapped",
-                "producer_consumer_pipeline",
-            ],
-        )
+        # The sweep times a sleep-based simulation of 15 frames, so ONE sample is at the mercy of the host's scheduler:
+        # a Windows CI runner measured 1_worker at 17.8 fps against 24.4 for the pool (a 37% gap against the 35% band
+        # below) on a sweep where everything exact held. The exact properties are asserted on every sweep; the two
+        # throughput comparisons use the median of three, which one stalled sample cannot move.
+        sweeps = []
+        for _ in range(3):
+            res = run_concurrency_benchmark(profile=profile, num_frames=num_frames, modes=modes)
+            self.assertEqual(len(res.results), 5)
+            for mode, m in res.results.items():
+                self.assertEqual(m.encoded_frames, num_frames)
+                self.assertGreater(m.throughput_fps, 0.0)
+                self.assertGreater(m.estimated_peak_ram_mb, 0.0)
+            sweeps.append(res)
 
-        self.assertEqual(len(res.results), 5)
-        for mode, m in res.results.items():
-            self.assertEqual(m.encoded_frames, num_frames)
-            self.assertGreater(m.throughput_fps, 0.0)
-            self.assertGreater(m.estimated_peak_ram_mb, 0.0)
+        def fps(mode):
+            return statistics.median(r.results[mode].throughput_fps for r in sweeps)
 
         # Invariant: GPU serialized cannot exceed GPU overlapped
-        fps_serialized = res.results["gpu_serialized"].throughput_fps
-        fps_overlapped = res.results["gpu_overlapped"].throughput_fps
-        self.assertGreater(fps_overlapped, fps_serialized)
+        self.assertGreater(fps("gpu_overlapped"), fps("gpu_serialized"))
 
         # Invariant: Maximum thread count != maximum performance
         # CPU worker pool with serialized GPU performs no better than 1_worker
-        fps_1w = res.results["1_worker"].throughput_fps
-        fps_cpu_pool = res.results["cpu_worker_pool"].throughput_fps
+        fps_1w = fps("1_worker")
+        fps_cpu_pool = fps("cpu_worker_pool")
         # They should be roughly comparable due to GPU lock serialization
         self.assertAlmostEqual(fps_1w, fps_cpu_pool, delta=fps_1w * 0.35)
-
 
 if __name__ == "__main__":
     unittest.main()
