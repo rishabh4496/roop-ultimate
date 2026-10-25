@@ -50,6 +50,10 @@ const EMPTY_RUN = {
   io_encode: '',
   io_pcie_saved_mb: 0,
   io_queue_sat: null,
+  // How many times a hardware rung gave way to a slower one this job (roop/video_io_hw.py HARDWARE_FALLBACK_BANNER),
+  // and the latest reason. Optional rungs that are absent on most machines (Intel QSV) are not counted.
+  io_fallbacks: 0,
+  io_fallback: '',
 };
 
 /** The fields a telemetry frame carries that change every tick. */
@@ -127,11 +131,15 @@ export const engineTextOf = (run) => {
  * has registered a backend. Pure so it can be checked without a render.
  */
 export const videoIoTextOf = (run) => {
-  if (!run || (!run.io_decode && !run.io_encode)) return '';
+  if (!run) return '';
+  const fallbacks = Number(run.io_fallbacks) || 0;
+  if (!run.io_decode && !run.io_encode && !fallbacks) return '';
   const path = [run.io_decode || '—', run.io_encode || '—'].join(' → ');
   const parts = [`Video I/O: ${path}`];
   if (run.io_pcie_saved_mb > 0) parts.push(`PCIe saved ~${run.io_pcie_saved_mb} MB (est.)`);
   if (run.io_queue_sat != null) parts.push(`decode queue ${run.io_queue_sat}%`);
+  // The path above is where the work really ran (the backend rewrites it on a fallback); this says it was not the plan.
+  if (fallbacks) parts.push(`⚠ HARDWARE FALLBACK${fallbacks > 1 ? ` ×${fallbacks}` : ''}${run.io_fallback ? `: ${run.io_fallback}` : ''}`);
   return parts.join(' · ');
 };
 

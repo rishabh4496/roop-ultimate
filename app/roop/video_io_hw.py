@@ -61,6 +61,9 @@ BACKEND_CPU = "CPU-Fallback"
 BACKEND_NVENC_DIRECT = "NVENC-Direct"
 BACKEND_NVENC_PIPE = "NVENC-Pipe"       # the existing ffmpeg h264_nvenc pipe (video_stream.NVHardwareVideoWriter)
 
+#: Printed whenever a hardware rung gives way to a slower one; the same text is what the report and the HUD carry.
+HARDWARE_FALLBACK_BANNER = "[WARNING: HARDWARE FALLBACK TRIGGERED]"
+
 #: A read that waited longer than this for the decoder counts as starved (the decode thread had nothing ready).
 STARVE_S = 0.002
 _SATURATION_WINDOW = 512
@@ -122,6 +125,7 @@ class VideoIoTelemetry:
             self._moved = 0
             self._reads: Deque[bool] = collections.deque(maxlen=_SATURATION_WINDOW)
             self._fallbacks: List[str] = []
+            self._warned: List[str] = []
 
     def register_decoder(self, tag: str, backend: str) -> None:
         with self._lock:
@@ -131,10 +135,32 @@ class VideoIoTelemetry:
         with self._lock:
             self._encoders[str(tag)] = backend
 
-    def note_fallback(self, what: str) -> None:
+    def note_fallback(self, what: str, warn: bool = True) -> None:
+        """Record that a hardware rung gave way to a slower one, and say so: the banner goes to the console once per
+        distinct reason, the line stays in ``snapshot()['fallbacks']`` (the HARDWARE section and the per-job
+        report) and its count rides the 4 Hz frame (``flat()['io_fallbacks']``) so the HUD can show it.
+        ``warn=False`` is for an OPTIONAL rung that is absent on most machines (Intel QSV): recorded, never a banner
+        and never counted, so the badge stays meaningful."""
+        line = str(what)[:300]
         with self._lock:
-            if len(self._fallbacks) < 20:
-                self._fallbacks.append(str(what)[:300])
+            fresh = line not in self._fallbacks
+            if fresh and len(self._fallbacks) < 20:
+                self._fallbacks.append(line)
+            if fresh and warn and len(self._warned) < 20:
+                self._warned.append(line)
+        if fresh and warn:
+            try:
+                print(f"{HARDWARE_FALLBACK_BANNER} {line}", flush=True)
+            except (OSError, UnicodeError):           # Pinokio's terminal pipe can be closed during shutdown
+                pass
+
+    def hardware_fallback(self, kind: str, tag: str, from_backend: str, to_backend: str, reason: str) -> None:
+        """A hardware rung failed WHILE the run was using it (a runtime bug, not a missing package). The stage's
+        label is rewritten to the backend that now does the work - ``register_decoder`` ran when the reader opened and
+        would otherwise keep reporting ``NVDEC-DLPack`` for a render the CPU finished - and the reason is recorded."""
+        with self._lock:
+            (self._encoders if kind == "encode" else self._decoders)[str(tag)] = to_backend
+        self.note_fallback(f"{tag}: {from_backend} -> {to_backend} ({reason})")
 
     def note_decoded(self, nbytes: int, device: bool) -> None:
         with self._lock:
@@ -181,6 +207,8 @@ class VideoIoTelemetry:
                 "decode_queue_saturation": sat,
                 "decode_queue_reads": reads,
                 "fallbacks": list(self._fallbacks),
+                "fallback_count": len(self._warned),
+                "last_fallback": self._warned[-1] if self._warned else None,
             }
 
     def flat(self) -> Dict[str, Any]:
@@ -193,6 +221,8 @@ class VideoIoTelemetry:
             "io_pcie_saved_mb": int(s["pcie_saved_bytes"] // (1024 * 1024)),
             "io_queue_sat": None if s["decode_queue_saturation"] is None
             else int(round(s["decode_queue_saturation"] * 100)),
+            "io_fallbacks": s["fallback_count"],
+            "io_fallback": (s["last_fallback"] or "")[:160],
         }
 
 
@@ -379,6 +409,13 @@ class NvZeroCopyReader:
         self.path = path
         self.buffer_size = max(1, int(buffer_size))
         self._gen = 0
+        self._gpu_id = int(gpu_id)
+        # Frames handed out since the decoder last advanced, and the consumer-side events that say they are done with
+        # them (see ``consumed``). ``device_syncs`` / ``event_waits`` count how each advance was ordered.
+        self._outstanding = False
+        self._consumed: List[Any] = []
+        self.device_syncs = 0
+        self.event_waits = 0
         self._pos = int(start_frame)
         self._end = None if end_frame is None else int(end_frame)
         if self._end is not None and self._end < self._pos:
@@ -415,9 +452,45 @@ class NvZeroCopyReader:
         t = self._torch.from_dlpack(f)
         frame = HwFrame(self._pos, int(getattr(f, "timestamp", 0)), tensor=t, owner=self, gen=self._gen,
                         nbytes=self._frame_bytes)
+        self._outstanding = True
         self._pos += 1
         telemetry.note_decoded(self._frame_bytes, device=True)
         return frame
+
+    def consumed(self, stream: Any = None) -> None:
+        """Declare that every kernel reading the frames handed out so far has been ENQUEUED on ``stream`` (default:
+        the calling thread's current stream). The next ``read`` / ``read_batch`` then waits for that stream's progress
+        to this point instead of draining the whole device. Call it once per advance, from the consumer, after
+        launching the last kernel that touches the frame's tensor - a consumer on a second stream (inference, encode)
+        passes ITS stream."""
+        if self._closed or not self._outstanding:
+            return
+        torch = self._torch
+        ev = torch.cuda.Event()
+        ev.record(stream if stream is not None else torch.cuda.current_stream(self._gpu_id))
+        self._consumed.append(ev)
+
+    def _await_consumers(self) -> None:
+        """Order the consumers BEFORE the decoder recycles a surface.
+
+        The decoder's output ring holds two surfaces and the NEXT ``get_batch_frames`` call overwrites the oldest one.
+        The decoder is not a torch stream, so no ``wait_event`` can order a consumer against it: the only ordering
+        available is a host wait, here, before the call. Without it a consumer queued on another stream read the NEXT
+        frame's pixels (side-stream clone of frame N differed from a full decode on 100% of 63 trials once the reader
+        advanced; ``test_a_side_stream_consumer_is_ordered_before_the_surface_is_recycled``). With no ``consumed()``
+        declaration the wait is device-wide, which covers every stream and every ``detach()`` clone, at the price of
+        draining whatever the consumer still has in flight."""
+        if not self._outstanding:
+            return
+        if self._consumed:
+            events, self._consumed = self._consumed, []
+            for ev in events:
+                ev.synchronize()
+            self.event_waits += 1
+        else:
+            self._torch.cuda.synchronize(self._gpu_id)
+            self.device_syncs += 1
+        self._outstanding = False
 
     def read(self) -> Optional[HwFrame]:
         if self._closed or (self._end is not None and self._pos >= self._end):
@@ -428,6 +501,8 @@ class NvZeroCopyReader:
             raw, self._peek = self._peek, None
             telemetry.note_read(0.0)
         else:
+            self._await_consumers()
+            t0 = time.perf_counter()        # the wait above is the consumer's time, not the decoder's
             raw = self._dec.get_batch_frames(1)
             telemetry.note_read(time.perf_counter() - t0)
         return self._wrap(raw[0]) if raw else None
@@ -452,6 +527,8 @@ class NvZeroCopyReader:
                 # offset, while single read() and the rest of the batch were exact). Copy it on the device first.
                 frames = [f.detach() for f in frames]
         if len(frames) < n:
+            self._await_consumers()         # also covers the detach() clones made just above
+            t0 = time.perf_counter()
             frames += [self._wrap(f) for f in (self._dec.get_batch_frames(n - len(frames)) or [])]
         telemetry.note_read(time.perf_counter() - t0)
         return frames
@@ -506,6 +583,7 @@ class NvSparseKeyframeReader:
         self._nvc, self._torch = nvc, torch
         self.path = path
         self.gpu_id = int(gpu_id)
+        self._tag = tag
         self.adaptive_midpoints = bool(adaptive_midpoints)
         self.max_gop_gap = max(1, int(max_gop_gap))
         self.enable_decode_stats = bool(enable_decode_stats)
@@ -661,9 +739,13 @@ class NvSparseKeyframeReader:
                             return
                     except Exception as exc:
                         _swallowed("roop/video_io_hw.py:sample_decode", exc, f"skipping frame {idx}")
+                        telemetry.note_fallback(f"{self._tag}: frame {idx} skipped, decode failed "
+                                                f"({type(exc).__name__}: {exc})")
                 return
             except Exception as exc:
                 _swallowed("roop/video_io_hw.py:simple_decoder_fallback", exc, "falling back to demuxer decoder")
+                telemetry.note_fallback(f"{self._tag}: NVDEC SimpleDecoder -> demuxer decoder "
+                                        f"({type(exc).__name__}: {exc})")
 
         index_of = {pts: idx for idx, pts, _ in table}
         dec = nvc.CreateDecoder(gpuid=self.gpu_id, codec=self._codec_id, usedevicememory=True,
@@ -1008,7 +1090,7 @@ def open_keyframe_reader(path: str, *, gpu_id: int = 0, tag: str = "stage1-keyfr
             try:
                 return _KeyframeAdapter(IntelQsvReader(path, keyframes_only=True, tag=tag))
             except HwUnavailable as exc:
-                telemetry.note_fallback(f"{tag}: QSV-oneVPL skipped ({exc})")
+                telemetry.note_fallback(f"{tag}: QSV-oneVPL skipped ({exc})", warn=False)
         try:
             return _KeyframeAdapter(NvSparseKeyframeReader(path, gpu_id=gpu_id, tag=tag))
         except HwUnavailable as exc:
@@ -1209,9 +1291,20 @@ class NvZeroCopyWriter:
             raise ValueError(f"frame is {tuple(t.shape)}, the encoder was opened for (3, {self.height}, {self.width})")
         return t
 
-    def write(self, frame: Any, layout: str = "CHW_RGB") -> None:
+    def write(self, frame: Any, layout: str = "CHW_RGB", after: Any = None) -> None:
+        """Encode one frame. ``after`` is the producer's ``torch.cuda.Event`` (recorded after the last kernel that
+        writes ``frame``) or ``torch.cuda.Stream``: the NV12 conversion runs on THIS thread's current stream, so a
+        frame produced on another stream (inference) has to be ordered in front of it or the conversion reads whatever
+        the buffer held before (``test_a_frame_written_on_another_stream_needs_after``). A frame produced on the
+        current stream needs nothing."""
         if self._closed:
             raise RuntimeError("writer is closed")
+        if after is not None:
+            current = self._torch.cuda.current_stream(self._device)
+            if isinstance(after, self._torch.cuda.Stream):
+                current.wait_stream(after)
+            else:
+                current.wait_event(after)
         nv12 = rgb_to_nv12(self._as_tensor(frame, layout), self.matrix)
         # The NV12 conversion is queued on torch's stream and NVENC reads the buffer on its own. Unordered, ~30% of
         # 30-frame clips encoded GARBAGE (4 dB round trip, identical on every decode of the file; 0 of 60 with the

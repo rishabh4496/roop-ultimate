@@ -6492,11 +6492,12 @@ def _telemetry_snapshot():
 
 
 def _video_io_flat() -> dict:
-    """io_decode / io_encode / io_pcie_saved_mb / io_queue_sat for the telemetry frame. Constant (empty) until a
-    job registers a backend, so the change-only sampler stays quiet while idle."""
+    """io_decode / io_encode / io_pcie_saved_mb / io_queue_sat / io_fallbacks / io_fallback for the telemetry frame.
+    Constant (empty) until a job registers a backend, so the change-only sampler stays quiet while idle."""
     mod = sys.modules.get('roop.video_io_hw')
     if mod is None:
-        return {'io_decode': '', 'io_encode': '', 'io_pcie_saved_mb': 0, 'io_queue_sat': None}
+        return {'io_decode': '', 'io_encode': '', 'io_pcie_saved_mb': 0, 'io_queue_sat': None,
+                'io_fallbacks': 0, 'io_fallback': ''}
     return mod.telemetry.flat()
 
 

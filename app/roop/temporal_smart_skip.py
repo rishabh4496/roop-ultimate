@@ -141,7 +141,9 @@ class DenseFlowWarper:
                     engines[key] = nvof_cls.create(key, perf, grid, hint, False, False, False, 0)
                 except TypeError:
                     engines[key] = nvof_cls.create(key)
-            except (cv2.error, AttributeError, RuntimeError, TypeError):
+            except (cv2.error, AttributeError, RuntimeError, TypeError) as exc:
+                _swallowed('roop/temporal_smart_skip.py:nvof_create', exc,
+                           f'NVOF engine for {key[0]}x{key[1]} could not be created; next flow tier')
                 engines[key] = False
         return engines[key] or None
 
@@ -289,7 +291,8 @@ def _normalize_track_key(track_id: Any, segment_id: Optional[int] = None) -> Opt
     else:
         try:
             seg = int(getattr(getattr(roop.globals, '_segment_spec', None), 'index', 0) or 0)
-        except Exception:
+        except Exception as exc:
+            _swallowed('roop/temporal_smart_skip.py:segment_index', exc, 'segment index unreadable; keyed as segment 0')
             seg = 0
     return (seg, tid)
 

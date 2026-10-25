@@ -133,11 +133,12 @@ class PureLogic(unittest.TestCase):
         self.assertEqual(s["decode_queue_saturation"], 0.75)
         flat = t.flat()
         self.assertEqual(flat, {"io_decode": "NVDEC-DLPack", "io_encode": "NVENC-Direct", "io_pcie_saved_mb": 12,
-                                "io_queue_sat": 75})
+                                "io_queue_sat": 75, "io_fallbacks": 0, "io_fallback": ""})
 
     def test_mixed_backends_are_all_named_and_idle_is_empty_not_zero_saturation(self):
         t = hw.telemetry
-        self.assertEqual(t.flat(), {"io_decode": "", "io_encode": "", "io_pcie_saved_mb": 0, "io_queue_sat": None})
+        self.assertEqual(t.flat(), {"io_decode": "", "io_encode": "", "io_pcie_saved_mb": 0, "io_queue_sat": None,
+                                    "io_fallbacks": 0, "io_fallback": ""})
         t.register_decoder("stage1", hw.BACKEND_CPU)
         t.register_decoder("stage3", hw.BACKEND_NVDEC_PIPE)
         self.assertEqual(t.snapshot()["decode_backend"], "CPU-Fallback + NVDEC-Pipe")
@@ -669,6 +670,161 @@ class HardwarePaths(unittest.TestCase):
             self.assertEqual(len(frames), len(sample_tbl))
             self.assertIsNotNone(frames[0].decode_stats)
             self.assertIn("qp_luma", frames[0].decode_stats)
+
+
+@pytest.mark.gpu
+class StreamOrderingAndTail(unittest.TestCase):
+    """What the reader and writer guarantee to a consumer that runs on ANOTHER CUDA stream, and what happens to the
+    last, short batch. The consumer is held back with ``torch.cuda._sleep`` so the decoder gets the chance to recycle
+    the surface under it: the control (no delay) passes with or without the fix, the delayed consumer corrupted
+    100% of 63 trials before ``NvZeroCopyReader._await_consumers`` existed."""
+
+    SPIN = 200_000_000          # cycles: long enough that the next decode lands first (~100+ ms on an RTX 4070)
+
+    @classmethod
+    def setUpClass(cls):
+        try:
+            cls.nvc, cls.torch = hw._load_nvc()
+        except hw.HwUnavailable as exc:
+            raise unittest.SkipTest(f"UNVERIFIED - no PyNvVideoCodec/CUDA here: {exc}")
+        if not _ffmpeg_ok():
+            raise unittest.SkipTest("no ffmpeg to generate the test clips")
+        with hw.NvZeroCopyReader(_CLIPS["idr"], buffer_size=16) as r:
+            cls.ref = [f.tensor.clone() for f in r]
+        cls.torch.cuda.synchronize()
+        cls.side = cls.torch.cuda.Stream()
+
+    def setUp(self):
+        hw.telemetry.reset()
+
+    def _delayed_clone(self, tensor):
+        with self.torch.cuda.stream(self.side):
+            self.torch.cuda._sleep(self.SPIN)
+            return tensor.clone()
+
+    def test_a_side_stream_consumer_is_ordered_before_the_surface_is_recycled(self):
+        for lag in (1, 2):
+            for start in (0, 7, 40, 100):
+                with self.subTest(lag=lag, start=start):
+                    with hw.NvZeroCopyReader(_CLIPS["idr"], buffer_size=16, start_frame=start) as r:
+                        f = r.read()
+                        held = self._delayed_clone(f.tensor)
+                        for _ in range(lag):
+                            r.read()
+                        self.side.synchronize()
+                        self.assertTrue(bool(self.torch.equal(held, self.ref[start])),
+                                        f"frame {start} was overwritten while a side-stream kernel still read it")
+                        self.assertGreaterEqual(r.device_syncs, 1, "with no consumed() the reader drains the device")
+
+    def test_declared_consumption_waits_on_that_stream_only(self):
+        with hw.NvZeroCopyReader(_CLIPS["idr"], buffer_size=16, start_frame=10) as r:
+            f = r.read()
+            held = self._delayed_clone(f.tensor)
+            r.consumed(self.side)               # "my last kernel on frame 10 is queued on `side`"
+            r.read()
+            self.side.synchronize()
+            self.assertTrue(bool(self.torch.equal(held, self.ref[10])))
+            self.assertEqual((r.event_waits, r.device_syncs), (1, 0),
+                             "a declared consumer is waited on by its event, not by draining the device")
+            r.consumed()                        # frame 11, consumed on this thread's (idle) stream
+            r.read()
+            self.assertEqual((r.event_waits, r.device_syncs), (2, 0))
+            r.read()                            # frame 12 was never declared: the safe default is the device sync
+            self.assertEqual((r.event_waits, r.device_syncs), (2, 1))
+
+    def test_consumed_without_outstanding_frames_is_a_no_op(self):
+        with hw.NvZeroCopyReader(_CLIPS["idr"]) as r:
+            r.consumed()                        # nothing handed out yet
+            self.assertEqual(r._consumed, [])
+            r.read()
+            r.consumed()
+            self.assertEqual(len(r._consumed), 1)
+
+    def _batches(self, **kw):
+        sizes, frames = [], []
+        with hw.NvZeroCopyReader(_CLIPS["idr"], buffer_size=16, **kw) as r:
+            while True:
+                batch = r.read_batch(8)
+                if not batch:
+                    break
+                sizes.append(len(batch))
+                frames += [(f.index, f.tensor.clone()) for f in batch]
+        return sizes, frames
+
+    def test_the_last_short_batch_is_complete_and_exact(self):
+        sizes, frames = self._batches()
+        total = len(self.ref)
+        self.assertEqual(total, 150)
+        self.assertEqual(sizes, [8] * 18 + [6], "150 frames at B=8 end in a batch of 6, then nothing")
+        self.assertEqual([i for i, _ in frames], list(range(total)))
+        bad = [i for i, t in frames if not bool(self.torch.equal(t, self.ref[i]))]
+        self.assertEqual(bad, [], "every frame, including the short tail, equals a one-at-a-time decode")
+
+    def test_a_trim_that_leaves_five_frames_in_the_last_batch(self):
+        sizes, frames = self._batches(start_frame=0, end_frame=133)             # 133 = 16 * 8 + 5
+        self.assertEqual(sizes, [8] * 16 + [5])
+        self.assertEqual([i for i, _ in frames], list(range(133)))
+        self.assertTrue(all(bool(self.torch.equal(t, self.ref[i])) for i, t in frames))
+
+    def test_every_frame_of_a_short_tail_reaches_the_encoder_and_the_file(self):
+        path = os.path.join(_TMP.name, "tail133.mp4")
+        with hw.NvZeroCopyReader(_CLIPS["idr"], buffer_size=16, start_frame=0, end_frame=133) as r,                 hw.NvZeroCopyWriter(path, 640, 360, 25.0) as w:
+            while True:
+                batch = r.read_batch(8)
+                if not batch:
+                    break
+                for f in batch:
+                    w.write(f)
+        self.assertEqual(w.frames_written, 133)
+        self.assertEqual(_probe(path, "nb_read_frames")["nb_read_frames"], "133",
+                         "close() must drain the encoder: the last frames are inside NVENC until EndEncode")
+        self.assertEqual(hw.snapshot()["frames_encoded"], 133)
+
+    def _decoded_mean(self, path):
+        with hw.NvZeroCopyReader(path) as r:
+            return float(r.read().tensor.float().mean())
+
+    def test_a_frame_written_on_another_stream_needs_after(self):
+        torch = self.torch
+        shape = (3, 360, 640)
+        # The first NV12 conversion in a process pays kernel loading that outlasts the producer's spin and would hide
+        # the hazard; warm it up so the producer is still busy when write() runs.
+        hw.rgb_to_nv12(torch.zeros(shape, dtype=torch.uint8, device="cuda"), hw.default_matrix(640, 360))
+        torch.cuda.synchronize()
+
+        def encode(name, ordered):
+            path = os.path.join(_TMP.name, name)
+            with hw.NvZeroCopyWriter(path, 640, 360, 25.0) as w:      # open FIRST: CreateEncoder takes ~100 ms
+                t = torch.zeros(shape, dtype=torch.uint8, device="cuda")
+                torch.cuda.synchronize()
+                with torch.cuda.stream(self.side):
+                    torch.cuda._sleep(5 * self.SPIN)                  # the producer is still busy when write() runs
+                    t.fill_(200)
+                ev = torch.cuda.Event()
+                ev.record(self.side)
+                w.write(t, after=ev if ordered else None)
+            self.side.synchronize()
+            return self._decoded_mean(path)
+
+        self.assertAlmostEqual(encode("ordered.mp4", True), 200.0, delta=4.0,
+                               msg="with after= the conversion waits for the producer's kernel")
+        self.assertLess(encode("unordered.mp4", False), 60.0,
+                        "CONTROL: without after= the conversion read the buffer before the producer wrote it, "
+                        "which is why write() takes after=")
+
+    def test_after_accepts_a_stream_as_well_as_an_event(self):
+        path = os.path.join(_TMP.name, "after_stream.mp4")
+        hw.rgb_to_nv12(self.torch.zeros((3, 360, 640), dtype=self.torch.uint8, device="cuda"), hw.default_matrix(640, 360))
+        self.torch.cuda.synchronize()
+        with hw.NvZeroCopyWriter(path, 640, 360, 25.0) as w:
+            t = self.torch.zeros((3, 360, 640), dtype=self.torch.uint8, device="cuda")
+            self.torch.cuda.synchronize()
+            with self.torch.cuda.stream(self.side):
+                self.torch.cuda._sleep(5 * self.SPIN)
+                t.fill_(120)
+            w.write(t, after=self.side)
+        self.side.synchronize()
+        self.assertAlmostEqual(self._decoded_mean(path), 120.0, delta=4.0)
 
 
 if __name__ == "__main__":

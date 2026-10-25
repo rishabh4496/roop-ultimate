@@ -436,7 +436,9 @@ class TemporalMaskSmoother:
                 except TypeError:
                     # Some Python bindings expose only the default arguments.
                     engines[key] = create(key)
-            except (AttributeError, cv2.error, TypeError):
+            except (AttributeError, cv2.error, TypeError) as exc:
+                _swallowed('face_swapper.py:nvof_create', exc,
+                           f'NVOF engine for {key[0]}x{key[1]} could not be created; next flow tier')
                 engines[key] = False
         return engines[key] or None
 
@@ -468,7 +470,8 @@ class TemporalMaskSmoother:
                 converted = float_gpu
             flow = converted.download()
             return np.asarray(flow, dtype=np.float32)
-        except (AttributeError, cv2.error, TypeError):
+        except (AttributeError, cv2.error, TypeError) as exc:
+            _swallowed('face_swapper.py:nvof_calc', exc, 'NVOF flow failed; next flow tier')
             return None
 
     def _cuda_farneback_engine(self) -> Optional[Any]:
@@ -481,7 +484,8 @@ class TemporalMaskSmoother:
                 klass = (getattr(cv2, 'cuda_FarnebackOpticalFlow', None) or
                          getattr(cuda, 'FarnebackOpticalFlow', None))
                 engine = klass.create(3, 0.5, False, 15, 3, 5, 1.2, 0)
-            except (AttributeError, cv2.error, TypeError):
+            except (AttributeError, cv2.error, TypeError) as exc:
+                _swallowed('face_swapper.py:cuda_farneback_create', exc, 'CUDA Farneback unavailable; next flow tier')
                 engine = False
             self._tls.cuda_farneback = engine
         return engine or None
@@ -512,7 +516,8 @@ class TemporalMaskSmoother:
                 return None
             flow_gpu = engine.calc(cur_gpu, prev_gpu, None)
             return np.asarray(flow_gpu.download(), dtype=np.float32)
-        except (AttributeError, cv2.error, TypeError):
+        except (AttributeError, cv2.error, TypeError) as exc:
+            _swallowed('face_swapper.py:cuda_farneback_calc', exc, 'CUDA Farneback flow failed; next flow tier')
             return None
 
     def _flow_dis_engine(self) -> Optional[Any]:
@@ -548,8 +553,8 @@ class TemporalMaskSmoother:
                     if self._flow_is_valid(flow):
                         self.last_flow_tier = 'dis'
                         return flow
-                except cv2.error:
-                    pass
+                except cv2.error as exc:
+                    _swallowed('face_swapper.py:dis_calc', exc, 'DIS flow failed; mask held fixed')
 
         # A build without DIS cannot estimate tier-3 motion.  Keeping the
         # mask fixed is safer than introducing an undeclared fourth tier that

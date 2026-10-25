@@ -606,6 +606,15 @@ def test_end_to_end_fidelity_throughput_and_av_timing(rig, cases, name):
 # ---------------------------------------------------------------------------
 # soak: no process crash, no per-render growth
 # ---------------------------------------------------------------------------
+def _device_used_mb() -> float:
+    """Driver-level VRAM in use on the whole device (``cudaMemGetInfo``), not torch's allocator. TensorRT's engine
+    contexts, its virtual-memory buffers (``StdVirtualMemoryBufferImpl``) and ORT arenas live OUTSIDE torch's allocator,
+    so ``memory_allocated`` is blind to exactly the growth that ends in ``resizePhysical`` / ``OutOfMemory``."""
+    import torch
+    free, total = torch.cuda.mem_get_info()
+    return (total - free) / 2 ** 20
+
+
 def _quiescent_cuda_mb() -> float:
     import torch
     gc.collect()
@@ -639,6 +648,7 @@ def test_repeated_renders_do_not_leak_or_crash(rig, cases):
         out, _, secs = rig.render(case.clip, target, rig.tmp / f"soak_{i % 2}")
         assert out.stat().st_size > 0
         samples.append({"render": i, "cuda_mb": round(_quiescent_cuda_mb(), 1),
+                        "device_used_mb": round(_device_used_mb(), 1),
                         "rss_mb": round(proc.memory_info().rss / 2 ** 20, 1),
                         "fps": round(case.frames / secs, 2)})
         print("[soak]", samples[-1], flush=True)
@@ -652,6 +662,9 @@ def test_repeated_renders_do_not_leak_or_crash(rig, cases):
     rss_growth = settled[-1]["rss_mb"] - settled[0]["rss_mb"]
     per_render_cuda = cuda_growth / max(1, len(settled) - 1)
     per_render_rss = rss_growth / max(1, len(settled) - 1)
+    device_growth = settled[-1]["device_used_mb"] - settled[0]["device_used_mb"]
+    per_render_device = device_growth / max(1, len(settled) - 1)
+    assert per_render_device <= SOAK_DEVICE_MB_PER_RENDER, (per_render_device, samples)
     assert per_render_cuda <= SOAK_CUDA_MB_PER_RENDER, (per_render_cuda, samples)
     assert per_render_rss <= SOAK_RSS_MB_PER_RENDER, (per_render_rss, samples)
 
@@ -660,3 +673,7 @@ def test_repeated_renders_do_not_leak_or_crash(rig, cases):
 # A per-render cuBLAS-workspace strand is +16.25 MB, so 2 MB/render catches it.
 SOAK_CUDA_MB_PER_RENDER = 2.0
 SOAK_RSS_MB_PER_RENDER = 40.0
+# Measured 2026-10-26 (4070, 1080p x3, HEAD 04b432e + segment total_encoded fix): driver-level device usage 1305.5 MB at
+# every one of the three post-render samples (TensorRT contexts, ORT arenas and virtual-memory buffers released). The
+# bound is whole-device, so another process can move it; 64 MB/render is far below one leaked engine context.
+SOAK_DEVICE_MB_PER_RENDER = 64.0

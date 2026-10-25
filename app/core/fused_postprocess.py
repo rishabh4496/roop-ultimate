@@ -42,9 +42,13 @@ try:
     import triton
     import triton.language as tl
     HAVE_TRITON = True
-except Exception:                                       # pragma: no cover - the CPU/light profile
+    TRITON_IMPORT_ERROR = ""
+except Exception as _triton_error:                      # pragma: no cover - the CPU/light profile
     triton = tl = None
     HAVE_TRITON = False
+    # "not installed" and "installed but broken" (a wheel built for another CUDA, a missing compiler) are different
+    # fixes; the reason is what select_backend / fused_postprocess print.
+    TRITON_IMPORT_ERROR = f"{type(_triton_error).__name__}: {_triton_error}"[:300]
 
 # OpenCV's float RGB <-> XYZ (D65) constants, so the reference agrees with cv2.cvtColor on float32 input.
 _RGB2XYZ = ((0.412453, 0.357580, 0.180423), (0.212671, 0.715160, 0.072169), (0.019334, 0.119193, 0.950227))
@@ -380,7 +384,8 @@ def fused_postprocess(swapped: torch.Tensor, restored: torch.Tensor, xseg_mask: 
     restorer's high band (1.0 = all of it).
     """
     if not HAVE_TRITON:
-        raise RuntimeError("triton is not installed (pip install triton-windows on Windows, triton on Linux)")
+        raise RuntimeError("triton is not importable (" + (TRITON_IMPORT_ERROR or "not installed") +
+                           "; pip install triton-windows on Windows, triton on Linux)")
     for name, t in (("swapped", swapped), ("restored", restored), ("xseg_mask", xseg_mask), ("keep_mask", keep_mask)):
         if t is None:
             continue
@@ -434,7 +439,14 @@ def select_backend(tensor: torch.Tensor, backend: str = "auto") -> str:
         raise ValueError(f"backend must be auto, triton or torch, not {backend!r}")
     can_triton = HAVE_TRITON and tensor.is_cuda and getattr(torch.version, "hip", None) is None
     if backend == "triton" and not can_triton:
-        raise RuntimeError("backend='triton' needs triton and an NVIDIA CUDA tensor")
+        raise RuntimeError("backend='triton' needs triton and an NVIDIA CUDA tensor"
+                           + (f" (triton import: {TRITON_IMPORT_ERROR})" if TRITON_IMPORT_ERROR else ""))
+    if backend == "auto" and tensor.is_cuda and not can_triton and getattr(torch.version, "hip", None) is None:
+        # A CUDA tensor taking the eager reference is a real downgrade (7-20x slower than the kernel), not a CPU device
+        # choice - say why, once, instead of returning "torch" with nothing recorded.
+        from roop.degrade import fell_back
+        fell_back("core/fused_postprocess.py:triton_unavailable", TRITON_IMPORT_ERROR or "triton is not installed",
+                  "CUDA tensor post-processed by the eager torch reference")
     return "triton" if (can_triton and backend != "torch") else "torch"
 
 

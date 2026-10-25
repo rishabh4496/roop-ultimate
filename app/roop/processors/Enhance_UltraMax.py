@@ -1066,7 +1066,12 @@ class Enhance_UltraMax:
                     output = ort_cuda_output_to_torch(iob.get_outputs()[0], out_dtype)
             if output is None:
                 # No CUDA runtime, or a device/shape the copy declined. The
-                # host path below is the supported fallback, not an error.
+                # host path below is the supported fallback, not an error -
+                # but this latches for the rest of the session, so say so
+                # (ort_cuda_output_to_torch already named the cause).
+                _swallowed('roop/processors/Enhance_UltraMax.py:cuda_post_latch',
+                           RuntimeError('ORT CUDA output was not copied to Torch'),
+                           'CUDA post-process is off for this session; compatibility host path')
                 self._cuda_iob_available = False
                 return None
             restored = output[0].flip(0).permute(1, 2, 0).to(torch.float32)

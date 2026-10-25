@@ -5,7 +5,7 @@ Every enhancer here ends the same three lines — clip to [-1, 1], rescale to
 about that ending are traps, and both were found the expensive way in GPEN
 before being written down here.
 """
-from roop.degrade import swallowed as _swallowed
+from roop.degrade import fell_back as _fell_back, swallowed as _swallowed
 
 import contextlib
 
@@ -183,6 +183,8 @@ def ort_cuda_output_to_torch(ort_value, torch_dtype):
         return None
     lib = _cudart()
     if lib is None:
+        _fell_back('roop/processors/enhance_common.py:cudart', 'the CUDA runtime DLL could not be loaded',
+                   'host copy path')
         return None
     shape = tuple(ort_value.shape())
     nbytes = int(ort_value.tensor_size_in_bytes())
@@ -190,6 +192,9 @@ def ort_cuda_output_to_torch(ort_value, torch_dtype):
     if out.numel() * out.element_size() != nbytes:
         # A dtype/shape disagreement would silently copy the wrong number of
         # bytes, so refuse rather than produce a plausible wrong tensor.
+        _fell_back('roop/processors/enhance_common.py:ort_cuda_output_size',
+                   f'ORT output is {nbytes} B but {tuple(shape)} {torch_dtype} is '
+                   f'{out.numel() * out.element_size()} B', 'host copy path')
         return None
     torch.cuda.synchronize()
     # cudaMemcpyDeviceToDevice == 3. The synchronous form is deliberate: it
@@ -200,6 +205,8 @@ def ort_cuda_output_to_torch(ort_value, torch_dtype):
                         ctypes.c_void_p(ort_value.data_ptr()),
                         ctypes.c_size_t(nbytes), ctypes.c_int(3))
     if rc != 0:
+        _fell_back('roop/processors/enhance_common.py:ort_cuda_output_memcpy',
+                   f'cudaMemcpy device-to-device returned {rc}', 'host copy path')
         return None
     # `cudaMemcpy` device-to-device does NOT block the host (CUDA docs: no host-side
     # synchronization for D2D), and it runs on the legacy default stream, which a

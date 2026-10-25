@@ -492,6 +492,7 @@ class ModelOptQuantizer:
     def __init__(self, device_id: int = 0):
         self.device_id = device_id
         self.hardware = detect_hardware_capabilities(device_id)
+        self.last_calibration: dict[str, int] = {}
 
     @classmethod
     def is_modelopt_available(cls) -> bool:
@@ -670,19 +671,37 @@ class ModelOptQuantizer:
             len(interior_convs)
         )
 
-        # Run calibration cache to measure activation amax values
-        ort_sess = ort.InferenceSession(onnx_model.SerializeToString(), providers=["CPUExecutionProvider"])
+        # Run calibration cache to measure activation amax values. ORT cannot fetch an INTERMEDIATE tensor by name
+        # ("Invalid output name"), which is what every interior conv's input is - so the tensors being probed are first
+        # promoted to graph outputs of a throw-away copy. Until this was done every probe failed, and the bare
+        # `except: pass` that used to wrap it hid that for the life of the code.
+        import onnx.helper as onnx_helper
+        probe_names = sorted({n.inputs[0].name for n in interior_convs if n.inputs and n.inputs[0].name})
+        probe_model = onnx.ModelProto()
+        probe_model.CopyFrom(onnx_model)
+        declared = {o.name for o in probe_model.graph.output}
+        probe_model.graph.output.extend(onnx_helper.make_empty_tensor_value_info(name)
+                                        for name in probe_names if name not in declared)
+        ort_sess = ort.InferenceSession(probe_model.SerializeToString(), providers=["CPUExecutionProvider"])
         activation_max: dict[str, float] = {}
+        calibrated, failed = 0, []
 
         for feed in calibration_cache:
-            for node in interior_convs:
-                inp_name = node.inputs[0].name
-                try:
-                    out = ort_sess.run([inp_name], feed)[0]
-                    cur_max = float(np.max(np.abs(out)))
-                    activation_max[inp_name] = max(activation_max.get(inp_name, 1e-4), cur_max)
-                except Exception:
-                    pass
+            try:
+                outputs = ort_sess.run(probe_names, feed)
+            except Exception as err:
+                failed.append(f"{type(err).__name__}: {err}")
+                continue
+            for name, out in zip(probe_names, outputs):
+                activation_max[name] = max(activation_max.get(name, 1e-4), float(np.max(np.abs(out))))
+            calibrated += 1
+        # NOTE the amaxes collected above are NOT consumed below - only the per-channel WEIGHT scales are - so the
+        # result is the same with or without them; this is a measurement, not yet an activation quantizer.
+        self.last_calibration = {"runs": calibrated, "failed": len(failed), "tensors": len(activation_max)}
+        if failed:
+            logger.warning("Native FP8 calibration: %d of %d calibration feeds failed (first: %s)%s",
+                           len(failed), len(failed) + calibrated, failed[0],
+                           "; NO feed succeeded, nothing was calibrated" if not calibrated else "")
 
         # Insert explicit Q/DQ pairs on interior weights and inputs
         for node in interior_convs:

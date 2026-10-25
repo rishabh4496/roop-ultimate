@@ -27,6 +27,32 @@ def _writer(tmp, **kw):
                                    source_video=os.path.join(tmp, "src.mp4"), **kw)
 
 
+class TotalEncodedCountsTheOpenSegment(unittest.TestCase):
+    """procmgr_batch asserts ``total_encoded == total_frames`` BEFORE ``writer.close()`` commits the last segment."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        sw.reset_parts()
+
+    def tearDown(self):
+        sw.reset_parts()
+        self._tmp.cleanup()
+
+    def test_committed_plus_open(self):
+        w = _writer(self._tmp.name)
+        w.segments = [{"frames": 1000}, {"frames": 1000}]
+        w._cur_frames = 37
+        self.assertEqual(w.total_encoded, 2037)
+
+    def test_a_render_shorter_than_one_segment_is_not_zero_before_close(self):
+        import numpy as np
+        w = _writer(self._tmp.name)
+        for _ in range(12):
+            w.write_frame(np.zeros((64, 64, 3), np.uint8))
+        self.assertEqual(w.total_encoded, 12, "this read 0 and failed the Stage 3 parity assertion on every short render")
+        w.close()           # promotes the single segment and clears the list: nothing reads the count after this
+
+
 class PartsRegistryTest(unittest.TestCase):
 
     def setUp(self):

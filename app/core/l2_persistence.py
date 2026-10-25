@@ -26,9 +26,11 @@ import torch
 try:
     from cuda.bindings import runtime as _rt
     HAVE_CUDA_PYTHON = True
-except Exception:                                        # pragma: no cover - the light profile
+    CUDA_PYTHON_IMPORT_ERROR = ""
+except Exception as _cuda_python_error:                  # pragma: no cover - the light profile
     _rt = None
     HAVE_CUDA_PYTHON = False
+    CUDA_PYTHON_IMPORT_ERROR = f"{type(_cuda_python_error).__name__}: {_cuda_python_error}"[:300]
 
 MiB = 1 << 20
 ALIGN = 512
@@ -51,7 +53,7 @@ def _ok(result, what: str):
 
 def available() -> Tuple[bool, str]:
     if not HAVE_CUDA_PYTHON:
-        return False, "cuda-python is not installed"
+        return False, "cuda-python is not importable (" + (CUDA_PYTHON_IMPORT_ERROR or "not installed") + ")"
     if not torch.cuda.is_available():
         return False, "no CUDA device"
     return True, ""

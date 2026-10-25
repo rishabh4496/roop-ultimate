@@ -434,7 +434,11 @@ class SegmentedVideoWriter:
 
     @property
     def total_encoded(self) -> int:
-        return sum(int(s.get("frames", 0) or 0) for s in self.segments)
+        """Frames handed to the encoder so far: the committed segments PLUS the open one. The open segment is only
+        committed by ``close()``, but ``procmgr_batch`` asserts frame-count parity BEFORE it closes the writer, so
+        counting committed segments alone read 0 for any render shorter than one segment (and short by the open
+        segment's frames for a longer one) - every such render failed the Stage 3 parity assertion at HEAD 04b432e."""
+        return sum(int(s.get("frames", 0) or 0) for s in self.segments) + int(self._cur_frames or 0)
 
     # ── finish ───────────────────────────────────────────────────────────────
     def close(self):

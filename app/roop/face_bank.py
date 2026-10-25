@@ -262,6 +262,9 @@ class FaceBank:
                     return self._aggregate_characters(collected_faces, cluster_labels)
             except Exception as exc:
                 _swallowed("face_bank.py:hw_scan", exc, "hardware scan failed; falling back to capture")
+                from roop.video_io_hw import BACKEND_CPU, BACKEND_NVDEC_DLPACK, telemetry as _io_telemetry
+                _io_telemetry.hardware_fallback("decode", "stage1-keyframes", BACKEND_NVDEC_DLPACK, BACKEND_CPU,
+                                                f"face bank scan: {type(exc).__name__}: {exc}")
 
         # ── Fallback Capture Path ──
         from roop import hdr_pipeline

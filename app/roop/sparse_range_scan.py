@@ -545,6 +545,14 @@ def _scan_active_ranges_hw(
         return ranges, mask, stats
 
 
+def _hardware_scan_fell_back(exc: BaseException) -> None:
+    """The Stage 1 pre-scan left NVDEC for cv2: move its decode label off ``NVDEC-DLPack`` and put the reason where
+    the per-job report (``video_io.fallbacks``), the HARDWARE section and the HUD badge read it."""
+    from roop import video_io_hw as hw
+    hw.telemetry.hardware_fallback("decode", "stage1-keyframes", hw.BACKEND_NVDEC_DLPACK, hw.BACKEND_CPU,
+                                   f"sparse range scan: {type(exc).__name__}: {exc}")
+
+
 def scan_active_ranges(
     source_video: str,
     target_faces: Optional[Sequence[Any]] = None,
@@ -603,9 +611,14 @@ def scan_active_ranges(
                     detector=detector,
                 )
             except HwUnavailable as exc:
+                _hardware_scan_fell_back(exc)
                 print(f"[SparseScan] Hardware keyframe pre-scan unavailable ({exc}); using fallback demuxer", flush=True)
             except Exception as exc:
+                # A RUNTIME failure (a shape/stride mismatch, a decoder fault) - not a missing package. The reader had
+                # already registered itself as the active decoder, so without the relabel the report would credit
+                # NVDEC for a pre-scan that cv2 finished. ROOP_STRICT_FALLBACK=1 re-raises it.
                 _swallowed("sparse_range_scan:hw_scan", exc, "hardware scan failed; using fallback demuxer")
+                _hardware_scan_fell_back(exc)
         capture = cv2.VideoCapture(source_video)
     cap = capture
     if not cap.isOpened():

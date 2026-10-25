@@ -56,7 +56,7 @@ from typing import Dict, List, Optional
 
 from roop.env import env_bool
 
-__all__ = ["swallowed", "report", "reset", "strict_fallback", "total_swallowed"]
+__all__ = ["swallowed", "fell_back", "report", "reset", "strict_fallback", "total_swallowed"]
 
 _lock = threading.RLock()
 _counts: Dict[str, dict] = {}
@@ -109,6 +109,12 @@ def swallowed(site: str, error: BaseException,
             # failure. This occurs when Pinokio's terminal pipe closes during
             # shutdown, or when a platform stream cannot encode the message.
             pass
+
+
+def fell_back(site: str, reason: str, detail: str = "", *, strict: Optional[bool] = None) -> None:
+    """``swallowed`` for a fallback that is a decision, not an exception: a ``None`` return, a refused shape, a
+    probe that said no. Same counter, same once-per-site print, same ``ROOP_STRICT_FALLBACK`` re-raise."""
+    swallowed(site, RuntimeError(reason), detail, strict=strict)
 
 
 def report() -> List[dict]:
