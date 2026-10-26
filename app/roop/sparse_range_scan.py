@@ -361,6 +361,42 @@ class FaceAnalyserProbe:
         return self.target_matrix is not None
 
 
+# A scan that finds a cut between two samples bisects for its first frame, at most this many cuts per scan (each costs
+# ~log2(gap) random-access decodes). Past it a cut keeps the position of the sample that revealed it.
+MAX_CUTS_LOCALIZED = 128
+
+
+def with_edge_samples(samples: Sequence[int], total_frames: int) -> List[int]:
+    """Sorted, de-duplicated sample schedule that always includes the first and last frame of the interval.
+
+    The keyframe schedule samples I-frames (plus a midpoint only where the GOP exceeds 60 frames), so a face that
+    is present from the first frame to the last was only seen from the first keyframe to the last one and padded
+    by M = 10 frames: with a 45-frame GOP and a trim starting mid-GOP, up to 44 leading and trailing frames fell
+    outside every active range and went out unswapped (122 of 155 frames covered on a clip with a face in every
+    frame). The software path and the dense-keyframe branch already sample the last frame; this makes both ends
+    sampled on every path.
+    """
+    last = max(0, int(total_frames) - 1)
+    return sorted({int(i) for i in samples if 0 <= int(i) <= last} | {0, last})
+
+
+def locate_cut_frame(lo: int, hi: int, in_new_shot: Callable[[int], bool]) -> Tuple[int, int]:
+    """First frame of the new shot, given ``lo`` (still the old shot) and ``hi`` (already the new one).
+
+    Bisection on ``in_new_shot(frame)``; returns ``(frame, probes)``, ``probes <= ceil(log2(hi - lo))``. A cut that the
+    encoder did not mark with a keyframe is only visible at the next sampled keyframe, up to a GOP late: the scan used
+    to record that keyframe as the cut (a cut at 120 in a clip whose keyframes are 105 and 150 was reported at 150)."""
+    probes = 0
+    while hi - lo > 1:
+        mid = (lo + hi) // 2
+        probes += 1
+        if in_new_shot(mid):
+            hi = mid
+        else:
+            lo = mid
+    return hi, probes
+
+
 def _full_range(total: int, mode: str, **extra: Any) -> Tuple[List[Tuple[int, int]], np.ndarray, Dict[str, Any]]:
     total = max(1, int(total))
     stats = {"active_frames": total, "total_frames": total, "skipped_frames": 0,
@@ -443,6 +479,7 @@ def _scan_active_ranges_hw(
         # decode only IDR/I-frames (plus midpoint frames only if GOP > 60 frames) within the active trim range [frame_start, frame_end)
         table = reader.keyframe_table(start_frame=frame_start, end_frame=frame_end)
         rel_kfs = [k - frame_start for k, _ in table if frame_start <= k < frame_end]
+        key_abs = {int(k) for k, _ in table}          # true I-frames: their bitstream stats say nothing about cuts
         gaps = [rel_kfs[i+1] - rel_kfs[i] for i in range(len(rel_kfs)-1)] if len(rel_kfs) > 1 else [total_frames]
         median_gap = np.median(gaps) if gaps else total_frames
 
@@ -455,6 +492,7 @@ def _scan_active_ranges_hw(
             scheduled_samples = [idx - frame_start for idx, pts, is_key in sample_tbl if frame_start <= idx < frame_end]
             if not scheduled_samples:
                 scheduled_samples = [0]
+        scheduled_samples = with_edge_samples(scheduled_samples, total_frames)
 
         dec = nvc.CreateSimpleDecoder(source_video, reader.gpu_id, 0, 0, True, 0, 0, False, 1,
                                      nvc.OutputColorType.RGBP, False, reader.enable_decode_stats)
@@ -462,12 +500,14 @@ def _scan_active_ranges_hw(
         total_samples = len(scheduled_samples)
         prev_idx = None
 
-        def test_frame(abs_f, rel_f):
+        def test_frame(abs_f, rel_f, commit=True):
             nonlocal samples_done, detector_errors
             raw = dec[abs_f]
             t = torch.from_dlpack(raw).clone()
             stats = raw.ParseDecodeStats() if reader.enable_decode_stats else None
-            is_cut = cut_detector.observe(abs_f, tensor=t, stats=stats)
+            # the first sample has nothing before it to differ from: its (non-key) stats are no cut evidence either
+            first = prev_idx is None and commit
+            is_cut = cut_detector.observe(abs_f, tensor=t, stats=stats, keyframe=first or abs_f in key_abs, commit=commit)
             hw_f = HwFrame(abs_f, None, tensor=t, decode_stats=stats)
             bgr = hw_f.bgr()
             try:
@@ -484,21 +524,49 @@ def _scan_active_ranges_hw(
                     _swallowed("sparse_range_scan:progress_cb", exc, "progress callback error")
             return is_cut
 
+        def localize(lo_abs, hi_abs, thumb_lo):
+            """First frame of the new shot between two samples, or None when the luma did not decide the cut."""
+            thumb_hi = cut_detector._last_luma_tensor
+            if thumb_lo is None or thumb_hi is None:
+                return None
+            if cut_detector.luma_distance(thumb_lo, thumb_hi) < cut_detector.luma_cut_delta:
+                return None                      # flagged by a bitstream cue on a non-key frame: nothing to bisect on
+
+            def in_new_shot(f):
+                raw = dec[f]
+                thumb = cut_detector.luma_thumb(torch.from_dlpack(raw).clone())
+                return thumb is not None and cut_detector.luma_distance(thumb_lo, thumb) >= cut_detector.luma_cut_delta
+
+            try:
+                return locate_cut_frame(lo_abs, hi_abs, in_new_shot)[0]
+            except Exception as exc:
+                _swallowed("sparse_range_scan:locate_cut", exc, "cut kept at the sample that revealed it")
+                return None
+
+        localized = 0
         for s_idx in scheduled_samples:
             if should_stop and should_stop():
                 break
             abs_idx = frame_start + s_idx
+            thumb_before = cut_detector._last_luma_tensor        # the previous sample's thumbnail
             is_cut = test_frame(abs_idx, s_idx)
-            # If a scene cut fell between samples, inspect the midpoint and boundary frames
+            # If a scene cut fell between samples, find its first frame, then inspect the midpoint and boundary
+            # frames (for faces). The inspections are probes: they run BEFORE the frame that flagged the cut, and
+            # must not become the baseline the next sample is compared with.
             if is_cut and prev_idx is not None and (s_idx - prev_idx) >= 2:
+                if localized < MAX_CUTS_LOCALIZED:
+                    exact = localize(frame_start + prev_idx, abs_idx, thumb_before)
+                    if exact is not None:
+                        cut_detector.relocate_last_cut(exact)
+                        localized += 1
                 mid_rel = prev_idx + (s_idx - prev_idx) // 2
                 mid_abs = frame_start + mid_rel
-                test_frame(mid_abs, mid_rel)
+                test_frame(mid_abs, mid_rel, commit=False)
                 if (s_idx - prev_idx) > 8:
                     if s_idx > 0 and (s_idx - 1) not in positives:
-                        test_frame(frame_start + s_idx - 1, s_idx - 1)
+                        test_frame(frame_start + s_idx - 1, s_idx - 1, commit=False)
                     if prev_idx + 1 < mid_rel and (prev_idx + 1) not in positives:
-                        test_frame(frame_start + prev_idx + 1, prev_idx + 1)
+                        test_frame(frame_start + prev_idx + 1, prev_idx + 1, commit=False)
             prev_idx = s_idx
 
         elapsed = time.perf_counter() - t0

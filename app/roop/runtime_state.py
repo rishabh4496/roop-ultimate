@@ -332,15 +332,30 @@ def _surgeon_info() -> dict:
     try:
         from roop.aux_canary import _load_store
         store = _load_store()
-        verdicts = store.get("verdicts", {})
-        for k, v in verdicts.items():
+        # The store keeps one verdict per engine HASH ever verified (xseg: 21, restoreformer++: 11), so keying by model
+        # name and letting the last dict entry win showed an arbitrary one: an old build that failed under a floor since
+        # relaxed read FAILED for a model whose current engine passes, and a pass could hide a live failure. Report the
+        # latest verdict per model, and how many were recorded.
+        latest, recorded = {}, {}
+        for k, v in store.get("verdicts", {}).items():
             stem = v.get("stem") or k[:8]
+            recorded[stem] = recorded.get(stem, 0) + 1
+            when = str(v.get("when") or "")
+            if stem not in latest or when >= latest[stem][0]:
+                latest[stem] = (when, v)
+        for stem, (when, v) in latest.items():
             canary_summary[stem] = {
                 "passed": v.get("passed", False),
                 "reason": v.get("reason", ""),
+                "when": when,
+                "recorded": recorded[stem],
             }
     except Exception as _canary_err:
         _swallowed("roop/runtime_state.py:canary_summary", _canary_err)
+
+    # A canary PASSES only if its engine output was finite (aux_canary.py rejects nan_inf_free < 1), so every latest
+    # verdict passing establishes NaN/Inf-freedom; anything else is not established (None), never asserted as True.
+    nan_inf_free = True if canary_summary and all(c["passed"] is True for c in canary_summary.values()) else None
 
     return {
         "surgeon_version": salt,
@@ -348,7 +363,7 @@ def _surgeon_info() -> dict:
         "verification_gates": {
             "psnr_min_db": psnr_gate,
             "cosine_min": cos_gate,
-            "nan_inf_free": True,
+            "nan_inf_free": nan_inf_free,
         },
         "canary_verdicts": canary_summary,
     }

@@ -160,7 +160,7 @@ def parse_adaptive_downgrades(text):
 
 
 def parse_run(text):
-    """Frames, seconds, fps and the swap audit, from the pipeline's own output.
+    r"""Frames, seconds, fps and the swap audit, from the pipeline's own output.
 
     The processing rate comes from ONE authoritative line -- the encoder's
     "took N secs, M frames/s" -- and from nothing else. A loose `([\d.]+)\s*fps`

@@ -1327,7 +1327,10 @@ class TrackingMixin:
                     # decoded frames. Several existing unit tests feed symbolic
                     # frame tokens to this pre-pass and must retain their exact
                     # full-frame detector contract.
-                    hinted = idx in cut_hints and idx not in shot_boundaries
+                    # The frame BEFORE a cut as well as the cut itself: with a detection every K frames the last
+                    # frames of a shot have no later anchor in their own shot (gap-fill may not cross the cut), so up
+                    # to K-1 of them held no face (2 of 3 frames before each cut on the e2e clip: 5 of 155 unswapped).
+                    hinted = (idx in cut_hints or (idx + 1) in cut_hints) and idx not in shot_boundaries
                     self._stage1_cut_hints_used += int(hinted)
                     detect_plan = temporal_tracker.plan(
                         idx, frame.shape, force_full=(idx in shot_boundaries or hinted))

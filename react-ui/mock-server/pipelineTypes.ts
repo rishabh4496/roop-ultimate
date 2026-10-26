@@ -114,7 +114,7 @@ export interface PrecisionValues {
   effective: string;
   surgeon_version: string;
   surgical_models: string[];
-  verification_gates: { psnr_min_db: number; cosine_min: number; nan_inf_free: boolean };
+  verification_gates: { psnr_min_db: number; cosine_min: number; nan_inf_free: boolean | null };
   canary_verdicts: Record<string, CanaryVerdict>;
 }
 

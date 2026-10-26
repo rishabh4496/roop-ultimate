@@ -1867,7 +1867,7 @@ MASKING_HEAD_JS = """
       var fKey = String(facesetIdx);
       /* New multi-faceset format: all top-level keys are digit strings */
       var keys = Object.keys(obj);
-      var isNew = keys.length > 0 && keys.every(function(k) { return /^\d+$/.test(k); });
+      var isNew = keys.length > 0 && keys.every(function(k) { return /^\\d+$/.test(k); });
       if (isNew) {
         var entry = obj[fKey];
         return entry ? JSON.stringify(entry) : '';
@@ -2021,7 +2021,7 @@ MASKING_HEAD_JS = """
     var result = [];
     (str || '').split(',').forEach(function(part) {
       part = part.trim();
-      var m = part.match(/^(\d+)\s*[-–]\s*(\d+)$/);
+      var m = part.match(/^(\\d+)\\s*[-–]\\s*(\\d+)$/);
       if (m) {
         var lo = parseInt(m[1], 10), hi = parseInt(m[2], 10);
         for (var i = lo; i <= hi; i++) result.push(i);
@@ -2183,7 +2183,7 @@ MASKING_HEAD_JS = """
       try {
         var existing = JSON.parse(existJson);
         var exKeys = Object.keys(existing);
-        var isNew = exKeys.length > 0 && exKeys.every(function(k) { return /^\d+$/.test(k); });
+        var isNew = exKeys.length > 0 && exKeys.every(function(k) { return /^\\d+$/.test(k); });
         if (isNew) {
           allMasks = existing;
         } else {

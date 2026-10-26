@@ -197,7 +197,7 @@ def test_unusable_chunks_stop_the_join_and_are_kept(monkeypatch, tmp_path):
     """A worker that 'finished' with a truncated file must stop the run BEFORE the concat list
     is written, with the chunk workspace left in place for inspection."""
     import pytest
-    with pytest.raises(RuntimeError, match="chunk\(s\) unusable"):
+    with pytest.raises(RuntimeError, match=r"chunk\(s\) unusable"):
         _stub_render_distributed(monkeypatch, tmp_path, ["GPU-a"], 2,
                                  verify_chunks=lambda paths: ["zero bytes: chunk_00001_render.mp4"])
     workspace = tmp_path / "w"

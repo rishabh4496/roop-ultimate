@@ -384,15 +384,29 @@ class HardwareBitstreamCutDetector:
         self._last_cut_frame = -999999
         self.scene_cuts.clear()
 
-    def observe(self, frame_idx: int, tensor: Any = None, stats: Optional[Dict[str, Any]] = None) -> bool:
+    def observe(self, frame_idx: int, tensor: Any = None, stats: Optional[Dict[str, Any]] = None,
+                keyframe: Optional[bool] = None, commit: bool = True) -> bool:
         """Observe a frame's VRAM tensor and/or decode statistics.
         Returns True if a cut transition is detected at frame_idx.
+
+        ``keyframe`` says the observed frame is a true I-frame. Its bitstream statistics carry no scene
+        information: an I-frame is ~100% intra coding units (threshold 0.85) and is coded at a lower QP than
+        the P-frames around it (threshold 6), on EVERY keyframe. Measured on a 1080p H.264 clip with no cut at
+        frames 45 and 105 (luma delta 2.4 / 3.0 against 30-60 at the real cuts): intra_ratio 1.0, QP 6.4 vs
+        16 on the P-frames. The keyframe scan samples only I-frames, so with the stats cues applied every
+        sampled keyframe was reported as a scene cut. A keyframe is therefore judged on the luma change alone;
+        ``None`` (caller does not know) keeps the old behaviour.
+
+        ``commit=False`` is a PROBE of a frame that is not the next one in time (the scan inspects midpoints and
+        boundary frames BEFORE the frame that just flagged a cut). A probe returns its verdict but does not become
+        the "previous frame": committing one made the next keyframe, in the same shot as the one that flagged the
+        cut, get compared with a frame from the shot before it, so every real cut was followed by a false one.
         """
         is_cut = False
 
-        # 1. Macroblock / coding-unit motion vector stats & QP deltas
+        # 1. Macroblock / coding-unit motion vector stats & QP deltas (non-key frames only: see above)
         mean_qp = None
-        if stats and isinstance(stats, dict):
+        if stats and isinstance(stats, dict) and not keyframe:
             qp_luma = stats.get('qp_luma')
             if qp_luma:
                 mean_qp = float(np.mean(qp_luma))
@@ -417,21 +431,15 @@ class HardwareBitstreamCutDetector:
 
         # 2. Fast GPU L1 downsampled tensor diff in VRAM
         if tensor is not None:
-            try:
-                import torch
-                if isinstance(tensor, torch.Tensor) and tensor.is_cuda:
-                    t = tensor.float()
-                    if t.ndim == 3:
-                        t = t.unsqueeze(0)
-                    small = torch.nn.functional.adaptive_avg_pool2d(t, (36, 64))[0]
-                    luma = 0.299 * small[0] + 0.587 * small[1] + 0.114 * small[2]
-                    if self._last_luma_tensor is not None:
-                        diff = float(torch.abs(luma - self._last_luma_tensor).mean().item())
-                        if diff >= self.luma_cut_delta:
-                            is_cut = True
+            luma = self.luma_thumb(tensor)
+            if luma is not None:
+                if self._last_luma_tensor is not None and self.luma_distance(luma, self._last_luma_tensor) >= self.luma_cut_delta:
+                    is_cut = True
+                if commit:
                     self._last_luma_tensor = luma
-            except Exception as exc:
-                _swallowed("scene_detector.py:observe_tensor", exc, "tensor diff fallback")
+
+        if not commit:
+            return is_cut                          # a probe: decides, but leaves the baseline and the cut list alone
 
         if mean_qp is not None:
             self._last_mean_qp = mean_qp
@@ -445,9 +453,34 @@ class HardwareBitstreamCutDetector:
 
         return is_cut
 
+    @staticmethod
+    def luma_thumb(tensor: Any) -> Optional[Any]:
+        """The 36x64 luma thumbnail the cut test compares, or None for anything that is not a CUDA frame tensor."""
+        try:
+            import torch
+            if isinstance(tensor, torch.Tensor) and tensor.is_cuda:
+                t = tensor.float()
+                if t.ndim == 3:
+                    t = t.unsqueeze(0)
+                small = torch.nn.functional.adaptive_avg_pool2d(t, (36, 64))[0]
+                return 0.299 * small[0] + 0.587 * small[1] + 0.114 * small[2]
+        except Exception as exc:
+            _swallowed("scene_detector.py:observe_tensor", exc, "tensor diff fallback")
+        return None
+
+    @staticmethod
+    def luma_distance(a: Any, b: Any) -> float:
+        return float(a.sub(b).abs().mean().item())
+
+    def relocate_last_cut(self, frame_idx: int) -> None:
+        """The cut just recorded at a sampled frame really happened earlier (bisection found its first frame)."""
+        if self.scene_cuts and int(frame_idx) < self.scene_cuts[-1]:
+            self.scene_cuts[-1] = int(frame_idx)
+            self._last_cut_frame = int(frame_idx)
+
     def observe_hw_frame(self, hw_frame: Any) -> bool:
         """Helper to observe an HwFrame directly."""
         tensor = getattr(hw_frame, "tensor", None)
         stats = getattr(hw_frame, "decode_stats", None)
         index = getattr(hw_frame, "index", 0)
-        return self.observe(index, tensor=tensor, stats=stats)
+        return self.observe(index, tensor=tensor, stats=stats, keyframe=getattr(hw_frame, "is_keyframe", None))

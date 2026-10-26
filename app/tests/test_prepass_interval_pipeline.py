@@ -203,8 +203,10 @@ class TestIntervalThroughTheRealPrepass:
         mgr, calls, _, text = run_prepass(4, pooled=pooled, hints=[hinted_frame], monkeypatch=monkeypatch)
         assert mgr._stage1_cut_hints == [hinted_frame]
         assert calls.get(hinted_frame) == 'full'
-        assert mgr._prepass_schedule['stage1_cut_hints'] == 1
-        assert '1 full detection(s) forced by a Stage 1 cut hint' in text
+        # ... and so does the frame before it: the last frame of the shot needs an anchor inside its own shot
+        assert calls.get(hinted_frame - 1) == 'full'
+        assert mgr._prepass_schedule['stage1_cut_hints'] == 2
+        assert '2 full detection(s) forced by a Stage 1 cut hint' in text
         # a hint is a SCHEDULING hint, not a shot boundary: gap-fill across it is still allowed
         assert hinted_frame not in (getattr(mgr, '_shot_boundaries', None) or set())
 
