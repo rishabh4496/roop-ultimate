@@ -75,13 +75,40 @@ export function opsCells(ops) {
     if (key === 'model' && /^tensorrt|^trt/i.test(backend)) label = /graph/i.test(backend) ? 'TRT Graph' : 'TRT';
     if (key === 'blend' && /triton/i.test(backend)) label = 'Triton Blend';
     if (key === 'encode' && /nvenc/i.test(backend)) label = 'NVENC';
+    // How the number was taken, in the backend's words ("host wall (blocking call)" for an ORT / cv2 / pipe call that
+    // returns with its result on the host, "cuda-event" for an asynchronous GPU stage): a ms figure never says
+    // "GPU time" unless the backend says it read a CUDA event.
+    const timing = o && o.timing ? String(o.timing) : '';
     return {
-      key, label, backend,
+      key, label, backend, timing,
       value: o && isNum(o.ms) ? fmtMs(o.ms) : DASH,
       calls: o && isNum(o.calls) ? o.calls : null,
-      title: o ? `${label}: ${fmtMs(o.ms)} per call over ${fmtCount(o.calls)} calls${backend ? ` on ${backend}` : ''}` : `${label}: did not run`,
+      title: o ? `${label}: ${fmtMs(o.ms)} per call over ${fmtCount(o.calls)} calls${backend ? ` on ${backend}` : ''}${timing ? ` · ${timing}` : ''}` : `${label}: did not run`,
     };
   });
+}
+
+/**
+ * Stage 3's throughput cells. Every figure counts frames the OUTPUT WRITER accepted (`frames_retired`), never the trim's
+ * planned length and never a worker's finished-frame tick; a metric the backend did not measure is a dash, never 0.
+ *
+ *   Effective Output  frames written per second (smart-skipped frames are still written, so this can exceed Neural)
+ *   Neural            swap-model inferences per second
+ *   Smart-Skip        share of faces that reused a flow-warped patch instead of running the model ("off" when the
+ *                     setting is off and nothing was skipped)
+ */
+export function stage3RateCells(s3) {
+  if (!s3 || typeof s3 !== 'object' || (s3.frames_retired == null && s3.effective_output_fps == null)) return [];
+  const skip = s3.smart_skip_enabled === false && !s3.smart_skip_faces ? 'off'
+    : isNum(s3.smart_skip_ratio_pct) ? fmtPct(s3.smart_skip_ratio_pct) : DASH;
+  return [
+    { key: 'effective', label: 'Effective Output', value: fmtFps(s3.effective_output_fps),
+      title: `${fmtCount(s3.frames_retired)} frames written to the output; ${s3.fps_basis || 'retired frames'}` },
+    { key: 'neural', label: 'Neural', value: fmtRate(s3.neural_inference_fps, 'inf/s'),
+      title: `${fmtCount(s3.neural_inferences)} swap-model inferences (faces the model ran on)` },
+    { key: 'skip', label: 'Smart-Skip', value: skip,
+      title: `${fmtCount(s3.smart_skip_faces)} faces reused a flow-warped patch instead of running the model` },
+  ];
 }
 
 /**
@@ -156,6 +183,9 @@ export function reportSections(report) {
     key: STAGE_3, label: STAGE_LABEL[STAGE_3], state: s3.state || 'PENDING',
     rows: [
       row('Wall clock', fmtSecs(s3.wall_s)),
+      ...stage3RateCells(s3).flatMap((c) => (c.key === 'effective'
+        ? [row('Frames written (retired)', fmtCount(s3.frames_retired)), row('Effective Output FPS', c.value)]
+        : [row(c.key === 'neural' ? 'Neural Inference FPS' : 'Smart-Skip ratio', c.value)])),
       row('Zero-GPU passthrough frames', fmtCount(s3.passthrough_frames)),
       row('GPU frames (swap / enhance)', fmtCount(s3.gpu_frames)),
       row('Frames with a swapped face', fmtCount(s3.swapped_frames)),
@@ -194,6 +224,8 @@ export function headline(report) {
   return {
     ok: report.ok !== false,
     fps: fmtFps(report.effective_fps),
+    // What that fps divides: frames the output writer accepted over the whole job's wall clock.
+    fpsTitle: report.effective_fps_basis ? `${report.effective_fps_basis} / total wall clock` : '',
     wall: fmtSecs(report.total_wall_s),
     speedup: speedupText(report.speedup),
     vram: fmtGb(report.vram && report.vram.peak_gb),

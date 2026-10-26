@@ -29,6 +29,9 @@ const EMPTY_RUN = {
   fps: 0,
   fps_now: null,
   frame_ms: null,
+  // What fps / fps_now / current_frame COUNT: 'retired' (frames the output writer accepted, Stage 3) or 'processed'
+  // (the progress bar's finished-frame tick, used until the writer reports one and on stages that do not write).
+  fps_basis: 'processed',
   current_frame: 0,
   total_frames: 0,
   eta_s: null,
@@ -150,6 +153,9 @@ export function setSystemTelemetry(system) {
 export const getRun = () => useTelemetryStore.getState().run;
 
 // ── Derived values every consumer used to compute for itself ─────────────
+
+/** "written" for retired frames, "processed" otherwise: the one word a throughput label needs to say what it counts. */
+export const fpsBasisWord = (basis) => (basis === 'retired' ? 'written' : 'processed');
 
 /** Progress as a clamped 0..1 (the backend can overshoot; see Processing). */
 export const selectProg = (s) => {

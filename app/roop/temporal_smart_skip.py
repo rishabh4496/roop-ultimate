@@ -332,6 +332,15 @@ def get_track_patch(track_id: Any, expected_frame_idx: Optional[int] = None,
         return entry
 
 
+def patch_is_reusable(entry: Optional[Dict[str, Any]]) -> bool:
+    """Whether a cached track entry holds a patch that can really be warped forward.
+
+    The swapper is bypassed only when this is True: counting an empty or non-array patch as a reuse would bypass
+    the model with nothing to put in its place AND report the face as saved work in the Smart-Skip ratio."""
+    patch = entry.get("patch") if isinstance(entry, dict) else None
+    return isinstance(patch, np.ndarray) and patch.size > 0
+
+
 def clear_track_patches() -> None:
     """Clear all track patches between jobs or on scene cuts."""
     with _PATCH_LOCK:

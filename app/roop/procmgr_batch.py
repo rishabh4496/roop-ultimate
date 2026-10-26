@@ -84,6 +84,7 @@ class BatchProcessingMixin:
         from roop import hdr_pipeline as _hdr_pipeline
         from roop import video_io_hw as _video_io_hw
         from roop import runtime_banner as _runtime_banner
+        from roop import gpu_event_timer as _gpu_event_timer
         import roop.util_ffmpeg as util_ffmpeg
         from roop.degrade import swallowed as _swallowed
         # Stabilization scheduling (temporal smoothing needs frames in order; the
@@ -152,6 +153,7 @@ class BatchProcessingMixin:
                 self._stage_profiler = StageProfiler(gpu_sync=_detail_sync,
                                                      device_id=_device_id)
                 set_detailed_profiler(self._stage_profiler)
+                _gpu_event_timer.register(self._stage_profiler.gpu_timer)
                 print('[Phase14] detailed stage profiler enabled; '
                       f"mode={'synchronized' if _detail_sync else 'event-only'}; "
                       'external telemetry is required for full-card VRAM.', flush=True)
@@ -160,6 +162,7 @@ class BatchProcessingMixin:
                 print(f'[Phase14] detailed stage profiler unavailable: {_exc}', flush=True)
         else:
             set_detailed_profiler(None)
+            _gpu_event_timer.register(None)
         # Frame indices restart per clip, so a latch carried over from the last
         # one would match a new face by position and hand it a stale verdict.
         self._nonfrontal_router.reset()
@@ -1028,6 +1031,10 @@ class BatchProcessingMixin:
         print(f"[Pipeline] === Stage {_main_lbl}: Main Processing ===", flush=True)
         _st.enter(_st.STAGE_3_MAIN_SWAP, self.total_frames)
         _swaps_at_stage3 = self.total_swaps
+        # The sequential writer thread increments this per frame and nothing cleared it, so a second render on the
+        # same ProcessMgr compared 2N encoded frames against N expected in the parity assertion below. None, not 0:
+        # the other paths never touch it and the assertion falls back to the writer's own count for None.
+        self._encoded_frame_count = None
         # Live FPS + queue monitor (ROOP_PIPELINE_LOG_EVERY, default 100, 0 = off).
         # `_runtime_read/write_queue` are only (re)bound by the parallel-stab path
         # and survive between runs, so clear them or a threaded render following a
@@ -1209,6 +1216,12 @@ class BatchProcessingMixin:
             self._lipsync_audio = None
             _st.put(_st.STAGE_3_MAIN_SWAP, faces_swapped=int(self.total_swaps - _swaps_at_stage3))
             _st.leave(_st.STAGE_3_MAIN_SWAP, ok=sys.exc_info()[1] is None and self._writer_error is None)
+            try:
+                _stage3_line = _st.stage3_line(getattr(self, 'total_frames', None))
+                if _stage3_line:
+                    print(_stage3_line, flush=True)
+            except Exception as _exc:
+                _swallowed('roop/procmgr_batch.py:stage3_line', _exc, 'Stage 3 closing line left out')
             # release_face_analyser_aux() intentionally leaves a detector-only
             # object for the main pass. Do not let that reduced object escape
             # into post-run callers: clear the pool so the next analysis call

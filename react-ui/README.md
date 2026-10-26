@@ -193,6 +193,18 @@ backend names, so a CPU blend is never called Triton. The **Canary precision** b
 RUNNING / NONE: no recorded verdict is NONE, never PASSED. It is also in the Settings "Last run report" and leads the
 PRECISION card of the 14-section Structured Runtime Report.
 
+**What an fps means.** Every Stage 3 rate counts frames the output writer *accepted* (`retire()` in
+`stage_telemetry.py`, called after each `write_frame`), never the trim's planned length and never a worker's
+finished-frame tick (the stabilized path ticks the progress bar a chunk before it writes). The telemetry frame says
+which it is in `fps_basis` (`retired` or `processed`; `processed` only until the writer reports its first frame, or on
+a write path that never reports), and the Diagnostics "Avg" tile and the "Render now" line say *written* or
+*processed* accordingly. Stage 3 shows three numbers side by side (`stage3RateCells`): **Effective Output** (frames
+written/s), **Neural** (swap-model inferences/s) and **Smart-Skip** (share of faces that reused a flow-warped patch).
+Reused frames are still written, so Effective Output can exceed Neural. A metric nothing measured is a dash, a measured
+0 is `0.0%`, and Smart-Skip says `off` when the setting is off. Per-op ms carries its `timing`: `host wall (blocking
+call)` for the ORT / cv2 / pipe calls `_prof` wraps (their return IS the duration), `cuda-event` for a GPU-resident
+stage read through `roop/gpu_event_timer.py` (record on the hot path, read later at <= 4 Hz, never synchronized).
+
 ### Type scale and colour tokens
 
 Body text is **12px or more**. `text-nano` (9) and `text-micro` (10) are chrome sizes (pill badge, `<kbd>`,

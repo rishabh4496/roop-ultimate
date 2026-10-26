@@ -30,6 +30,9 @@ INVARIANTS (exit 0 only when all hold):
   R4  cap.set / cap.grab counts equal the `[Track] positioned ... N seek(s) ... over W frame(s)` lines the
       seekers print themselves
   R5  the report is JSON-safe and equals what `/api/runtime/state` would carry (PERFORMANCE.pipeline_report)
+  R6  Stage 3's `frames_retired` (frames the output writer accepted) equals the delivered file's own packet count,
+      `effective_output_fps` == retired / Stage 3 wall, the swap-inference counter is non-zero when faces were
+      swapped, and the closing `[Stage 3] retired N/M frames | X Effective Output FPS` line is in the render log
 
 INFORMATIONAL: the speedup estimate against the measured dense (1-stage) arms, ABBA-counterbalanced after a
 warm-up, with the estimate's error reported (nothing gates on it: its tolerance has no distribution yet).
@@ -190,6 +193,20 @@ def check_run(res: dict, strict_audio: bool = True) -> dict:
         and 0 < util <= 100,
         'detail': {'vram': vr, 'stage3_peak_gb': s3.get('peak_vram_gb'), 'worker_utilization_pct': util,
                    'workers': s1.get('workers'), 'sampled_frames': s1.get('sampled_frames')}}
+    # R6: Stage 3's fps divides frames the WRITER accepted. Ground truth is the delivered file's own packet count.
+    ret, eff, w3 = s3.get('frames_retired'), s3.get('effective_output_fps'), s3.get('wall_s')
+    neural, skipped = s3.get('neural_inferences'), s3.get('smart_skip_faces')
+    log_text = open(res['log'], encoding='utf-8', errors='replace').read()
+    line = re.search(r'\[Stage 3\] retired (\d+)/(\d+) frames \| ([\d.]+) Effective Output FPS', log_text)
+    inv['R6_retired_frames_and_rates'] = {
+        'ok': ret is not None and ret == pk == exp and w3 and eff == round(ret / w3, 2)
+        and (not s3.get('faces_swapped') or (neural or 0) + (skipped or 0) > 0)
+        and line is not None and int(line.group(1)) == ret and float(line.group(3)) == eff
+        and rep.get('effective_fps_basis', '').startswith('retired'),
+        'detail': {'frames_retired': ret, 'delivered_packets': pk, 'expected': exp, 'effective_output_fps': eff,
+                   'stage3_wall_s': w3, 'neural_inferences': neural, 'smart_skip_faces': skipped,
+                   'smart_skip_ratio_pct': s3.get('smart_skip_ratio_pct'), 'faces_swapped': s3.get('faces_swapped'),
+                   'terminal_line': line.group(0) if line else None, 'run_effective_fps': rep.get('effective_fps')}}
     sl = res['seek_lines']
     inv['R4_seek_counts_match_the_seekers'] = {
         'ok': s2.get('set_calls') == sl['seeks'] and s2.get('grab_calls') == sl['walked'],

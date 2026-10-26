@@ -2,7 +2,7 @@ import React from 'react';
 import { Skeleton } from '../ui';
 import useTelemetry from './useTelemetry';
 import { LiveText } from '../LiveTelemetry';
-import { videoIoTextOf } from '../../store/telemetryStore';
+import { fpsBasisWord, videoIoTextOf } from '../../store/telemetryStore';
 
 // The GPU / VRAM / CPU / RAM strip in Face Swap's "Live Telemetry" section.
 //
@@ -97,7 +97,7 @@ export default function SystemTelemetryHud() {
         as="div"
         className="mt-3 text-micro font-mono text-white/55 empty:hidden"
         select={(s) => (s.run.fps_now
-          ? `Render now: ${s.run.fps_now.toFixed(1)} fps · ${s.run.frame_ms} ms/frame`
+          ? `Render now: ${s.run.fps_now.toFixed(1)} fps ${fpsBasisWord(s.run.fps_basis)} · ${s.run.frame_ms} ms/frame`
           : '')}
       />
     </>

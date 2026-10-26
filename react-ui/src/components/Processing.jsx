@@ -336,6 +336,7 @@ const RUN_FIELDS = (s) => ({
   total_frames: s.run.total_frames,
   eta_s: s.run.eta_s,
   fps: s.run.fps,
+  fps_basis: s.run.fps_basis,
   liveSeq: s.run.live_seq,
   engine_label: s.run.engine_label,
   engine_model: s.run.engine_model,
@@ -393,7 +394,7 @@ function useLiveRun({ startedAtS, paused, pauseRequested, stopping, elapsedRef }
 
   return {
     prog, frames, elapsedMs, etaMs, etaNote, now,
-    desc: run.desc, statusLine: run.statusLine, fps: run.fps, liveSeq: run.liveSeq,
+    desc: run.desc, statusLine: run.statusLine, fps: run.fps, fpsBasis: run.fps_basis, liveSeq: run.liveSeq,
     // "Compiling TensorRT Engine... <model> · <precision>" while the backend is building or verifying
     // one; '' otherwise. Shown IN PLACE of the status text at the two headline sites, never merged
     // into `desc`, which other readers parse for the stage ("encod", frame counters).
@@ -679,7 +680,7 @@ function RunHeadlineLive({ p, startedAtS, paused, pauseRequested, stopping, elap
 function RunPanelsLive({ settings, runtime, telemetry, runConfigSummary, startedAtS,
                          paused, pauseRequested, stopping, elapsedRef }) {
   const processing = true;
-  const { prog, frames, elapsedMs, etaMs, desc, statusLine, fps, liveSeq } = useLiveRun({
+  const { prog, frames, elapsedMs, etaMs, desc, statusLine, fps, fpsBasis, liveSeq } = useLiveRun({
     startedAtS, paused, pauseRequested, stopping, elapsedRef,
   });
   return (
@@ -731,6 +732,7 @@ function RunPanelsLive({ settings, runtime, telemetry, runConfigSummary, started
           framesDone={frames?.done}
           framesTotal={frames?.total}
           fps={fps}
+          fpsBasis={fpsBasis}
         />
       </div>
     </div>

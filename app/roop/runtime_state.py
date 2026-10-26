@@ -282,6 +282,26 @@ def _profile_data(manager) -> tuple[Mapping[str, Any], Any]:
         return {}, profile
 
 
+def _retired_live() -> Optional[Mapping[str, Any]]:
+    try:
+        from roop import stage_telemetry
+        return stage_telemetry.retired_view()
+    except Exception as _degrade_error:
+        _swallowed("roop/runtime_state.py:retired_live", _degrade_error, "fps left on the progress bar's basis")
+        return None
+
+
+def _stage3_view() -> Any:
+    """Stage 3's retired-frame metrics (effective output fps, neural inference fps, smart-skip ratio), or UNKNOWN
+    before a render has started one."""
+    try:
+        from roop import stage_telemetry
+        return stage_telemetry.stage3_rates() or UNKNOWN
+    except Exception as _degrade_error:
+        _swallowed("roop/runtime_state.py:stage3_view", _degrade_error, "Stage 3 rates left UNKNOWN")
+        return UNKNOWN
+
+
 def _pipeline_report() -> Any:
     try:
         from roop import stage_telemetry
@@ -486,6 +506,13 @@ def snapshot(progress: Optional[Mapping[str, Any]] = None,
     profile_data, profile = _profile_data(manager)
     provider = _active_provider()
     fraction, frame_done, frame_total, fps = _frame_values(progress, run_stats)
+    # While Stage 3 reports writes, the report's fps and done-count are RETIRED frames (accepted by the output
+    # writer); `_frame_values` only scrapes the progress bar's text, which counts a frame when a worker finishes it.
+    fps_basis = "processed (progress bar)"
+    stage3_view = _stage3_view()
+    retired = _retired_live()
+    if retired is not None and retired.get("avg_fps"):
+        fps, frame_done, fps_basis = retired["avg_fps"], retired["frames"], "retired (frames accepted by the output writer)"
     eta = _number(eta_s)
     resources = _resource_snapshot()
     sample = _monitor_sample(manager)
@@ -704,6 +731,7 @@ def snapshot(progress: Optional[Mapping[str, Any]] = None,
         "frames_done": frame_done,
         "frames_total": frame_total,
         "fps": fps,
+        "fps_basis": fps_basis,
         "eta_s": eta if eta is not None else UNKNOWN,
         "pause": pause,
     }
@@ -717,6 +745,10 @@ def snapshot(progress: Optional[Mapping[str, Any]] = None,
     }
     performance_values = {
         "fps": fps,
+        "fps_basis": fps_basis,
+        # Effective Output FPS / Neural Inference FPS / Smart-Skip ratio of Stage 3, live while it runs and final
+        # after (roop/stage_telemetry.stage3_rates); UNKNOWN before a render has reached Stage 3.
+        "stage3_rates": stage3_view,
         "eta_s": eta if eta is not None else UNKNOWN,
         "stage_timing": stage_profile,
         "runtime_monitor": runtime_summary,

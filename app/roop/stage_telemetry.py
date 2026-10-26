@@ -39,6 +39,14 @@ job history stores (`api._record_run_history`) and the UI shows:
     stage 4   the `finalize_output` result (verification, colour tags, A/V alignment, orphans)
     run       total_wall_s, effective_fps, and `speedup`
 
+RETIRED FRAMES (Stage 3). Every fps in this report divides frames the OUTPUT WRITER HAS ACCEPTED (`retire()`, called
+at the three `write_frame` sites in ProcessMgr, right after the write returns), never the trim's planned frame
+count and never a worker's "I finished this frame" tick (the parallel-stabilization path ticks the progress bar when
+a frame lands in its result dict, up to a chunk before it is written). Smart-Skip splits the picture in two:
+`effective_output_fps` is frames written per second; `neural_inference_fps` is swap-model inferences per second;
+`smart_skip_ratio_pct` is the share of faces that reused a flow-warped patch instead of running the model. Frames
+that were reused cost no inference but are still written, so the first number can exceed the second.
+
 `speedup` is an ESTIMATE and says so (`estimated: true`, `method`): a dense 1-stage render is not run
 during a job, so the baseline is this run's own per-active-frame cost (Stage 2 + Stage 3 wall, scaled from
 the active frames to every frame) divided into what the 3-stage run actually took. A measured dense arm is
@@ -50,8 +58,10 @@ from __future__ import annotations
 import sys
 import threading
 import time
+from collections import deque
 from typing import Any, Dict, Optional
 
+from roop import gpu_event_timer as _gpu_events
 from roop.degrade import swallowed as _swallowed
 from roop.vram_peak import PeakSampler
 
@@ -73,6 +83,17 @@ RESTORED = "RESTORED"
 _ops_on = False
 _ops_lock = threading.Lock()
 _ops: Dict[str, list] = {}                       # _prof stage name -> [seconds, calls]
+# What `_prof` measures: the host wall clock around a call that blocks until its result is on the host (an ORT run,
+# a cv2 call, a pipe write). That IS the operation's duration, so no CUDA event is needed or used; a GPU-resident
+# stage that enqueues asynchronously reports through roop/gpu_event_timer.py instead and is labelled "cuda-event".
+OPS_TIMING = "host wall (blocking call)"
+
+# Frames the output writer has accepted this Stage 3 (see the module docstring). Written from the writer thread(s),
+# so it has its own lock; `retire` is a no-op unless Stage 3 is RUNNING (`_ops_on`).
+RETIRE_WINDOW_S = 10.0
+_retire_lock = threading.Lock()
+_retired = 0
+_retire_win: deque = deque(maxlen=4096)           # (monotonic seconds, cumulative frames retired)
 # Which _prof stage is which column of the brief's Stage 3 line. `swap` is the swap model's inference call,
 # `alignment` the face crop/warp (cv2 on the host unless a GPU warp is wired), `blend` the paste-back.
 OPS_COLUMNS = (("decode", "decode"), ("warp", "alignment"), ("model", "swap"), ("restore", "enhance"),
@@ -151,6 +172,137 @@ def record_op(stage: str, seconds: float) -> None:
             slot[1] += 1
 
 
+def retire(n: int = 1) -> None:
+    """`n` more frames have been accepted by the output writer (call AFTER `write_frame` returns).
+
+    Ignored unless Stage 3 is RUNNING, so a live-preview swap between renders cannot move a finished report."""
+    global _retired
+    if not _ops_on:
+        return
+    now = time.monotonic()
+    with _retire_lock:
+        _retired += int(n)
+        _retire_win.append((now, _retired))
+
+
+def _reset_retired() -> None:
+    global _retired
+    with _retire_lock:
+        _retired = 0
+        _retire_win.clear()
+
+
+def _retired_total() -> int:
+    with _retire_lock:
+        return _retired
+
+
+def _retire_rate(running: bool, now: Optional[float] = None) -> Optional[float]:
+    """Frames written per second over the last RETIRE_WINDOW_S while running (decays if writes stop).
+
+    The window ends at `now`, not at the last write: a stalled writer must read as a falling rate, not freeze at
+    the last good one. None until two writes exist."""
+    now = time.monotonic() if now is None else now
+    with _retire_lock:
+        pts = list(_retire_win)
+    if len(pts) < 2:
+        return None
+    cutoff = now - RETIRE_WINDOW_S
+    base = pts[0]
+    for p in pts:
+        if p[0] <= cutoff:
+            base = p
+        else:
+            break
+    end_t = now if running else pts[-1][0]
+    dt = end_t - base[0]
+    if dt <= 0:
+        return None
+    return round((pts[-1][1] - base[1]) / dt, 2)
+
+
+def _smart_skip_enabled() -> Optional[bool]:
+    try:
+        from roop.temporal_smart_skip import is_smart_skip_enabled
+        return bool(is_smart_skip_enabled())
+    except Exception as exc:                          # noqa: BLE001 - the label is optional
+        _swallowed("roop/stage_telemetry.py:smart_skip_enabled", exc, "smart-skip flag left out of the report")
+        return None
+
+
+def _stage3_rates(wall_s: Optional[float], counters: Dict[str, float], running: bool) -> Dict[str, Any]:
+    """The retired-frame metrics of Stage 3. A metric nothing fed is None, never a made-up 0.
+
+    `effective_output_fps`  frames written per second: windowed while RUNNING, retired / wall once it ended.
+    `neural_inference_fps`  swap-model inferences per second over the stage's wall clock.
+    `smart_skip_ratio_pct`  faces that reused a flow-warped patch / (those + faces the model ran on)."""
+    retired = _retired_total()
+    neural, skipped = counters.get("neural_inferences"), counters.get("smart_skip_faces")
+    if running:
+        eff = _retire_rate(True)
+    else:
+        eff = round(retired / wall_s, 2) if retired and wall_s and wall_s > 0 else None
+    return {
+        "frames_retired": retired if (retired or wall_s is not None) else None,
+        "effective_output_fps": eff,
+        "neural_inferences": int(neural) if neural is not None else None,
+        "neural_inference_fps": _rate(neural, wall_s) if neural is not None else None,
+        "smart_skip_faces": int(skipped) if skipped is not None else None,
+        "smart_skip_ratio_pct": (_ratio_pct(skipped or 0, neural or 0)
+                                 if (skipped is not None or neural is not None) else None),
+        "smart_skip_enabled": _smart_skip_enabled(),
+        "fps_basis": "retired (frames accepted by the output writer)",
+    }
+
+
+def retired_view() -> Optional[Dict[str, Any]]:
+    """The live retired-frame counter for a headline fps: None unless Stage 3 is RUNNING and the writer has
+    accepted at least one frame. A None tells the caller to fall back to (and LABEL) the progress bar's processed
+    count, so a write path that never calls `retire` shows its old numbers marked as such instead of zero."""
+    with _lock:
+        s = _stages.get(STAGE_3_MAIN_SWAP)
+        if not s or s["state"] != RUNNING or s.get("since") is None:
+            return None
+        since = s["since"]
+    n = _retired_total()
+    if n <= 0:
+        return None
+    elapsed = time.time() - since
+    return {"frames": n, "avg_fps": round(n / elapsed, 2) if elapsed > 0 else None, "now_fps": _retire_rate(True)}
+
+
+def stage3_rates() -> Optional[Dict[str, Any]]:
+    """Stage 3's retired-frame metrics, live while it runs and final once it ended; None before it started."""
+    with _lock:
+        s = _stages.get(STAGE_3_MAIN_SWAP)
+        if not s or s["state"] in (PENDING, SKIPPED):
+            return None
+        return _stage3_rates(_wall(s, time.time()), dict(_counters.get(STAGE_3_MAIN_SWAP) or {}),
+                             running=s["state"] == RUNNING)
+
+
+def stage3_line(expected_frames: Optional[int] = None) -> Optional[str]:
+    """The terminal's Stage 3 closing line, from the same numbers the HUD and the report show; None before Stage 3.
+
+    "[Stage 3] retired 600/600 frames | 21.40 Effective Output FPS | 812 neural inferences = 9.1/s |
+    Smart-Skip 12.3% of 926 faces". A frame short of the expectation is printed as such, not rounded away."""
+    r = stage3_rates()
+    if not r or r["frames_retired"] is None:
+        return None
+    n = r["frames_retired"]
+    parts = [f"retired {n}" + (f"/{int(expected_frames)}" if expected_frames else "") + " frames"]
+    if r["effective_output_fps"] is not None:
+        parts.append(f"{r['effective_output_fps']:.2f} Effective Output FPS")
+    if r["neural_inferences"] is not None and r["neural_inference_fps"] is not None:
+        parts.append(f"{r['neural_inferences']} neural inferences = {r['neural_inference_fps']:.1f}/s")
+    if r["smart_skip_enabled"] is False and not r["smart_skip_faces"]:
+        parts.append("Smart-Skip off")                     # off beats "0.0%": a setting that is off skipped nothing
+    elif r["smart_skip_ratio_pct"] is not None:
+        faces = (r["smart_skip_faces"] or 0) + (r["neural_inferences"] or 0)
+        parts.append(f"Smart-Skip {r['smart_skip_ratio_pct']:.1f}% of {faces} faces")
+    return "[Stage 3] " + " | ".join(parts)
+
+
 def _ops_ms() -> Dict[str, Optional[Dict[str, Any]]]:
     """ms per call and call count for each Stage 3 column; None for one that never ran (never a made-up 0)."""
     with _ops_lock:
@@ -194,6 +346,7 @@ def enter(stage: str, total: int = 0) -> None:
     if stage == STAGE_3_MAIN_SWAP:
         with _ops_lock:
             _ops.clear()
+        _reset_retired()
         _ops_on = True
 
 
@@ -381,7 +534,7 @@ def _ratio_pct(part: Any, other: Any) -> Optional[float]:
 def _ops_report() -> Dict[str, Optional[Dict[str, Any]]]:
     """Stage 3's per-operation ms/call with the backend each ran on; a column that never ran is None."""
     ops, labels = _ops_ms(), _backends()
-    return {col: (dict(v, backend=labels.get(col)) if v else None) for col, v in ops.items()}
+    return {col: (dict(v, backend=labels.get(col), timing=OPS_TIMING) if v else None) for col, v in ops.items()}
 
 
 def _aux_offload() -> Optional[Dict[str, Any]]:
@@ -416,6 +569,8 @@ def build_summary(ok: bool = True, now: Optional[float] = None) -> Dict[str, Any
         def _peak(stage: str) -> Optional[float]:
             return (vram.get("by_stage_gb") or {}).get(stage)
 
+        rates3 = _stage3_rates(s3, c3, running=st[STAGE_3_MAIN_SWAP]["state"] == RUNNING)
+
         stage1 = {"state": st[STAGE_1_SPARSE_PRESCAN]["state"], "wall_s": s1,
                   "sampled_frames": c1.get("sampled_frames"), "samples_total": c1.get("samples_total"),
                   "stride": c1.get("stride"), "workers": c1.get("workers"),
@@ -446,7 +601,10 @@ def build_summary(ok: bool = True, now: Optional[float] = None) -> Dict[str, Any
                   "passthrough_frames": c3.get("passthrough_frames"), "gpu_frames": c3.get("gpu_frames"),
                   "swapped_frames": c3.get("swapped_frames"), "faces_swapped": c3.get("faces_swapped"),
                   "peak_vram_gb": _peak(STAGE_3_MAIN_SWAP),
-                  "processing_fps": round(total / s3, 2) if total and s3 else None,
+                  # Retired frames / wall, not the trim's planned count / wall: a stage that died at frame 40 of
+                  # 600 used to report 600 / wall.
+                  "processing_fps": rates3["effective_output_fps"],
+                  **rates3,
                   "ops": _ops_report()}
         # Stage 4 is the LAST finalize of the job (a multi-video job reports the last video's pipeline).
         last = fins[-1] if fins else None
@@ -465,12 +623,17 @@ def build_summary(ok: bool = True, now: Optional[float] = None) -> Dict[str, Any
         started = run.get("started")
         total_wall = round(now - started, 3) if started else None
         pipeline_s = sum(x for x in (s1, s2, s3) if x)
-        eff_fps = round(total / (pipeline_s + s4), 2) if total and (pipeline_s + s4) > 0 else None
+        # Frames the writer accepted over the whole pipeline's wall clock (Stages 1-3 plus finalize). Dividing the
+        # planned `total` here reported the trim's length as delivered whether or not Stage 3 got there.
+        retired_n = rates3["frames_retired"]
+        eff_fps = round(retired_n / (pipeline_s + s4), 2) if retired_n and (pipeline_s + s4) > 0 else None
         speedup = estimate_speedup(s1, s2, s3, total, active, restored=restored)
         return {"schema": 1, "ok": bool(ok) and (stage4 is None or stage4["ok"]), "finished_at": now,
                 "video_io": _video_io_snapshot(), "aux_offload": _aux_offload(),
                 "total_frames": total, "videos_in_job": videos, "total_wall_s": total_wall,
-                "effective_fps": eff_fps, "speedup": speedup,
+                "effective_fps": eff_fps, "effective_fps_basis": rates3["fps_basis"],
+                "gpu_event_timing": _gpu_events.resolve_registered(force=True),
+                "speedup": speedup,
                 "vram": {"peak_gb": vram.get("peak_gb"), "base_gb": vram.get("base_gb"),
                          "total_gb": vram.get("total_gb"), "samples": vram.get("samples")},
                 "stages": {STAGE_1_SPARSE_PRESCAN: stage1, STAGE_2_ACTIVE_PREPASS: stage2,
@@ -502,6 +665,9 @@ def _live_rate(stage: Dict[str, Any], now: float) -> Optional[float]:
 
 def snapshot() -> Dict[str, Any]:
     """JSON-safe view for a telemetry frame. Constant while idle (the sampler sends on change)."""
+    # The one place CUDA event pairs are read: this runs on the telemetry sampler (4 Hz, routes_telemetry), never in
+    # the frame loop, and `resolve` self-throttles to 250 ms and reads only pairs the GPU has already finished.
+    gpu_events = _gpu_events.resolve_registered()
     with _lock:
         if not _stages:
             return {"stage": None, "stages": {}}
@@ -528,8 +694,17 @@ def snapshot() -> Dict[str, Any]:
                 # Stage-local items per second: samples (Stage 1), active-range frames (Stage 2), frames (Stage 3).
                 "fps": _live_rate(s, now),
             }
-        if _stages.get(STAGE_3_MAIN_SWAP, {}).get("state") in (RUNNING, DONE):
+        s3_state = _stages.get(STAGE_3_MAIN_SWAP, {}).get("state")
+        if s3_state in (RUNNING, DONE):
             out[STAGE_3_MAIN_SWAP]["ops"] = _ops_report()
+            # Stage 3's `fps` is the retired-frame rate (frames the writer accepted), not the progress bar's
+            # processed-frame rate that `_live_rate` derived from `done`.
+            rates3 = _stage3_rates(out[STAGE_3_MAIN_SWAP]["wall_s"], _counters.get(STAGE_3_MAIN_SWAP) or {},
+                                   running=s3_state == RUNNING)
+            out[STAGE_3_MAIN_SWAP].update(rates3)
+            out[STAGE_3_MAIN_SWAP]["fps"] = rates3["effective_output_fps"]
+            if gpu_events is not None:
+                out[STAGE_3_MAIN_SWAP]["gpu_events"] = gpu_events
         c1 = _counters.get(STAGE_1_SPARSE_PRESCAN) or {}
         c2 = _counters.get(STAGE_2_ACTIVE_PREPASS) or {}
         out[STAGE_1_SPARSE_PRESCAN]["scene_cuts"] = c1.get("scene_cuts")
@@ -560,6 +735,7 @@ def reset() -> None:
     _ops_on = False
     with _ops_lock:
         _ops.clear()
+    _reset_retired()
     with _lock:
         _run.clear()
         _stages.clear()

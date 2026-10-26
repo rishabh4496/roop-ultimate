@@ -21,7 +21,7 @@ export type FlowBackend = 'nvof' | 'cv' | 'torch';
 
 export type OpName = 'decode' | 'warp' | 'model' | 'restore' | 'blend' | 'encode';
 /** One Stage 3 column: per-call milliseconds, how many calls, and the backend that really ran. */
-export interface OpCell { ms: number; calls: number; backend: string }
+export interface OpCell { ms: number; calls: number; backend: string; timing?: string }
 export type OpsReport = Record<OpName, OpCell | null>;
 
 export interface StageTelemetry {
@@ -40,6 +40,17 @@ export interface StageTelemetry {
   flow_ratio_pct?: number | null;
   flow_backend?: FlowBackend | null;
   ops?: OpsReport;
+  // Stage 3 only (app/roop/stage_telemetry.py `_stage3_rates`): every rate counts frames the OUTPUT WRITER accepted, and a
+  // metric nothing fed is null. `neural_*` counts swap-model inferences; the smart-skip ratio is faces that reused a
+  // flow-warped patch over (those + faces the model ran on).
+  frames_retired?: number | null;
+  effective_output_fps?: number | null;
+  neural_inferences?: number | null;
+  neural_inference_fps?: number | null;
+  smart_skip_faces?: number | null;
+  smart_skip_ratio_pct?: number | null;
+  smart_skip_enabled?: boolean | null;
+  fps_basis?: string;
 }
 
 export interface PipelineTelemetry {
@@ -84,6 +95,9 @@ export function buildStages(progress: number, processing: boolean, fps: number):
         blend: { ms: 4.1, calls: 144, backend: 'cv2 (CPU)' },
         encode: { ms: 1.2, calls: 144, backend: 'hevc_nvenc' },
       },
+      frames_retired: 144, effective_output_fps: fps, neural_inferences: 120, neural_inference_fps: Math.round(fps * 0.8 * 10) / 10,
+      smart_skip_faces: 24, smart_skip_ratio_pct: 16.7, smart_skip_enabled: true,
+      fps_basis: 'retired (frames accepted by the output writer)',
     }),
   };
   const current: StageName | null = s3 === 'RUNNING' ? STAGE_3 : s2 === 'RUNNING' ? STAGE_2 : s1 === 'RUNNING' ? STAGE_1 : null;

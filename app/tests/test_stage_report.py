@@ -49,7 +49,7 @@ class _Base(unittest.TestCase):
         mock.patch.object(st._vram, "start", lambda: st._vram.reset()).start()
         self.addCleanup(mock.patch.stopall)
 
-    def run_pipeline(self, total=600, active=200, s1=2.0, s2=10.0, s3=30.0):
+    def run_pipeline(self, total=600, active=200, s1=2.0, s2=10.0, s3=30.0, retired=None):
         st.begin_run(total)
         st.enter(S1)
         self.clock.t += s1
@@ -68,6 +68,8 @@ class _Base(unittest.TestCase):
             st.add(S3, "gpu_frames")
         for _ in range(active - 10):
             st.add(S3, "swapped_frames")
+        # The output writer accepts every frame of the trim (ProcessMgr's three write sites call `retire`).
+        st.retire(total if retired is None else retired)
         self.clock.t += s3
         st.put(S3, faces_swapped=190)
         st.leave(S3)

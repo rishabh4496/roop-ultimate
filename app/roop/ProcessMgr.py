@@ -2015,9 +2015,11 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                         with _prof('encode'):
                             if self.output_to_file:
                                 self.videowriter.write_frame(frame)
-                                self._encoded_frame_count = getattr(self, '_encoded_frame_count', 0) + 1
+                                self._encoded_frame_count = (getattr(self, '_encoded_frame_count', None) or 0) + 1
                             if self.output_to_cam:
                                 self.streamwriter.WriteToStream(frame)
+                            if self.output_to_file or self.output_to_cam:
+                                _stage_telemetry.retire()
                             if self._temporal_faces is not None:
                                 self._temporal_faces.pop(nextindex - 1, None)
                             if hasattr(self, '_track_assignments') and self._track_assignments is not None:
@@ -2157,6 +2159,8 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     self.videowriter.write_frame(frame)
                 if self.output_to_cam:
                     self.streamwriter.WriteToStream(frame)
+                if self.output_to_file or self.output_to_cam:
+                    _stage_telemetry.retire()
             # These caches are frame-lifetime resources.  Release each entry at
             # the encode boundary so queue depth cannot retain the whole clip.
             if self._temporal_faces is not None:
@@ -2611,6 +2615,8 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                                     self.videowriter.write_frame(fr)
                             if self.output_to_cam:
                                 self.streamwriter.WriteToStream(fr)
+                            if self.output_to_file or self.output_to_cam:
+                                _stage_telemetry.retire()
                             _written_indices.add(gi)
                             _encoded_count += 1
                             if _runtime_scheduler is not None:
@@ -6127,7 +6133,8 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         )
         if _is_reuse_candidate and _temporal_tid is not None:
             try:
-                from roop.temporal_smart_skip import is_smart_skip_enabled, get_track_patch, get_dense_flow_warper
+                from roop.temporal_smart_skip import (
+                    is_smart_skip_enabled, get_track_patch, get_dense_flow_warper, patch_is_reusable)
                 if is_smart_skip_enabled():
                     _cur_fi = getattr(self._tls, 'frame_idx', None)
                     _exp_fi = (_cur_fi - 1) if _cur_fi is not None and _cur_fi > 0 else None
@@ -6151,7 +6158,10 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                                 )
                             except (cv2.error, ValueError, TypeError, AttributeError):
                                 pass
-                        _smart_skip_reused = True
+                        # Only a patch that was really warped forward counts as a reuse. This was set
+                        # unconditionally, so an empty / non-array patch bypassed the swapper with nothing
+                        # to put in its place and the Smart-Skip ratio would have counted it as saved work.
+                        _smart_skip_reused = patch_is_reusable(_prev_entry)
                         scale_factor = float(_prev_entry.get('scale_factor', 0.0) or 0.0)
             except Exception as _exc:
                 _swallowed('roop/ProcessMgr.py:smart_skip_warp', _exc, 'smart-skip warp failed; running full swap')
@@ -6159,9 +6169,11 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         for p in self.processors:
             if p.type == 'swap':
               if _smart_skip_reused:
+                self._count_stage3('smart_skip_faces')
                 continue          # Swapper bypassed by Temporal Smart-Skip
               if _raw_hit is not None:
                 continue          # served by the neighbouring block (roop.stab_dedup)
+              self._count_stage3('neural_inferences')
               with _prof('swap'):
                 # A composite swapper (realswap) crops its SECOND net straight
                 # from the plate rather than from this crop, which saves the

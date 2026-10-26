@@ -3,7 +3,7 @@ import { useTelemetryStore } from '../../store/telemetryStore';
 import { useEngineRun } from './useEngineRun';
 import {
   STAGE_ORDER, STAGE_LABEL, STAGE_1, STAGE_2, STAGE_3, auxOffloadText, canaryTone, canaryView, flowEngineLabel,
-  fmtCount, fmtPct, fmtRate, fmtSecs, headline, opsCells, reportSections, stateTone,
+  fmtCount, fmtPct, fmtRate, fmtSecs, headline, opsCells, reportSections, stage3RateCells, stateTone,
 } from './reportFormat';
 
 // The 3-stage pipeline's live HUD and its finished report.
@@ -60,7 +60,7 @@ export function PipelineSummaryCard({ report, title = 'Pipeline report', default
         <span className={`text-micro font-semibold ${head.ok ? 'text-emerald-400' : 'text-red-300'}`}>
           {head.ok ? 'verified' : 'FAILED'}
         </span>
-        <span className="text-micro font-mono text-white/80">{head.frames} frames · {head.wall} · {head.fps}</span>
+        <span className="text-micro font-mono text-white/80" title={head.fpsTitle}>{head.frames} frames · {head.wall} · {head.fps}</span>
         <span className="text-micro font-mono text-white/60" title="Estimated from this run's own per-active-frame cost; a dense render is not run during a job">
           speedup {head.speedup}
         </span>
@@ -112,6 +112,17 @@ function OpsStrip({ ops }) {
   );
 }
 
+/** Stage 3's throughput: Effective Output FPS (frames written) | Neural inf/s | Smart-Skip %, from retired frames. */
+function RatesStrip({ stage }) {
+  const cells = stage3RateCells(stage);
+  if (!cells.length) return null;
+  return (
+    <div className="mt-1 flex flex-wrap gap-x-2.5 gap-y-0.5 text-nano font-mono text-white/70" data-testid="stage3-rates">
+      {cells.map((c) => <span key={c.key} title={c.title}>{c.label} {c.value}</span>)}
+    </div>
+  );
+}
+
 /** One live row per stage while a render runs: state, stage-local progress, elapsed time, stage rate. */
 function LiveRows({ pipeline }) {
   const stages = pipeline.stages || {};
@@ -140,6 +151,7 @@ function LiveRows({ pipeline }) {
             {liveDetail(name, s) && (
               <div className="mt-0.5 text-nano font-mono text-white/70" data-testid={`${name}-detail`}>{liveDetail(name, s)}</div>
             )}
+            {name === STAGE_3 && <RatesStrip stage={s} />}
             {name === STAGE_3 && <OpsStrip ops={s.ops} />}
           </div>
         );

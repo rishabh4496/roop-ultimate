@@ -399,6 +399,8 @@ class BenchmarkRunResult:
             f"Frames Tested : {int(m.get('frames_processed', 150))} frames (1080p full pipeline)\n"
             f"{'-' * 64}\n"
             f"Throughput    : {m.get('avg_fps', 0.0):.2f} FPS (Latency: {m.get('avg_latency_ms', 0.0):.2f} ms)\n"
+            f"                (frames / summed process_frame latency, one frame in flight; decode and encode excluded,\n"
+            f"                 so NOT the end-to-end Effective Output FPS of a render)\n"
             f"1% Low Floor  : {m.get('p1_low_fps', 0.0):.2f} FPS (P99 Latency: {m.get('p99_latency_ms', 0.0):.2f} ms)\n"
             f"Peak VRAM     : {m.get('peak_vram_mb', 0.0):.2f} MiB\n"
             f"Peak CPU Load : {m.get('peak_cpu_pct', 0.0):.1f}%\n"

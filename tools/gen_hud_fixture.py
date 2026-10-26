@@ -22,6 +22,7 @@ import roop.globals as g  # noqa: E402
 
 S1, S2, S3 = st.STAGE_1_SPARSE_PRESCAN, st.STAGE_2_ACTIVE_PREPASS, st.STAGE_3_MAIN_SWAP
 clock = [1000.0]
+mono = [50.0]                                       # `retire`'s window clock (time.monotonic)
 
 
 def _spin(seconds):
@@ -37,6 +38,8 @@ FIXTURE = os.path.join(ROOT, "react-ui", ".render-check", "pipeline-hud.fixture.
 def build():
     """Drive the real writers and return ``{"live": snapshot, "summary": report}`` (no file written)."""
     with mock.patch.object(st.time, "time", lambda: clock[0]), \
+            mock.patch.object(st.time, "monotonic", lambda: mono[0]), \
+            mock.patch.object(st, "_smart_skip_enabled", return_value=True), \
             mock.patch.object(g, "execution_providers", [("TensorrtExecutionProvider", {}), "CPUExecutionProvider"],
                               create=True), \
             mock.patch.object(g, "video_encoder", "h264_nvenc", create=True), \
@@ -65,8 +68,14 @@ def build():
                 with procmgr_runtime._prof(stage):
                     _spin(ms / 1000.0)
         st.put(S3, swapped_frames=120, faces_swapped=130)
+        st.add(S3, "neural_inferences", 90)             # swap-model runs; 40 more faces reused a warped patch
+        st.add(S3, "smart_skip_faces", 40)
         st.progress(S3, 300, 600)
-        clock[0] += 10.0
+        # The output writer accepts 30 frames a second for 10 s: the retired rate, live and final, is 30 fps.
+        for _ in range(10):
+            clock[0] += 1.0
+            mono[0] += 1.0
+            st.retire(30)
         live = st.snapshot()
         st.leave(S3)
         summary = st.end_run(ok=True)

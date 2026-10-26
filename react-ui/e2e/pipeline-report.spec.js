@@ -35,7 +35,9 @@ const baseFrame = (extra) => ({
 const liveStages = {
   [S1]: { state: 'DONE', stage_progress_pct: 100, active_ranges_count: 2, verified_target_frames: null, skipped_frames_pct: 46.7, eta_seconds: 0, wall_s: 6.2 },
   [S2]: { state: 'DONE', stage_progress_pct: 100, active_ranges_count: 2, verified_target_frames: 180, skipped_frames_pct: 46.7, eta_seconds: 0, wall_s: 4.49 },
-  [S3]: { state: 'RUNNING', stage_progress_pct: 40, active_ranges_count: 2, verified_target_frames: 180, skipped_frames_pct: 46.7, eta_seconds: 7, wall_s: 5.5 },
+  [S3]: { state: 'RUNNING', stage_progress_pct: 40, active_ranges_count: 2, verified_target_frames: 180, skipped_frames_pct: 46.7, eta_seconds: 7, wall_s: 5.5,
+    fps: 24.5, frames_retired: 140, effective_output_fps: 24.5, neural_inferences: 90, neural_inference_fps: 16.4,
+    smart_skip_faces: 40, smart_skip_ratio_pct: 30.8, smart_skip_enabled: true, fps_basis: 'retired (frames accepted by the output writer)' },
 };
 
 /** Replace /ws/telemetry with a scripted socket: `frames` are sent in order, `gap` ms apart, the last repeated. */
@@ -65,6 +67,11 @@ test('processing: live stages, then the finished report replaces them', async ({
   await expect(live.locator(`[data-stage="${S3}"]`)).toContainText('RUNNING');
   await expect(live.locator(`[data-stage="${S3}"]`)).toContainText('40.0%');
   await expect(live.locator(`[data-stage="${S1}"]`)).toContainText('6.20s');
+  // Stage 3's throughput is frames the writer accepted, with the neural rate and the smart-skip share beside it
+  const rates = live.locator(`[data-stage="${S3}"]`).getByTestId('stage3-rates');
+  await expect(rates).toContainText('Effective Output 24.5 fps');
+  await expect(rates).toContainText('Neural 16.4 inf/s');
+  await expect(rates).toContainText('Smart-Skip 30.8%');
   await shot(page, 'ui_processing_live.png');
 
   const card = page.getByTestId('pipeline-report');

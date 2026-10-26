@@ -7,6 +7,7 @@ deliberately optional because explicit fences perturb throughput; a report recor
 whether the GPU fields are event-based, synchronized, or unavailable.
 """
 from roop.degrade import swallowed as _swallowed
+from roop.gpu_event_timer import GpuEventTimer
 
 from collections import defaultdict
 import json
@@ -65,6 +66,11 @@ class StageProfiler:
         self.gpu_sync = bool(gpu_sync)
         self.device_id = int(device_id or 0)
         self.torch = _cuda_module()
+        # Event pairs are recorded in begin()/end() and READ in report() once the GPU has passed them
+        # (roop/gpu_event_timer.py). Reading in end() raised "device not ready" on every asynchronous stage and the
+        # error was swallowed, so the GPU column came back empty while the report said it was measuring.
+        # 2048 pairs: ~13 stage calls per frame at 100 fps is 1300 pairs/s, and finished pairs are recycled at 4 Hz.
+        self.gpu_timer = GpuEventTimer(pairs=2048, torch_module=self.torch) if self.torch else None
         self._stages = defaultdict(lambda: {
             "calls": 0, "cpu_seconds": 0.0, "gpu_event_seconds": 0.0,
             "gpu_event_samples": 0, "gpu_sync_window_seconds": 0.0,
@@ -84,18 +90,17 @@ class StageProfiler:
     def begin(self, stage):
         token = {"stage": str(stage), "cpu_start": time.perf_counter(),
                  "mem_start": _memory_snapshot(self.torch) if self.torch else None,
-                 "event_start": None, "sync_start": None}
+                 "event_pair": None, "sync_start": None}
         if self.torch:
             try:
                 if self.gpu_sync:
                     sync_start = time.perf_counter()
                     self.torch.cuda.synchronize(self.device_id)
                     token["sync_start"] = sync_start
-                token["event_start"] = self.torch.cuda.Event(enable_timing=True)
-                token["event_start"].record()
+                token["event_pair"] = self.gpu_timer.begin(token["stage"]) if self.gpu_timer else None
             except Exception as _degrade_error:
                 _swallowed("roop/stage_profiler.py:93", _degrade_error, "fallback continued")
-                token["event_start"] = None
+                token["event_pair"] = None
         return token
 
     def end(self, token):
@@ -103,34 +108,30 @@ class StageProfiler:
             return
         stage = token["stage"]
         cpu_seconds = max(0.0, time.perf_counter() - token["cpu_start"])
-        gpu_event_seconds = None
         sync_seconds = 0.0
         sync_window = None
         if self.torch:
             try:
-                event_end = self.torch.cuda.Event(enable_timing=True)
-                event_end.record()
+                if self.gpu_timer:
+                    self.gpu_timer.end(token.get("event_pair"))
+                    # Recycles finished pairs (throttled to 4 Hz, query()-gated, never waits) so a long run does
+                    # not exhaust the pool when nobody is reading the telemetry socket.
+                    self.gpu_timer.resolve()
                 wait_start = time.perf_counter()
                 if self.gpu_sync:
                     self.torch.cuda.synchronize(self.device_id)
                 wait_end = time.perf_counter()
                 sync_seconds = max(0.0, wait_end - wait_start)
-                if token.get("event_start") is not None:
-                    gpu_event_seconds = max(0.0, token["event_start"].elapsed_time(event_end) / 1000.0)
                 if token.get("sync_start") is not None:
                     sync_window = max(0.0, wait_end - token["sync_start"])
             except Exception as _degrade_error:
                 _swallowed("roop/stage_profiler.py:118", _degrade_error, "fallback continued")
-                gpu_event_seconds = None
         mem_end = _memory_snapshot(self.torch) if self.torch else None
         with self._lock:
             data = self._stages[stage]
             data["calls"] += 1
             data["cpu_seconds"] += cpu_seconds
             self._calls += 1
-            if gpu_event_seconds is not None:
-                data["gpu_event_seconds"] += gpu_event_seconds
-                data["gpu_event_samples"] += 1
             if sync_window is not None:
                 data["gpu_sync_window_seconds"] += sync_window
             if self.torch and self.gpu_sync:
@@ -168,7 +169,22 @@ class StageProfiler:
     def _mean(values):
         return (sum(values) / len(values)) if values else None
 
+    def _fold_gpu_events(self):
+        """Read every event pair the GPU has already finished (never waits) into the per-stage totals."""
+        timer = self.gpu_timer
+        if timer is None:
+            return None
+        timer.resolve(force=True)
+        snap = timer.snapshot()
+        with self._lock:
+            for name, agg in snap["names"].items():
+                data = self._stages[name]
+                data["gpu_event_seconds"] = agg["total_ms"] / 1000.0
+                data["gpu_event_samples"] = agg["samples"]
+        return snap
+
     def report(self):
+        gpu_events = self._fold_gpu_events()
         with self._lock:
             stages = {}
             for name, source in self._stages.items():
@@ -221,6 +237,11 @@ class StageProfiler:
                 "mode": "synchronized" if self.gpu_sync else "event-only",
                 "invasive": bool(self.gpu_sync),
                 "torch_cuda_available": self.torch is not None,
+                # Said out loud so an empty GPU column cannot pass for "measured": how many event pairs were
+                # lost (pool exhausted / record failed) and how many were still in flight when this was read.
+                "gpu_event_timing": (None if gpu_events is None else
+                                     {"pending": gpu_events["pending"], "dropped": gpu_events["dropped"],
+                                      "errors": gpu_events["errors"], "read": "deferred, query()-gated, no sync"}),
                 "device_id": self.device_id,
                 "total_calls": self._calls,
                 "elapsed_seconds": max(0.0, time.perf_counter() - self._started),

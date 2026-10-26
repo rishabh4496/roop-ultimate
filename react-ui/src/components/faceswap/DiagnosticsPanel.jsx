@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useApi } from '../../useApi';
 import { reportFailure } from '../../failureLog';
+import { fpsBasisWord } from '../../store/telemetryStore';
 
 /**
  * Diagnostics shown inside the Preview box while a job runs.
@@ -123,7 +124,7 @@ const fmtDur = (ms) => {
 
 export default function DiagnosticsPanel({ desc = '', telemetry, processing, paused, config = [],
                                            elapsedMs = 0, etaMs = 0, prog = 0,
-                                           framesDone = null, framesTotal = null, fps = null }) {
+                                           framesDone = null, framesTotal = null, fps = null, fpsBasis = 'processed' }) {
   const { getJSON } = useApi();
   // ── Throughput history ────────────────────────────────────────────────────
   // Derived from the FRAME COUNT over wall time, NOT from the "(Z FPS)" in the
@@ -308,7 +309,7 @@ export default function DiagnosticsPanel({ desc = '', telemetry, processing, pau
         <Stat label="Avg"
               value={fpsStats ? fpsStats.avg.toFixed(1)
                               : backendFps != null ? backendFps.toFixed(1) : '—'}
-              sub="fps over run" />
+              sub={`fps over run · ${fpsBasisWord(fpsBasis)}`} />
         <Stat label="RAM" value={telemetry?.ram_used != null ? `${telemetry.ram_used} GB` : '—'}
               sub={telemetry?.ram_total ? `of ${telemetry.ram_total} GB` : null} />
         <Stat label="Disk free" value={telemetry?.disk_free != null ? `${telemetry.disk_free} GB` : '—'}

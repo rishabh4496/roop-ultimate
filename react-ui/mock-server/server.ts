@@ -515,6 +515,7 @@ async function startServer() {
         const isDesktop = activeHardwareProfile === 'desktop';
         ws.send(JSON.stringify({
           fps: progressState.processing ? progressState.fps : 0,
+          fps_basis: 'retired',
           current_frame: progressState.current_frame,
           total_frames: progressState.total_frames,
           progress: progressState.progress,

@@ -6458,6 +6458,17 @@ def _telemetry_snapshot():
             fps = _avg_r
         if _now_r and not _progress.get('paused'):
             fps_now = _now_r
+    # Stage 3's headline counter and rates are RETIRED frames (accepted by the output writer), not the bar's
+    # processed frames: the parallel-stabilization path ticks the bar when a frame lands in its result dict, up to a
+    # chunk before it is written. Until the writer has accepted one frame (or on a path that never reports writes)
+    # the bar's numbers stay, and `fps_basis` says so.
+    fps_basis = 'processed'
+    if processing and desc.startswith('Processing frame'):
+        _retired = _stage_telemetry.retired_view()
+        if _retired is not None and _retired['avg_fps']:
+            done, fps, fps_basis = _retired['frames'], _retired['avg_fps'], 'retired'
+            if not _progress.get('paused'):
+                fps_now = _retired['now_fps']
     # The three-stage view (roop/stage_telemetry.py). Stage 3's counter is the one above, folded in
     # here so the frame loop never writes it; constant while idle, so the change-only sampler stays quiet.
     # Only the swap pass's own line ("Processing frame n / total ...") counts as Stage 3: the stage
@@ -6473,6 +6484,9 @@ def _telemetry_snapshot():
         'current_frame': done,
         'total_frames': total,
         'fps': round(fps, 1),
+        # What `fps`, `fps_now` and `current_frame` count: 'retired' (frames the output writer accepted) while
+        # Stage 3 reports writes, else 'processed' (the progress bar's finished-frame tick).
+        'fps_basis': fps_basis,
         # Recent frames/s and its reciprocal, the wall-clock time one frame is
         # currently taking end to end (all workers together, so NOT a model's
         # inference latency -- ROOP_PROFILE measures that). None until two
