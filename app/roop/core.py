@@ -1899,6 +1899,7 @@ def batch_process(output_method, files:list[ProcessEntry], use_new_method) -> No
                         _fin = finalize_output.finalize_render(
                             video_file_name, destination,
                             audio_source=None if skip_audio else audio_source,
+                            video_source=v.filename,
                             trim_start=v.startframe, trim_end=v.endframe,
                             expected_frames=int(v.endframe - v.startframe),
                             skip_audio=skip_audio, stopped=stopped)

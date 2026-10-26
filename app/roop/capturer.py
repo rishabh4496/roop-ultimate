@@ -245,7 +245,8 @@ def _probe_video(video_path: str):
     try:
         cmd = [_ffprobe_binary(), "-v", "error", "-select_streams", "v:0",
                "-show_entries",
-               "stream=width,height,avg_frame_rate,nb_frames,duration,codec_name,pix_fmt,sample_aspect_ratio,display_aspect_ratio"
+               "stream=width,height,avg_frame_rate,nb_frames,duration,codec_name,pix_fmt,sample_aspect_ratio,display_aspect_ratio,"
+               "color_space,color_primaries,color_transfer,color_range"
                ":format=duration",
                "-of", "json", video_path]
         proc = subprocess.run(cmd, capture_output=True, timeout=30, **_popen_kwargs())
@@ -294,7 +295,10 @@ def _probe_video(video_path: str):
             info = {"w": w, "h": h, "fps": fps or 25.0, "frames": max(0, frames),
                     "codec": codec, "pix_fmt": pix_fmt,
                     "sar": sar, "sar_val": sar_val,
-                    "dar": dar, "dar_val": dar_val}
+                    "dar": dar, "dar_val": dar_val,
+                    # the source's colour description (roop/source_color.py turns it into the encoder's plan)
+                    "color": {k: str(st.get(k) or "") for k in
+                              ("color_space", "color_primaries", "color_transfer", "color_range")}}
     except Exception as _degrade_error:
         _swallowed("roop/capturer.py:258", _degrade_error, "fallback continued")
         info = None

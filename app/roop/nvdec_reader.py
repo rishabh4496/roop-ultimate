@@ -275,6 +275,14 @@ class FFmpegVideoReader:
             # Aiming half a frame early makes frame numbering match cv2's
             # CAP_PROP_POS_FRAMES without off-by-one drift from float PTS.
             t = max(0.0, (self._start_frame - 0.5) / self.fps)
+            try:
+                # a variable-frame-rate clip: frame N is NOT at N / fps (see vfr_timing.seek_time)
+                from roop import vfr_timing
+                vfr_t = vfr_timing.seek_time(self.path, self._start_frame)
+                if vfr_t is not None:
+                    t = max(0.0, vfr_t)
+            except Exception as _vfr_exc:
+                _swallowed("roop/nvdec_reader.py:vfr_seek", _vfr_exc, "seek time falls back to (frame - 0.5) / fps")
             cmd += ["-ss", f"{t:.6f}"]
         cmd += ["-noautorotate", "-i", self.path,
                 # CRITICAL: pass every decoded frame through 1:1. Without this,

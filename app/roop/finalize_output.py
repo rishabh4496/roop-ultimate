@@ -102,8 +102,20 @@ def probe_container(path: str, timeout: float = 20.0) -> Optional[Dict[str, Any]
             out[key] = None if tag in _UNSET else tag
         return out
 
+    reduced_audio = _reduce(audio)
+    if reduced_audio is not None and path.lower().endswith((".mp4", ".mov", ".m4v")):
+        # ffprobe's audio duration is the MEDIA length: it ignores an edit list that skips the head of the audio (the
+        # exact trim cut, util_ffmpeg._skip_audio_head) or ends it with the video. What a player presents is the edits.
+        try:
+            from roop import mp4_timing
+            span = mp4_timing.edit_span(path, b"soun")
+            if span is not None:
+                reduced_audio["start_s"], reduced_audio["duration_s"] = span
+        except Exception as exc:
+            from roop.degrade import swallowed as _swallowed
+            _swallowed("roop/finalize_output.py:edit_span", exc, "audio duration stays ffprobe's media length")
     return {"size": _float(fmt.get("size")), "format_duration": _float(fmt.get("duration")),
-            "video": _reduce(video), "audio": _reduce(audio)}
+            "video": _reduce(video), "audio": reduced_audio}
 
 
 def _frames_of(video: Dict[str, Any]) -> Optional[int]:
@@ -233,7 +245,7 @@ def find_orphans(temp_video: str, destination: str) -> List[str]:
 def finalize_render(temp_video: str, destination: str, *,
                     audio_source: Optional[str], trim_start: Optional[int], trim_end: Optional[int],
                     expected_frames: Optional[int] = None, skip_audio: bool = False,
-                    stopped: bool = False,
+                    stopped: bool = False, video_source: Optional[str] = None,
                     mux: Optional[Callable[..., bool]] = None,
                     source_has_audio: Optional[Callable[[str], bool]] = None) -> Dict[str, Any]:
     """Mux (or move), verify, then delete. Returns the JSON-safe result described in the module docstring.
@@ -265,6 +277,13 @@ def finalize_render(temp_video: str, destination: str, *,
             result["wall_s"] = round(time.perf_counter() - t_all, 3)
             result["kept_intermediate"] = temp_video if os.path.exists(temp_video) else None
             return result
+
+    # A variable-frame-rate source: re-stamp the intermediate's samples at the source's own timestamps BEFORE the mux,
+    # so the muxed file keeps every frame where the camera put it (the mux copies packets and their timestamps).
+    vsrc = video_source or audio_source
+    if vsrc and result.get("reference_frames"):
+        from roop import vfr_timing
+        result["vfr"] = vfr_timing.retime_intermediate(temp_video, vsrc, trim_start, int(result["reference_frames"]))
 
     expect_audio = False
     if not skip_audio and audio_source:

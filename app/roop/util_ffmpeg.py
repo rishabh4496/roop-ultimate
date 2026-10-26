@@ -778,8 +778,49 @@ def restore_audio(intermediate_video: str, original_video: str, trim_frame_start
         return _restore_audio_impl(intermediate_video, original_video, trim_frame_start, trim_frame_end, final_video)
 
 
+def _first_audio_packet_s(path: str, at_s: float = 0.0):
+    """pts (seconds) of the first audio packet at or after ``at_s``, or None."""
+    import json as _json
+    from roop.ffmpeg_path import ffprobe_binary
+    cmd = [ffprobe_binary(), '-v', 'error', '-select_streams', 'a:0', '-read_intervals', f'{max(0.0, at_s - 0.25):.6f}%+0.75',
+           '-show_entries', 'packet=pts_time', '-of', 'json', path]
+    out = subprocess.run(cmd, capture_output=True, text=True, timeout=60).stdout
+    times = sorted(float(p['pts_time']) for p in (_json.loads(out or '{}').get('packets') or []) if p.get('pts_time') not in (None, 'N/A'))
+    later = [t for t in times if t >= at_s - 1e-6]
+    return later[0] if later else None
+
+
+def _skip_audio_head(original_video: str, final_video: str, cut_from_s: float, start_s: float, video_s: float) -> None:
+    """After a stream-copy audio cut that began `start_s - cut_from_s` before the trim point: make the trim point t = 0.
+
+    The first kept source packet is the first one at/after `cut_from_s`; the muxer put it at the final file's first audio
+    packet time. Skip (start_s - that packet) seconds of it by edit list and end the track with the video."""
+    try:
+        from roop import mp4_timing
+        p_first = _first_audio_packet_s(original_video, cut_from_s)
+        if p_first is None:
+            return
+        # The track's first packet is media time 0 (any shift the muxer applied is an edit-list delay, replaced below).
+        skip = start_s - p_first                      # into the audio track's media
+        if skip < 0 or skip > 1.0:
+            return                                    # not the geometry this assumes: leave the packet-aligned cut
+        # The video's first frame is not always at 0 (a B-frame delay shifts BOTH streams by the same amount): the
+        # audio must begin where the video does.
+        v0 = float(mp4_timing.presentation_seconds(final_video)[0])
+        mp4_timing.trim_audio_head(final_video, skip, video_s, delay_s=v0)
+    except Exception as _exc:
+        _swallowed('roop/util_ffmpeg.py:skip_audio_head', _exc, 'audio keeps its packet-aligned start')
+
+
 def _restore_audio_impl(intermediate_video: str, original_video: str, trim_frame_start, trim_frame_end, final_video: str) -> bool:
     fps = util.constant_frame_rate(util.detect_fps(original_video))
+    # On a variable-frame-rate source `frame / constant_fps` is not where that frame is: use its real timestamp.
+    vfr_window = None
+    try:
+        from roop import vfr_timing
+        vfr_window = vfr_timing.audio_window(original_video, trim_frame_start, trim_frame_end)
+    except Exception as _vfr_exc:
+        _swallowed('roop/util_ffmpeg.py:vfr_window', _vfr_exc, 'audio window falls back to frame / constant fps')
 
     # Seek the audio source to match any trim that was applied before processing.
     audio_seek = []
@@ -790,6 +831,8 @@ def _restore_audio_impl(intermediate_video: str, original_video: str, trim_frame
     duration = None
     if trim_frame_end is not None:
         duration = max(0.0, (trim_frame_end - (trim_frame_start or 0)) / fps)
+        if vfr_window is not None and vfr_window.duration_s is not None:
+            duration = vfr_window.duration_s
 
     rate = util.audio_sample_rate(original_video)
     if rate is not None:
@@ -814,13 +857,22 @@ def _restore_audio_impl(intermediate_video: str, original_video: str, trim_frame
     # Any failure (no audio stream, an odd container) falls through to the
     # original single command, which is right whenever trim_start is 0.
     start_s = (trim_frame_start / fps) if (trim_frame_start and fps) else 0.0
+    if vfr_window is not None and trim_frame_start:
+        start_s = vfr_window.start_s
     if start_s > 0:
         audio_cut = os.path.splitext(final_video)[0] + '.__audio_cut.mka'
+        # A stream-copy cut can only begin on a packet boundary (AAC: 1024 samples = 23 ms at 44.1 kHz), and the muxer then
+        # puts that first packet at t = 0: the audio came out EARLY by the gap between the trim point and the packet
+        # (19.0 ms measured, 0..23 ms in general). In an MP4 the gap is repaired exactly: cut `lead` (3 packets) BEFORE
+        # the trim point, and let the audio track's edit list skip the remainder, so the trim point is t = 0 to the
+        # sample. Other containers keep the packet-aligned cut (no edit list to carry the skip).
+        is_mp4 = final_video.lower().endswith(('.mp4', '.mov', '.m4v'))
+        lead = min(start_s, 3.0 * 1024.0 / float(rate or 44100)) if is_mp4 else 0.0
         try:
             cut = ['-i', original_video, '-map', '0:a:0?', '-vn', '-sn', '-dn',
-                   '-ss', format(start_s, '.6f')]
+                   '-ss', format(start_s - lead, '.6f')]
             if duration is not None:
-                cut += ['-t', format(duration, '.6f')]
+                cut += ['-t', format(duration + lead, '.6f')]
             cut += ['-c:a', 'copy', audio_cut]
             if run_ffmpeg(cut) and os.path.isfile(audio_cut) and os.path.getsize(audio_cut) > 0:
                 muxed = (
@@ -843,10 +895,12 @@ def _restore_audio_impl(intermediate_video: str, original_video: str, trim_frame
                 # its audio from running on past the last frame.
                 video_s = _stream_duration(intermediate_video, 'v:0')
                 if video_s:
-                    muxed += ['-t', format(video_s, '.6f')]
-                if final_video.lower().endswith(('.mp4', '.mov', '.m4v')):
+                    muxed += ['-t', format(video_s + lead, '.6f')]
+                if is_mp4:
                     muxed += ['-movflags', '+faststart']
                 if run_ffmpeg(muxed + [final_video]):
+                    if is_mp4 and lead > 0 and video_s:
+                        _skip_audio_head(original_video, final_video, start_s - lead, start_s, video_s)
                     return True
         finally:
             with contextlib.suppress(OSError):

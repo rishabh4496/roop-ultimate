@@ -171,11 +171,14 @@ class FFMPEG_VideoWriter:
     def __init__(self, filename, size, fps, codec="libx265", crf=14, audiofile=None,
                  preset="faster", bitrate=None,
                  logfile=None, threads=None, ffmpeg_params=None,
-                 colorspace=None, sar=None, dar=None):
+                 colorspace=None, sar=None, dar=None, color=None):
 
         if logfile is None:
             logfile = sp.PIPE
 
+        # A roop.source_color.ColorPlan: encode with the SOURCE's matrix and range and write the SOURCE's tags.
+        # None keeps the established BT.709 limited-range path unchanged.
+        self._color = color
         self.filename = filename
         self.codec = codec
         self.ext = self.filename.split(".")[-1]
@@ -324,14 +327,19 @@ class FFMPEG_VideoWriter:
         sar = getattr(self, '_sar', None)
         if sar and str(sar).strip() not in ('', '1:1', '1/1'):
             filters.append(f'setsar={sar}')
-        if convert:
+        plan = getattr(self, '_color', None) if convert else None
+        if plan is not None:
+            filters.append(plan.video_filter())
+        elif convert:
             filters.append('colorspace=bt709:iall=bt601-6-625:fast=1')
         if filters:
             cmd.extend(['-vf', ','.join(filters)])
         dar = getattr(self, '_dar', None)
         if dar and str(dar).strip():
             cmd.extend(['-aspect', str(dar)])
-        if convert:
+        if plan is not None:
+            cmd.extend(plan.tag_args())
+        elif convert:
             # State the tags rather than relying on the filter to propagate
             # frame metadata into the muxer. Measured free: with the filter
             # present the round-trip error is identical to three decimals

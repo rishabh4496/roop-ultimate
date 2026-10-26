@@ -666,13 +666,24 @@ class BatchProcessingMixin:
         # pre-passes and the 2-pass stabilizer must then only scan the frames
         # that still need encoding.
         if self.output_to_file:
-            _src_sar, _src_dar = None, None
+            _src_sar, _src_dar, _src_color = None, None, None
             if source_video:
                 try:
                     from roop.capturer import _probe_video
                     _src_info = _probe_video(source_video) or {}
                     _src_sar = _src_info.get('sar')
                     _src_dar = _src_info.get('dar')
+                    from roop import source_color as _source_color
+                    _src_color = _source_color.plan_for(_src_info, int(height or 0))
+                    if _src_color is not None:
+                        print('[Color] source is not BT.709 limited range - encoding with the source\'s own '
+                              f'{_src_color.describe()} so the un-swapped background keeps its values and tags.')
+                    from roop import vfr_timing as _vfr_timing
+                    _src_timing = _vfr_timing.probe_source_timing(source_video)
+                    roop.globals.source_timing = _src_timing.summary() if _src_timing is not None else None
+                    if _src_timing is not None and _src_timing.is_vfr:
+                        print(f'[VFR] variable-frame-rate source ({_src_timing.reason}); every frame keeps its own '
+                              f'timestamp at finalisation, and the audio is cut at the true start of a trim.')
                     if 'sar_val' in _src_info:
                         roop.globals.video_sar = float(_src_info['sar_val'])
                 except (OSError, ValueError, KeyError, AttributeError, TypeError):
@@ -727,6 +738,7 @@ class BatchProcessingMixin:
                         crf=roop.globals.video_quality,
                         sar=_src_sar,
                         dar=_src_dar,
+                        color=_src_color,
                     )
                     _video_io_hw.telemetry.register_encoder("encode", _video_io_hw.BACKEND_NVENC_PIPE)
                 else:
@@ -740,6 +752,7 @@ class BatchProcessingMixin:
                         audiofile=None,
                         sar=_src_sar,
                         dar=_src_dar,
+                        color=_src_color,
                     )
         if self.output_to_cam:
             self.streamwriter = StreamWriter((width, height), int(fps))

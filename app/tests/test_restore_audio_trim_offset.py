@@ -59,8 +59,12 @@ class TrimmedAudioIsCutSeparately(unittest.TestCase):
         cut, mux = seen
         # -ss AFTER the input = output-side = exact; before it would be the bug.
         self.assertLess(cut.index("-i"), cut.index("-ss"))
-        self.assertEqual(float(cut[cut.index("-ss") + 1]), 8.0)        # 200 / 25
-        self.assertAlmostEqual(float(cut[cut.index("-t") + 1]), 4.8)   # 120 / 25
+        # The cut begins `lead` = 3 AAC packets (3 * 1024 / 48000 = 64 ms) BEFORE the trim point and the audio track's edit
+        # list skips the remainder (util_ffmpeg._skip_audio_head), so the trim point is t = 0 to the sample instead of
+        # up to one packet (0..23 ms) early.
+        lead = 3 * 1024 / 48000
+        self.assertAlmostEqual(float(cut[cut.index("-ss") + 1]), 8.0 - lead, places=5)   # 200 / 25 - lead
+        self.assertAlmostEqual(float(cut[cut.index("-t") + 1]), 4.8 + lead, places=5)    # 120 / 25 + lead
         self.assertEqual(cut[cut.index("-c:a") + 1], "copy")
         self.assertIn("-vn", cut)
         # The mux takes the cut audio, keeps metadata from the ORIGINAL (input
@@ -73,7 +77,7 @@ class TrimmedAudioIsCutSeparately(unittest.TestCase):
         # Bounded by the video's own length; `-shortest` dropped the last
         # frames (interleave buffering against a packet-aligned audio cut).
         self.assertNotIn("-shortest", mux)
-        self.assertAlmostEqual(float(mux[mux.index("-t") + 1]), 4.8)
+        self.assertAlmostEqual(float(mux[mux.index("-t") + 1]), 4.8 + lead, places=5)    # the skipped head is on top
         self.assertEqual(leftover, [], "the temporary audio cut was left behind")
 
     def test_untrimmed_render_keeps_the_single_command(self):

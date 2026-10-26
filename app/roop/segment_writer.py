@@ -159,12 +159,15 @@ class SegmentedVideoWriter:
             self.chunk = self._default_chunk()
         sar = None
         dar = None
+        color = None
         if source_video:
             try:
                 from roop.capturer import _probe_video
                 info = _probe_video(source_video) or {}
                 sar = info.get("sar")
                 dar = info.get("dar")
+                from roop import source_color
+                color = source_color.plan_for(info, int(size[1] or 0))
             except (OSError, ValueError, KeyError, AttributeError):
                 pass
         self._writer_options = {
@@ -175,6 +178,7 @@ class SegmentedVideoWriter:
             "colorspace": colorspace,
             "sar": sar,
             "dar": dar,
+            "color": color,
         }
         self._checkpoint_callback = checkpoint_callback
         self._write_lock = threading.RLock()

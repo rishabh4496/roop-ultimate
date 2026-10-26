@@ -173,7 +173,16 @@ class NVHardwareVideoReader:
             "cuda",
         ]
         if self.start_frame > 0 and self.fps > 0:
-            cmd.extend(["-ss", f"{max(0.0, (self.start_frame - 0.5) / self.fps):.6f}"])
+            seek = max(0.0, (self.start_frame - 0.5) / self.fps)
+            try:
+                # a variable-frame-rate clip: frame N is NOT at N / fps (see vfr_timing.seek_time)
+                from roop import vfr_timing
+                vfr_seek = vfr_timing.seek_time(self.video_path, self.start_frame)
+                if vfr_seek is not None:
+                    seek = max(0.0, vfr_seek)
+            except Exception as _vfr_exc:
+                _swallowed("roop/video_stream.py:vfr_seek", _vfr_exc, "seek time falls back to (frame - 0.5) / fps")
+            cmd.extend(["-ss", f"{seek:.6f}"])
         cmd.extend([
             "-noautorotate",
             "-i",
@@ -528,7 +537,10 @@ class NVHardwareVideoWriter:
         colorspace: Optional[str] = None,
         sar: Optional[str] = None,
         dar: Optional[str] = None,
+        color=None,
     ):
+        # A roop.source_color.ColorPlan (source matrix + range + tags), or None for the established BT.709/tv path.
+        self.color_plan = color
         self.output_path = os.path.abspath(output_path)
         self.width = int(width)
         self.height = int(height)
@@ -653,14 +665,20 @@ class NVHardwareVideoWriter:
         if sar and str(sar).strip() not in {"", "1:1", "1/1"}:
             filters.append(f"setsar={sar}")
         color = str(getattr(self, "colorspace", None) or os.environ.get("ROOP_FFMPEG_COLORSPACE", "bt709")).strip().lower()
-        if color not in {"", "off", "none", "passthrough", "0", "false"}:
+        convert = color not in {"", "off", "none", "passthrough", "0", "false"}
+        plan = getattr(self, "color_plan", None) if convert else None
+        if plan is not None:
+            filters.append(plan.video_filter())
+        elif convert:
             filters.append("colorspace=bt709:iall=bt601-6-625:fast=1")
         if filters:
             cmd.extend(["-vf", ",".join(filters)])
         dar = getattr(self, "dar", None)
         if dar and str(dar).strip():
             cmd.extend(["-aspect", str(dar)])
-        if color not in {"", "off", "none", "passthrough", "0", "false"}:
+        if plan is not None:
+            cmd.extend(plan.tag_args())
+        elif convert:
             cmd.extend([
                 "-colorspace", "bt709",
                 "-color_primaries", "bt709",

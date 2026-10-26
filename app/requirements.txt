@@ -21,6 +21,7 @@ albucore==0.0.16
 psutil==5.9.6
 nvidia-ml-py>=12.535.133
 tqdm==4.66.4
+requests>=2.31             # roop/recognition_registry.py imports it at module top (was only in requirements-ci.txt; transitive via transformers/diffusers)
 ftfy
 regex
 pyvirtualcam
