@@ -4,6 +4,7 @@ import { useApi } from '../useApi';
 import { Button, Card, MotionIcon } from './ui';
 import { confirmDialog } from './confirm';
 import { LABELS, CHIP_KEYS, fmtDur, fmtVal, primitives, diffSettings } from './settingsDiff';
+import CheckpointDiff from './history/CheckpointDiff';
 import { Icon } from '../icons';
 import { logFailure, reportFailure } from '../failureLog';
 import { PipelineSummaryCard } from './faceswap/PipelineReport';
@@ -32,8 +33,9 @@ const fmtRel = (t) => {
   return new Date(t * 1000).toLocaleDateString();
 };
 
-export default function RunHistory({ notify, setSettings, setTab }) {
+export default function RunHistory({ notify, setSettings, setTab, settings }) {
   const { getJSON, postJSON } = useApi();
+  const [diffId, setDiffId] = useState(null);       // the run whose checkpoint is being compared with the current settings
   const [entries, setEntries] = useState([]);
   const [outputPath, setOutputPath] = useState('');
   const [existing, setExisting] = useState({}); // basename -> kind, for still-present outputs
@@ -141,6 +143,7 @@ export default function RunHistory({ notify, setSettings, setTab }) {
 
   const cmpA = entries.find((e) => e.id === compare[0]);
   const cmpB = entries.find((e) => e.id === compare[1]);
+  const diffEntry = diffId === null ? null : entries.find((e) => e.id === diffId) || null;
 
   const exportTelemetryCSV = () => {
     try {
@@ -245,6 +248,19 @@ export default function RunHistory({ notify, setSettings, setTab }) {
       {/* Compare panel */}
       {cmpA && cmpB && <ComparePanel a={cmpA} b={cmpB} onClear={() => setCompare([])} onLoad={loadRunSettings} />}
 
+      {/* One run's checkpoint against what is set right now, with selective restore */}
+      {diffEntry && (
+        <CheckpointDiff
+          entry={diffEntry}
+          current={settings}
+          onClose={() => setDiffId(null)}
+          onRestore={(patch, rows) => {
+            setSettings?.((s) => ({ ...(s || {}), ...patch }));
+            notify?.(`Restored ${rows.length} parameter${rows.length === 1 ? '' : 's'} from the checkpoint: ${rows.slice(0, 3).map((r) => `${r.label} → ${r.fromText}`).join(', ')}${rows.length > 3 ? '…' : ''}`);
+          }}
+        />
+      )}
+
       {/* Search */}
       {entries.length > 0 && (
         <input
@@ -288,6 +304,8 @@ export default function RunHistory({ notify, setSettings, setTab }) {
               selected={compare.includes(entry.id)}
               compareFull={compare.length >= 2 && !compare.includes(entry.id)}
               onToggleCompare={() => toggleCompare(entry.id)}
+              onDiff={settings ? () => setDiffId((cur) => (cur === entry.id ? null : entry.id)) : null}
+              diffOpen={diffId === entry.id}
               onLoad={() => loadRunSettings(entry)}
               onReveal={revealOutput}
               onExport={exportRun}
@@ -318,7 +336,7 @@ function Chip({ k, v }) {
   );
 }
 
-function RunRow({ entry, outputPath, existing, presets, selected, compareFull, onToggleCompare, onLoad, onReveal, onExport, onDelete }) {
+function RunRow({ entry, outputPath, existing, presets, selected, compareFull, onToggleCompare, onDiff, diffOpen, onLoad, onReveal, onExport, onDelete }) {
   const outputs = entry.outputs || [];
   // Pick the first output that still exists on disk for the thumbnail.
   const liveName = outputs.find((n) => existing[n]);
@@ -418,12 +436,22 @@ function RunRow({ entry, outputPath, existing, presets, selected, compareFull, o
                     className="px-2.5 py-1 rounded-lg text-mini font-semibold bg-white/[0.04] border border-white/10 text-white/55 hover:text-white hover:border-white/20 transition-colors">
               ↻ Load settings
             </button>
+            {onDiff && entry.settings && (
+              <button type="button" onClick={onDiff} aria-pressed={!!diffOpen} data-testid={`run-diff-${entry.id}`}
+                      title="Compare this run's settings with the ones set now, and restore any of them"
+                      className={`px-2.5 py-1 rounded-lg text-mini font-semibold border transition-colors ${
+                        diffOpen ? 'bg-[var(--accent)]/20 border-[var(--accent)]/40 text-accent'
+                          : 'bg-white/[0.04] border-white/10 text-white/55 hover:text-white hover:border-white/20'}`}>
+                ≠ vs current
+              </button>
+            )}
             {liveName && kind === 'video' && presets.length > 0 && (
               <select
                 onChange={handleExportChange}
                 disabled={exporting}
                 defaultValue=""
                 title="Export a crop-to-fill copy for a social aspect ratio"
+                aria-label="Export a crop-to-fill copy"
                 className="px-2 py-1 rounded-lg text-mini font-semibold bg-white/[0.04] border border-white/10 text-white/55 hover:text-white hover:border-white/20 transition-colors disabled:opacity-40 cursor-pointer"
               >
                 <option value="" disabled>{exporting ? 'Exporting…' : 'Export…'}</option>

@@ -309,7 +309,7 @@ export default function Home({ progress, setTab, setSettings, notify }) {
                       ) : (
                         <img
                           src={src}
-                          alt={f.name}
+                          alt=""
                           loading="lazy"
                           className="w-full h-full object-cover"
                           onError={(e) => {

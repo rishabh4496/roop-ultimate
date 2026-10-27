@@ -28,7 +28,7 @@ when the pointer or keyboard focus reaches a tab (`warmTab`) and once more at id
 | `#/faceswap` | Face Swap | The workspace. Source and target media, the people found in the target, the live preview (scrub, compare, mask brush, pop-out), the slider tracker, the **inspector** (below), timeline and segments, the queue, and the **run bar**: the one Start control, which becomes Cancel while a job runs and says in words why it is unavailable. |
 | `#/batch` | Batch Matrix | Builds many jobs at once. Four strategies: one faceset to many targets (`one_to_many`), `grouped`, per-file `matrix`, and `recipes`. |
 | `#/processing` | Processing | A run's own tab. In the rail while a run exists, jobs are queued, or you are on it (with a live count): live progress, preview peek, diagnostics, terminal, pause / resume / stop. |
-| `#/facemgr` | Face Manager | Builds `.fsz` facesets from images or video frames, with per-face quality scores and pruning. |
+| `#/facemgr` | Face Manager | Builds `.fsz` facesets from images or video frames, with per-face quality scores, a pose-coverage radar and one-click Auto-Prune; its Morph Lab blends 2-4 identities (pad or sliders) and saves the result as a `.fsz`. |
 | `#/extras` | Editor | Resize / rotate / crop / re-FPS for images and videos, the frame post-processors (AI upscale, colorize, stylize), a **Video to faceset (.fsz)** extractor (load a clip, scrub, cut faces, build; the same workspace as the Face Manager) and, collapsed, the swap enhancement stack. |
 | `#/gallery` | Outputs | Browse, compare, reveal and delete finished renders. |
 | `#/history` | History | Every completed run with the exact settings it used, its duration and throughput; export presets. |
@@ -357,12 +357,18 @@ Faceset library and builder, identity blending, recognition backbone.
 | Method | Path | Called from |
 | --- | --- | --- |
 | POST | `/api/facemgr/add` | FaceManager, VideoFramesetExtractor |
+| POST | `/api/facemgr/auto_prune` | PoseRadar |
 | POST | `/api/facemgr/build` | FaceManager, VideoFramesetExtractor |
 | POST | `/api/facemgr/clear` | FaceManager |
 | POST | `/api/facemgr/cut` | FaceManager, VideoFramesetExtractor |
 | POST | `/api/facemgr/faceset` | FaceManager |
 | GET | `/api/facemgr/frame` | FaceManager, VideoFramesetExtractor |
+| POST | `/api/facemgr/morph/blend` | MorphLab |
+| GET | `/api/facemgr/morph/candidates` | MorphLab |
+| POST | `/api/facemgr/morph/preview` | MorphLab |
+| POST | `/api/facemgr/morph/save` | MorphLab |
 | POST | `/api/facemgr/prune` | FaceManager |
+| GET | `/api/facemgr/radar` | PoseRadar |
 | POST | `/api/facemgr/remove` | FaceManager |
 | GET | `/api/faceset/library` | FacesetLibrary |
 | POST | `/api/faceset/library/delete` | FacesetLibrary |
@@ -395,6 +401,9 @@ The batch queue.
 | POST | `/api/queue/reorder` | useQueue |
 | POST | `/api/queue/resume` | useQueue |
 | POST | `/api/queue/retry` | useQueue |
+| GET | `/api/queue/segments` | useSegmentGroups |
+| POST | `/api/queue/segments/join` | useSegmentGroups |
+| POST | `/api/queue/segments/rerender` | useSegmentGroups |
 | POST | `/api/queue/start` | useQueue |
 | POST | `/api/queue/stop` | useQueue |
 | POST | `/api/queue/update` | useQueue |

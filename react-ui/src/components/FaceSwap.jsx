@@ -29,6 +29,7 @@ import {
   selectionIdentity,
 } from './faceswap/processingSelection';
 import ComparisonGridPanel from './faceswap/ComparisonGridPanel';
+import ABReferencePanel from './faceswap/ABReferencePanel';
 import ParserRegions from './faceswap/ParserRegions';
 import InteractivePreview from './faceswap/InteractivePreview';
 import useQueue, {
@@ -4195,6 +4196,9 @@ export default function FaceSwap({
                 />
               </div>
             )}
+
+            {/* A previous render sent from Outputs, wiped against the live preview. Renders nothing until one is sent. */}
+            <ABReferencePanel previewSrc={previewSrc} frame={frame} fps={targets[selTarget]?.fps || 25} startFrame={startFrame} />
 
             {/* Preview controls. Each one drives a preview render, which does
                 compete with a run for the GPU — but it takes a deliberate click

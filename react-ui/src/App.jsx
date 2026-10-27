@@ -1442,10 +1442,10 @@ export default function App() {
                     controlBusy={controlBusy}
                   />
                 )}
-                {tab === 'facemgr' && <FaceManager notify={notify} registerFileListener={registerFileListener} />}
+                {tab === 'facemgr' && <FaceManager notify={notify} registerFileListener={registerFileListener} setTab={setTab} />}
                 {tab === 'extras' && <Extras notify={notify} registerFileListener={registerFileListener} meta={meta} settings={settings} setSettings={setSettings} setTab={setTab} />}
                 {tab === 'gallery' && <Gallery notify={notify} setSettings={setSettings} setTab={setTab} />}
-                {tab === 'history' && <RunHistory notify={notify} setSettings={setSettings} setTab={setTab} />}
+                {tab === 'history' && <RunHistory notify={notify} setSettings={setSettings} setTab={setTab} settings={settings} />}
                 {tab === 'settings' && <Settings meta={meta} settings={settings} setSettings={setSettings} notify={notify} progress={progress} />}
               </Suspense>
               </ErrorBoundary>

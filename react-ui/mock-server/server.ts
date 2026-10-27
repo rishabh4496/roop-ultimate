@@ -1127,8 +1127,17 @@ async function startServer() {
   });
 
   // ── Gallery & History ───────────────────────────────────────────────
+  // Real shape: {output_path, files: [{name, kind, url, path, absolute_path, mtime, size}]}. `outputs` is the
+  // mock's older key, kept for anything that still reads it. output_path does not start with '/', so the UI's
+  // fileUrl() turns it into /api/file?path=... which this mock answers with a placeholder image.
   app.get('/api/output', (req, res) => {
-    res.json({ outputs: outputFiles });
+    const files = outputFiles.map((o) => ({
+      name: o.name,
+      kind: /\.(mp4|mov|mkv|webm)$/i.test(o.name) ? 'video' : 'image',
+      url: `/outputs/${o.name}`, path: `/outputs/${o.name}`, absolute_path: `C:/mock/output/${o.name}`,
+      mtime: Date.parse(o.date) / 1000, size: 18_400_000,
+    }));
+    res.json({ output_path: 'C:/mock/output', files, outputs: outputFiles });
   });
 
   app.post('/api/output/delete', (req, res) => {
@@ -1138,8 +1147,19 @@ async function startServer() {
     res.json({ ok: true, outputs: outputFiles });
   });
 
+  // Real shape: {entries: [{id, time (s), outputs: [names], settings, duration_s, frames, fps}]}. The settings are
+  // fixed CHECKPOINT values (0.37, 13, ...) that no default equals, so a diff against the live settings always has
+  // the same rows to show. `history` is the mock's older key.
+  const checkpointSettings = () => ({
+    ...appSettings, swap_model: 'inswapper', codeformer_fidelity: 0.37, face_mask_blend: 13, mask_erode_dilate_radius: -3,
+    restore_ultra_detail_weight: 0.55, selected_enhancer: 'None', only_in_checkpoint: 7,
+  });
   app.get('/api/history', (req, res) => {
-    res.json({ history: historyRuns });
+    const entries = [
+      { id: 1700000000001, time: Date.now() / 1000 - 3600, outputs: ['interview_swapped_final.mp4'], settings: checkpointSettings(), duration_s: 24.2, frames: 180, fps: 7.4 },
+      { id: 1700000000002, time: Date.now() / 1000 - 7200, outputs: ['portrait_swapped_ultramax.png'], settings: { ...checkpointSettings(), codeformer_fidelity: 0.9 }, duration_s: 3.1, frames: 1, fps: 0.3 },
+    ];
+    res.json({ entries, history: historyRuns });
   });
 
   app.post('/api/history/delete', (req, res) => {
@@ -1274,10 +1294,22 @@ async function startServer() {
   const facemgrPayload = (extra: Record<string, unknown> = {}) => ({
     faces: facemgr.faces, scores: facemgr.scores, meta: facemgr.meta, ...extra,
   });
+  // Seven faces that between them exercise every rule: all five pose buckets, one blurry face that is the ONLY
+  // right profile (kept for coverage), one blurry frontal (dropped), and one near-duplicate of face 1.
+  const FACE_SEED = [
+    { yaw: 0, pitch: 0, sharpness: 0.85, score: 0.82 },
+    { yaw: -58, pitch: 3, sharpness: 0.7, score: 0.7 },
+    { yaw: 62, pitch: -4, sharpness: 0.04, score: 0.3 },
+    { yaw: 4, pitch: 27, sharpness: 0.9, score: 0.88 },
+    { yaw: -6, pitch: -26, sharpness: 0.6, score: 0.66 },
+    { yaw: 1, pitch: 1, sharpness: 0.05, score: 0.2 },
+    { yaw: 2, pitch: 0, sharpness: 0.86, score: 0.8, dup_of: 0 },
+  ];
   const facemgrAddFace = () => {
+    const seed = FACE_SEED[facemgr.faces.length % FACE_SEED.length];
     facemgr.faces.push(createSampleFaceSvg('Face ' + (facemgr.faces.length + 1), 'faceset', '#2a3042', '#1b1d26', facemgr.faces.length + 1));
-    facemgr.scores.push(0.72);
-    facemgr.meta.push({});
+    facemgr.scores.push(seed.score);
+    facemgr.meta.push({ yaw: seed.yaw, pitch: seed.pitch, sharpness: seed.sharpness, sharp_var: seed.sharpness * 300, dup_of: seed.dup_of ?? null });
   };
 
   app.post('/api/facemgr/add', upload.array('files'), (req, res) => {
@@ -1302,6 +1334,109 @@ async function startServer() {
     res.json(facemgrPayload());
   });
   app.post('/api/facemgr/prune', (req, res) => res.json(facemgrPayload({ removed: 0 })));
+
+  // Pose radar / Auto-Prune / Morph Lab, mirroring app/roop/identity_lab.py and app/routes_identity_lab.py.
+  const BUCKETS = ['frontal', 'left_profile', 'right_profile', 'high_angle', 'low_angle'];
+  const BUCKET_LABELS: Record<string, string> = { frontal: 'Frontal', left_profile: 'Left profile', right_profile: 'Right profile', high_angle: 'High angle', low_angle: 'Low angle' };
+  const poseBucket = (yaw: number, pitch: number) => (Math.abs(yaw) >= 40 ? (yaw < 0 ? 'left_profile' : 'right_profile')
+    : Math.abs(pitch) >= 20 ? (pitch > 0 ? 'high_angle' : 'low_angle') : 'frontal');
+  const faceRows = () => facemgr.meta.map((m, i) => ({
+    index: i, yaw: m.yaw ?? 0, pitch: m.pitch ?? 0, bucket: poseBucket(m.yaw ?? 0, m.pitch ?? 0),
+    sharpness: m.sharpness ?? 0.8, sharp_var: m.sharp_var ?? 240, score: facemgr.scores[i] ?? 0,
+  }));
+  const prunePlan = () => {
+    const rows = faceRows();
+    const sorted = rows.map((r) => r.sharpness).sort((a, b) => a - b);
+    const median = sorted.length ? sorted[Math.floor(sorted.length / 2)] : 0;
+    const blurBelow = Math.min(0.35, Math.max(0.10, 0.45 * median));
+    const perBucket: Record<string, number> = {};
+    rows.forEach((r) => { perBucket[r.bucket] = (perBucket[r.bucket] || 0) + 1; });
+    const remove: any[] = [];
+    const kept: any[] = [];
+    rows.forEach((r) => {
+      if (r.sharpness < blurBelow) {
+        if (perBucket[r.bucket] === 1) kept.push({ index: r.index, reason: 'kept_for_coverage', bucket: r.bucket, sharpness: r.sharpness });
+        else remove.push({ index: r.index, reason: 'blurry', bucket: r.bucket, sharpness: r.sharpness, below: blurBelow });
+      } else if (facemgr.meta[r.index]?.dup_of != null) {
+        remove.push({ index: r.index, reason: 'duplicate', bucket: r.bucket, duplicate_of: facemgr.meta[r.index].dup_of, cosine: 0.99 });
+      }
+    });
+    const gone = new Set(remove.map((d) => d.index));
+    return { remove, kept_for_coverage: kept, keep: rows.filter((r) => !gone.has(r.index)).map((r) => r.index),
+      thresholds: { blur_below: blurBelow, median_sharpness: median, duplicate_cosine: 0.96 } };
+  };
+  app.get('/api/facemgr/radar', (req, res) => {
+    const rows = faceRows();
+    const buckets: Record<string, any> = {};
+    BUCKETS.forEach((b) => { buckets[b] = { label: BUCKET_LABELS[b], count: 0, indices: [], mean_sharpness: 0, best_score: 0 }; });
+    rows.forEach((r) => { const b = buckets[r.bucket]; b.count += 1; b.indices.push(r.index); b.mean_sharpness += r.sharpness; b.best_score = Math.max(b.best_score, r.score); });
+    BUCKETS.forEach((b) => { if (buckets[b].count) buckets[b].mean_sharpness = Number((buckets[b].mean_sharpness / buckets[b].count).toFixed(3)); });
+    const covered = BUCKETS.filter((b) => buckets[b].count);
+    res.json({ buckets, total: rows.length, covered, missing: BUCKETS.filter((b) => !covered.includes(b)),
+      coverage: rows.length ? covered.length / BUCKETS.length : 0, faces: rows, prune_preview: rows.length ? prunePlan() : null, bucket_order: BUCKETS });
+  });
+  app.post('/api/facemgr/auto_prune', (req, res) => {
+    if (!facemgr.faces.length) { res.status(400).json({ message: 'no faces to prune' }); return; }
+    const plan = prunePlan();
+    const dry = !!req.body?.dry_run;
+    if (!dry) {
+      const keep = new Set(plan.keep);
+      facemgr.faces = facemgr.faces.filter((_, i) => keep.has(i));
+      facemgr.scores = facemgr.scores.filter((_, i) => keep.has(i));
+      facemgr.meta = facemgr.meta.filter((_, i) => keep.has(i));
+    }
+    res.json(facemgrPayload({ removed: dry ? 0 : plan.remove.length, plan, dry_run: dry }));
+  });
+
+  const morphSaved: string[] = [];
+  const morphCandidates = () => [
+    { id: 'src:0', kind: 'source', label: 'Source face 1', thumb: createSampleFaceSvg('A', 'src', '#334155', '#1e293b', 31), available: true, reason: null },
+    { id: 'src:1', kind: 'source', label: 'Source face 2', thumb: createSampleFaceSvg('B', 'src', '#3f3a5a', '#1e1b2e', 32), available: true, reason: null },
+    { id: 'lib:Alice.fsz', kind: 'library', label: 'Alice', thumb: createSampleFaceSvg('C', 'lib', '#44403c', '#1c1917', 33), faces: 6, available: true, reason: null },
+    { id: 'lib:Bob.fsz', kind: 'library', label: 'Bob', thumb: createSampleFaceSvg('D', 'lib', '#14532d', '#052e16', 34), faces: 3, available: true, reason: null },
+    { id: 'lib:Legacy.fsz', kind: 'library', label: 'Legacy', thumb: '', faces: 2, available: false, reason: 'legacy .fsz: load it into the Face Manager first' },
+    ...morphSaved.map((n) => ({ id: `lib:${n}.fsz`, kind: 'library', label: n, thumb: createSampleFaceSvg('M', 'mix', '#7c2d12', '#431407', 35), faces: 1, available: true, reason: null })),
+  ];
+  const morphBlend = (body: any) => {
+    const comps = Array.isArray(body?.components) ? body.components : [];
+    if (comps.length < 2 || comps.length > 4) return { status: 400, body: { message: 'pick 2 to 4 identities' } };
+    const ids = comps.map((c: any) => String(c.id));
+    if (new Set(ids).size !== ids.length) return { status: 400, body: { message: 'each identity can be used once' } };
+    const cands = morphCandidates();
+    const known = ids.map((id: string) => cands.find((c) => c.id === id));
+    if (known.some((c: any) => !c || !c.available)) return { status: 400, body: { message: 'saved identity not found or unavailable' } };
+    const raw = comps.map((c: any) => Math.max(0, Number(c.weight) || 0));
+    const total = raw.reduce((a: number, b: number) => a + b, 0);
+    if (total <= 0) return { status: 400, body: { message: 'at least one weight must be above zero' } };
+    const w = raw.map((x: number) => x / total);
+    // The mock treats the identities as orthonormal, so the blend's cosine to input i is w_i / |w|.
+    const norm = Math.sqrt(w.reduce((a: number, b: number) => a + b * b, 0));
+    const cos = w.map((x: number) => Number((x / norm).toFixed(4)));
+    const dominant = w.indexOf(Math.max(...w));
+    return { status: 200, body: {
+      weights: w.map((x: number) => Number(x.toFixed(4))), weights_as_given: raw, cosine_to_each: cos, dominant,
+      pairwise_cosine: w.map((_: number, i: number) => w.map((__: number, j: number) => (i === j ? 1 : 0))),
+      components: ids.map((id: string, i: number) => ({ id, label: (known[i] as any).label })),
+      warning: cos[dominant] < 0.5 ? `the blend sits far from every source (cosine to the dominant one is ${cos[dominant].toFixed(2)}); the swap may not resemble any of them` : null,
+    } };
+  };
+  app.get('/api/facemgr/morph/candidates', (req, res) => res.json({ candidates: morphCandidates() }));
+  app.post('/api/facemgr/morph/blend', (req, res) => { const r = morphBlend(req.body); res.status(r.status).json(r.body); });
+  app.post('/api/facemgr/morph/save', (req, res) => {
+    const r = morphBlend(req.body);
+    if (r.status !== 200) { res.status(r.status).json(r.body); return; }
+    let name = String(req.body?.name || 'Blended identity').trim() || 'Blended identity';
+    let n = 1;
+    const base = name;
+    while (morphSaved.includes(name)) { name = `${base} (${n})`; n += 1; }
+    morphSaved.push(name);
+    res.json({ entries: [], dir: 'C:/mock/facesets', saved: name, weights: (r.body as any).weights, cosine_to_each: (r.body as any).cosine_to_each });
+  });
+  app.post('/api/facemgr/morph/preview', (req, res) => {
+    const r = morphBlend(req.body);
+    if (r.status !== 200) { res.status(r.status).json(r.body); return; }
+    res.json({ source_faces: [], source_faces_info: [], faceset_count: 1, index: 0, weights: (r.body as any).weights });
+  });
   app.post('/api/facemgr/remove', (req, res) => {
     const i = Number(req.body?.index);
     if (i >= 0 && i < facemgr.faces.length) { facemgr.faces.splice(i, 1); facemgr.scores.splice(i, 1); facemgr.meta.splice(i, 1); }

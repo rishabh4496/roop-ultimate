@@ -43,6 +43,8 @@ export const LONG_RUNNING = {
   'POST /api/target/auto_angles': 'scans the whole clip for each person\'s angles',
   'POST /api/target/autocluster': 'embeds and clusters every captured face',
   'POST /api/target/face_bank': 'embeds and clusters faces across the clip',
+  'POST /api/facemgr/morph/preview': 'writes the blend, then re-detects a face in its reference image (cold detector load)',
+  'POST /api/queue/segments/join': 'ffmpeg stream-copy concat of a whole render plus ffprobe verification of the result',
 
   // ── uploads (size is the user's, not ours; then the server analyses what arrived)
   'POST /api/source/add': 'upload + face detection',

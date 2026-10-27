@@ -6196,6 +6196,8 @@ import routes_facemgr as _routes_facemgr
 import routes_output as _routes_output
 app.include_router(_routes_faceset.router)
 app.include_router(_routes_facemgr.router)
+import routes_identity_lab as _routes_identity_lab
+app.include_router(_routes_identity_lab.router)
 app.include_router(_routes_output.router)
 _source_gallery.API_TEMP = API_TEMP
 _routes_faceset.API_TEMP = API_TEMP

@@ -6,6 +6,8 @@ import { confirmDialog } from './confirm';
 import { Icon } from '../icons';
 import OutputCompare from './OutputCompare';
 import { reportFailure } from '../failureLog';
+import { saveReference } from './faceswap/abReference';
+import { fmtClock, scrubRatio, scrubTime } from './hoverScrub';
 
 export default function Gallery({ notify, setSettings, setTab }) {
   const { getJSON, postJSON, postFiles } = useApi();
@@ -199,6 +201,19 @@ export default function Gallery({ notify, setSettings, setTab }) {
     } finally {
       setBusyFile('');
     }
+  };
+
+  // Park a finished render as the A/B reference and open Face Swap, which shows it beside the live preview
+  // so a previous result can be judged against a new recipe on the same frame.
+  const sendAsReference = (file) => {
+    saveReference({
+      url: fileUrl(`${outputPath}/${file.name}`),
+      name: file.name,
+      kind: file.kind === 'video' ? 'video' : 'image',
+      runId: historyByName[file.name]?.id ?? null,
+    });
+    notify(`"${file.name}" is now the A/B reference in Face Swap`);
+    setTab?.('faceswap');
   };
 
   const copySelectedPaths = () => {
@@ -416,6 +431,7 @@ export default function Gallery({ notify, setSettings, setTab }) {
                   onReveal={() => revealFile(file.name)}
                   onReuseTarget={() => reuseAsTarget(file.name)}
                   onReuseSource={() => reuseAsSource(file.name)}
+                  onSendReference={() => sendAsReference(file)}
                   historyEntry={historyByName[file.name]}
                   onLoadSettings={loadRunSettings}
                   isBusy={busyFile === file.name}
@@ -489,6 +505,15 @@ export default function Gallery({ notify, setSettings, setTab }) {
                             )}
                             <button
                               type="button"
+                              onClick={() => sendAsReference(file)}
+                              className="px-2 py-1 rounded bg-white/5 hover:bg-white/15 text-white/80 text-micro font-bold"
+                              title="Send to Face Swap as the A/B reference"
+                              aria-label={`Send ${file.name} to Face Swap as the A/B reference`}
+                            >
+                              A/B
+                            </button>
+                            <button
+                              type="button"
                               onClick={() => reuseAsTarget(file.name)}
                               disabled={busyFile === file.name}
                               className="px-2 py-1 rounded bg-white/5 hover:bg-white/15 text-white/80 text-micro font-bold"
@@ -559,9 +584,42 @@ export default function Gallery({ notify, setSettings, setTab }) {
   );
 }
 
-function VideoHoverCard({ file, srcUrl, dateStr, sizeStr, onDelete, onReveal, onReuseTarget, onReuseSource, historyEntry, onLoadSettings, isBusy, isSelected, onToggleSelect }) {
-  const [hovered, setHovered] = useState(false);
+function VideoHoverCard({ file, srcUrl, dateStr, sizeStr, onDelete, onReveal, onReuseTarget, onReuseSource, onSendReference, historyEntry, onLoadSettings, isBusy, isSelected, onToggleSelect }) {
   const videoRef = useRef(null);
+  // Hover scrubbing: the pointer's x across the thumbnail is the playhead. Written straight to the
+  // <video> and to two DOM nodes (bar + clock) once per animation frame; no React state per pointer move,
+  // so sweeping across a grid of thirty cards does not re-render any of them.
+  const scrubBarRef = useRef(null);
+  const scrubClockRef = useRef(null);
+  const scrubRaf = useRef(0);
+  const scrubPending = useRef(null);
+  const applyScrub = () => {
+    scrubRaf.current = 0;
+    const r = scrubPending.current;
+    const v = videoRef.current;
+    if (r === null || !v || !Number.isFinite(v.duration)) return;
+    const t = scrubTime(r, v.duration);
+    if (typeof v.fastSeek === 'function') v.fastSeek(t); else v.currentTime = t;
+    if (scrubBarRef.current) scrubBarRef.current.style.width = `${r * 100}%`;
+    if (scrubClockRef.current) {
+      scrubClockRef.current.textContent = `${fmtClock(t)} / ${fmtClock(v.duration)}`;
+      scrubClockRef.current.style.opacity = '1';
+    }
+  };
+  const onScrubMove = (e) => {
+    if (file.kind !== 'video') return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    scrubPending.current = scrubRatio(e.clientX, rect);
+    if (!scrubRaf.current) scrubRaf.current = requestAnimationFrame(applyScrub);
+  };
+  const onScrubLeave = () => {
+    if (scrubRaf.current) { cancelAnimationFrame(scrubRaf.current); scrubRaf.current = 0; }
+    scrubPending.current = null;
+    if (scrubBarRef.current) scrubBarRef.current.style.width = '0%';
+    if (scrubClockRef.current) scrubClockRef.current.style.opacity = '0';
+    if (videoRef.current) videoRef.current.currentTime = 0;
+  };
+  useEffect(() => () => { if (scrubRaf.current) cancelAnimationFrame(scrubRaf.current); }, []);
   const cardRef = useRef(null);
   const isVideo = file.kind === 'video';
 
@@ -583,16 +641,6 @@ function VideoHoverCard({ file, srcUrl, dateStr, sizeStr, onDelete, onReveal, on
     return () => obs.disconnect();
   }, [isVideo, inView]);
 
-  useEffect(() => {
-    if (!videoRef.current) return;
-    if (hovered) {
-      videoRef.current.play().catch(() => {});
-    } else {
-      videoRef.current.pause();
-      videoRef.current.currentTime = 0;
-    }
-  }, [hovered]);
-
   return (
     <Card
       // A media tile is exactly the surface tilt was built for: it is a
@@ -602,11 +650,16 @@ function VideoHoverCard({ file, srcUrl, dateStr, sizeStr, onDelete, onReveal, on
       className={`tap overflow-hidden border flex flex-col group/card transition-all ${
         isSelected ? 'border-[var(--accent)] bg-[var(--accent)]/5 shadow-[0_0_20px_rgba(233,69,96,0.2)]' : 'border-white/5 hover:border-[#E94560]/40 hover:shadow-[0_12px_36px_rgba(233,69,96,0.15)]'
       }`}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
     >
-      {/* File preview box */}
-      <div ref={cardRef} className="relative aspect-video bg-black/45 flex items-center justify-center overflow-hidden border-b border-white/5 shrink-0 select-none">
+      {/* File preview box. On a video, moving the pointer across it scrubs through the clip. */}
+      <div
+        ref={cardRef}
+        onPointerMove={onScrubMove}
+        onPointerLeave={onScrubLeave}
+        data-testid={isVideo ? 'scrub-surface' : undefined}
+        className="relative aspect-video bg-black/45 flex items-center justify-center overflow-hidden border-b border-white/5 shrink-0 select-none"
+        style={isVideo ? { touchAction: 'pan-y' } : undefined}
+      >
         {onToggleSelect && (
           <div className="absolute top-2 left-2 z-20">
             <input
@@ -615,6 +668,7 @@ function VideoHoverCard({ file, srcUrl, dateStr, sizeStr, onDelete, onReveal, on
               onChange={onToggleSelect}
               className="h-4 w-4 rounded accent-[var(--accent)] cursor-pointer shadow-lg"
               title="Select file"
+              aria-label={`Select ${file.name}`}
             />
           </div>
         )}
@@ -668,59 +722,58 @@ function VideoHoverCard({ file, srcUrl, dateStr, sizeStr, onDelete, onReveal, on
           </span>
         )}
 
-        {/* Action hover mask overlay */}
-        <div className="absolute inset-0 bg-black/60 opacity-0 group-hover/card:opacity-100 transition-opacity flex flex-col items-center justify-center gap-2 p-4">
-          <div className="flex gap-2 w-full max-w-[200px]">
-            <Button
-              size="sm"
-              variant="primary"
-              onClick={onReuseTarget}
-              disabled={isBusy}
-              className="flex-1 justify-center whitespace-nowrap"
-            >
-              Set Target
-            </Button>
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={onReuseSource}
-              disabled={isBusy}
-              className="flex-1 justify-center whitespace-nowrap"
-            >
-              Extract Faces
-            </Button>
-          </div>
-          <div className="flex gap-2 w-full max-w-[200px]">
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={onReveal}
-              disabled={isBusy}
-              className="flex-1 justify-center"
-            >
-              Reveal
-            </Button>
-            <a
-              href={srcUrl}
-              download={file.name}
-              className="flex-1 rounded-xl font-bold border border-white/5 bg-white/10 hover:bg-white/15 text-white backdrop-blur-md px-3 py-1.5 text-xs flex items-center justify-center"
-            >
-              ⬇ Get
-            </a>
-          </div>
-          {historyEntry && (
-            <div className="w-full max-w-[200px]">
-              <Button
-                size="sm"
-                variant="secondary"
-                onClick={() => onLoadSettings(historyEntry)}
-                disabled={isBusy}
-                title={`Re-apply the exact settings this file was rendered with (${historyEntry.settings?.swap_model || ''} · ${historyEntry.settings?.selected_enhancer || 'no enhancer'})`}
-                className="w-full justify-center whitespace-nowrap"
-              >
-                Load run settings
-              </Button>
+        {/* Scrub position line + clock (written by the pointer handler, not by React state). */}
+        {isVideo && (
+          <>
+            <div className="absolute inset-x-0 bottom-0 z-10 h-0.5 bg-white/10 pointer-events-none">
+              <div ref={scrubBarRef} className="h-full w-0 bg-[var(--accent)]" data-testid="scrub-bar" />
             </div>
+            <span ref={scrubClockRef} style={{ opacity: 0 }} data-testid="scrub-clock"
+                  className="absolute left-1/2 top-2 z-10 -translate-x-1/2 rounded bg-black/70 px-1.5 py-0.5 font-mono text-nano tabular-nums text-white pointer-events-none transition-opacity" />
+          </>
+        )}
+
+        {/* Actions: a bar along the bottom, NOT a mask over the picture - the picture is what is being scrubbed. */}
+        <div className="absolute inset-x-0 bottom-0 z-20 flex flex-wrap items-center justify-center gap-1.5 bg-gradient-to-t from-black/85 via-black/55 to-transparent px-2 pb-2 pt-8 opacity-0 transition-opacity group-hover/card:opacity-100 group-focus-within/card:opacity-100">
+          <Button size="sm" variant="primary" onClick={onReuseTarget} disabled={isBusy} className="justify-center whitespace-nowrap">
+            Set Target
+          </Button>
+          <Button size="sm" variant="secondary" onClick={onReuseSource} disabled={isBusy} className="justify-center whitespace-nowrap">
+            Extract Faces
+          </Button>
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={onSendReference}
+            disabled={isBusy}
+            data-testid="send-reference"
+            title="Open Face Swap with this render beside the live preview, to judge it against a new recipe"
+            aria-label={`Send ${file.name} to Face Swap as the A/B reference`}
+            className="justify-center whitespace-nowrap"
+          >
+            Send to Face Swap · A/B
+          </Button>
+          <Button size="sm" variant="secondary" onClick={onReveal} disabled={isBusy} className="justify-center">
+            Reveal
+          </Button>
+          <a
+            href={srcUrl}
+            download={file.name}
+            className="rounded-xl font-bold border border-white/5 bg-white/10 hover:bg-white/15 text-white backdrop-blur-md px-3 py-1.5 text-xs flex items-center justify-center"
+          >
+            ⬇ Get
+          </a>
+          {historyEntry && (
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => onLoadSettings(historyEntry)}
+              disabled={isBusy}
+              title={`Re-apply the exact settings this file was rendered with (${historyEntry.settings?.swap_model || ''} · ${historyEntry.settings?.selected_enhancer || 'no enhancer'})`}
+              className="justify-center whitespace-nowrap"
+            >
+              Load run settings
+            </Button>
           )}
         </div>
       </div>
@@ -728,17 +781,17 @@ function VideoHoverCard({ file, srcUrl, dateStr, sizeStr, onDelete, onReveal, on
       {/* File details panel */}
       <div className="p-4 flex-1 flex flex-col justify-between gap-2 min-w-0">
         <div className="min-w-0">
-          <h4
+          <p
             className="text-sm font-bold text-white/90 truncate cursor-pointer hover:text-[#E94560]"
             title={file.name}
             onClick={onReveal}
           >
             {file.name}
-          </h4>
+          </p>
           <span className="text-micro font-mono text-muted block mt-0.5">{dateStr}{sizeStr ? ` · ${sizeStr}` : ''}</span>
         </div>
         <div className="flex justify-between items-center shrink-0">
-          <span className="text-micro uppercase font-semibold tracking-wider text-[var(--accent)]/80">
+          <span className="text-micro uppercase font-semibold tracking-wider text-muted">
             {file.kind}
           </span>
           <button

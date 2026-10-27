@@ -620,37 +620,57 @@ def _segment_path(job, spec):
     return segment_destination(roop_globals.output_path, spec, ext)
 
 
-def _join_if_group_done(job_id):
-    """When every slice of `job_id`'s split is COMPLETED, join them (stream copy).
+def _group_pairs_locked(group_id):
+    """[(job, SegmentSpec)] of one split in slice order. Call with `_lock` held."""
+    pairs = []
+    for j in _queue["jobs"]:
+        spec = _segment_spec_for(j)
+        if spec is not None and spec.group == group_id:
+            pairs.append((j, spec))
+    pairs.sort(key=lambda t: t[1].index)
+    return pairs
+
+
+def _target_entry_for(job):
+    """(source video path, total frames, fps) of the job's target, from the loaded target list."""
+    media_id = job.get("target_media_id")
+    for entry in list_files_process:
+        if str(getattr(entry, "media_id", "") or "") == str(media_id or "__none__") or \
+                os.path.basename(getattr(entry, "filename", "") or "") == job.get("target_name"):
+            return (getattr(entry, "filename", None), int(getattr(entry, "total_frames", 0) or 0),
+                    float(getattr(entry, "fps", 0) or 0))
+    return None, 0, 0.0
+
+
+def _join_group(group_id, *, automatic=False):
+    """Join the finished slices of one split (stream copy) and VERIFY the result.
 
     The numbered segments stay on disk; the join is `<stem>_joined.mp4` beside them with its
-    `<stem>_concat_list.txt`. A failed join is recorded on the job and announced, never raised:
-    the slices are finished work and the user can still join them by hand."""
+    `<stem>_concat_list.txt`. Every slice must be COMPLETED and present. When the slices cover the whole
+    source its own audio rides along (copied when mp4 can hold it), and the joined video's duration is
+    checked against the source's (else against the summed ranges), the answer stored as `verify`.
+    A failed join is recorded on the jobs and announced, never raised: the slices are finished work.
+    Returns the result dict, or `{"skipped": reason}` when it was not the moment to join."""
     from roop import segment_output
     with _lock:
-        job = _find(job_id)
-        seg = (job or {}).get("segment")
-        if not seg:
-            return
-        group = [j for j in _queue["jobs"] if (j.get("segment") or {}).get("group") == seg["group"]]
-        if len(group) < seg["count"] or any(_state(j) != "COMPLETED" for j in group):
-            return
-        group.sort(key=lambda j: j["segment"]["index"])
-        specs = [_segment_spec_for(j) for j in group]
+        pairs = _group_pairs_locked(group_id)
+        if not pairs:
+            return {"ok": False, "skipped": "unknown_group", "error": "no such segment group"}
+        group = [p[0] for p in pairs]
+        specs = [p[1] for p in pairs]
+        waiting = [s.index for j, s in pairs if _state(j) != "COMPLETED"]
+        if len(pairs) < specs[0].count or waiting:
+            why = (f"slice(s) {waiting} not finished" if waiting
+                   else f"only {len(pairs)} of {specs[0].count} slices are in the queue")
+            return {"ok": False, "skipped": "incomplete", "error": why, "waiting": waiting}
         paths = [_segment_path(j, s) for j, s in zip(group, specs)]
         stem = segment_output.safe_stem(group[0].get("target_name") or "output")
         ext = os.path.splitext(paths[0])[1]
         ranges = [(s.start_frame, s.end_frame) for s in specs]
-        media_id = group[0].get("target_media_id")
-        source, total = None, 0
-        for entry in list_files_process:
-            if str(getattr(entry, "media_id", "") or "") == str(media_id or "__none__") or \
-                    os.path.basename(getattr(entry, "filename", "") or "") == group[0].get("target_name"):
-                source, total = getattr(entry, "filename", None), int(getattr(entry, "total_frames", 0) or 0)
-                break
+        source, total, fps = _target_entry_for(group[0])
         out_dir = roop_globals.output_path
-    use_source_audio = bool(source and segment_output.covers_whole_source(ranges, total)
-                            and not getattr(roop_globals, "skip_audio", False))
+    covers = bool(source and segment_output.covers_whole_source(ranges, total))
+    use_source_audio = bool(covers and not getattr(roop_globals, "skip_audio", False))
     try:
         # Exact frame-count parity assertion across segments before Batch Matrix concatenation
         for p, s in zip(paths, specs):
@@ -669,11 +689,17 @@ def _join_if_group_done(job_id):
             paths, segment_output.joined_path(out_dir, stem, ext),
             segment_output.concat_list_path(out_dir, stem),
             source_media=source, source_audio=use_source_audio)
-        result = {"ok": True, "output": joined, "segments": paths, "source_audio": use_source_audio}
-        _say(f"[Queue] joined {len(paths)} segments -> {os.path.basename(joined)}")
+        rate = fps or segment_output.probe_fps(paths[0])
+        verify = segment_output.verify_joined(
+            joined, segment_output.expected_join_duration(ranges, rate, source, covers), rate)
+        result = {"ok": True, "output": joined, "segments": paths, "source_audio": use_source_audio,
+                  "audio": segment_output.audio_codec_for_join(source) if use_source_audio else "segments",
+                  "verify": verify, "automatic": automatic}
+        _say(f"[Queue] joined {len(paths)} segments -> {os.path.basename(joined)}"
+             + ("" if verify.get("ok") is not False else f" (DURATION CHECK FAILED: {verify.get('reason')})"))
     except Exception as exc:
         _swallowed("routes_queue.py:join_segments", exc, "segments kept, join failed")
-        result = {"ok": False, "error": str(exc), "segments": paths}
+        result = {"ok": False, "error": str(exc), "segments": paths, "automatic": automatic}
         _say(f"[Queue] segments kept but NOT joined: {exc}")
     with _lock:
         for j in group:
@@ -681,10 +707,23 @@ def _join_if_group_done(job_id):
         _save()
     try:
         from roop import pipeline_status
-        pipeline_status.segments_joined(seg["group"], result["ok"],
+        pipeline_status.segments_joined(group_id, result["ok"],
                                         **{k: v for k, v in result.items() if k != "ok"})
     except Exception as exc:
         _swallowed("routes_queue.py:segments_joined", exc, "status event dropped")
+    return result
+
+
+def _join_if_group_done(job_id):
+    """When every slice of `job_id`'s split is COMPLETED, join them (see `_join_group`)."""
+    with _lock:
+        seg = (_find(job_id) or {}).get("segment")
+        if not seg:
+            return
+        group = [j for j in _queue["jobs"] if (j.get("segment") or {}).get("group") == seg["group"]]
+        if len(group) < seg["count"] or any(_state(j) != "COMPLETED" for j in group):
+            return
+    _join_group(seg["group"], automatic=True)
 
 
 def _next_pending():
@@ -1217,6 +1256,115 @@ def queue_join(payload: dict = Body(...)):
 
     _say(f"[Queue] joined {len(files)} segment(s) -> {os.path.basename(dest)}")
     url = f"/outputs/{os.path.basename(dest)}"; return {"path": url, "url": url, "name": os.path.basename(dest), "absolute_path": dest, "segments": len(files)}
+
+
+# ── Segment custody: chunk matrix, per-chunk re-render, join now ─────────────
+# A split render is N jobs (see `_segment_spec_for`); these three routes are the user's handle on the
+# set: what every slice is doing and where its file is, a way to redo ONE slice (it overwrites only
+# its own `.segments/<group>/seg_NNNN_*.mp4`, never a sibling), and a join that can be asked for at
+# any time and that checks what it produced.
+
+_RERENDERABLE = ("COMPLETED", "FAILED", "CANCELLED", "INTERRUPTED", "RECOVERABLE")
+
+
+def _segment_groups_snapshot():
+    from roop import segment_output
+    out_dir = roop_globals.output_path
+    with _lock:
+        groups = {}
+        for job in _queue["jobs"]:
+            spec = _segment_spec_for(job)
+            if spec is None:
+                continue
+            path = _segment_path(job, spec)
+            try:
+                size = os.path.getsize(path) if os.path.isfile(path) else 0
+            except OSError:
+                size = 0
+            g = groups.setdefault(spec.group, {
+                "group": spec.group, "target_name": job.get("target_name") or "",
+                "target_media_id": job.get("target_media_id") or "", "count": spec.count,
+                "segments": [], "_job": job, "_ext": os.path.splitext(path)[1]})
+            progress = job.get("progress") or {}
+            g["segments"].append({
+                "index": spec.index, "job_id": job["id"], "state": _state(job),
+                "label": job.get("label") or "", "start_frame": spec.start_frame, "end_frame": spec.end_frame,
+                "frames": spec.end_frame - spec.start_frame + 1, "name": os.path.basename(path),
+                "exists": size > 0, "bytes": size, "error": job.get("error") or "",
+                "fraction": float(progress.get("fraction") or 0.0)})
+        result = []
+        for g in groups.values():
+            g["segments"].sort(key=lambda s: s["index"])
+            job, ext = g.pop("_job"), g.pop("_ext")
+            stem = segment_output.safe_stem(g["target_name"] or "output")
+            joined = segment_output.joined_path(out_dir, stem, ext or ".mp4")
+            segs = g["segments"]
+            complete = len(segs) >= g["count"] and all(s["state"] == "COMPLETED" and s["exists"] for s in segs)
+            gj = job.get("group_join")
+            g.update({
+                "completed": sum(1 for s in segs if s["state"] == "COMPLETED"),
+                "present": len(segs),
+                "can_join": complete,
+                "join_blocked": None if complete else (
+                    f"{g['count'] - len(segs)} slice(s) missing from the queue" if len(segs) < g["count"]
+                    else "slice(s) " + ", ".join(str(s["index"]) for s in segs
+                                                 if not (s["state"] == "COMPLETED" and s["exists"]))
+                    + " not finished"),
+                "joined": {"name": os.path.basename(joined), "exists": os.path.isfile(joined),
+                           "url": f"/outputs/{os.path.basename(joined)}" if os.path.isfile(joined) else "",
+                           "result": gj},
+            })
+            result.append(g)
+        return result
+
+
+@router.get("/api/queue/segments")
+def queue_segments():
+    return {"groups": _segment_groups_snapshot()}
+
+
+@router.post("/api/queue/segments/rerender")
+def queue_segment_rerender(payload: dict = Body(...)):
+    """Queue ONE slice again. Its file is replaced when it finishes, no other slice is touched, and
+    when the whole split is complete again it is re-joined (`_join_if_group_done`). `start: true`
+    also starts the runner if it is idle."""
+    job_id = str(payload.get("id") or "")
+    with _lock:
+        job = _find(job_id)
+        if job is None or _segment_spec_for(job) is None:
+            return JSONResponse(status_code=404, content={"message": "no such segment job"})
+        if job_id == _queue["current"] or _state(job) not in _RERENDERABLE:
+            return JSONResponse(status_code=409, content={
+                "message": f"slice is {_state(job).lower()}; it can be re-rendered once it has finished or failed"})
+        spec = _segment_spec_for(job)
+        group = [j for j in _queue["jobs"] if (_segment_spec_for(j) or spec).group == spec.group
+                 and _segment_spec_for(j) is not None]
+        _set_state(job, "QUEUED")
+        job.update({"error": "", "started": 0.0, "finished": 0.0, "progress": _empty_progress(),
+                    "cancel_requested": False, "outputs": []})
+        for j in group:
+            j.pop("group_join", None)           # the old join no longer describes the set
+        _save()
+    if payload.get("start") and not _queue["running"]:
+        queue_start()
+    return {"queue": _snapshot(), "groups": _segment_groups_snapshot()}
+
+
+@router.post("/api/queue/segments/join")
+def queue_segments_join(payload: dict = Body(...)):
+    """Join a split's slices now: lossless concat, the source's own audio stream when the slices cover
+    the whole source, then a duration check of the joined video (reported in `verify`)."""
+    group = str(payload.get("group") or "")
+    result = _join_group(group)
+    if result.get("skipped") == "unknown_group":
+        return JSONResponse(status_code=404, content={"message": result["error"]})
+    if result.get("skipped"):
+        return JSONResponse(status_code=409, content={"message": result["error"], "waiting": result.get("waiting")})
+    if not result.get("ok"):
+        return JSONResponse(status_code=500, content={"message": result.get("error", "join failed"),
+                                                      "segments": result.get("segments")})
+    name = os.path.basename(result["output"])
+    return {**result, "name": name, "url": f"/outputs/{name}", "groups": _segment_groups_snapshot()}
 
 
 @router.post("/api/queue/stop")

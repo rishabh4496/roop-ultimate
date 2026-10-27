@@ -5,6 +5,7 @@ import { Card, Section, Button, InfoBadge, MotionIcon } from './ui';
 import { Icon } from '../icons';
 import useQueue from './faceswap/useQueue';
 import QueuePanel from './faceswap/QueuePanel';
+import SegmentMatrix from './segments/SegmentMatrix';
 import FacesetLibrary from './faceswap/FacesetLibrary';
 import {
   autoMatchMatrixConfig,
@@ -1951,6 +1952,10 @@ export default function BatchSwap({ settings = {}, notify, onUpdateSetting }) {
           notify?.(`Loaded settings from "${job.target_name}"`);
         }}
       />
+
+      {/* The queue above is one row per job; this is the same jobs grouped as the splits they belong to,
+          with the files they left and the join. Renders nothing when no split is queued. */}
+      <SegmentMatrix notify={notify} running={queue.running} />
     </div>
   );
 }

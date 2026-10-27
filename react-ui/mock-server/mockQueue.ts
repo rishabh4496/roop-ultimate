@@ -74,6 +74,10 @@ export interface MockJob {
   cancel_requested: boolean;
   recoverable: boolean;
   project_id: string;
+  /** {group, index, count} when this job is one slice of a split render (Batch Matrix stamps it). */
+  segment: { group: string; index: number; count: number } | null;
+  /** The join result recorded on every slice once the split was joined. */
+  group_join?: Record<string, any> | null;
   // Mock-only bookkeeping, stripped from snapshots.
   _sim?: { frame: number; total: number; fps: number };
 }
@@ -161,6 +165,16 @@ function freezeSelection(job: any): Record<string, any> {
   };
 }
 
+/** routes_queue._clean_segment: a well-formed marker or null. */
+export function cleanSegment(value: any): MockJob['segment'] {
+  if (!value || typeof value !== 'object') return null;
+  const group = String(value.group || '').trim();
+  const index = Number(value.index);
+  const count = Number(value.count);
+  if (!group || !Number.isInteger(index) || !Number.isInteger(count) || index < 1 || count < 2 || index > count) return null;
+  return { group, index, count };
+}
+
 export function normalizeJob(payload: any): MockJob {
   const selection = freezeSelection(payload);
   return {
@@ -189,6 +203,7 @@ export function normalizeJob(payload: any): MockJob {
     cancel_requested: false,
     recoverable: false,
     project_id: String(payload.project_id || ''),
+    segment: cleanSegment(payload.segment),
   };
 }
 
@@ -323,6 +338,103 @@ export class MockQueue {
     }
     return { status: 200, body: this.snapshot() };
   }
+
+  // ── segment custody (mirrors routes_queue.queue_segments / rerender / segments/join) ──
+  /** Set by a test: the NEXT join reports a joined video 1.5 s longer than the source, to exercise the check. */
+  mismatchNextJoin = false;
+
+  private specOf(job: MockJob): { group: string; index: number; count: number; start: number; end: number } | null {
+    if (job.frame_start == null || job.frame_end == null) return null;
+    if (job.segment) return { ...job.segment, start: job.frame_start, end: job.frame_end };
+    const key = job.target_media_id || job.target_name;
+    const peers = this.jobs.filter((j) => (j.target_media_id || j.target_name) === key && j.frame_start != null && j.frame_end != null)
+      .sort((a, b) => (a.frame_start as number) - (b.frame_start as number));
+    if (peers.length < 2) return null;
+    return { group: `auto:${key}`, index: peers.indexOf(job) + 1, count: peers.length, start: job.frame_start, end: job.frame_end };
+  }
+
+  segmentGroups() {
+    const groups = new Map<string, any>();
+    for (const job of this.jobs) {
+      const spec = this.specOf(job);
+      if (!spec) continue;
+      const done = job.state === 'COMPLETED';
+      const g = groups.get(spec.group) || { group: spec.group, target_name: job.target_name, target_media_id: job.target_media_id, count: spec.count, segments: [] as any[], _job: job };
+      g.segments.push({
+        index: spec.index, job_id: job.id, state: job.state, label: job.label, start_frame: spec.start, end_frame: spec.end,
+        frames: spec.end - spec.start + 1, name: `seg_${String(spec.index).padStart(4, '0')}_${spec.start}_${spec.end}.mp4`,
+        exists: done, bytes: done ? 1_048_576 * (1 + spec.index) : 0, error: job.error || '', fraction: job.progress.fraction || 0,
+      });
+      groups.set(spec.group, g);
+    }
+    return [...groups.values()].map((g) => {
+      g.segments.sort((a: any, b: any) => a.index - b.index);
+      const first = g._job as MockJob;
+      delete g._job;
+      const stem = (g.target_name || 'output').replace(/\.[^.]+$/, '');
+      const complete = g.segments.length >= g.count && g.segments.every((s: any) => s.state === 'COMPLETED' && s.exists);
+      const result = first.group_join || null;
+      return {
+        ...g,
+        completed: g.segments.filter((s: any) => s.state === 'COMPLETED').length,
+        present: g.segments.length,
+        can_join: complete,
+        join_blocked: complete ? null : g.segments.length < g.count
+          ? `${g.count - g.segments.length} slice(s) missing from the queue`
+          : `slice(s) ${g.segments.filter((s: any) => !(s.state === 'COMPLETED' && s.exists)).map((s: any) => s.index).join(', ')} not finished`,
+        joined: { name: `${stem}_joined.mp4`, exists: !!(result && result.ok), url: result && result.ok ? `/outputs/${stem}_joined.mp4` : '', result },
+      };
+    });
+  }
+
+  private joinResult(group: string, automatic: boolean) {
+    const g = this.segmentGroups().find((x) => x.group === group);
+    if (!g) return { status: 404, body: { message: 'no such segment group' } };
+    if (!g.can_join) return { status: 409, body: { message: g.join_blocked, waiting: [] } };
+    const target = this.deps.targets().find((t) => (t.media_id || t.name) === (g.target_media_id || g.target_name)) || this.deps.targets()[0];
+    const fps = target?.fps || 30;
+    const total = target?.frames || g.segments.reduce((n: number, s: any) => n + s.frames, 0);
+    const covers = g.segments[0].start_frame <= 1 && g.segments[g.segments.length - 1].end_frame >= total;
+    const frames = g.segments.reduce((n: number, s: any) => n + s.frames, 0);
+    const expected = covers ? total / fps : frames / fps;
+    const joined = this.mismatchNextJoin ? expected + 1.5 : expected;
+    this.mismatchNextJoin = false;
+    const tol = Math.max(0.1, 2 / fps);
+    const ok = Math.abs(joined - expected) <= tol;
+    const verify: Record<string, any> = {
+      expected_s: Number(expected.toFixed(3)), joined_s: Number(joined.toFixed(3)), tolerance_s: Number(tol.toFixed(3)),
+      ok, delta_s: Number((joined - expected).toFixed(3)),
+    };
+    if (!ok) verify.reason = `joined video is ${joined.toFixed(2)}s, expected ${expected.toFixed(2)}s (off by ${(joined - expected) >= 0 ? '+' : ''}${(joined - expected).toFixed(2)}s, tolerance ${tol.toFixed(2)}s)`;
+    const result = { ok: true, output: `/output/${g.joined.name}`, segments: g.segments.map((s: any) => s.name), source_audio: covers,
+      audio: covers ? 'copy' : 'segments', verify, automatic };
+    for (const j of this.jobs) { const sp = this.specOf(j); if (sp && sp.group === group) j.group_join = result; }
+    return { status: 200, body: { ...result, name: g.joined.name, url: `/outputs/${g.joined.name}`, groups: this.segmentGroups() } };
+  }
+
+  /** The runner joins a split by itself when its last slice completes (routes_queue._join_if_group_done). */
+  private autoJoin(job: MockJob) {
+    const spec = this.specOf(job);
+    if (!spec || !job.segment) return;
+    const g = this.segmentGroups().find((x) => x.group === spec.group);
+    if (g && g.can_join) this.joinResult(spec.group, true);
+  }
+
+  rerender(id: string, start: boolean) {
+    const job = this.find(id);
+    if (!job || !this.specOf(job)) return { status: 404, body: { message: 'no such segment job' } };
+    if (job.id === this.current || !['COMPLETED', 'FAILED', 'CANCELLED', 'INTERRUPTED', 'RECOVERABLE'].includes(job.state)) {
+      return { status: 409, body: { message: `slice is ${job.state.toLowerCase()}; it can be re-rendered once it has finished or failed` } };
+    }
+    const spec = this.specOf(job)!;
+    this.setState(job, 'QUEUED');
+    Object.assign(job, { error: '', started: 0, finished: 0, progress: emptyProgress(), cancel_requested: false, outputs: [] });
+    for (const j of this.jobs) { const sp = this.specOf(j); if (sp && sp.group === spec.group) j.group_join = null; }
+    if (start && !this.running) this.start();
+    return { status: 200, body: { queue: this.snapshot(), groups: this.segmentGroups() } };
+  }
+
+  joinGroup(group: string) { return this.joinResult(group, false); }
 
   // ── runner ──────────────────────────────────────────────────────────────
   start() {
@@ -517,6 +629,7 @@ export class MockQueue {
     if (state === 'COMPLETED') {
       job.progress.fraction = 1;
       job.outputs = [this.deps.onOutput(job)];
+      this.autoJoin(job);
     } else if (beforeRender) {
       // A pre-dispatch failure keeps its own empty snapshot, never the
       // previous job's numbers.
@@ -549,5 +662,10 @@ export function installMockQueue(app: Express, deps: MockQueueDeps): MockQueue {
   app.post('/api/queue/cancel', (req, res) => send(res, queue.cancel(String(body(req).id || ''))));
   app.post('/api/queue/stop', (_req, res) => send(res, queue.stop()));
   app.post('/api/queue/join', (req, res) => send(res, queue.join(body(req).ids || [], body(req).name)));
+  app.get('/api/queue/segments', (_req, res) => res.json({ groups: queue.segmentGroups() }));
+  app.post('/api/queue/segments/rerender', (req, res) => send(res, queue.rerender(String(body(req).id || ''), !!body(req).start)));
+  app.post('/api/queue/segments/join', (req, res) => send(res, queue.joinGroup(String(body(req).group || ''))));
+  // Test hook, mock only: make the NEXT join come out 1.5 s too long, to exercise the duration check.
+  app.post('/api/mock/segments/mismatch_next_join', (_req, res) => { queue.mismatchNextJoin = true; res.json({ ok: true }); });
   return queue;
 }

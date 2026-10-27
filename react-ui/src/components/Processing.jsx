@@ -22,6 +22,7 @@ import { outputMediaUrl, outputSource } from './outputUrl';
 import useRenderLite from './faceswap/useRenderLite';
 import { lastPreview } from './faceswap/lastPreview';
 import { fmtTime } from './faceswap/utils';
+import SegmentMatrix from './segments/SegmentMatrix';
 
 /**
  * The Processing tab.
@@ -211,6 +212,9 @@ export default function Processing({ progress, settings, notify, setTab,
       <PipelineHud runtime={progress.runtime} />
       {/* 1-click CPU vs TensorRT vs OpenVINO provider matrix; report-only, needs an idle GPU. */}
       <ProviderBenchmark processing={!!processing} />
+      {/* One pill per chunk of every segmented render: inspect, re-render one chunk, join. Renders nothing
+          when no split exists. */}
+      <SegmentMatrix notify={notify} running={!!processing} />
 
       {/* ── The stage ───────────────────────────────────────────────────────
           Responsive scrollable container so the terminal and controls are never

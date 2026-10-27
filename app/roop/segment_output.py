@@ -153,15 +153,106 @@ def write_concat_manifest(paths: Sequence[str], manifest: str) -> str:
 
 
 def concat_command(manifest: str, output: str, source_media: Optional[str] = None,
-                   source_audio: bool = False) -> List[str]:
+                   source_audio: bool = False, audio_codec: str = "aac") -> List[str]:
     """The stream-copy join. `source_audio` muxes the source's own track (brief's form);
-    otherwise the segments' audio, already cut per range, is carried."""
+    otherwise the segments' audio, already cut per range, is carried.
+
+    `audio_codec` is `aac` (re-encode, always valid in mp4) or `copy` (the source's own audio
+    stream untouched). `join_segments` picks `copy` for a source whose audio mp4 can hold as-is."""
     cmd = [ffmpeg_binary(), "-v", "error", "-y", "-f", "concat", "-safe", "0", "-i", manifest]
     if source_audio and source_media:
         cmd += ["-i", source_media, "-map", "0:v:0", "-map", "1:a?"]
     else:
         cmd += ["-map", "0:v:0", "-map", "0:a?"]
-    return cmd + ["-c:v", "copy", "-c:a", "aac", "-movflags", "+faststart", output]
+    # No `-shortest`: it trims the VIDEO to the shorter stream, and a source whose audio ends a few
+    # frames early would silently lose those frames (it cost 4 of 30 in the test clip).
+    return cmd + ["-c:v", "copy", "-c:a", audio_codec, "-movflags", "+faststart", output]
+
+
+# Audio codecs an mp4 container can carry as-is. Anything else (opus, vorbis, pcm, dts...) is
+# re-encoded to AAC rather than failing the join.
+MP4_COPYABLE_AUDIO = frozenset({"aac", "mp3", "ac3", "eac3", "alac"})
+
+
+def _ffprobe_json(args: List[str], timeout: int = 120) -> dict:
+    r = _run([ffprobe_binary(), "-v", "error", *args], timeout=timeout)
+    if r.returncode:
+        return {}
+    try:
+        return json.loads(r.stdout or "{}")
+    except ValueError:
+        return {}
+
+
+def probe_audio_codec(path: str) -> Optional[str]:
+    streams = _ffprobe_json(["-select_streams", "a:0", "-show_entries", "stream=codec_name",
+                             "-of", "json", path]).get("streams") or []
+    return streams[0].get("codec_name") if streams else None
+
+
+def audio_codec_for_join(source_media: Optional[str]) -> str:
+    """`copy` when the source's audio can ride into an mp4 untouched, else `aac`."""
+    return "copy" if source_media and probe_audio_codec(source_media) in MP4_COPYABLE_AUDIO else "aac"
+
+
+def probe_video_duration(path: str) -> Optional[float]:
+    """Seconds of the first video stream (the container's when the stream states none)."""
+    info = _ffprobe_json(["-select_streams", "v:0", "-show_entries", "stream=duration:format=duration",
+                          "-of", "json", path])
+    for raw in ((info.get("streams") or [{}])[0].get("duration"), (info.get("format") or {}).get("duration")):
+        try:
+            v = float(raw)
+            if v > 0:
+                return v
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def probe_fps(path: str) -> Optional[float]:
+    streams = _ffprobe_json(["-select_streams", "v:0", "-show_entries", "stream=r_frame_rate",
+                             "-of", "json", path]).get("streams") or []
+    try:
+        num, _, den = str((streams[0] or {}).get("r_frame_rate", "")).partition("/")
+        v = float(num) / float(den or 1)
+        return v if v > 0 else None
+    except (IndexError, ValueError, ZeroDivisionError):
+        return None
+
+
+def expected_join_duration(ranges: Iterable[tuple], fps: Optional[float],
+                           source_media: Optional[str] = None, covers_source: bool = False) -> Optional[float]:
+    """What the joined file's video should last: the SOURCE's own duration when the segments cover it
+    whole, else the summed length of the ranges (inclusive 1-based frames) at the clip's frame rate."""
+    if covers_source and source_media:
+        d = probe_video_duration(source_media)
+        if d:
+            return d
+    if not fps:
+        return None
+    frames = sum(int(e) - int(s) + 1 for s, e in ranges)
+    return frames / float(fps) if frames > 0 else None
+
+
+def verify_joined(joined: str, expected_s: Optional[float], fps: Optional[float],
+                  tolerance_frames: float = 2.0) -> dict:
+    """Does the joined file last as long as it should? `ok` is None (neither pass nor fail) when there
+    is nothing to compare against: an unmeasured result must not read as either."""
+    actual = probe_video_duration(joined) if os.path.isfile(joined) else None
+    tol = max(0.1, tolerance_frames / float(fps)) if fps else 0.25
+    out = {"expected_s": None if expected_s is None else round(expected_s, 3),
+           "joined_s": None if actual is None else round(actual, 3),
+           "tolerance_s": round(tol, 3), "ok": None, "delta_s": None}
+    if actual is None:
+        out["ok"] = False
+        out["reason"] = "the joined file has no measurable video duration"
+    elif expected_s is not None:
+        out["delta_s"] = round(actual - expected_s, 3)
+        out["ok"] = abs(actual - expected_s) <= tol
+        if not out["ok"]:
+            out["reason"] = (f"joined video is {actual:.2f}s, expected {expected_s:.2f}s "
+                             f"(off by {actual - expected_s:+.2f}s, tolerance {tol:.2f}s)")
+    return out
 
 
 def join_segments(paths: Sequence[str], output: str, manifest: str,
@@ -170,7 +261,8 @@ def join_segments(paths: Sequence[str], output: str, manifest: str,
     write_concat_manifest(paths, manifest)
     tmp = output + ".part.mp4"
     try:
-        r = _run(concat_command(manifest, tmp, source_media, source_audio))
+        codec = audio_codec_for_join(source_media) if (source_audio and source_media) else "aac"
+        r = _run(concat_command(manifest, tmp, source_media, source_audio, codec))
         if r.returncode or not os.path.isfile(tmp) or os.path.getsize(tmp) <= 0:
             raise RuntimeError(f"concat failed ({r.returncode}): {(r.stderr or '')[-600:]}")
         if not probe_has_video(tmp):

@@ -95,6 +95,74 @@ export const primitives = (settings) => {
   return out;
 };
 
+// ── checkpoint vs current ────────────────────────────────────────────────────
+// History's "Compare Checkpoint vs. Current Settings": the saved run on the left, what is set NOW on
+// the right, one row per parameter that differs, and a restore that writes the CHECKPOINT's value back.
+
+// Pixel-valued settings read as "12px", not "12".
+export const UNITS = {
+  face_mask_blend: 'px',
+  mouth_mask_blend: 'px',
+  mask_erode_dilate_radius: 'px',
+  eyes_feather_blend: 'px',
+  face_detector_size: 'px',
+};
+
+// Labels the run chips never needed but a diff does.
+Object.assign(LABELS, {
+  face_mask_blend: 'Mask feather',
+  mouth_mask_blend: 'Mouth mask feather',
+  mask_erode_dilate_radius: 'Mask erode / dilate',
+  restore_ultra_detail_weight: 'Restoration detail weight',
+  stabilize_enhancer_strength: 'Flicker reduction strength',
+  eyes_blend_amount: 'Eyes blend amount',
+});
+
+export const labelFor = (k) => LABELS[k] || k.replace(/_/g, ' ');
+export const fmtWithUnit = (k, v) => {
+  const base = fmtVal(v);
+  return UNITS[k] && base !== '—' && typeof v === 'number' ? `${base}${UNITS[k]}` : base;
+};
+
+/**
+ * Rows for every parameter whose checkpoint value differs from the current one.
+ *   changed          set in both, different
+ *   only-checkpoint  the checkpoint set it and the current settings have no value (restoring adds it)
+ *   only-current     the current settings set it and the checkpoint never did (nothing to restore TO)
+ * Sorted with the labelled, human-meaningful parameters first.
+ */
+export const checkpointDiff = (checkpoint, current) => {
+  const a = primitives(checkpoint);
+  const b = primitives(current);
+  const rows = [];
+  for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) {
+    const hasA = Object.prototype.hasOwnProperty.call(a, k) && a[k] !== undefined;
+    const hasB = Object.prototype.hasOwnProperty.call(b, k) && b[k] !== undefined;
+    if (hasA && hasB && fmtVal(a[k]) === fmtVal(b[k])) continue;
+    rows.push({
+      k,
+      label: labelFor(k),
+      known: k in LABELS,
+      from: hasA ? a[k] : undefined,
+      to: hasB ? b[k] : undefined,
+      fromText: hasA ? fmtWithUnit(k, a[k]) : '—',
+      toText: hasB ? fmtWithUnit(k, b[k]) : '—',
+      kind: hasA && hasB ? 'changed' : hasA ? 'only-checkpoint' : 'only-current',
+      restorable: hasA,
+    });
+  }
+  rows.sort((x, y) => (Number(y.known) - Number(x.known)) || x.label.localeCompare(y.label));
+  return rows;
+};
+
+/** {key: checkpointValue} for the selected rows that can be restored. Never writes a key the checkpoint lacks. */
+export const restorePatch = (rows, selectedKeys) => {
+  const want = new Set(selectedKeys);
+  const patch = {};
+  for (const r of rows) if (want.has(r.k) && r.restorable) patch[r.k] = r.from;
+  return patch;
+};
+
 /** Union of both settings objects, split into what differs and what matches. */
 export const diffSettings = (a, b) => {
   const pa = primitives(a), pb = primitives(b);

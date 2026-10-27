@@ -1,6 +1,14 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { postJSON, postFiles, postFile, fileUrl, API } from '../api';
 import { Section, Slider, Toggle, Button } from './ui';
+import MorphLab from './facemgr/MorphLab';
+import PoseRadar from './facemgr/PoseRadar';
+
+// The two jobs this screen does: build a faceset from footage, or blend existing identities into a new one.
+const VIEWS = [
+  { id: 'builder', label: 'Faceset builder' },
+  { id: 'morph', label: 'Morph Lab' },
+];
 
 // Detector engines the Face Manager can extract with. SCRFD is buffalo_l's
 // built-in detector (the pipeline default); the others help harvest faces from
@@ -22,7 +30,8 @@ const TONE = {
   red: { text: 'text-red-400', ring: 'ring-red-400/40', bg: 'bg-red-500/15' },
 };
 
-export default function FaceManager({ notify, registerFileListener }) {
+export default function FaceManager({ notify, registerFileListener, setTab }) {
+  const [view, setView] = useState('builder');
   const [faces, setFaces] = useState([]);   // data-URL thumbnails
   const [scores, setScores] = useState([]); // parallel FIQA scores 0..1
   const [meta, setMeta] = useState([]);     // parallel breakdown dicts
@@ -131,6 +140,26 @@ export default function FaceManager({ notify, registerFileListener }) {
 
   return (
     <div className="space-y-4">
+      <div role="tablist" aria-label="Face Manager" className="flex gap-1 rounded-xl border border-white/10 bg-white/[0.03] p-1 w-fit">
+        {VIEWS.map((v) => (
+          <button
+            key={v.id} type="button" role="tab" id={`facemgr-tab-${v.id}`} aria-selected={view === v.id}
+            aria-controls={`facemgr-panel-${v.id}`} data-testid={`facemgr-tab-${v.id}`}
+            onClick={() => setView(v.id)}
+            className={`rounded-lg px-3 py-1.5 text-sm font-semibold transition-colors ${
+              view === v.id ? 'bg-[var(--accent)]/15 text-accent' : 'text-white/60 hover:text-white hover:bg-white/[0.06]'}`}
+          >
+            {v.label}
+          </button>
+        ))}
+      </div>
+
+      {view === 'morph' ? (
+        <div role="tabpanel" id="facemgr-panel-morph" aria-labelledby="facemgr-tab-morph">
+          <MorphLab notify={notify} setTab={setTab} />
+        </div>
+      ) : (
+      <div role="tabpanel" id="facemgr-panel-builder" aria-labelledby="facemgr-tab-builder" className="space-y-4">
       <Section>
         <h2 className="text-lg font-bold">Create blending facesets</h2>
         <p className="text-sm text-white/50">
@@ -207,6 +236,15 @@ export default function FaceManager({ notify, registerFileListener }) {
             </div>
           )}
 
+          <PoseRadar
+            refreshKey={`${faces.length}:${scores.join(',')}`}
+            selected={sel}
+            onSelect={setSel}
+            onPruned={(res) => { applyPayload(res); setSel(0); }}
+            notify={notify}
+            busy={busy}
+          />
+
           <FaceQualityGrid faces={faces} scores={scores} meta={meta} threshold={threshold} selected={sel} onSelect={setSel} />
 
           <div className="flex flex-wrap gap-2 mt-3">
@@ -225,6 +263,8 @@ export default function FaceManager({ notify, registerFileListener }) {
           )}
         </Section>
       </div>
+      </div>
+      )}
     </div>
   );
 }
