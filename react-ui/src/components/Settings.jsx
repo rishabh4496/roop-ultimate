@@ -1,3 +1,4 @@
+import { useShallow } from 'zustand/react/shallow';
 import React, { useEffect, useState, useCallback } from 'react';
 import { useApi } from '../useApi';
 import { Section, Select, Slider, Toggle, TextInput } from './ui';
@@ -131,8 +132,9 @@ export default function Settings({ meta, settings, setSettings, notify, progress
   const [onlyModified, setOnlyModified] = useState(false);
   // The open tab lives in the workspace store so the palette and the telemetry
   // popover can open one (e.g. Runtime Diagnostics) and it survives a reload.
-  const tab = useWorkspaceStore((st) => st.settingsTab);
-  const setTab = useWorkspaceStore((st) => st.setSettingsTab);
+  const { tab, setTab } = useWorkspaceStore(
+    useShallow((st) => ({ tab: st.settingsTab, setTab: st.setSettingsTab }))
+  );
   // A search or the changed-only filter looks across ALL tabs: a result hidden on
   // another tab would read as "no such setting".
   const flat = query.trim() !== '' || onlyModified;

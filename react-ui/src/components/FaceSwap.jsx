@@ -78,6 +78,7 @@ import useClipAdvisor, { ADVISOR_LABELS, fmtAdviceVal } from './faceswap/useClip
 import useRuntimeEstimate from './faceswap/useRuntimeEstimate';
 import useUserDefaults from './faceswap/useUserDefaults';
 import useViewPersistence from './faceswap/useViewPersistence';
+import { useCoalescedPreviewController } from './faceswap/coalescedPreviewController';
 import usePlaybackBuffer from './faceswap/usePlaybackBuffer';
 import useGridPreviewLoader from './faceswap/useGridPreviewLoader';
 import useWorkspaceLayout from './faceswap/useWorkspaceLayout';
@@ -748,6 +749,12 @@ export default function FaceSwap({
   // faceset); this covers the tab switch, which is how this window usually
   // ends.
   useEffect(() => () => { releaseOwner(previewOwner); }, [previewOwner]);
+  useEffect(() => () => {
+    if (previewAbortCtrlRef.current) {
+      try { previewAbortCtrlRef.current.abort(); } catch {}
+      previewAbortCtrlRef.current = null;
+    }
+  }, []);
 
   // Invalidate cache when source/target faces or selections change
   useEffect(() => {
@@ -1058,6 +1065,8 @@ export default function FaceSwap({
 
 
   const previewBusyRef = useRef(false);   // a /api/preview call is in flight
+  const previewAbortCtrlRef = useRef(null); // active AbortController for in-flight preview
+  const _coalescedPreviewCtrl = useCoalescedPreviewController();
   const previewPendingRef = useRef(null); // latest queued request while busy (coalesced)
   // The NEWEST render's refreshPreview. The coalesced request is dispatched
   // through this, never through the closure that happened to be in flight:
@@ -1467,11 +1476,16 @@ export default function FaceSwap({
     // TensorRT/CUDA. So never run two at once — queue the latest request and
     // run it once the current one finishes.
     if (previewBusyRef.current) {
-      // Only the caller's own opts are kept. Anything they did not say
-      // (target, frame, person, source, settings) is resolved by the newest
-      // closure when this is re-dispatched, so the coalesced request always
-      // asks for what the UI wants THEN, not what it wanted now.
+      // Coalesced: store newest opts and immediately abort the stale in-flight request
       previewPendingRef.current = { ...opts };
+      if (previewAbortCtrlRef.current) {
+        try {
+          previewAbortCtrlRef.current.abort();
+        } catch {
+          // ignore
+        }
+        previewAbortCtrlRef.current = null;
+      }
       return;
     }
     
@@ -1481,6 +1495,7 @@ export default function FaceSwap({
     // TensorRT/CUDA engine (minutes). Abort after 15 min so a genuine hang can
     // never wedge the single-flight guard permanently.
     const ctrl = new AbortController();
+    previewAbortCtrlRef.current = ctrl;
     // `killed` tells OUR deadline apart from any other abort. The request is also aborted
     // when this panel unmounts (abortOnUnmount): that is the user leaving, not a model
     // build that took too long, and must neither toast nor start the queued next preview.
@@ -1570,17 +1585,26 @@ export default function FaceSwap({
         });
       }
     } catch (e) {
-      if (e.name === 'AbortError' && !killed) abandoned = true;           // the panel went away
-      else notify(e.name === 'AbortError' ? 'Preview timed out (model build took too long)' : e.message, 'error');
+      if (e.name === 'AbortError') {
+        if (killed) notify('Preview timed out (model build took too long)', 'error');
+        else if (!previewPendingRef.current) abandoned = true;
+      } else {
+        notify(e.message, 'error');
+      }
     }
     finally {
       clearTimeout(killer);
+      if (previewAbortCtrlRef.current === ctrl) {
+        previewAbortCtrlRef.current = null;
+      }
       previewBusyRef.current = false;
       setPreviewing(false);
       if (previewPendingRef.current && !abandoned) {
         const next = previewPendingRef.current;
         previewPendingRef.current = null;
-        (refreshPreviewRef.current || refreshPreview)(next);
+        requestAnimationFrame(() => {
+          (refreshPreviewRef.current || refreshPreview)(next);
+        });
       }
     }
   };

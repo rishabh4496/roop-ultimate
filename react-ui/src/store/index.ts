@@ -15,6 +15,9 @@ export {
   videoIoTextOf,
   FAST_FIELDS,
   UI_HZ,
+  getTransientTelemetry,
+  useTransientTelemetryRef,
+  subscribeTransientTelemetry,
 } from './telemetryStore';
 export {
   useRecipeStore,

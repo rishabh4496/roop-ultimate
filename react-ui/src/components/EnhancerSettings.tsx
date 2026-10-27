@@ -13,6 +13,7 @@ import {
   Workflow,
   Radio,
 } from 'lucide-react';
+import { useShallow } from 'zustand/react/shallow';
 import { useTelemetryStore, setEnhancerCompilation } from '../store/telemetryStore';
 
 export type PrecisionMode = 'hybrid_fp16_fp32' | 'strict_fp32';
@@ -167,9 +168,12 @@ export default function EnhancerSettings({
     ...initialSettings,
   }));
 
-  // Centralized telemetry from singleton store — zero redundant WebSockets
-  const runTele = useTelemetryStore((s: any) => s.run) as Record<string, any>;
-  const enhancerStore = useTelemetryStore((s: any) => s.enhancer) as Record<string, any>;
+  // Centralized telemetry from singleton store — atomic selectors prevent re-renders on fast telemetry ticks
+  const fpsValue = useTelemetryStore((s: any) => s.run?.fps || s.run?.fps_now || 0);
+  const comp = useTelemetryStore(useShallow((s: any) => s.enhancer?.compilation || DEFAULT_COMPILATION));
+  const queueDepths = useTelemetryStore(
+    useShallow((s: any) => s.enhancer?.pipeline_queue_depths || { decode: 0, swap: 0, enhance: 0, encode: 0 })
+  );
 
   const [isCompiling, setIsCompiling] = useState<boolean>(false);
   const [compileError, setCompileError] = useState<string | null>(null);
@@ -265,10 +269,7 @@ export default function EnhancerSettings({
     }
   }, [settings.precision_mode, settings.provider]);
 
-  // Derived Telemetry Values. (VRAM / CPU / RAM are not here: the header's telemetry pill is the one place
-  // the app shows hardware, and subscribing to the 3 s system sample made this panel re-render on an idle tab.)
-  const comp = enhancerStore?.compilation || DEFAULT_COMPILATION;
-  const fpsValue = runTele.fps || runTele.fps_now || 0;
+  // Derived Telemetry Values: comp, fpsValue, and queueDepths are atomically selected above.
 
   return (
     <div
@@ -491,7 +492,7 @@ export default function EnhancerSettings({
             </div>
 
             <div className="grid grid-cols-4 gap-1.5 text-micro font-mono pt-1">
-              {Object.entries(enhancerStore?.pipeline_queue_depths || { decode: 0, swap: 0, enhance: 0, encode: 0 }).map(([stage, depth]) => (
+              {Object.entries(queueDepths).map(([stage, depth]) => (
                 <div
                   key={stage}
                   className="p-1.5 rounded-lg bg-slate-950/60 border border-white/5 flex flex-col items-center justify-center"

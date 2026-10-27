@@ -38,7 +38,9 @@ const MAX_EDGE = 2560;
 
 // Release only what this component decoded. Caller-supplied frames belong to
 // the caller's lifecycle.
-const releaseOwned = (layer, img) => { if (img && !layer.external) releaseFrame(img); };
+const releaseOwned = (layer, img) => {
+    if (img && !layer.external) releaseFrame(img);
+  };
 
 // `object-fit: contain`, done by hand because a canvas has no such property.
 const fitBox = (cw, ch, iw, ih) => {

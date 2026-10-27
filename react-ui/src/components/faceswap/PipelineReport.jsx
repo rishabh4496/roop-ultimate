@@ -1,3 +1,4 @@
+import { useShallow } from 'zustand/react/shallow';
 import React from 'react';
 import { useTelemetryStore } from '../../store/telemetryStore';
 import { useEngineRun } from './useEngineRun';
@@ -165,7 +166,7 @@ function LiveRows({ pipeline }) {
  * app), the live stage rows while one runs, and the finished report once `summary` arrives.
  */
 export function PipelineHud({ runtime = null, className = '' }) {
-  const pipeline = useTelemetryStore((s) => s.pipeline);
+  const pipeline = useTelemetryStore(useShallow((s) => s.pipeline));
   const run = useEngineRun();
   return <PipelineHudView pipeline={pipeline} runtime={runtime} run={run} className={className} />;
 }

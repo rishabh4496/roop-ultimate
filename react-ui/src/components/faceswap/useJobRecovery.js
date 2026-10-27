@@ -1,3 +1,4 @@
+import { useShallow } from 'zustand/react/shallow';
 import { useCallback, useEffect, useRef } from 'react';
 import { getJSON } from '../../api';
 import { useJobStore } from '../../store/jobStore';
@@ -32,8 +33,9 @@ const normalise = (pr) => ({
 });
 
 export default function useJobRecovery({ onReattach } = {}) {
-  const beginReconcile = useJobStore((s) => s.beginReconcile);
-  const reconcile = useJobStore((s) => s.reconcile);
+  const { beginReconcile, reconcile } = useJobStore(
+    useShallow((s) => ({ beginReconcile: s.beginReconcile, reconcile: s.reconcile }))
+  );
   // The endpoint's absence is a property of the backend, not of this render —
   // remember it so we stop paying a 404 every heartbeat.
   const legacyRef = useRef(false);

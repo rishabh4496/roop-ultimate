@@ -1,3 +1,4 @@
+import { useShallow } from 'zustand/react/shallow';
 import React, { useEffect, useState, useCallback, useRef, useMemo, Suspense } from 'react';
 import { getJSON, postJSON, timeoutFor } from './api';
 import { logFailure, reportFailure, setFailureToast } from './failureLog';
@@ -493,8 +494,9 @@ export default function App() {
   // says what is actually running; useJobRecovery reconciles the two and is the
   // only thing allowed to conclude either "still going" or "over". See
   // store/jobStore.js for why that order is load-bearing.
-  const beginJob = useJobStore((s) => s.beginJob);
-  const endJob = useJobStore((s) => s.endJob);
+  const { beginJob, endJob } = useJobStore(
+    useShallow((s) => ({ beginJob: s.beginJob, endJob: s.endJob }))
+  );
   useJobRecovery({
     onReattach: ({ startedAt, label }) => {
       // Resume everything a running job owns: the clock (from the BACKEND's
@@ -605,10 +607,14 @@ export default function App() {
     localStorage.setItem('roop_zoom', String(zoom));
   }, [zoom]);
 
-  const railCollapsed = useWorkspaceStore((st) => st.railCollapsed);
-  const toggleRail = useWorkspaceStore((st) => st.toggleRail);
-  const setWorkspaceMode = useWorkspaceStore((st) => st.setWorkspaceMode);
-  const setSettingsTab = useWorkspaceStore((st) => st.setSettingsTab);
+  const { railCollapsed, toggleRail, setWorkspaceMode, setSettingsTab } = useWorkspaceStore(
+    useShallow((st) => ({
+      railCollapsed: st.railCollapsed,
+      toggleRail: st.toggleRail,
+      setWorkspaceMode: st.setWorkspaceMode,
+      setSettingsTab: st.setSettingsTab,
+    }))
+  );
   const [showShortcutsModal, setShowShortcutsModal] = useState(false);
   const [showProfilesModal, setShowProfilesModal] = useState(false);
   const [showSnapshotsModal, setShowSnapshotsModal] = useState(false);

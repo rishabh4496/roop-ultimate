@@ -1,3 +1,4 @@
+import { useShallow } from 'zustand/react/shallow';
 import { useState } from 'react';
 import { WORKSPACE_LAYOUT, WORKSPACE_MODES, useWorkspaceStore } from '../../store/workspaceStore';
 
@@ -14,8 +15,9 @@ import { WORKSPACE_LAYOUT, WORKSPACE_MODES, useWorkspaceStore } from '../../stor
 export { WORKSPACE_MODES };
 
 export default function useWorkspaceLayout() {
-  const workspaceMode = useWorkspaceStore((s) => s.workspaceMode);
-  const setWorkspaceMode = useWorkspaceStore((s) => s.setWorkspaceMode);
+  const { workspaceMode, setWorkspaceMode } = useWorkspaceStore(
+    useShallow((s) => ({ workspaceMode: s.workspaceMode, setWorkspaceMode: s.setWorkspaceMode }))
+  );
   const [ambilightEnabled, setAmbilightEnabled] = useState(true);
   const [drawers, setDrawers] = useState({ left: true, right: true, bottom: true });
 

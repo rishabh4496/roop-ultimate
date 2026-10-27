@@ -1,3 +1,4 @@
+import { useShallow } from 'zustand/react/shallow';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useSystemTelemetryPoller } from '../faceswap/useTelemetry';
 import { LiveText } from '../LiveTelemetry';
@@ -115,7 +116,7 @@ const Row = ({ label, children }) => (
 // The popover's contents. A component of its own so that subscribing to the sample (a re-render every 3 s)
 // happens only while the popover is open.
 function Details({ engine, onOpenDiagnostics, onClose }) {
-  const sys = useTelemetryStore((s) => s.system);
+  const sys = useTelemetryStore(useShallow((s) => s.system));
   const reading = readingOf(sys);
   if (!sys) return <div className="py-4 text-center text-mini text-muted">Connecting to hardware diagnostics…</div>;
   return (

@@ -1,3 +1,4 @@
+import { useShallow } from 'zustand/react/shallow';
 import React from 'react';
 import { LAYOUT_PRESETS, useWorkspaceStore } from '../../store/workspaceStore';
 
@@ -12,8 +13,9 @@ import { LAYOUT_PRESETS, useWorkspaceStore } from '../../store/workspaceStore';
 // A mode the switcher does not name (the dock's "dual") leaves all three
 // unselected rather than lying about which is active.
 export default function LayoutSwitcher({ tab, onNavigate }) {
-  const mode = useWorkspaceStore((s) => s.workspaceMode);
-  const setMode = useWorkspaceStore((s) => s.setWorkspaceMode);
+  const { mode, setMode } = useWorkspaceStore(
+    useShallow((s) => ({ mode: s.workspaceMode, setMode: s.setWorkspaceMode }))
+  );
 
   return (
     <div

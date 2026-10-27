@@ -1,5 +1,5 @@
 import OutputVideoPlayer from './OutputVideoPlayer';
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { fileUrl } from '../api';
 import { useApi } from '../useApi';
 import { Section, Select, Slider, Button } from './ui';
@@ -29,6 +29,7 @@ export default function Extras({ notify, registerFileListener, meta, settings, s
   const [file, setFile] = useState(null);
   const [fileName, setFileName] = useState('');
   const [fileUrlSrc, setFileUrlSrc] = useState('');
+  const fileUrlSrcRef = useRef('');
   const [opts, setOpts] = useState(DEFAULT_OPTS);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(null);
@@ -71,8 +72,10 @@ export default function Extras({ notify, registerFileListener, meta, settings, s
       setFile(f);
       setFileName(f.name);
       setResult(null);
-      if (fileUrlSrc) URL.revokeObjectURL(fileUrlSrc);
-      setFileUrlSrc(URL.createObjectURL(f));
+      if (fileUrlSrcRef.current) URL.revokeObjectURL(fileUrlSrcRef.current);
+      const url = URL.createObjectURL(f);
+      fileUrlSrcRef.current = url;
+      setFileUrlSrc(url);
     }
   };
 
@@ -85,20 +88,25 @@ export default function Extras({ notify, registerFileListener, meta, settings, s
         setFile(f);
         setFileName(f.name);
         setResult(null);
-        if (fileUrlSrc) URL.revokeObjectURL(fileUrlSrc);
-        setFileUrlSrc(URL.createObjectURL(f));
+        if (fileUrlSrcRef.current) URL.revokeObjectURL(fileUrlSrcRef.current);
+        const url = URL.createObjectURL(f);
+        fileUrlSrcRef.current = url;
+        setFileUrlSrc(url);
         notify(`Loaded ${f.name} into editor`);
       }
       return true; // consumed
     });
-  }, [registerFileListener, fileUrlSrc]);
+  }, [registerFileListener]);
   /* eslint-enable react-hooks/exhaustive-deps */
 
   useEffect(() => {
     return () => {
-      if (fileUrlSrc) URL.revokeObjectURL(fileUrlSrc);
+      if (fileUrlSrcRef.current) {
+        URL.revokeObjectURL(fileUrlSrcRef.current);
+        fileUrlSrcRef.current = '';
+      }
     };
-  }, [fileUrlSrc]);
+  }, []);
 
   const apply = async () => {
     if (!file) { notify('Pick a file first', 'error'); return; }

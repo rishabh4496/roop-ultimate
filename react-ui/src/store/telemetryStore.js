@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { useEffect, useRef } from 'react';
 
 // ── High-frequency telemetry, OUTSIDE React state ─────────────────────────
 //
@@ -212,3 +213,65 @@ export const etaMsOf = (run, elapsedMs) => {
   const p = Math.min(1, Math.max(0, Number(run.progress) || 0));
   return p > 0.01 && elapsedMs > 0 ? (elapsedMs * (1 - p)) / p : 0;
 };
+
+// ── High-Frequency Transient Telemetry Split ──────────────────────────────
+// Separates rapidly changing execution metrics (currentFrame, liveFps, vramUsedMb,
+// stageProgress, kernelLatencyMs, etaSeconds) from React reconciliation paths.
+
+export function getTransientTelemetry(state = useTelemetryStore.getState()) {
+  const r = state.run || {};
+  const s = state.system || {};
+  const e = state.enhancer || {};
+  return {
+    currentFrame: Number(r.current_frame) || 0,
+    totalFrames: Number(r.total_frames) || 0,
+    liveFps: Number(r.fps_now ?? r.fps) || 0,
+    vramUsedMb: s.vram_used ? Math.round(s.vram_used * 1024) : (Number(e.gpu_vram_used_mb) || 0),
+    vramTotalMb: s.vram_total ? Math.round(s.vram_total * 1024) : (Number(e.gpu_vram_total_mb) || 0),
+    stageProgress: Number(r.progress) || 0,
+    kernelLatencyMs: Number(r.frame_ms) || 0,
+    etaSeconds: Number(r.eta_s) || 0,
+    engineState: r.engine_state || 'IDLE',
+  };
+}
+
+/**
+ * Hook providing a ref to high-frequency transient telemetry.
+ * Automatically synchronizes with store updates without triggering component re-renders.
+ */
+export function useTransientTelemetryRef(selector = getTransientTelemetry) {
+  const ref = useRef(selector(useTelemetryStore.getState()));
+  const selRef = useRef(selector);
+  selRef.current = selector;
+
+  useEffect(() => {
+    ref.current = selRef.current(useTelemetryStore.getState());
+    return useTelemetryStore.subscribe((state) => {
+      ref.current = selRef.current(state);
+    });
+  }, []);
+
+  return ref;
+}
+
+/**
+ * Direct requestAnimationFrame subscription to transient telemetry.
+ * Updates canvas or DOM directly at display refresh rate without React commits.
+ */
+export function subscribeTransientTelemetry(callback, selector = getTransientTelemetry) {
+  let rafId = 0;
+  let latest = selector(useTelemetryStore.getState());
+  const unsub = useTelemetryStore.subscribe((state) => {
+    latest = selector(state);
+    if (!rafId) {
+      rafId = requestAnimationFrame(() => {
+        rafId = 0;
+        callback(latest);
+      });
+    }
+  });
+  return () => {
+    unsub();
+    if (rafId) cancelAnimationFrame(rafId);
+  };
+}

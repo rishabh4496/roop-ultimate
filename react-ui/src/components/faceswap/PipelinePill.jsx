@@ -1,3 +1,4 @@
+import { useShallow } from 'zustand/react/shallow';
 import React from 'react';
 import { useTelemetryStore } from '../../store/telemetryStore';
 import { LiveText } from '../LiveTelemetry';
@@ -68,7 +69,7 @@ export function PipelinePillView({ model, processing = true, className = '' }) {
  * lets step 3 stay "Muxing" between Stage 3 ending and the report arriving. Renders nothing while idle.
  */
 export default function PipelinePill({ processing = true, className = '' }) {
-  const pipeline = useTelemetryStore((s) => s.pipeline);
+  const pipeline = useTelemetryStore(useShallow((s) => s.pipeline));
   const model = pillModel(pipeline, { processing });
   return <PipelinePillView model={model} processing={processing} className={className} />;
 }

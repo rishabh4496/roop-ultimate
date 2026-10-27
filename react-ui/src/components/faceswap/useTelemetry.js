@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { getJSON } from '../../api';
+import { useShallow } from 'zustand/react/shallow';
 import { setSystemTelemetry, useTelemetryStore } from '../../store/telemetryStore';
 import { reportFailure } from '../../failureLog';
 
@@ -54,5 +55,5 @@ export function useSystemTelemetryPoller(intervalMs = 3000) {
 
 export default function useTelemetry(intervalMs = 3000) {
   useSystemTelemetryPoller(intervalMs);
-  return useTelemetryStore((s) => s.system);
+  return useTelemetryStore(useShallow((s) => s.system));
 }

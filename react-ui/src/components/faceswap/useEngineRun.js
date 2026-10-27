@@ -1,17 +1,16 @@
-import { useMemo } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { useTelemetryStore } from '../../store/telemetryStore';
 
 /**
- * The live engine state (is a canary running now, for which model) from the telemetry store. Three primitives, not
- * the whole `run` slice: that object changes on every fast telemetry tick (fps, frame counters) and selecting it
- * would re-render the caller at the socket's rate for a block that rarely changes.
+ * The live engine state (is a canary running now, for which model) from the telemetry store.
+ * Subscribes with atomic shallow selector to avoid redundant re-renders.
  */
 export function useEngineRun() {
-  const engineState = useTelemetryStore((s) => s.run.engine_state);
-  const engineModel = useTelemetryStore((s) => s.run.engine_model);
-  const enginePrecision = useTelemetryStore((s) => s.run.engine_precision);
-  return useMemo(
-    () => ({ engine_state: engineState, engine_model: engineModel, engine_precision: enginePrecision }),
-    [engineState, engineModel, enginePrecision],
+  return useTelemetryStore(
+    useShallow((s) => ({
+      engine_state: s.run?.engine_state || 'IDLE',
+      engine_model: s.run?.engine_model || '',
+      engine_precision: s.run?.engine_precision || '',
+    }))
   );
 }

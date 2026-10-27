@@ -27,7 +27,11 @@ function getWorker() {
     return null;
   }
   try {
-    worker = new Worker(new URL('./decoder.worker.js', import.meta.url), { type: 'module' });
+    try {
+      worker = new Worker(new URL('../../workers/frameDecoder.worker.ts', import.meta.url), { type: 'module' });
+    } catch {
+      worker = new Worker(new URL('./decoder.worker.js', import.meta.url), { type: 'module' });
+    }
     worker.onmessage = (e) => {
       const { id, ok, bitmap, aborted, message, status, busy, retryAfterMs, retryAfterHeader } = e.data || {};
       const entry = pending.get(id);
@@ -75,7 +79,11 @@ async function decodeOnMainThread(url, signal) {
     }
     const blob = await res.blob();
     if (signal?.aborted) throw new DOMException('aborted', 'AbortError');
-    return createImageBitmap(blob);
+    try {
+      return await createImageBitmap(blob, { premultiplyAlpha: 'none', colorSpaceConversion: 'none' });
+    } catch {
+      return await createImageBitmap(blob);
+    }
   }
   // No createImageBitmap at all. `drawImage` takes an HTMLImageElement, so the
   // canvas path still works — it just decodes on this thread.
@@ -107,12 +115,24 @@ export function normalizeFrameUrl(url) {
   return trimmed;
 }
 
-export function decodeFrame(rawUrl, { signal } = {}) {
+export function decodeFrame(input, { signal, mime } = {}) {
   if (signal?.aborted) return Promise.reject(new DOMException('aborted', 'AbortError'));
-  const url = normalizeFrameUrl(rawUrl);
+  const isBuffer = input instanceof ArrayBuffer;
+  const isBlob = typeof Blob !== 'undefined' && input instanceof Blob;
+  const url = (!isBuffer && !isBlob) ? normalizeFrameUrl(input) : null;
 
   const w = getWorker();
-  if (!w) return decodeOnMainThread(url, signal);
+  if (!w) {
+    if (isBuffer || isBlob) {
+      const blob = isBlob ? input : new Blob([input], { type: mime || 'image/jpeg' });
+      try {
+        return createImageBitmap(blob, { premultiplyAlpha: 'none', colorSpaceConversion: 'none' });
+      } catch {
+        return createImageBitmap(blob);
+      }
+    }
+    return decodeOnMainThread(url, signal);
+  }
 
   const id = ++seq;
   return new Promise((resolve, reject) => {
@@ -127,11 +147,27 @@ export function decodeFrame(rawUrl, { signal } = {}) {
     const entry = pending.get(id);
     entry.resolve = settle(resolve);
     entry.reject = settle(reject);
-    w.postMessage({ id, type: 'decode', url });
+    if (isBuffer) {
+      w.postMessage({ id, type: 'decode', buffer: input, mime }, [input]);
+    } else if (isBlob) {
+      w.postMessage({ id, type: 'decode', blob: input });
+    } else {
+      w.postMessage({ id, type: 'decode', url });
+    }
   }).catch((err) => {
     // The worker died mid-flight (see onerror). One retry on the main thread so
     // a single bad boot does not leave the stage permanently blank.
-    if (workerBroken && err?.name !== 'AbortError') return decodeOnMainThread(url, signal);
+    if (workerBroken && err?.name !== 'AbortError') {
+      if (isBuffer || isBlob) {
+        const blob = isBlob ? input : new Blob([input], { type: mime || 'image/jpeg' });
+        try {
+          return createImageBitmap(blob, { premultiplyAlpha: 'none', colorSpaceConversion: 'none' });
+        } catch {
+          return createImageBitmap(blob);
+        }
+      }
+      return decodeOnMainThread(url, signal);
+    }
     throw err;
   });
 }
