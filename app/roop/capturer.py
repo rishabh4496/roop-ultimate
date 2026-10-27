@@ -246,7 +246,7 @@ def _probe_video(video_path: str):
         cmd = [_ffprobe_binary(), "-v", "error", "-select_streams", "v:0",
                "-show_entries",
                "stream=width,height,avg_frame_rate,nb_frames,duration,codec_name,pix_fmt,sample_aspect_ratio,display_aspect_ratio,"
-               "color_space,color_primaries,color_transfer,color_range"
+               "color_space,color_primaries,color_transfer,color_range,bits_per_raw_sample"
                ":format=duration",
                "-of", "json", video_path]
         proc = subprocess.run(cmd, capture_output=True, timeout=30, **_popen_kwargs())
@@ -292,13 +292,33 @@ def _probe_video(video_path: str):
             dar = ""
 
         if w > 0 and h > 0:
+            raw_bits = st.get("bits_per_raw_sample")
+            bit_depth = 8
+            try:
+                if raw_bits and int(raw_bits) > 0:
+                    bit_depth = int(raw_bits)
+            except (TypeError, ValueError):
+                pass
+            if bit_depth == 8 and pix_fmt:
+                for token, b in (("16", 16), ("14", 14), ("12", 12), ("10", 10), ("9", 9)):
+                    if token in pix_fmt and not pix_fmt.startswith(("rgb24", "bgr24")):
+                        bit_depth = b
+                        break
+
+            color_dict = {k: str(st.get(k) or "") for k in
+                          ("color_space", "color_primaries", "color_transfer", "color_range")}
+            from roop.source_color import format_color_badge
+            color_badge = format_color_badge(
+                {"color": color_dict, "bit_depth": bit_depth, "pix_fmt": pix_fmt, "codec": codec},
+                bit_depth=bit_depth, pix_fmt=pix_fmt, codec=codec
+            )
             info = {"w": w, "h": h, "fps": fps or 25.0, "frames": max(0, frames),
                     "codec": codec, "pix_fmt": pix_fmt,
+                    "bit_depth": bit_depth, "color_badge": color_badge,
                     "sar": sar, "sar_val": sar_val,
                     "dar": dar, "dar_val": dar_val,
                     # the source's colour description (roop/source_color.py turns it into the encoder's plan)
-                    "color": {k: str(st.get(k) or "") for k in
-                              ("color_space", "color_primaries", "color_transfer", "color_range")}}
+                    "color": color_dict}
     except Exception as _degrade_error:
         _swallowed("roop/capturer.py:258", _degrade_error, "fallback continued")
         info = None

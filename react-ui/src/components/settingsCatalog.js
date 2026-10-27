@@ -96,6 +96,9 @@ export const SETTINGS_CATALOG = [
   { key: 'light_harmonizer_ambient_bias', label: 'Ambient light bias', section: 'Lighting & Harmonization' },
   { key: 'light_harmonizer_eye_specular', label: 'Eye specular catchlight restoration', section: 'Lighting & Harmonization' },
   { key: 'light_harmonizer_shadow_occlusion', label: 'Dynamic shadow casting', section: 'Lighting & Harmonization' },
+  { key: 'specular_highlight_recovery', label: 'Specular highlight recovery', section: 'Lighting & Harmonization' },
+  { key: 'ambient_shadow_match', label: 'Ambient shadow & SH match', section: 'Lighting & Harmonization' },
+  { key: 'subdermal_warmth_match', label: 'Sub-dermal warmth & halation', section: 'Lighting & Harmonization' },
 
   // Surgical mouth & occlusion
   { key: 'restore_original_mouth', label: 'Restore dynamic original mouth', section: 'Surgical mouth & occlusion' },

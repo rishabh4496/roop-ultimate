@@ -77,6 +77,9 @@ color_transfer_mode = 'rct'
 # applied only inside a robust skin-region estimate.
 skin_tone_warmth = 0.0       # -100 cool .. 0 neutral .. +100 warm
 saturation_match = 0.0       # 0 off .. 1 match target skin saturation
+specular_highlight_recovery = 0.0  # 0.0 off .. 1.0 full specular sheen/rim recovery
+ambient_shadow_match = 0.0         # 0.0 off .. 1.0 hemisphere shadow falloff match
+subdermal_warmth_match = 0.0       # 0.0 off .. 1.0 shadow/mid/highlight sub-dermal warmth
 # Target-conditioned appearance: the target crop supplies low-frequency
 # illumination, scene cast, shadows, highlights, and skin chroma. Disabled by
 # default so existing renders/custom looks remain bit-identical until enabled.

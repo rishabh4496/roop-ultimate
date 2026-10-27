@@ -74,6 +74,9 @@
     "light_harmonizer_ambient_bias",
     "light_harmonizer_eye_specular",
     "light_harmonizer_shadow_occlusion",
+    "specular_highlight_recovery",
+    "ambient_shadow_match",
+    "subdermal_warmth_match",
     "restore_original_mouth",
     "mouth_open_threshold",
     "enable_xseg_occlusion",
@@ -874,6 +877,42 @@
       "ui": {
         "label": "Dynamic shadow casting",
         "section": "Lighting & Harmonization"
+      }
+    },
+    "specular_highlight_recovery": {
+      "default": 0.0,
+      "type": "float",
+      "ui": {
+        "label": "Specular highlight recovery",
+        "section": "Lighting & Harmonization"
+      },
+      "env": {
+        "var": "ROOP_SPECULAR_HIGHLIGHT_RECOVERY",
+        "kind": "value"
+      }
+    },
+    "ambient_shadow_match": {
+      "default": 0.0,
+      "type": "float",
+      "ui": {
+        "label": "Ambient shadow & SH match",
+        "section": "Lighting & Harmonization"
+      },
+      "env": {
+        "var": "ROOP_AMBIENT_SHADOW_MATCH",
+        "kind": "value"
+      }
+    },
+    "subdermal_warmth_match": {
+      "default": 0.0,
+      "type": "float",
+      "ui": {
+        "label": "Sub-dermal warmth & halation",
+        "section": "Lighting & Harmonization"
+      },
+      "env": {
+        "var": "ROOP_SUBDERMAL_WARMTH_MATCH",
+        "kind": "value"
       }
     },
     "refine_landmarks": {

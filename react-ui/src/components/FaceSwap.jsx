@@ -172,6 +172,7 @@ export default function FaceSwap({
   const [previewDiagnostic, setPreviewDiagnostic] = useState(null);
   const [previewSar, setPreviewSar] = useState(1.0);
   const [previewDar, setPreviewDar] = useState(0.0);
+  const [previewColorBadge, setPreviewColorBadge] = useState('');
   // Manual mask painted in the preview box (PNG data URL) + the face keypoints
   // it was painted against. maskVersion is a cheap token for the preview cache
   // key so the multi-KB data URL never has to be stringified per render.
@@ -1232,6 +1233,9 @@ export default function FaceSwap({
       color_transfer_mode: activeParams.color_transfer_mode,
       skin_tone_warmth: num(activeParams.skin_tone_warmth, 0),
       saturation_match: num(activeParams.saturation_match, 0),
+      specular_highlight_recovery: num(activeParams.specular_highlight_recovery, 0),
+      ambient_shadow_match: num(activeParams.ambient_shadow_match, 0),
+      subdermal_warmth_match: num(activeParams.subdermal_warmth_match, 0),
       target_conditioned_appearance: !!activeParams.target_conditioned_appearance,
       target_conditioned_appearance_strength: num(activeParams.target_conditioned_appearance_strength, 0.75),
       target_conditioned_appearance_temporal_alpha: num(activeParams.target_conditioned_appearance_temporal_alpha, 0.30),
@@ -1492,6 +1496,7 @@ export default function FaceSwap({
         setPreviewDiagnostic(cached.diagnostic || null);
         if (cached.sar !== undefined) setPreviewSar(cached.sar);
         if (cached.dar !== undefined) setPreviewDar(cached.dar);
+        if (cached.colorBadge !== undefined) setPreviewColorBadge(cached.colorBadge);
         // No revoke of the outgoing url here: it is a cache entry, and the
         // cache is what owns it. Freeing it would blank a frame the user can
         // still step back onto.
@@ -1575,6 +1580,7 @@ export default function FaceSwap({
             diagnostic: res.selection_diagnostic || (res.target_required ? 'target_required' : null),
             signature: res.preview_signature || null, requestId: res.request_id || null,
             sar: res.sar_val ?? 1.0, dar: res.dar_val ?? 0.0,
+          colorBadge: res.color_badge || '',
           });
         }
         if (import.meta.env?.DEV) {
@@ -1596,6 +1602,7 @@ export default function FaceSwap({
       setPreviewPose(res.pose || []);
       if (res.sar_val !== undefined) setPreviewSar(res.sar_val);
       if (res.dar_val !== undefined) setPreviewDar(res.dar_val);
+      if (res.color_badge !== undefined) setPreviewColorBadge(res.color_badge);
       const diagnostic = res.selection_diagnostic
         || (res.target_required ? 'target_required' : null);
       setPreviewDiagnostic(diagnostic);
@@ -3411,6 +3418,9 @@ export default function FaceSwap({
                 <>
             <Slider label="Skin tone warmth" info="Fine LAB chroma correction applied only inside a conservative skin-region estimate. Negative values cool toward blue/green, positive values warm toward red/yellow. 0 is neutral." min={-100} max={100} step={1} value={num(p.skin_tone_warmth, 0)} onChange={(v) => set('skin_tone_warmth', v)} defaultValue={FACESWAP_DEFAULTS.skin_tone_warmth} />
             <Slider label="Saturation match" info="Matches swapped skin saturation to the original target skin region using robust HSV statistics. 0 is off, 1 is a full match. Hair, eyes, lips, glasses, and background are excluded from the estimate." min={0} max={1} step={0.05} value={num(p.saturation_match, 0)} onChange={(v) => set('saturation_match', v)} defaultValue={FACESWAP_DEFAULTS.saturation_match} />
+            <Slider label="Specular highlight recovery" info="Extracts high-luminance specular peaks (sweat sheen, rim light, directional flash highlights) from the target face's L-channel in LAB space and composites them over the restored swap so skin reacts naturally to scene lighting. 0 = off." min={0} max={1} step={0.05} value={num(p.specular_highlight_recovery, 0)} onChange={(v) => set('specular_highlight_recovery', v)} defaultValue={FACESWAP_DEFAULTS.specular_highlight_recovery} />
+            <Slider label="Ambient shadow & SH match" info="Matches directional shadow falloff across the left/right/top/bottom hemispheres of the face ROI so side-lit dramatic scenes retain natural 3D lighting shape. 0 = off." min={0} max={1} step={0.05} value={num(p.ambient_shadow_match, 0)} onChange={(v) => set('ambient_shadow_match', v)} defaultValue={FACESWAP_DEFAULTS.ambient_shadow_match} />
+            <Slider label="Sub-dermal warmth & halation" info="Matches shadow, midtone, and highlight A*/B* chrominance balance between target and swap within the skin mask, recovering subsurface red scatter and edge halation. 0 = off." min={0} max={1} step={0.05} value={num(p.subdermal_warmth_match, 0)} onChange={(v) => set('subdermal_warmth_match', v)} defaultValue={FACESWAP_DEFAULTS.subdermal_warmth_match} />
                 </>
               ),
             }}
@@ -4208,6 +4218,7 @@ export default function FaceSwap({
                     onRetryFrame={retryRawFrame}
                     sarVal={previewSar}
                     darVal={previewDar}
+                    colorBadge={previewColorBadge || targets[selTarget]?.color_badge || ''}
                   />
                 </div>
               )

@@ -369,6 +369,7 @@ def _target_rows(path: Optional[str], fps: Optional[float], frames: Optional[int
         out["pix_fmt"] = info.get("pix_fmt") or None
         out["fps"] = out["fps"] or _r(info.get("fps"), 3)
         out["frames"] = out["frames"] or info.get("frames") or None
+        out["color_badge"] = info.get("color_badge")
     probe = _safe(lambda: __import__("roop.finalize_output", fromlist=["probe_container"]).probe_container(path), None, "container")
     if probe:
         video = probe.get("video") or {}
@@ -509,11 +510,18 @@ def profile_rows(p: Dict[str, Any]) -> List[Tuple[str, List[Tuple[str, str]]]]:
     if t is None:
         rows.append(("Target media", [("Media", "n/a")]))
     else:
-        rows.append(("Target media", [
+        badge = t.get("color_badge")
+        if not badge:
+            badge = _safe(lambda: __import__("roop.source_color", fromlist=["format_color_badge"]).format_color_badge(t), None, "badge")
+        t_items = [
             ("File", _na(t.get("file"))),
             ("Video", f"{_na(t.get('resolution'))} @ {_num(t.get('fps'), '{:.3f}')} fps | {_count(t.get('frames'))} frames"),
             ("Format", f"{_na(t.get('pix_fmt'))} | {_na(t.get('color'))}"),
-            ("Audio", "present" if t.get("audio") else ("none" if t.get("audio") is False else "n/a"))]))
+        ]
+        if badge:
+            t_items.append(("Color pipeline", str(badge)))
+        t_items.append(("Audio", "present" if t.get("audio") else ("none" if t.get("audio") is False else "n/a")))
+        rows.append(("Target media", t_items))
     m = p.get("models")
     if m is None:
         rows.append(("Model & precision chain", [("Models", "n/a")]))

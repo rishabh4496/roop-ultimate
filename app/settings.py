@@ -111,6 +111,9 @@ UI_SETTINGS = (
     ('light_harmonizer_ambient_bias', 'Ambient light bias', 'Lighting & Harmonization'),
     ('light_harmonizer_eye_specular', 'Eye specular catchlight restoration', 'Lighting & Harmonization'),
     ('light_harmonizer_shadow_occlusion', 'Dynamic shadow casting', 'Lighting & Harmonization'),
+    ('specular_highlight_recovery', 'Specular highlight recovery', 'Lighting & Harmonization'),
+    ('ambient_shadow_match', 'Ambient shadow & SH match', 'Lighting & Harmonization'),
+    ('subdermal_warmth_match', 'Sub-dermal warmth & halation', 'Lighting & Harmonization'),
     # Surgical mouth & occlusion
     ('restore_original_mouth', 'Restore dynamic original mouth', 'Surgical mouth & occlusion'),
     ('mouth_open_threshold', 'Mouth open MAR threshold', 'Surgical mouth & occlusion'),
@@ -165,6 +168,9 @@ ENV_SETTINGS = (
     ('enhance_min_face_px', 'ROOP_ENHANCE_MIN_FACE_PX', 'value'),
     ('auto_bypass_restorer_native_swap', 'ROOP_AUTO_BYPASS_RESTORER_NATIVE_SWAP', 'bool'),
     ('temporal_smart_skip', 'ROOP_TEMPORAL_SMART_SKIP', 'bool'),
+    ('specular_highlight_recovery', 'ROOP_SPECULAR_HIGHLIGHT_RECOVERY', 'value'),
+    ('ambient_shadow_match', 'ROOP_AMBIENT_SHADOW_MATCH', 'value'),
+    ('subdermal_warmth_match', 'ROOP_SUBDERMAL_WARMTH_MATCH', 'value'),
     # Flow-texture locking.  These are config-only performance knobs: the
     # visible Face Swap control intentionally remains the on/off + carry weight
     # pair, while backend selection and local RAFT weights are deployment facts.
@@ -1216,6 +1222,9 @@ class Settings:
         self.light_harmonizer_ambient_bias = float(self.default_get(data, 'light_harmonizer_ambient_bias', 0.0))
         self.light_harmonizer_eye_specular = float(self.default_get(data, 'light_harmonizer_eye_specular', 0.8))
         self.light_harmonizer_shadow_occlusion = float(self.default_get(data, 'light_harmonizer_shadow_occlusion', 0.6))
+        self.specular_highlight_recovery = float(self.default_get(data, 'specular_highlight_recovery', 0.0))
+        self.ambient_shadow_match = float(self.default_get(data, 'ambient_shadow_match', 0.0))
+        self.subdermal_warmth_match = float(self.default_get(data, 'subdermal_warmth_match', 0.0))
         # Detection refinements
         self.refine_landmarks = self.default_get(data, 'refine_landmarks', True)
         # Swap-model face mask — only hififace/hyperswap emit one; the models that
@@ -1604,6 +1613,9 @@ class Settings:
             'light_harmonizer_ambient_bias': self.light_harmonizer_ambient_bias,
             'light_harmonizer_eye_specular': self.light_harmonizer_eye_specular,
             'light_harmonizer_shadow_occlusion': self.light_harmonizer_shadow_occlusion,
+            'specular_highlight_recovery': self.specular_highlight_recovery,
+            'ambient_shadow_match': self.ambient_shadow_match,
+            'subdermal_warmth_match': self.subdermal_warmth_match,
             'refine_landmarks': self.refine_landmarks,
             'swap_model_mask_strength': self.swap_model_mask_strength,
             'jaw_reshape': self.jaw_reshape,

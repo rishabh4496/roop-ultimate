@@ -356,9 +356,27 @@ class FFMPEG_VideoWriter:
         if threads is not None:
             cmd.extend(["-threads", str(threads)])
 
+        is_10bit = False
+        if plan is not None and (getattr(plan, 'bit_depth', 8) >= 10 or '10' in getattr(plan, 'pix_fmt', '')):
+            is_10bit = True
+
+        if is_10bit:
+            if is_nvenc:
+                out_pix = 'p010le'
+            elif codec in ('libx265', 'hevc_qsv', 'av1_nvenc', 'libsvtav1'):
+                out_pix = 'yuv420p10le'
+            else:
+                out_pix = 'yuv420p'
+        elif is_qsv:
+            out_pix = _qsv_encode.PIX_FMT
+        else:
+            out_pix = 'yuv420p'
+
+        if is_10bit and codec == 'hevc_nvenc' and '-profile:v' not in cmd:
+            cmd.extend(['-profile:v', 'main10'])
+
         cmd.extend([
-            # QuickSync encoders take NV12, not planar yuv420p (same 8-bit 4:2:0 sampling).
-            '-pix_fmt', _qsv_encode.PIX_FMT if is_qsv else 'yuv420p',
+            '-pix_fmt', out_pix,
         ])
         if self.filename.lower().endswith(('.mp4', '.mov', '.m4v')):
             cmd.extend(['-movflags', '+faststart'])

@@ -62,6 +62,7 @@ export default function InteractivePreview({
   onRetryFrame,
   sarVal = 1.0,
   darVal = 0.0,
+  colorBadge = '',
 }) {
   // ── State & Refs ──────────────────────────────────────────────────────────
   const [sliderPosition, setSliderPosition] = useState(50);
@@ -136,6 +137,18 @@ export default function InteractivePreview({
 
   // Feature: Mini RGB Parade / Skin-Tone Vectorscope
   const [scopeActive, setScopeActive] = useState(false);
+  // Feature: False-Color Luminance & Skin-Tone Zebra Overlay
+  const [zebraActive, setZebraActive] = useState(false);
+
+  const activeFaceBbox = useMemo(() => {
+    if (!faces || faces.length === 0) return null;
+    const idx = (typeof selectedFaceIndex === 'number' && selectedFaceIndex >= 0 && selectedFaceIndex < faces.length)
+      ? selectedFaceIndex
+      : 0;
+    const f = faces[idx];
+    if (!f) return null;
+    return f.bbox || (Array.isArray(f) ? f : null);
+  }, [faces, selectedFaceIndex]);
 
   const [imgDim, setImgDim] = useState(null);
   const splitMode = compare && (splitView || compareMode === 'quad');
@@ -1156,6 +1169,21 @@ export default function InteractivePreview({
           Scope
         </button>
 
+        {/* False-Color / Zebra Exposure Toggle Button */}
+        <button
+          type="button"
+          onClick={() => setZebraActive((z) => !z)}
+          aria-pressed={zebraActive}
+          title="Toggle False-Color / Zebra Exposure overlay (>95 IRE clipped highlights, <5 IRE crushed shadows on face ROI)"
+          className={`px-2 h-7 rounded-lg text-micro font-bold flex items-center gap-1 transition-colors ${
+            zebraActive
+              ? 'text-rose-300 bg-rose-500/20 border border-rose-400/40 shadow-[0_0_10px_rgba(244,63,94,0.3)]'
+              : 'hud-glass-button text-white/70'
+          }`}
+        >
+          Zebra
+        </button>
+
         {/* Video Frame controls */}
         {isVideo && (
           <>
@@ -1225,6 +1253,16 @@ export default function InteractivePreview({
       {imgDim && (
         <span className="rounded-lg bg-black/75 backdrop-blur-md px-2.5 py-1 font-mono text-micro tabular-nums text-white/80 border border-white/10 shadow-lg">
           {imgDim.w}×{imgDim.h}
+        </span>
+      )}
+      {colorBadge && (
+        <span className="rounded-lg bg-indigo-500/20 text-indigo-300 backdrop-blur-md px-2.5 py-1 text-micro font-bold border border-indigo-400/30 shadow-lg">
+          {colorBadge}
+        </span>
+      )}
+      {zebraActive && (
+        <span className="rounded-lg bg-rose-500/20 text-rose-300 backdrop-blur-md px-2.5 py-1 text-micro font-bold border border-rose-400/30 shadow-lg animate-pulse">
+          Zebra (&gt;95 / &lt;5 IRE)
         </span>
       )}
       {compare && (
@@ -1617,6 +1655,8 @@ export default function InteractivePreview({
             diffGain={diffGain}
             diffColorMap={diffColorMap}
             fadeMs={isPlaying ? 0 : scrubbing ? 60 : 200}
+            zebra={zebraActive}
+            faceBbox={activeFaceBbox}
             onDimensions={setImgDim}
             className="relative z-[1] w-full h-full object-contain pointer-events-none"
           />

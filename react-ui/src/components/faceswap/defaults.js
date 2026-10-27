@@ -55,6 +55,9 @@ export const FACESWAP_DEFAULTS = {
   color_transfer_mode: 'lct',
   skin_tone_warmth: 0,
   saturation_match: 0,
+  specular_highlight_recovery: 0,
+  ambient_shadow_match: 0,
+  subdermal_warmth_match: 0,
   // Target-conditioned appearance is opt-in and preserves source identity.
   target_conditioned_appearance: false,
   target_conditioned_appearance_strength: 0.75,

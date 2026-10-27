@@ -171,7 +171,7 @@ ADDED_AFTER_REGISTRY = ('perf_batch_max', 'perf_nvenc_preset', 'perf_gpu_affine'
                         'hdr_pipeline', 'hdr_source_transfer', 'hdr_source_primaries',
                         'hdr_output_codec',
                         'prepass_detect_interval', 'prepass_landmark_filter', 'auto_bypass_restorer_native_swap',
-                        'temporal_smart_skip')
+                        'temporal_smart_skip', 'specular_highlight_recovery', 'ambient_shadow_match', 'subdermal_warmth_match')
 
 
 class EnvMappingMatchesTheOldRunPy(unittest.TestCase):

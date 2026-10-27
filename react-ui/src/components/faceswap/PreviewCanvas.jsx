@@ -3,6 +3,7 @@ import React, {
 } from 'react';
 import { decodeFrame, releaseFrame } from './frameDecoder';
 import { drawAmplifiedHeatmap } from './heatmap';
+import { drawZebraOverlay } from './falseColorZebra';
 
 // ── The preview stage, as an UNCONTROLLED canvas ──────────────────────────
 //
@@ -67,6 +68,9 @@ const PreviewCanvas = forwardRef(function PreviewCanvas({
   diffGain = 3.0,             // Amplified diff multiplier (1x - 10x)
   diffColorMap = 'turbo',     // 'turbo' | 'inferno'
   fadeMs = 200,
+  zebra = false,
+  zebraMode = 'zebra',
+  faceBbox = null,
   className = '',
   style,
   onDimensions,
@@ -85,8 +89,10 @@ const PreviewCanvas = forwardRef(function PreviewCanvas({
   const wipeAngleRef = useRef(wipeAngle);
   const diffGainRef = useRef(diffGain);
   const diffColorMapRef = useRef(diffColorMap);
-  const cfgRef = useRef({ wipeDir, wipeAngle, mode, diffGain, diffColorMap, fadeMs });
-  cfgRef.current = { wipeDir, wipeAngle, mode, diffGain, diffColorMap, fadeMs };
+  const cfgRef = useRef({ wipeDir, wipeAngle, mode, diffGain, diffColorMap, fadeMs, zebra, zebraMode });
+  cfgRef.current = { wipeDir, wipeAngle, mode, diffGain, diffColorMap, fadeMs, zebra, zebraMode };
+  const faceBboxRef = useRef(faceBbox);
+  faceBboxRef.current = faceBbox;
 
   const rafRef = useRef(0);
   const reportedDimRef = useRef('');
@@ -265,6 +271,16 @@ const PreviewCanvas = forwardRef(function PreviewCanvas({
       ctx.restore();
     }
 
+    if (cfgRef.current.zebra) {
+      drawZebraOverlay(
+        ctx,
+        cw,
+        ch,
+        faceBboxRef.current,
+        cfgRef.current.zebraMode || 'zebra',
+      );
+    }
+
     return needsMore;
   }, [sizeToFrame]);
 
@@ -369,7 +385,7 @@ const PreviewCanvas = forwardRef(function PreviewCanvas({
   useEffect(() => { wipeAngleRef.current = wipeAngle; requestPaint(); }, [wipeAngle, requestPaint]);
   useEffect(() => { diffGainRef.current = diffGain; requestPaint(); }, [diffGain, requestPaint]);
   useEffect(() => { diffColorMapRef.current = diffColorMap; requestPaint(); }, [diffColorMap, requestPaint]);
-  useEffect(() => { requestPaint(); }, [mode, wipeDir, wipeAngle, diffGain, diffColorMap, fadeMs, requestPaint]);
+  useEffect(() => { requestPaint(); }, [mode, wipeDir, wipeAngle, diffGain, diffColorMap, fadeMs, zebra, zebraMode, faceBbox, requestPaint]);
 
   // Teardown must return the layers to their INITIAL state, `src` included.
   //

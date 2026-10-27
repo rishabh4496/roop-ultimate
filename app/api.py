@@ -2462,6 +2462,15 @@ def _refresh_target_frames(idx):
         total = 1
         entry.fps = 0
     entry.total_frames = total
+    if os.path.isfile(entry.filename) and util.is_video(entry.filename):
+        try:
+            from roop.capturer import _probe_video
+            pinfo = _probe_video(entry.filename) or {}
+            entry.color_badge = pinfo.get("color_badge", "")
+            entry.bit_depth = pinfo.get("bit_depth", 8)
+            entry.pix_fmt = pinfo.get("pix_fmt", "")
+        except Exception:
+            pass
     # Keep the user's trim markers on re-select; only (re)initialise when unset
     # or out of range.
     if not getattr(entry, 'endframe', None) or entry.endframe > total:
@@ -2489,6 +2498,9 @@ def _target_entry_dict(entry):
         "end_frame": entry.endframe,
         "frames": total,
         "fps": entry.fps or 0,
+        "color_badge": getattr(entry, "color_badge", None) or "",
+        "bit_depth": getattr(entry, "bit_depth", 8),
+        "pix_fmt": getattr(entry, "pix_fmt", ""),
     }
 
 
@@ -2845,6 +2857,8 @@ def target_preview(request: Request, index: int = 0, frame: int = 1, width: int 
         if vinfo:
             headers["X-Video-Sar"] = str(vinfo.get("sar_val", 1.0))
             headers["X-Video-Dar"] = str(vinfo.get("dar_val", 0.0))
+            if vinfo.get("color_badge"):
+                headers["X-Video-Color-Badge"] = str(vinfo.get("color_badge"))
     return Response(content=data, media_type=media, headers=headers)
 
 
@@ -4976,6 +4990,7 @@ def preview(payload: dict = Body(...)):
             "sar_val": float(target_info.get("sar_val", 1.0)) if target_info else 1.0,
             "dar": target_info.get("dar", "") if target_info else "",
             "dar_val": float(target_info.get("dar_val", 0.0)) if target_info else 0.0,
+            "color_badge": target_info.get("color_badge", "sRGB 8-bit") if target_info else "sRGB 8-bit",
         }
 
         # Apply detection resolution before any detection so the face-box overlay and
@@ -5050,6 +5065,12 @@ def preview(payload: dict = Body(...)):
             "skin_tone_warmth", getattr(roop_globals.CFG, "skin_tone_warmth", 0.0)))
         roop_globals.saturation_match = float(payload.get(
             "saturation_match", getattr(roop_globals.CFG, "saturation_match", 0.0)))
+        roop_globals.specular_highlight_recovery = float(payload.get(
+            "specular_highlight_recovery", getattr(roop_globals.CFG, "specular_highlight_recovery", 0.0)))
+        roop_globals.ambient_shadow_match = float(payload.get(
+            "ambient_shadow_match", getattr(roop_globals.CFG, "ambient_shadow_match", 0.0)))
+        roop_globals.subdermal_warmth_match = float(payload.get(
+            "subdermal_warmth_match", getattr(roop_globals.CFG, "subdermal_warmth_match", 0.0)))
         roop_globals.sam2_model_size = payload.get("sam2_model_size", getattr(roop_globals.CFG, "sam2_model_size", "tiny"))
 
         # Pre-align analysis modules so get_all_faces and live_swap build the exact same FaceAnalysis set
@@ -5539,6 +5560,12 @@ def _run_swap(payload):
             "skin_tone_warmth", getattr(roop_globals.CFG, "skin_tone_warmth", 0.0)))
         roop_globals.saturation_match = float(payload.get(
             "saturation_match", getattr(roop_globals.CFG, "saturation_match", 0.0)))
+        roop_globals.specular_highlight_recovery = float(payload.get(
+            "specular_highlight_recovery", getattr(roop_globals.CFG, "specular_highlight_recovery", 0.0)))
+        roop_globals.ambient_shadow_match = float(payload.get(
+            "ambient_shadow_match", getattr(roop_globals.CFG, "ambient_shadow_match", 0.0)))
+        roop_globals.subdermal_warmth_match = float(payload.get(
+            "subdermal_warmth_match", getattr(roop_globals.CFG, "subdermal_warmth_match", 0.0)))
         _apply_target_appearance_settings(payload)
         _apply_temporal_compositing_settings(payload)
         _apply_temporal_quality_settings(payload)

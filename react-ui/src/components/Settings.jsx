@@ -894,6 +894,9 @@ export default function Settings({ meta, settings, setSettings, notify, progress
               <Slider label="Ambient light bias" min={-0.5} max={0.5} step={0.05} {...bind('light_harmonizer_ambient_bias', 0.0)} />
               <Slider label="Eye specular catchlight restoration" min={0} max={1} step={0.05} {...bind('light_harmonizer_eye_specular', 0.8)} />
               <Slider label="Dynamic shadow casting" min={0} max={1} step={0.05} {...bind('light_harmonizer_shadow_occlusion', 0.6)} />
+              <Slider label="Specular highlight recovery" min={0} max={1} step={0.05} {...bind('specular_highlight_recovery', 0.0)} />
+              <Slider label="Ambient shadow & SH match" min={0} max={1} step={0.05} {...bind('ambient_shadow_match', 0.0)} />
+              <Slider label="Sub-dermal warmth & halation" min={0} max={1} step={0.05} {...bind('subdermal_warmth_match', 0.0)} />
             </FilterSection>
           </div>
         )}

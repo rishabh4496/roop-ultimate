@@ -125,6 +125,165 @@ class ColorTransferMixin:
                 cv2.COLOR_LAB2BGR)
         return out
 
+    def _apply_directional_and_specular_lighting(self, source, target,
+                                                 specular_strength=None,
+                                                 ambient_strength=None,
+                                                 subdermal_strength=None):
+        """Directional Relighting, Specular Skin Highlight Recovery, and Sub-Dermal Warmth Matching.
+
+        1. Specular Highlight Recovery (0%..100%): Extracts high-luminance specular peaks
+           (sweat sheen, rim light, directional flash highlights) from target face's L-channel
+           and composites them over the swapped face so skin reacts naturally to scene lighting.
+        2. Ambient Shadow & Spherical Harmonics Match (0%..100%): Matches directional shadow
+           falloff across left/right/top/bottom hemispheres of face ROI so dramatic side-lit scenes
+           never look flat or evenly lit.
+        3. Sub-Dermal Warmth & Halation Match (0%..100%): Fine-tunes shadow/midtone/highlight
+           Red-Cyan and Yellow-Blue balance specifically within the skin mask.
+
+        Bit-identical no-op at neutral (0.0) settings.
+        """
+        if specular_strength is not None:
+            specular_rec = float(specular_strength)
+        else:
+            try:
+                specular_rec = float(getattr(roop.globals, 'specular_highlight_recovery', 0.0) or 0.0)
+            except (TypeError, ValueError):
+                specular_rec = 0.0
+
+        if ambient_strength is not None:
+            shadow_match = float(ambient_strength)
+        else:
+            try:
+                shadow_match = float(getattr(roop.globals, 'ambient_shadow_match', 0.0) or 0.0)
+            except (TypeError, ValueError):
+                shadow_match = 0.0
+
+        if subdermal_strength is not None:
+            subdermal = float(subdermal_strength)
+        else:
+            try:
+                subdermal = float(getattr(roop.globals, 'subdermal_warmth_match', 0.0) or 0.0)
+            except (TypeError, ValueError):
+                subdermal = 0.0
+
+        specular_rec = float(np.clip(specular_rec, 0.0, 1.0))
+        shadow_match = float(np.clip(shadow_match, 0.0, 1.0))
+        subdermal = float(np.clip(subdermal, 0.0, 1.0))
+
+        if specular_rec <= 1e-6 and shadow_match <= 1e-6 and subdermal <= 1e-6:
+            return source
+
+        out = np.asarray(source).copy()
+        ref = np.asarray(target)
+        if ref.shape[:2] != out.shape[:2]:
+            ref = cv2.resize(ref, (out.shape[1], out.shape[0]), interpolation=cv2.INTER_AREA)
+
+        mask = self._skin_region_mask(ref)
+        if mask is None:
+            return out
+
+        h, w = out.shape[:2]
+        s_lab = cv2.cvtColor(out[:, :, :3], cv2.COLOR_BGR2LAB).astype(np.float32)
+        t_lab = cv2.cvtColor(ref[:, :, :3], cv2.COLOR_BGR2LAB).astype(np.float32)
+
+        s_l = s_lab[:, :, 0]
+        t_l = t_lab[:, :, 0]
+
+        # ── 1. Ambient Shadow & Spherical Harmonics Directional Match ───────────
+        if shadow_match > 1e-6:
+            sigma_amb = max(3.0, min(h, w) / 16.0)
+            t_low = cv2.GaussianBlur(t_l, (0, 0), sigmaX=sigma_amb, sigmaY=sigma_amb)
+            s_low = cv2.GaussianBlur(s_l, (0, 0), sigmaX=sigma_amb, sigmaY=sigma_amb)
+
+            skin_sample = mask > 0.20
+            if int(skin_sample.sum()) >= 64:
+                cx, cy = (w - 1) * 0.5, (h - 1) * 0.5
+                yy, xx = np.ogrid[:h, :w]
+                left_mask = skin_sample & (xx < cx)
+                right_mask = skin_sample & (xx >= cx)
+                top_mask = skin_sample & (yy < cy)
+                bottom_mask = skin_sample & (yy >= cy)
+
+                t_left = float(np.median(t_low[left_mask])) if int(left_mask.sum()) > 16 else float(np.median(t_low[skin_sample]))
+                t_right = float(np.median(t_low[right_mask])) if int(right_mask.sum()) > 16 else float(np.median(t_low[skin_sample]))
+                t_top = float(np.median(t_low[top_mask])) if int(top_mask.sum()) > 16 else float(np.median(t_low[skin_sample]))
+                t_bottom = float(np.median(t_low[bottom_mask])) if int(bottom_mask.sum()) > 16 else float(np.median(t_low[skin_sample]))
+
+                s_left = float(np.median(s_low[left_mask])) if int(left_mask.sum()) > 16 else float(np.median(s_low[skin_sample]))
+                s_right = float(np.median(s_low[right_mask])) if int(right_mask.sum()) > 16 else float(np.median(s_low[skin_sample]))
+                s_top = float(np.median(s_low[top_mask])) if int(top_mask.sum()) > 16 else float(np.median(s_low[skin_sample]))
+                s_bottom = float(np.median(s_low[bottom_mask])) if int(bottom_mask.sum()) > 16 else float(np.median(s_low[skin_sample]))
+
+                dx = (t_right - t_left) - (s_right - s_left)
+                dy = (t_bottom - t_top) - (s_bottom - s_top)
+
+                norm_x = (xx.astype(np.float32) - cx) / max(1.0, cx)
+                norm_y = (yy.astype(np.float32) - cy) / max(1.0, cy)
+                sh_field = 0.5 * (dx * norm_x + dy * norm_y)
+
+                spatial_delta = t_low - s_low
+                directional_shadow = 0.65 * sh_field + 0.35 * spatial_delta
+                directional_shadow = np.clip(directional_shadow, -45.0, 45.0)
+
+                s_l = np.clip(s_l + shadow_match * directional_shadow * mask, 0.0, 255.0)
+
+        # ── 2. Specular Skin Highlight Recovery ────────────────────────────────
+        if specular_rec > 1e-6:
+            sigma_spec = max(1.5, min(h, w) / 32.0)
+            t_base = cv2.GaussianBlur(t_l, (0, 0), sigmaX=sigma_spec, sigmaY=sigma_spec)
+            spec_residual = t_l - t_base
+
+            spec_gate = np.clip((t_l - 130.0) / 60.0, 0.0, 1.0)
+            spec_peaks = np.maximum(0.0, spec_residual) * spec_gate
+
+            rim_peaks = np.maximum(0.0, t_l - np.maximum(s_l, 140.0)) * spec_gate * 0.5
+            total_specular = (spec_peaks + rim_peaks) * mask
+
+            s_l = np.clip(s_l + specular_rec * total_specular, 0.0, 255.0)
+
+            # Preserve physical specular highlight neutrality (Fresnel reflection)
+            desat = np.clip(specular_rec * (spec_peaks / 45.0) * mask, 0.0, 0.5)
+            s_lab[:, :, 1] = s_lab[:, :, 1] * (1.0 - desat) + 128.0 * desat
+            s_lab[:, :, 2] = s_lab[:, :, 2] * (1.0 - desat) + 128.0 * desat
+
+        s_lab[:, :, 0] = s_l
+
+        # ── 3. Sub-Dermal Warmth & Halation Balance ────────────────────────────
+        if subdermal > 1e-6:
+            w_shadow = np.clip((95.0 - s_l) / 45.0, 0.0, 1.0)
+            w_high = np.clip((s_l - 150.0) / 50.0, 0.0, 1.0)
+            w_mid = np.maximum(0.0, 1.0 - w_shadow - w_high)
+            w_sum = w_shadow + w_mid + w_high + 1e-6
+            w_s = w_shadow / w_sum
+            w_m = w_mid / w_sum
+            w_h = w_high / w_sum
+
+            sample = mask > 0.35
+            if int(sample.sum()) >= 64:
+                def get_zone_delta(chan_idx, zone_weights):
+                    s_chan = s_lab[:, :, chan_idx]
+                    t_chan = t_lab[:, :, chan_idx]
+                    zone_sel = sample & (zone_weights > 0.35)
+                    if int(zone_sel.sum()) >= 24:
+                        return float(np.median(t_chan[zone_sel]) - np.median(s_chan[zone_sel]))
+                    return float(np.median(t_chan[sample]) - np.median(s_chan[sample]))
+
+                da_s = np.clip(get_zone_delta(1, w_s) + 2.0, -18.0, 18.0)
+                db_s = np.clip(get_zone_delta(2, w_s) + 1.5, -18.0, 18.0)
+                da_m = np.clip(get_zone_delta(1, w_m), -16.0, 16.0)
+                db_m = np.clip(get_zone_delta(2, w_m), -16.0, 16.0)
+                da_h = np.clip(get_zone_delta(1, w_h), -16.0, 16.0)
+                db_h = np.clip(get_zone_delta(2, w_h), -16.0, 16.0)
+
+                delta_a = (w_s * da_s + w_m * da_m + w_h * da_h) * mask * subdermal
+                delta_b = (w_s * db_s + w_m * db_m + w_h * db_h) * mask * subdermal
+
+                s_lab[:, :, 1] = np.clip(s_lab[:, :, 1] + delta_a, 0.0, 255.0)
+                s_lab[:, :, 2] = np.clip(s_lab[:, :, 2] + delta_b, 0.0, 255.0)
+
+        out[:, :, :3] = cv2.cvtColor(np.clip(s_lab, 0.0, 255.0).astype(np.uint8), cv2.COLOR_LAB2BGR)
+        return out
+
     def apply_detail_transfer(self, face_img, orig_crop, strength):
         """Inject the original target crop's high-frequency skin texture onto the swapped/enhanced face.
 
@@ -190,6 +349,9 @@ class ColorTransferMixin:
         controls_active = (
             abs(float(getattr(roop.globals, 'skin_tone_warmth', 0.0) or 0.0)) > 1e-6
             or float(getattr(roop.globals, 'saturation_match', 0.0) or 0.0) > 1e-6
+            or float(getattr(roop.globals, 'specular_highlight_recovery', 0.0) or 0.0) > 1e-6
+            or float(getattr(roop.globals, 'ambient_shadow_match', 0.0) or 0.0) > 1e-6
+            or float(getattr(roop.globals, 'subdermal_warmth_match', 0.0) or 0.0) > 1e-6
         )
         if mode == 'none' and not controls_active:
             return source
@@ -222,6 +384,7 @@ class ColorTransferMixin:
             out = self._color_transfer_rct(source, target)
 
         out = self._apply_skin_photometric_controls(out, target)
+        out = self._apply_directional_and_specular_lighting(out, target)
 
         if (getattr(roop.globals, 'target_conditioned_appearance', False)
                 and appearance is not None):
