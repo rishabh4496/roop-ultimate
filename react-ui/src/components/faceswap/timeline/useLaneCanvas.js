@@ -49,7 +49,12 @@ export function useLaneCanvas(draw, deps) {
       schedule();
     };
     measure();
-    if (typeof ResizeObserver === 'undefined') return undefined;
+    if (typeof ResizeObserver === 'undefined') {
+      return () => {
+        if (rafRef.current) cancelAnimationFrame(rafRef.current);
+        rafRef.current = 0;
+      };
+    }
     const ro = new ResizeObserver(measure);
     ro.observe(canvas);
     return () => {
@@ -58,6 +63,11 @@ export function useLaneCanvas(draw, deps) {
       rafRef.current = 0;
     };
   }, [schedule]);
+
+  useEffect(() => () => {
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    rafRef.current = 0;
+  }, []);
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { schedule(); }, deps);

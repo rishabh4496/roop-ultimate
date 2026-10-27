@@ -155,6 +155,12 @@ export default function InteractivePreview({
     }
   }, []);
 
+  useEffect(() => () => {
+    if (inertiaRafRef.current) cancelAnimationFrame(inertiaRafRef.current);
+    if (lensRafRef.current) cancelAnimationFrame(lensRafRef.current);
+    if (settleTimeoutRef.current) clearTimeout(settleTimeoutRef.current);
+  }, []);
+
   const startInertia = useCallback((initVx, initVy) => {
     stopInertia();
     let vx = initVx;

@@ -30,6 +30,7 @@ import routes_facemgr as fm
 from api_media import _rgb_to_dataurl
 from roop import identity_lab as lab
 from roop import utilities as util
+from roop.degrade import swallowed as _swallowed
 
 router = APIRouter()
 
@@ -314,7 +315,8 @@ def write_blended_fsz(path, embedding, base_image, base_face, name):
         # None for the copy protocol); faceset_v2 rebuilds it as type(face)(face), and so does this.
         try:
             face = type(base_face)(base_face)
-        except Exception:
+        except Exception as exc:
+            _swallowed("routes_identity_lab:morph_faceset", exc, "face copy fallback to dict")
             face = dict(base_face)
     vec = np.asarray(embedding, np.float32)
     # Item assignment, never setattr: insightface's Face derives `normed_embedding` from `embedding` as a
