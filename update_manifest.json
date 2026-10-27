@@ -53,8 +53,8 @@
     "app/requirements.txt": "9da96b92e8018ff8ac6350b7d4f69608ee44039c51197bd5e935493d8eaf7192",
     "app/update_health.py": "7e9323cee2b05a60f14b8c71970263c6904209dfffb0f64333c30f9342f1304e",
     "app/update_manager.py": "f938d42e7f46751a35e80dbc1eb9d53f073b39a10d4f32db7f00f6b60ad9e656",
-    "react-ui/package-lock.json": "c7f402b1c64a9bc52f158eab62243581b8eb84ea83f9155efeed08fe8bcf3bae",
-    "react-ui/package.json": "c98058527c399cd1e2d526aa0562e052cbb7d57deb77f768e5611b655e19070b",
+    "react-ui/package-lock.json": "f2b3ac68564d099c138e7957b691e18ef5e90ff066abbf0edf9d45d8685ce482",
+    "react-ui/package.json": "0d4bd27008561b80189430be763a659f8022dd759173810f87fac6879387ac37",
     "scripts/fix_tensorrt.js": "1084ea447a5076b65469ca2b4824142245946908620c0c11d960531f5a0721ac",
     "torch.js": "fc11d982a64ed659e0fe8f40e46bb11d163afb5262ed8a6784dc9d2e4c534006",
     "update.js": "d6aa05ecfd23b4cda947121b657058b942d9491f30bba43e259cac451c29a84f"

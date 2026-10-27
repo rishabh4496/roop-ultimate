@@ -153,6 +153,18 @@ def publish_active_ranges(active: Optional[Iterable[Sequence[int]]]) -> None:
         _maps["active"] = None if active is None else merge_ranges(active)
 
 
+def reuse_frames(faces_by_frame: Any) -> List[int]:
+    """Clip-relative frames whose EVERY face carries the smart-skip mark (``reuse_flow_warp``).
+
+    A frame with one marked face and one unmarked face is not a reuse frame: the model still has to
+    run on the second. Faces are dict-like (``Face`` supports ``.get``)."""
+    out: List[int] = []
+    for fi, faces in faces_by_frame.items():
+        if faces and all(f.get("reuse_flow_warp") for f in faces):
+            out.append(int(fi))
+    return out
+
+
 def publish_reuse_frames(frames: Iterable[int]) -> None:
     """Stage 2's PLAN: clip-relative frames whose every face is marked for smart-skip reuse.
 

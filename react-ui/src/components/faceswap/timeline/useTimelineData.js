@@ -220,7 +220,8 @@ export function useFilmstrip({ targetIndex, targetKey, slots, enabled, onTile })
           cacheRef.current.set(hit.frame, hit.bmp);
         }
         // LRU-ish bound: Map iterates in insertion order, so the oldest go first.
-        while (cacheRef.current.size > 700) {
+        // 300 stills x (200 x 112 x 4 B) = ~27 MB of decoded bitmaps at most.
+        while (cacheRef.current.size > 300) {
           const oldest = cacheRef.current.keys().next().value;
           cacheRef.current.get(oldest)?.close?.();
           cacheRef.current.delete(oldest);

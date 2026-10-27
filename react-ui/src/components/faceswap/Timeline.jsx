@@ -250,8 +250,27 @@ export default function Timeline({
       const factor = Math.exp(clamp(e.deltaY, -240, 240) * 0.002);
       W.zoomAround(pivot, factor, ratio);
     };
+    // Ctrl/Cmd + wheel is the timeline's zoom gesture, claimed by its OWN listener rather than by a
+    // branch of the one above (which stays a pure yield to the app zoom, as test_ui_zoom_pan pins).
+    // The element listener runs before App.jsx's window listener, and stopPropagation is what keeps
+    // that from also firing: one gesture, one zoom - this track's, never the whole UI's.
+    const onZoomWheel = (e) => {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      const W = wheelRef.current;
+      const rect = el.getBoundingClientRect();
+      if (!W || W.maxFrames < 2 || !rect.width) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const ratio = clamp((e.clientX - rect.left) / rect.width, 0, 1);
+      // Anchored at the cursor; a trackpad pinch (|dy| ~ 1-10) and a notched wheel (~100) both land smoothly.
+      W.zoomAround(W.v.start + ratio * W.vSpan, Math.exp(clamp(e.deltaY, -240, 240) * 0.002), ratio);
+    };
     el.addEventListener('wheel', onWheel, { passive: false });
-    return () => el.removeEventListener('wheel', onWheel);
+    el.addEventListener('wheel', onZoomWheel, { passive: false });
+    return () => {
+      el.removeEventListener('wheel', onWheel);
+      el.removeEventListener('wheel', onZoomWheel);
+    };
   }, []);
 
   // Middle-button drag scrolls. Window-level move/up so the drag survives leaving the lanes.
@@ -287,7 +306,9 @@ export default function Timeline({
   useEffect(() => {
     if (!isPlaying || !zoomed || !setView) return;
     const next = followFrame(v, maxFrames, frame);
-    if (next !== v) setView(next);
+    // followFrame hands back an equal window when the playhead is still on screen; committing that
+    // would be a state change (and a re-render of the whole panel) on every playback tick.
+    if (next.start !== v.start || next.end !== v.end) setView(next);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [frame, isPlaying, zoomed]);
 
@@ -446,13 +467,18 @@ export default function Timeline({
   // ── Presence selection ────────────────────────────────────────────────────
   const [pick, setPick] = useState(null);     // {id, interval}
   useEffect(() => { setPick(null); }, [targetKey]);
-  const onPresenceClick = (row, interval) => {
+  const onPresenceClick = (row, interval, at) => {
     setPick({ id: row.id, interval });
-    // The pill's interval is the scene this person is in: In/Out go to exactly that range.
-    setFrameMarkerVal('start', interval[0]);
-    setFrameMarkerVal('end', interval[1]);
-    setFrame(interval[0]);
-    onPresenceSelect?.(row, interval);
+    // "That scene": the shot under the click, limited to the stretch this person is in. A person who
+    // stays on screen across several shots has ONE long pill, and In/Out to the whole of it would be
+    // the clip, not a scene; the cuts are what say where this scene starts and ends.
+    const shot = Number.isFinite(at) ? sceneAt(scenes, at) : null;
+    const from = shot ? Math.max(interval[0], shot.start) : interval[0];
+    const to = shot ? Math.min(interval[1], shot.end) : interval[1];
+    setFrameMarkerVal('start', from);
+    setFrameMarkerVal('end', to);
+    setFrame(from);
+    onPresenceSelect?.(row, [from, to]);
   };
 
   // ── Shuttle (J / K / L) ───────────────────────────────────────────────────

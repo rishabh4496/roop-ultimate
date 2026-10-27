@@ -222,6 +222,11 @@ class Rig:
         run['report'] = st.end_run(ok=run['error'] is None)
         run['finalize'] = fins
         run['capture'] = self.captured[-1] if self.captured else None
+        # What the timeline's cache lane would be told about THIS render, read before another render
+        # begins and replaces it (roop/timeline_tracks.py keeps only the last run's maps).
+        from roop import timeline_tracks
+        run['timeline_video'] = timeline_tracks._maps.get('video')
+        run['timeline_maps'] = timeline_tracks.render_maps(run['timeline_video'])
         run['rng'] = rng
         run['wall_s'], run['event_ms'] = wall, ev_ms
         run['log_text'] = open(run['log'], encoding='utf-8', errors='replace').read()
@@ -314,6 +319,25 @@ class ThreeStageSyncAndFps(unittest.TestCase):
         # edge samples: 126 of 155 active, 29 frames passed through unswapped)
         self.assertEqual((cap['stage1']['active_frames'], cap['stage1']['skipped_frames']), (TRIM_FRAMES, 0))
         self.assertEqual([tuple(r) for r in cap['stage1']['ranges']], [(0, TRIM_FRAMES - 1)])
+
+    def test_1_the_timeline_is_told_this_runs_stage_1_and_stage_2_maps(self):
+        """The React timeline's cache lane reads these (GET /api/target/timeline_tracks -> render). The unit
+        tests cover the arithmetic; this is the one place the PIPELINE'S OWN publication is exercised, on a
+        real render, and it pins the offset convention that is easiest to get wrong: the pipeline counts
+        0-based from the trim's first frame, the UI counts 1-based from the clip's."""
+        run = self.main_run()
+        maps = run['timeline_maps']
+        self.assertIsNotNone(run['timeline_video'], 'begin_run never ran: the pipeline did not start a timeline record')
+        self.assertEqual(os.path.basename(run['timeline_video']), os.path.basename(self.rig.clip),
+                         'the maps were recorded against a different video than the one rendered')
+        self.assertTrue(maps['video_matches'])
+        self.assertEqual(maps['range'], [TRIM[0] + 1, TRIM[1]], 'trim (10, 165) exclusive = UI frames 11..165')
+        self.assertTrue(maps['stage1_ran'], 'Stage 1 ran (sparse_auto_range) but published no ranges')
+        # the face is in every frame, so nothing of the trim is face-free ...
+        self.assertEqual(maps['face_free'], [])
+        # ... and every smart-skip range lies inside the trim, in UI numbering
+        for lo, hi in maps['reuse']:
+            self.assertTrue(TRIM[0] + 1 <= lo <= hi <= TRIM[1], (lo, hi))
 
     def test_1_the_render_leaves_nothing_behind_and_logs_no_failure(self):
         run = self.main_run()

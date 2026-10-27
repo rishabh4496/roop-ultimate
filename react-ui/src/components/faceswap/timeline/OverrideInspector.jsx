@@ -65,7 +65,9 @@ export default function OverrideInspector({
         <button type="button" onClick={onRemove} className="rounded-md px-2 py-1 text-mini font-semibold text-red-400 hover:bg-red-500/10">Remove</button>
       </div>
 
-      <div className="grid gap-x-5 gap-y-2 sm:grid-cols-2">
+      {/* One column: the Face Swap stage is ~420 px wide in the default layout, and two columns left the
+          range inputs ~28 px (collapsed to nothing - the control was there and could not be used). */}
+      <div className="grid gap-y-2">
         {OVERRIDE_FIELDS.map((f) => {
           const on = override.params[f.id] !== undefined;
           const disabled = override.bypass;
@@ -78,7 +80,7 @@ export default function OverrideInspector({
                 onChange={(e) => setParam(f.id, e.target.checked ? (f.kind === 'range' ? (inherited ?? f.base) : (inherited ?? swapModels[0] ?? '')) : undefined)}
                 className="accent-[var(--accent)]"
               />
-              <span className="w-32 shrink-0 text-mini text-[var(--text-muted)]">{f.label}</span>
+              <span className="w-28 shrink-0 text-mini text-[var(--text-muted)]">{f.label}</span>
               {f.kind === 'range' ? (
                 <>
                   <input
@@ -87,7 +89,7 @@ export default function OverrideInspector({
                     value={on ? override.params[f.id] : (inherited ?? f.base)}
                     aria-label={f.label}
                     onChange={(e) => setParam(f.id, Number(e.target.value))}
-                    className="h-1 min-w-0 flex-1 accent-[var(--accent)]"
+                    className="h-1 min-w-[96px] flex-1 accent-[var(--accent)]"
                   />
                   <span className="w-11 shrink-0 text-right font-mono text-note tabular-nums text-[var(--text-main)]">
                     {on ? override.params[f.id] : <span className="text-[var(--text-muted)]">{inherited ?? f.base}</span>}
@@ -99,7 +101,7 @@ export default function OverrideInspector({
                   value={on ? override.params[f.id] : ''}
                   aria-label={f.label}
                   onChange={(e) => setParam(f.id, e.target.value)}
-                  className={`${inputCls} min-w-0 flex-1 font-sans`}
+                  className={`${inputCls} min-w-[96px] flex-1 font-sans`}
                 >
                   {!on && <option value="">{inherited || 'Clip default'}</option>}
                   {swapModels.map((m) => <option key={m} value={m}>{m}</option>)}

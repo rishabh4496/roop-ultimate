@@ -171,6 +171,27 @@ class AppZoomCompensation(unittest.TestCase):
                 f'{name} does not yield Ctrl/Cmd+wheel to the app zoom, so one '
                 'gesture zooms this surface AND the whole UI')
 
+    def test_the_timeline_may_claim_ctrl_wheel_only_by_stopping_the_app_zoom(self):
+        """The timeline's brief makes Ctrl/Cmd+wheel ITS zoom gesture (anchored at the cursor, like
+        every NLE). That is allowed, and this is the one exception to the rule above, because the
+        rule's PURPOSE is that one gesture zooms one thing: the claim must come from its own listener
+        (the `onWheel` above keeps yielding) and that listener must stop the event before it reaches
+        App.jsx's window handler. Without `stopPropagation` the same wheel notch would zoom the
+        track and the whole UI. react-ui/e2e/timeline.spec.js asserts the behaviour (the app zoom does
+        not change); this pins the mechanism so a refactor cannot drop it unnoticed."""
+        src = _code(TIMELINE)
+        m = re.search(r'const onZoomWheel = \(e\) => \{(.*?)\n    \};', src, re.S)
+        self.assertIsNotNone(m, 'Timeline.jsx lost its Ctrl/Cmd+wheel zoom listener (onZoomWheel)')
+        body = m.group(1)
+        self.assertRegex(body, r'e\.ctrlKey \|\| e\.metaKey',
+                         'onZoomWheel must act only on the modified gesture')
+        self.assertIn('e.preventDefault()', body,
+                      'onZoomWheel must cancel the browser\'s own page zoom')
+        self.assertIn('e.stopPropagation()', body,
+                      'onZoomWheel must stop the event before App.jsx\'s window listener zooms the whole UI too')
+        self.assertRegex(src, r"addEventListener\('wheel',\s*onZoomWheel,\s*\{\s*passive:\s*false\s*\}\)",
+                         'onZoomWheel must be a non-passive native listener or preventDefault is ignored')
+
 
 class PanIsBoundedToThePicture(unittest.TestCase):
     """The bound has to come from the MEDIA, not from the box around it.

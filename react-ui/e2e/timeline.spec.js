@@ -59,6 +59,24 @@ const colorCount = (canvas, rgb, tol = 48) => canvas.evaluate((c, [r, g, b, t]) 
   return n;
 }, [...rgb, tol]);
 
+/**
+ * Scroll a lane to the middle of the viewport and prove nothing is covering the point a test is about to
+ * use. The Face Swap column has sticky bars and a floating dock: a mouse event aimed at coordinates they
+ * cover lands on THEM (a wheel notch on the film track was once delivered to a toolbar button), and the
+ * test then "fails" for a reason that has nothing to do with the timeline.
+ */
+async function reveal(page, locator) {
+  await locator.evaluate((el) => el.scrollIntoView({ block: 'center' }));
+  await page.waitForTimeout(120);
+  const box = await locator.boundingBox();
+  const clear = await locator.evaluate((el, [x, y]) => {
+    const hit = document.elementFromPoint(x, y);
+    return !!hit && (hit === el || el.contains(hit));
+  }, [box.x + box.width / 2, box.y + box.height / 2]);
+  expect(clear, 'the lane must be the topmost element at the point the test aims at').toBeTruthy();
+  return box;
+}
+
 const view = async (tl) => ({
   start: Number(await tl.getAttribute('data-view-start')),
   end: Number(await tl.getAttribute('data-view-end')),
@@ -112,7 +130,7 @@ test.describe('multi-track timeline (1,200-frame clip)', () => {
   test('Ctrl+wheel zooms the track about the cursor and not the app', async ({ page }) => {
     const tl = await openTimeline(page);
     const film = page.locator('div.cursor-ew-resize').first();
-    const box = await film.boundingBox();
+    const box = await reveal(page, film);
     const appZoomBefore = await page.evaluate(() => document.documentElement.style.zoom);
     await page.mouse.move(box.x + box.width * 0.75, box.y + box.height / 2);
     // the frame under the cursor before and after: it must not move
@@ -138,7 +156,7 @@ test.describe('multi-track timeline (1,200-frame clip)', () => {
     await page.getByTestId('timeline-zoom').fill('0.55');
     await expect(tl).toHaveAttribute('data-zoomed', 'true');
     const film = page.locator('div.cursor-ew-resize').first();
-    const box = await film.boundingBox();
+    const box = await reveal(page, film);
     const v0 = await view(tl);
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     await page.keyboard.down('Shift');
@@ -161,7 +179,7 @@ test.describe('multi-track timeline (1,200-frame clip)', () => {
     const tl = await openTimeline(page);
     const map = page.getByTestId('timeline-minimap');
     await expect(map, 'the minimap shows even at full zoom-out').toBeVisible();
-    const mb = await map.boundingBox();
+    const mb = await reveal(page, map);
     // full zoom-out: the window fills the bar
     const win = page.getByTestId('timeline-minimap-window');
     expect((await win.boundingBox()).width).toBeGreaterThan(mb.width * 0.95);
@@ -184,9 +202,18 @@ test.describe('multi-track timeline (1,200-frame clip)', () => {
     expect(scrolled.start).toBeLessThan(zoomed.start);
     expect(span(scrolled)).toBe(span(zoomed));
     // click elsewhere on the bar: centre the window there
-    await page.mouse.click(mb.x + mb.width * 0.9, mb.y + mb.height / 2);
-    const jumped = await view(tl);
-    expect(jumped.start).toBeGreaterThan(scrolled.start);
+    // Zooming added the "showing …" badge to the header, which can wrap and push the bar down: measure again.
+    const mb2 = await reveal(page, map);
+    const cx = mb2.x + mb2.width * 0.9;
+    const cy = mb2.y + mb2.height / 2;
+    const under = await page.evaluate(([x, y]) => {
+      const e = document.elementFromPoint(x, y);
+      return e ? `${e.tagName}${e.dataset.testid ? `[${e.dataset.testid}]` : ''} in minimap: ${!!e.closest('[data-testid="timeline-minimap"]')}` : 'nothing';
+    }, [cx, cy]);
+    expect(under, 'the click must land on the minimap').toContain('in minimap: true');
+    await page.mouse.click(cx, cy);
+    await expect.poll(async () => (await view(tl)).start).toBeGreaterThan(scrolled.start);
+    expect(span(await view(tl)), 'recentring keeps the zoom').toBe(span(scrolled));
   });
 
   test('J / K / L shuttle, I / O, comma / period and Up / Down jump to cuts', async ({ page }) => {
@@ -261,7 +288,8 @@ test.describe('multi-track timeline (1,200-frame clip)', () => {
   test('right-click adds a scene override, it persists, and its fields are editable', async ({ page }) => {
     await openTimeline(page);
     const scenes = page.getByTestId('lane-scenes');
-    const sb = await scenes.boundingBox();
+    await expect.poll(() => colorCount(scenes, [251, 122, 60]), { message: 'cuts loaded' }).toBeGreaterThan(20);
+    const sb = await reveal(page, scenes);
     // third shot (frames 421-630 of 1200): ~42 % across
     await page.mouse.click(sb.x + sb.width * 0.42, sb.y + sb.height - 3, { button: 'right' });
     const menu = page.getByTestId('timeline-menu');
@@ -273,8 +301,8 @@ test.describe('multi-track timeline (1,200-frame clip)', () => {
 
     const inspector = page.getByTestId('override-inspector');
     await expect(inspector).toBeVisible();
-    await expect(inspector.getByLabel('From')).toHaveValue('421');
-    await expect(inspector.getByLabel('To')).toHaveValue('630');
+    await expect(inspector.getByLabel('From', { exact: true })).toHaveValue('421');
+    await expect(inspector.getByLabel('To', { exact: true })).toHaveValue('630');
 
     // opt in to the feather field and move it
     await inspector.getByLabel('Override Mask feather').check();
@@ -295,7 +323,8 @@ test.describe('multi-track timeline (1,200-frame clip)', () => {
     await expect.poll(() => colorCount(page.getByTestId('lane-overrides'), [217, 119, 6], 60)).toBeGreaterThan(200);
 
     // remove it from the inspector
-    await page.getByTestId('lane-overrides').click({ position: { x: (await page.getByTestId('lane-overrides').boundingBox()).width * 0.42, y: 12 } });
+    const lb = await reveal(page, page.getByTestId('lane-overrides'));
+    await page.mouse.click(lb.x + lb.width * 0.42, lb.y + lb.height / 2);
     await expect(page.getByTestId('override-inspector')).toBeVisible();
     await page.getByTestId('override-inspector').getByRole('button', { name: 'Remove' }).click();
     await expect(page.getByTestId('override-inspector')).toBeHidden();
@@ -303,7 +332,7 @@ test.describe('multi-track timeline (1,200-frame clip)', () => {
 
   test('the bypass switch is withheld unless the detection mode can honour it', async ({ page }) => {
     await openTimeline(page);
-    const sb = await page.getByTestId('lane-scenes').boundingBox();
+    const sb = await reveal(page, page.getByTestId('lane-scenes'));
     await page.mouse.click(sb.x + sb.width * 0.2, sb.y + sb.height - 3, { button: 'right' });
     await page.getByTestId('timeline-menu').getByRole('menuitem', { name: /Add Scene Override/ }).first().click();
     const bypass = page.getByTestId('override-inspector').getByLabel('Bypass swap for this range');
@@ -321,12 +350,19 @@ test.describe('multi-track timeline (1,200-frame clip)', () => {
   test('clicking a presence pill sets In/Out to that stretch', async ({ page }) => {
     await openTimeline(page);
     const scenes = page.getByTestId('lane-scenes');
-    const sb = await scenes.boundingBox();
-    // Person 1 (row 0) is in every shot; click inside shot 2 (frames 211-420): ~25 % across, row 0 = y 16..29
-    await page.mouse.click(sb.x + sb.width * 0.25, sb.y + 16 + 6);
+    const sb = await reveal(page, scenes);
+    // The pills arrive with the tracks fetch: clicking before they are painted would hit a bare scene.
+    await expect.poll(() => colorCount(scenes, [56, 189, 248]), { message: 'person 1 pills drawn' }).toBeGreaterThan(200);
+    // Person 1 (row 0, y 16..29) is in EVERY shot, so the mock's pill is one stretch over the whole
+    // clip. Clicking it inside shot 2 (frames 211-420, ~22 % across) must give that SHOT, not the clip.
+    await page.mouse.click(sb.x + sb.width * 0.217, sb.y + 16 + 6);
     await expect(page.locator('label[title^="In point"] input')).toHaveValue('211');
     await expect(page.locator('label[title^="Out point"] input')).toHaveValue('420');
     await expect(page.getByLabel('Frame number')).toHaveValue('211');
+    // Person 2 (row 1, y 29..42) is in the first half of the odd shots only: shot 2 -> 211-315.
+    await page.mouse.click(sb.x + sb.width * 0.217, sb.y + 16 + 13 + 6);
+    await expect(page.locator('label[title^="Out point"] input')).toHaveValue('315');
+    await expect(page.locator('label[title^="In point"] input')).toHaveValue('211');
   });
 
   test('Render In→Out is offered and disabled for the reason Start is', async ({ page }) => {
@@ -362,15 +398,17 @@ for (const frames of [100, 50_000]) {
     try {
       const tl = await openTimeline(page);
       const film = page.locator('div.cursor-ew-resize').first();
-      await film.scrollIntoViewIfNeeded();
-      const box = await film.boundingBox();
+      const box = await reveal(page, film);
       const frameBox = page.getByLabel('Frame number');
 
       const zoom = await windowStats(page, async () => {
         await page.mouse.move(box.x + box.width * 0.5, box.y + box.height / 2);
         await page.keyboard.down('Control');
-        for (let i = 0; i < 40; i++) await page.mouse.wheel(0, -100);
-        for (let i = 0; i < 40; i++) await page.mouse.wheel(0, 100);
+        for (let i = 0; i < 55; i++) await page.mouse.wheel(0, -100);
+        const zoomedIn = await view(tl);
+        expect(span(zoomedIn), 'enough notches in reach the frame-by-frame floor').toBeLessThanOrEqual(12);
+        // each notch is x1.22, so the way back out from a handful of frames to 50,000 takes ~50
+        for (let i = 0; i < 80; i++) await page.mouse.wheel(0, 100);
         await page.keyboard.up('Control');
       });
       const afterZoom = await view(tl);
@@ -387,7 +425,7 @@ for (const frames of [100, 50_000]) {
 
       // zoom to the floor on a long clip, then pan across the whole thing with the minimap
       await page.getByTestId('timeline-zoom').fill('1');
-      const map = await page.getByTestId('timeline-minimap').boundingBox();
+      const map = await reveal(page, page.getByTestId('timeline-minimap'));
       const pan = await windowStats(page, async () => {
         await page.mouse.move(map.x + 4, map.y + map.height / 2);
         await page.mouse.down();

@@ -2617,9 +2617,7 @@ class TrackingMixin:
         # is really reused is decided per face at swap time, so the UI labels the lane "planned".
         try:
             from roop import timeline_tracks as _timeline_tracks
-            _timeline_tracks.publish_reuse_frames(
-                fi for fi, faces in self._temporal_faces.items()
-                if faces and all(f.get('reuse_flow_warp') for f in faces))
+            _timeline_tracks.publish_reuse_frames(_timeline_tracks.reuse_frames(self._temporal_faces))
         except Exception as _exc:
             _swallowed("roop/procmgr_tracking.py:timeline_reuse", _exc, "smart-skip frames not shown on the timeline")
         if _FLOW_ALIGN and _fs.get('aligned'):

@@ -113,7 +113,7 @@ export function SceneLane({
   const onClick = (e) => {
     const hit = hitAt(e);
     if (hit?.kind === 'cut') onJumpCut?.(hit.frame);
-    else if (hit?.kind === 'presence') onPresenceClick?.(hit.row, hit.interval);
+    else if (hit?.kind === 'presence') onPresenceClick?.(hit.row, hit.interval, hit.frame);
     else if (ref.current) onSeek?.(frameFromEvent(e, ref.current, normalizeView(view, maxFrames), maxFrames));
   };
 

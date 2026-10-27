@@ -35,7 +35,7 @@ export function sceneLaneHit({ frame, y, cuts, rows, scenes, tolFrames }) {
   const r = presenceRowAtY(y, rows.length);
   if (r >= 0) {
     const interval = presenceHit(rows[r], frame);
-    if (interval) return { kind: 'presence', row: rows[r], interval };
+    if (interval) return { kind: 'presence', row: rows[r], interval, frame };
   }
   const scene = sceneAt(scenes, frame);
   return scene ? { kind: 'scene', scene } : null;
