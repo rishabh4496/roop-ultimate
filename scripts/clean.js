@@ -26,13 +26,19 @@ module.exports = {
           type: "checkbox",
           key: "uploads",
           title: "Uploaded media scratch",
-          description: "Copies of images/videos you dragged into the app. Re-created on the next upload. (Your finished renders live in app/output and are NOT affected.)",
+          description: "Uploads no project or queue job still reads. Nothing is removed while a project is active or resumable, so unfinished work keeps its source videos. (Your finished renders live in app/output and are NOT affected.)",
+          default: true
+        }, {
+          type: "checkbox",
+          key: "pinokio_temp",
+          title: "Old Pinokio scratch",
+          description: "Temp folders in Pinokio's cache (TEMP, TMPDIR, TMP) that nothing has touched for 3+ days: tool scratch, benchmark leftovers, test fixtures. Newer files are kept.",
           default: true
         }, {
           type: "checkbox",
           key: "trt_stale",
           title: "Stale TensorRT engine caches",
-          description: "Engines built for a precision mode you no longer use. The caches for your current setting are kept, so runs stay just as fast.",
+          description: "Engines built for a precision mode you no longer use, plus test leftovers. Everything for your current setting is kept, so runs stay just as fast.",
           default: true
         }, {
           type: "checkbox",
@@ -58,6 +64,12 @@ module.exports = {
           title: "ALL TensorRT engine caches (frees the most, slow next run)",
           description: "Frees the largest chunk by far, but every model must recompile its engine the next time you use it — minutes of extra startup, once per model. Nothing breaks; it is purely a time-for-space trade.",
           default: false
+        }, {
+          type: "checkbox",
+          key: "pkg_caches",
+          title: "Package download caches (uv, npm, pip)",
+          description: "Shared by every Pinokio app. Refilled by the next install, which downloads again. Files an installed environment shares with the cache free no space and are not counted.",
+          default: false
         }]
       }
     },
@@ -71,13 +83,25 @@ module.exports = {
         logs: "{{input.logs}}",
         pycache: "{{input.pycache}}",
         build: "{{input.build}}",
-        trt_all: "{{input.trt_all}}"
+        trt_all: "{{input.trt_all}}",
+        pinokio_temp: "{{input.pinokio_temp}}",
+        pkg_caches: "{{input.pkg_caches}}"
       }
     },
     {
       when: "{{local.uploads}}",
       method: "shell.run",
       params: { venv: "env", path: "../app", message: ["python ../scripts/cleanup.py uploads"] }
+    },
+    {
+      when: "{{local.pinokio_temp}}",
+      method: "shell.run",
+      params: { venv: "env", path: "../app", message: ["python ../scripts/cleanup.py pinokio-temp"] }
+    },
+    {
+      when: "{{local.pkg_caches}}",
+      method: "shell.run",
+      params: { venv: "env", path: "../app", message: ["python ../scripts/cleanup.py pkg-caches"] }
     },
     {
       when: "{{local.trt_stale}}",

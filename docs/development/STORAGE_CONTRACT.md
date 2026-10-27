@@ -14,11 +14,34 @@ directories, old logs, and React/build lint caches. It explicitly excludes
 models, `app/env`, output videos, saved facesets, React dependencies, source,
 and Git metadata.
 
-The existing behavior is useful but not reference-aware: it does not inspect
+The original behavior was useful but not reference-aware: it did not inspect
 the durable queue, project checkpoints, loaded target paths, or partial output
-references before cleanup. Stage 10 therefore adds an application API and UI;
-the existing Pinokio Clean script remains unchanged and remains the legacy
-maintenance path.
+references before cleanup. Stage 10 added an application API and UI.
+
+2026-10-27: the sidebar Clean script now follows the same rules instead of
+bypassing them.
+
+- **Uploads** go through `StorageManager.scan()` (the backend modules are blocked so
+  it reads `queue.json` and `projects/*.json` from disk without booting CUDA). A
+  referenced upload is kept; while any project or queue job is active or
+  resumable, nothing is deletable; an unreadable record protects everything.
+  Before this, "Uploaded media scratch" was ticked by default and removed
+  `app/temp/api_uploads` wholesale, including sources a paused project still read.
+- **Stale TensorRT caches** were judged by exact folder name (`mixed`,
+  `mixed_swap_fp32`, `mixed_gpen_fp32`), but live caches are
+  `mixed_<GPU>_<driver>_..._<model>_fp32`, so every current engine (15.8 GB on the
+  main machine, ~25 min to rebuild) was classed stale. Now only `_unittest_*`
+  leftovers and another precision's folders qualify; `recognition_*_fp16_*` and
+  `surgical*` have no provable owner and are kept.
+- **New: Old Pinokio scratch** (`<PINOKIO_HOME>/cache/{TEMP,TMPDIR,TMP}`, default on):
+  entries whose newest file is 3+ days old, and `TEMP/claude/<project>/<session>`.
+  Only folders strictly inside `<PINOKIO_HOME>/cache` are accepted; the home is
+  derived from the launcher's `api/` location, never a drive letter.
+- **New: Package download caches** (uv / npm / pip, default OFF): shared by every
+  Pinokio app. Hard-linked files (uv shares them with the virtualenv) are counted
+  as 0 bytes, since deleting them frees nothing.
+
+Tests: `app/tests/test_cleanup_script.py`.
 
 ## Verified storage categories
 

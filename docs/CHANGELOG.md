@@ -5,6 +5,10 @@ full session record is [`SESSION_LOGS.md`](SESSION_LOGS.md); the running enginee
 state lives outside the repository (`RECODE_STATUS.md` in the operator's `roop-keep`
 folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22.
 
+## 2026-10-27
+
+- **Sidebar "Clean" cleans the Pinokio scratch too, and two defaults that would have destroyed work are fixed.** `scripts/clean.js` + `scripts/cleanup.py`; tests `app/tests/test_cleanup_script.py` (12). *Defect 1:* "Stale TensorRT caches" (default on) matched folder names exactly, so all 73 current engine folders (15.8 GB, ~25 min to rebuild) were stale by its rule; now 17 folders / 1.1 GB are candidates and only the provable ones (`_unittest_*`, other precisions) are deleted. *Defect 2:* "Uploaded media scratch" (default on) deleted `app/temp/api_uploads` (31 GB here) including sources of paused projects; it now uses `StorageManager` and removes nothing while resumable work exists (0 B on this install today, correctly). *Added:* "Old Pinokio scratch" (default on, 3+ days idle) and "Package download caches" (default off, hard links not counted). Details in `development/STORAGE_CONTRACT.md`. Not run end to end through the Pinokio UI: the report and every target function were exercised from the app's own Python.
+
 ## 2026-10-26
 
 - **Release sign-off: variable-frame-rate timestamps, the source's colour description, cooperative cancel, installer manifests. Four defects found by measuring the real render path; the brief's 3-stream ring does not exist.** Tests: `app/tests/test_release_signoff_vfr_color_cancel.py` (38 + 22 subtests, 8 min; mutation-checked), `_cancel_scenario.py` (the per-process cancel harness).
