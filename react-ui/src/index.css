@@ -958,6 +958,17 @@ html[data-render-lite] .animate-scanner-sweep {
   border-color: var(--border-strong);
 }
 
+/* Layout containment for the panels that change constantly while you work: the preview viewport, the timeline
+   and each inspector group. A slider drag, an accordion opening or a playhead tick inside one of them can no longer
+   invalidate layout or paint outside its own box, so it never re-flows the page.
+   `overflow-clip-margin` is not decoration: paint containment clips to the box, and the keyboard focus ring
+   (outline 2px + offset 2px, see *:focus-visible) sits OUTSIDE a control that is flush with the box edge. 6px of
+   margin keeps it visible; e2e/stage8-virtualization.spec.js pins that. */
+.contain-panel {
+  contain: layout style paint;
+  overflow-clip-margin: 6px;
+}
+
 /* Run panel: same matte family as the preview stage so switching between
    "previewing" and "processing" doesn't change the shape of the workspace. */
 .processing-stage {

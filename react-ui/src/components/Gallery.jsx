@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useMemo, useState, useRef } from 'react';
 import { fileUrl } from '../api';
 import { useApi } from '../useApi';
 import { Button, Card } from './ui';
@@ -8,6 +8,16 @@ import OutputCompare from './OutputCompare';
 import { reportFailure } from '../failureLog';
 import { saveReference } from './faceswap/abReference';
 import { fmtClock, scrubRatio, scrubTime } from './hoverScrub';
+import { VirtualGrid, VirtualRows } from './virtual/VirtualScroll';
+import { useHoverMount, useVideoThumb } from './media/useHoverVideo';
+import { releaseVideoElement } from './media/videoThumb';
+
+// The list view is a table made of grid rows (a <table> cannot be windowed: its rows are not positionable).
+// One column template shared by the header and every row keeps them aligned.
+const LIST_COLUMNS = '2.5rem minmax(12rem, 1fr) 4.5rem 5.5rem 11rem 21rem';
+// Estimated heights; both are re-measured, so they only need to be close.
+const LIST_ROW_ESTIMATE = 54;
+const CARD_DETAILS_ESTIMATE = 112;
 
 export default function Gallery({ notify, setSettings, setTab }) {
   const { getJSON, postJSON, postFiles } = useApi();
@@ -223,7 +233,9 @@ export default function Gallery({ notify, setSettings, setTab }) {
   };
 
   // Filter & Search files
-  const filteredFiles = files.filter((f) => {
+  // Memoised: scrolling the windowed grid re-renders its rows, not this component, but a selection or a toast does,
+  // and re-sorting a few thousand files on each of those is work the list never needed.
+  const filteredFiles = useMemo(() => files.filter((f) => {
     const matchesSearch = f.name.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesFilter =
       filterType === 'all' ||
@@ -235,7 +247,7 @@ export default function Gallery({ notify, setSettings, setTab }) {
     if (sortBy === 'big') return (b.size || 0) - (a.size || 0);
     if (sortBy === 'name') return a.name.localeCompare(b.name);
     return (b.mtime || 0) - (a.mtime || 0); // 'new'
-  });
+  }), [files, searchQuery, filterType, sortBy]);
 
   const totalSize = filteredFiles.reduce((acc, f) => acc + (f.size || 0), 0);
 
@@ -415,14 +427,22 @@ export default function Gallery({ notify, setSettings, setTab }) {
       {/* Grid or List view */}
       {!loading && filteredFiles.length > 0 && (
         viewMode === 'grid' ? (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-            {filteredFiles.map((file) => {
+          // Windowed: only the rows near the scroll position are mounted, so a 2,000-file folder is a few dozen cards
+          // (and, since a card mounts its <video> only on hover, zero decoders) instead of 2,000 of each.
+          <VirtualGrid
+            items={filteredFiles}
+            minCell={260}
+            gap={16}
+            cellHeight={(w) => Math.round((w * 9) / 16) + CARD_DETAILS_ESTIMATE}
+            getKey={(file) => file?.name}
+            label="Output files"
+            testId="gallery-grid"
+            renderCell={(file) => {
               const absolutePath = `${outputPath}/${file.name}`;
               const srcUrl = fileUrl(absolutePath);
 
               return (
                 <VideoHoverCard
-                  key={file.name}
                   file={file}
                   srcUrl={srcUrl}
                   dateStr={getFormatDate(file.mtime)}
@@ -439,39 +459,53 @@ export default function Gallery({ notify, setSettings, setTab }) {
                   onToggleSelect={() => toggleSelect(file.name)}
                 />
               );
-            })}
-          </div>
+            }}
+          />
         ) : (
           <div className="rounded-2xl glass-panel border border-white/10 overflow-hidden shadow-2xl">
             <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs text-white/80 border-collapse">
-                <thead>
-                  <tr className="border-b border-white/10 bg-black/40 text-muted uppercase font-mono text-nano tracking-wider">
-                    <th className="p-3 w-10 text-center">
-                      <input
-                        type="checkbox"
-                        checked={allVisibleSelected}
-                        onChange={toggleSelectAll}
-                        aria-label="Select all outputs"
-                        className="rounded accent-[var(--accent)] cursor-pointer"
-                      />
-                    </th>
-                    <th className="p-3">File</th>
-                    <th className="p-3">Type</th>
-                    <th className="p-3">Size</th>
-                    <th className="p-3">Date</th>
-                    <th className="p-3 text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-white/5">
-                  {filteredFiles.map((file) => {
+              {/* A table made of grid rows so it can be windowed (see LIST_COLUMNS). */}
+              <div role="table" aria-label="Output files" aria-rowcount={filteredFiles.length + 1} className="min-w-[58rem] text-left text-xs text-white/80">
+                <div role="row" aria-rowindex={1} className="grid items-center border-b border-white/10 bg-black/40 text-muted uppercase font-mono text-nano tracking-wider" style={{ gridTemplateColumns: LIST_COLUMNS }}>
+                  <div role="columnheader" className="p-3 text-center">
+                    <input
+                      type="checkbox"
+                      checked={allVisibleSelected}
+                      onChange={toggleSelectAll}
+                      aria-label="Select all outputs"
+                      className="rounded accent-[var(--accent)] cursor-pointer"
+                    />
+                  </div>
+                  <div role="columnheader" className="p-3">File</div>
+                  <div role="columnheader" className="p-3">Type</div>
+                  <div role="columnheader" className="p-3">Size</div>
+                  <div role="columnheader" className="p-3">Date</div>
+                  <div role="columnheader" className="p-3 text-right">Actions</div>
+                </div>
+                <VirtualRows
+                  role="rowgroup"
+                  label="Output rows"
+                  testId="gallery-list"
+                  count={filteredFiles.length}
+                  estimateSize={LIST_ROW_ESTIMATE}
+                  overscan={8}
+                  getItemKey={(i) => filteredFiles[i]?.name ?? i}
+                  className="max-h-[68vh]"
+                  renderRow={(i) => {
+                    const file = filteredFiles[i];
+                    if (!file) return null;
                     const absolutePath = `${outputPath}/${file.name}`;
                     const srcUrl = fileUrl(absolutePath);
                     const isSel = selectedFiles.has(file.name);
                     const historyEntry = historyByName[file.name];
                     return (
-                      <tr key={file.name} className={`hover:bg-white/[0.04] transition-colors ${isSel ? 'bg-[var(--accent)]/10' : ''}`}>
-                        <td className="p-3 text-center">
+                      <div
+                        role="row"
+                        aria-rowindex={i + 2}
+                        className={`grid items-center border-b border-white/5 hover:bg-white/[0.04] transition-colors ${isSel ? 'bg-[var(--accent)]/10' : ''}`}
+                        style={{ gridTemplateColumns: LIST_COLUMNS }}
+                      >
+                        <div role="cell" className="p-3 text-center">
                           <input
                             type="checkbox"
                             checked={isSel}
@@ -479,19 +513,19 @@ export default function Gallery({ notify, setSettings, setTab }) {
                             aria-label={`Select ${file.name}`}
                             className="rounded accent-[var(--accent)] cursor-pointer"
                           />
-                        </td>
-                        <td className="p-3 font-semibold text-white/90 truncate max-w-xs flex items-center gap-2">
+                        </div>
+                        <div role="cell" className="p-3 min-w-0 font-semibold text-white/90 flex items-center gap-2">
                           {file.kind === 'video'
-                            ? <Icon.film size={15} className="text-muted" />
-                            : <Icon.still size={15} className="text-muted" />}
+                            ? <Icon.film size={15} className="shrink-0 text-muted" />
+                            : <Icon.still size={15} className="shrink-0 text-muted" />}
                           <a href={srcUrl} target="_blank" rel="noreferrer" className="hover:text-accent truncate" title={file.name}>
                             {file.name}
                           </a>
-                        </td>
-                        <td className="p-3 text-white/50 font-mono text-micro uppercase">{file.kind}</td>
-                        <td className="p-3 text-white/60 font-mono text-mini tabular-nums">{fmtSize(file.size)}</td>
-                        <td className="p-3 text-white/50 text-mini whitespace-nowrap">{getFormatDate(file.mtime)}</td>
-                        <td className="p-3 text-right">
+                        </div>
+                        <div role="cell" className="p-3 text-white/50 font-mono text-micro uppercase">{file.kind}</div>
+                        <div role="cell" className="p-3 text-white/60 font-mono text-mini tabular-nums">{fmtSize(file.size)}</div>
+                        <div role="cell" className="p-3 text-white/50 text-mini whitespace-nowrap">{getFormatDate(file.mtime)}</div>
+                        <div role="cell" className="p-3 text-right">
                           <div className="flex items-center justify-end gap-1.5">
                             {historyEntry && (
                               <button
@@ -549,12 +583,12 @@ export default function Gallery({ notify, setSettings, setTab }) {
                               <Icon.trash size={14} />
                             </button>
                           </div>
-                        </td>
-                      </tr>
+                        </div>
+                      </div>
                     );
-                  })}
-                </tbody>
-              </table>
+                  }}
+                />
+              </div>
             </div>
           </div>
         )
@@ -620,26 +654,14 @@ function VideoHoverCard({ file, srcUrl, dateStr, sizeStr, onDelete, onReveal, on
     if (videoRef.current) videoRef.current.currentTime = 0;
   };
   useEffect(() => () => { if (scrubRaf.current) cancelAnimationFrame(scrubRaf.current); }, []);
-  const cardRef = useRef(null);
   const isVideo = file.kind === 'video';
 
-  // Only spin up a <video> (and its metadata fetch / decoder) once the card is
-  // near the viewport. Otherwise opening a large Outputs folder would mount a
-  // decoder for every file at once and stutter. `inView` latches true so a card
-  // that's been seen doesn't reload while scrolling — bounding the initial
-  // stampede is what matters. Images already use native loading="lazy".
-  const [inView, setInView] = useState(false);
-  useEffect(() => {
-    if (!isVideo || inView) return;
-    const el = cardRef.current;
-    if (!el) return;
-    if (typeof IntersectionObserver === 'undefined') { setInView(true); return; }
-    const obs = new IntersectionObserver((entries) => {
-      if (entries.some((e) => e.isIntersecting)) { setInView(true); obs.disconnect(); }
-    }, { rootMargin: '300px' });
-    obs.observe(el);
-    return () => obs.disconnect();
-  }, [isVideo, inView]);
+  // A <video> holds a decoder, so a tile mounts one only while it is being looked at: pointer over it, or keyboard
+  // focus inside it. Leaving unmounts it and releases the decoder at once (releaseVideoElement), so a screenful of
+  // tiles never has more than the one under the pointer decoding. The picture on the tile meanwhile is a still of
+  // the first frame (media/videoThumb.js), captured through a short-lived detached element, a couple at a time.
+  const { on: hovered, bind: hoverBind } = useHoverMount();
+  const thumb = useVideoThumb(srcUrl, isVideo);
 
   return (
     <Card
@@ -653,9 +675,12 @@ function VideoHoverCard({ file, srcUrl, dateStr, sizeStr, onDelete, onReveal, on
     >
       {/* File preview box. On a video, moving the pointer across it scrubs through the clip. */}
       <div
-        ref={cardRef}
+        onPointerEnter={isVideo ? hoverBind.onPointerEnter : undefined}
         onPointerMove={onScrubMove}
-        onPointerLeave={onScrubLeave}
+        // Reset the playhead BEFORE the <video> goes away, so the last seek it receives is the rewind.
+        onPointerLeave={(e) => { onScrubLeave(); if (isVideo) hoverBind.onPointerLeave(e); }}
+        onFocus={isVideo ? hoverBind.onFocus : undefined}
+        onBlur={isVideo ? hoverBind.onBlur : undefined}
         data-testid={isVideo ? 'scrub-surface' : undefined}
         className="relative aspect-video bg-black/45 flex items-center justify-center overflow-hidden border-b border-white/5 shrink-0 select-none"
         style={isVideo ? { touchAction: 'pan-y' } : undefined}
@@ -673,29 +698,39 @@ function VideoHoverCard({ file, srcUrl, dateStr, sizeStr, onDelete, onReveal, on
           </div>
         )}
         {isVideo ? (
-          inView ? (
-            <>
+          <>
+            {thumb ? (
+              <img
+                src={thumb}
+                alt=""
+                data-testid="video-still"
+                className="w-full h-full object-contain pointer-events-none transition-transform duration-500 group-hover/card:scale-102"
+              />
+            ) : (
+              <div className="w-full h-full flex flex-col items-center justify-center text-muted text-nano p-2 text-center">
+                <Icon.film size={thumb === null ? 24 : 30} className="mb-1 opacity-30" />
+                {thumb === null && <span className="truncate w-full">{file.name}</span>}
+              </div>
+            )}
+            {hovered && (
               <video
-                ref={videoRef}
+                // React 19 ref cleanup: runs when the element unmounts (pointer left), freeing the decoder now.
+                ref={(el) => {
+                  videoRef.current = el;
+                  return () => { releaseVideoElement(el); if (videoRef.current === el) videoRef.current = null; };
+                }}
                 src={srcUrl}
                 muted
                 loop
                 playsInline
                 preload="metadata"
-                className="w-full h-full object-contain pointer-events-none transition-transform duration-500 group-hover/card:scale-102"
-                onError={(e) => {
-                  e.target.style.display = 'none';
-                  if (e.target.nextElementSibling) e.target.nextElementSibling.style.display = 'flex';
-                }}
+                onLoadedMetadata={applyScrub}
+                data-testid="hover-video"
+                className="absolute inset-0 w-full h-full object-contain pointer-events-none bg-transparent"
+                onError={(e) => { e.currentTarget.style.display = 'none'; }}
               />
-              <div className="hidden w-full h-full flex-col items-center justify-center text-muted text-nano p-2 text-center bg-black/50">
-                <Icon.film size={24} className="mb-1 opacity-50" />
-                <span className="truncate w-full">{file.name}</span>
-              </div>
-            </>
-          ) : (
-            <div className="w-full h-full flex items-center justify-center text-white/15"><Icon.film size={30} /></div>
-          )
+            )}
+          </>
         ) : (
           <>
             <img

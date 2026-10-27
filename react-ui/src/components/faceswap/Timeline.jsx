@@ -389,30 +389,39 @@ export default function Timeline({
 
   // Labels at the very edges would hang off the track; anchor those to the edge instead of centring.
   const anchor = (pct) => (pct < 3 ? 'translateX(0)' : pct > 97 ? 'translateX(-100%)' : 'translateX(-50%)');
+  // Where a frame's marker sits along the track: a percentage of the (full-width) wrapper it is applied to.
+  const slide = (pct) => `translate3d(${pct}%, 0, 0)`;
 
-  // Imperative playhead: writes the same things the JSX below renders (the lines' `left`, the
-  // badge's `left`/`transform`/text/visibility) straight to the DOM. Re-registered on every render
-  // so it closes over the CURRENT view window and fps.
+  // Imperative playhead: writes the same things the JSX below renders straight to the DOM. Re-registered on
+  // every render so it closes over the CURRENT view window and fps.
+  //
+  // EVERYTHING THAT FOLLOWS THE FRAME MOVES BY TRANSFORM, NOT `left`. Each of these is a full-width, zero-content
+  // wrapper (`left-0 w-full`) whose child sits at its left edge, so `translate3d(P%, 0, 0)` -- a percentage of the
+  // wrapper's own width, i.e. of the track -- puts the child at P% of the track exactly where `left: P%` did.
+  // The difference is the pipeline: `left` re-runs layout for the lane stack on every playback tick; a transform on
+  // a `will-change: transform` layer is composited and never touches layout. The percentage maths is unchanged, so
+  // it is still independent of the app's CSS zoom (no pixel measurement anywhere).
   const playheadElRef = useRef(null);
   const stackLineRef = useRef(null);
   const badgeElRef = useRef(null);
+  const badgeInnerRef = useRef(null);
   const badgeTextRef = useRef(null);
   useLayoutEffect(() => {
     if (!playheadApiRef) return undefined;
     playheadApiRef.current = (f) => {
       liveFrameRef.current = f;
       const pct = pctOf(f);
-      if (playheadElRef.current) playheadElRef.current.style.left = `${pct}%`;
+      if (playheadElRef.current) playheadElRef.current.style.transform = slide(pct);
       if (stackLineRef.current) {
-        stackLineRef.current.style.left = `${pct}%`;
+        stackLineRef.current.style.transform = slide(pct);
         stackLineRef.current.style.display = inView(f) ? '' : 'none';
       }
       const badge = badgeElRef.current;
       if (badge) {
-        badge.style.left = `${pct}%`;
-        badge.style.transform = anchor(pct);
+        badge.style.transform = slide(pct);
         badge.style.display = inView(f) ? '' : 'none';
       }
+      if (badgeInnerRef.current) badgeInnerRef.current.style.transform = anchor(pct);
       if (badgeTextRef.current) badgeTextRef.current.textContent = fmtTimecode(f, fps);
     };
     return () => { if (playheadApiRef) playheadApiRef.current = null; };
@@ -577,7 +586,7 @@ export default function Timeline({
   const rangeIsWhole = startFrame <= 1 && endFrame >= maxFrames;
 
   return (
-    <div className="space-y-2 select-none" data-testid="timeline"
+    <div className="contain-panel space-y-2 select-none" data-testid="timeline"
          data-view-start={vStart} data-view-end={vEnd} data-zoomed={zoomed ? 'true' : 'false'}>
       {/* ── Header: identity + the single, editable statement of the range ── */}
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
@@ -724,14 +733,17 @@ export default function Timeline({
 
             {/* Hover line */}
             {hoverFrame !== null && (
-              <div className="absolute inset-y-0 w-px -translate-x-1/2 bg-white/35 z-20 pointer-events-none"
-                   style={{ left: `${pctOf(hoverFrame)}%` }} />
+              <div className="absolute inset-y-0 left-0 w-full z-20 pointer-events-none will-change-transform"
+                   style={{ transform: slide(pctOf(hoverFrame)) }}>
+                <div className="absolute inset-y-0 left-0 w-px -translate-x-1/2 bg-white/35" />
+              </div>
             )}
 
             {/* Playhead */}
             <div ref={playheadElRef}
-                 className={`absolute inset-y-0 z-30 pointer-events-none ${isScrubbing ? '' : 'transition-[left] duration-100 ease-out'}`}
-                 style={{ left: `${currentPct}%` }}>
+                 data-testid="timeline-playhead"
+                 className={`absolute inset-y-0 left-0 w-full z-30 pointer-events-none will-change-transform ${isScrubbing ? '' : 'transition-transform duration-100 ease-out'}`}
+                 style={{ transform: slide(currentPct) }}>
               <div className="absolute inset-y-0 left-0 -translate-x-1/2 w-[2px] bg-white shadow-[0_0_0_1px_rgba(0,0,0,0.45)]" />
               <div className="absolute -top-px left-0 -translate-x-1/2 h-0 w-0 border-x-[6px] border-x-transparent border-t-[8px] border-t-[var(--accent)]" />
               <div className="absolute bottom-1 left-0 -translate-x-1/2 h-2 w-2 rounded-full bg-white shadow-[0_1px_3px_rgba(0,0,0,0.6)]" />
@@ -741,11 +753,14 @@ export default function Timeline({
           {/* Playhead timecode, riding under the film track. Always mounted (hidden with display:none
               when out of view) so the imperative API has an element to write to. */}
           <div ref={badgeElRef}
-               className={`absolute -bottom-2 z-30 pointer-events-none ${isScrubbing ? '' : 'transition-[left] duration-100 ease-out'}`}
-               style={{ left: `${currentPct}%`, transform: anchor(currentPct), display: inView(shownFrame) ? undefined : 'none' }}>
-            <span ref={badgeTextRef} className="rounded-md bg-[var(--accent)] px-1.5 py-0.5 font-mono text-note font-bold tabular-nums text-white shadow-[0_2px_6px_rgba(0,0,0,0.5)]">
-              {fmtTimecode(shownFrame, fps)}
-            </span>
+               className={`absolute inset-x-0 -bottom-2 z-30 pointer-events-none will-change-transform ${isScrubbing ? '' : 'transition-transform duration-100 ease-out'}`}
+               style={{ transform: slide(currentPct), display: inView(shownFrame) ? undefined : 'none' }}>
+            {/* The label is anchored to the marker (edge-aware: see `anchor`), inside the sliding wrapper. */}
+            <div ref={badgeInnerRef} className="absolute bottom-0 left-0 w-max" style={{ transform: anchor(currentPct) }}>
+              <span ref={badgeTextRef} className="rounded-md bg-[var(--accent)] px-1.5 py-0.5 font-mono text-note font-bold tabular-nums text-white shadow-[0_2px_6px_rgba(0,0,0,0.5)]">
+                {fmtTimecode(shownFrame, fps)}
+              </span>
+            </div>
           </div>
         </div>
 
@@ -808,8 +823,10 @@ export default function Timeline({
 
         {/* Playhead continued across every lane */}
         <div ref={stackLineRef}
-             className="absolute inset-y-0 z-30 w-px -translate-x-1/2 bg-white/70 pointer-events-none"
-             style={{ left: `${currentPct}%`, display: inView(shownFrame) ? undefined : 'none' }} />
+             className="absolute inset-y-0 left-0 w-full z-30 pointer-events-none will-change-transform"
+             style={{ transform: slide(currentPct), display: inView(shownFrame) ? undefined : 'none' }}>
+          <div className="absolute inset-y-0 left-0 w-px -translate-x-1/2 bg-white/70" />
+        </div>
 
         {/* Right-click menu. Positioned in percent of the stack so the app-level CSS zoom cannot offset it. */}
         {menu && (

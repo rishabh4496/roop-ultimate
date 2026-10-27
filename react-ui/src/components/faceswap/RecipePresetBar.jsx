@@ -35,7 +35,7 @@ export default function RecipePresetBar({
   const btn = 'rounded-lg border border-white/10 bg-white/5 px-2.5 py-1.5 text-mini font-semibold text-white/80 transition-colors hover:bg-white/10 hover:text-white';
 
   return (
-    <section aria-label="Quick recipes" className="rounded-xl border border-white/[0.08] bg-white/[0.02] p-3">
+    <section aria-label="Quick recipes" className="contain-panel rounded-xl border border-white/[0.08] bg-white/[0.02] p-3">
       <div className="mb-2 flex items-center justify-between gap-2">
         <h2 className="m-0 text-mini font-semibold uppercase tracking-[0.14em] text-muted">Recipes</h2>
         <span className="min-w-0 truncate text-mini text-white/55">{active ? active.label : 'Custom settings'}</span>

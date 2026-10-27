@@ -47,7 +47,7 @@ export default function InspectorGroup({ id, title, icon: Ico, defaultOpen = fal
   const [open, setOpen] = useOpen(id, defaultOpen);
   const bodyId = useId();
   return (
-    <section className="rounded-xl border border-white/[0.08] bg-white/[0.02]">
+    <section className="contain-panel rounded-xl border border-white/[0.08] bg-white/[0.02]">
       <h2 className="m-0">
         <button
           type="button"

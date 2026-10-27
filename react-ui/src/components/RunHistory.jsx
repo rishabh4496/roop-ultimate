@@ -8,6 +8,12 @@ import CheckpointDiff from './history/CheckpointDiff';
 import { Icon } from '../icons';
 import { logFailure, reportFailure } from '../failureLog';
 import { PipelineSummaryCard } from './faceswap/PipelineReport';
+import { VirtualRows } from './virtual/VirtualScroll';
+import HoverVideoThumb from './media/HoverVideoThumb';
+
+// A collapsed row (thumbnail, a line of chips, the action row). It is only the starting guess: rows are measured, so
+// an expanded report or an open checkpoint diff simply makes its own row taller.
+const RUN_ROW_ESTIMATE = 190;
 
 /**
  * Run History — a browsable record of every completed swap.
@@ -293,26 +299,39 @@ export default function RunHistory({ notify, setSettings, setTab, settings }) {
 
       {/* Run list */}
       {!loading && filtered.length > 0 && (
-        <div className="space-y-3">
-          {filtered.map((entry) => (
-            <RunRow
-              key={entry.id}
-              entry={entry}
-              outputPath={outputPath}
-              existing={existing}
-              presets={presets}
-              selected={compare.includes(entry.id)}
-              compareFull={compare.length >= 2 && !compare.includes(entry.id)}
-              onToggleCompare={() => toggleCompare(entry.id)}
-              onDiff={settings ? () => setDiffId((cur) => (cur === entry.id ? null : entry.id)) : null}
-              diffOpen={diffId === entry.id}
-              onLoad={() => loadRunSettings(entry)}
-              onReveal={revealOutput}
-              onExport={exportRun}
-              onDelete={() => deleteEntry(entry)}
-            />
-          ))}
-        </div>
+        // Windowed: a long history mounts the rows near the scroll position, not every run ever recorded (each of
+        // which carries a thumbnail, a settings-chip row and a report card).
+        <VirtualRows
+          label="Run history"
+          testId="history-list"
+          count={filtered.length}
+          estimateSize={RUN_ROW_ESTIMATE}
+          gap={12}
+          overscan={5}
+          className="max-h-[78vh] pr-1"
+          getItemKey={(i) => filtered[i]?.id ?? i}
+          renderRow={(i) => {
+            const entry = filtered[i];
+            if (!entry) return null;
+            return (
+              <RunRow
+                entry={entry}
+                outputPath={outputPath}
+                existing={existing}
+                presets={presets}
+                selected={compare.includes(entry.id)}
+                compareFull={compare.length >= 2 && !compare.includes(entry.id)}
+                onToggleCompare={() => toggleCompare(entry.id)}
+                onDiff={settings ? () => setDiffId((cur) => (cur === entry.id ? null : entry.id)) : null}
+                diffOpen={diffId === entry.id}
+                onLoad={() => loadRunSettings(entry)}
+                onReveal={revealOutput}
+                onExport={exportRun}
+                onDelete={() => deleteEntry(entry)}
+              />
+            );
+          }}
+        />
       )}
     </div>
   );
@@ -366,8 +385,7 @@ function RunRow({ entry, outputPath, existing, presets, selected, compareFull, o
         <div className="relative w-32 h-20 shrink-0 rounded-lg overflow-hidden bg-black/45 border border-white/5 grid place-items-center">
           {liveName ? (
             kind === 'video' ? (
-              <video src={fileUrl(`${outputPath}/${liveName}`)} muted playsInline preload="metadata"
-                     className="w-full h-full object-contain" />
+              <HoverVideoThumb src={fileUrl(`${outputPath}/${liveName}`)} name={liveName} />
             ) : (
               <img src={fileUrl(`${outputPath}/${liveName}`)} alt={liveName} loading="lazy"
                    className="w-full h-full object-contain" />

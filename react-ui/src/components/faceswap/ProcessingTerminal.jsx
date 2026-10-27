@@ -1,6 +1,8 @@
-import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { Icon } from '../../icons';
 import { canaryView } from './reportFormat';
+import { LOG_RING_CAPACITY, SEVERITIES, bySeverity, createLogRing } from './logRing';
 
 /**
  * Terminal-style live feed shown inside the Preview box while a job runs.
@@ -10,11 +12,21 @@ import { canaryView } from './reportFormat';
  *  - PINNED STATUS LINE: Real-time progress rewritten in place.
  *  - ANSI ESCAPE PARSER: Colors and formatting rendered cleanly without escape code artifacts.
  *  - LOG SEARCH & FILTER: Quick real-time search across live terminal messages.
+ *  - SEVERITY FILTER: ALL / WARN / ERROR / PERF over the ring buffer, with counts.
  *  - LOG COPY & DOWNLOAD: Copy to clipboard with fallback, or download as a standalone .log file.
  *  - AUTO-SCROLL LOCK/UNLOCK: Smart detection with a "Jump to latest" floating pill when viewing history.
  *  - EXPAND / COLLAPSE: Toggle between compact split view and full-height log inspection.
  *  - THEMED HIGHLIGHTS: Adapts to the active workspace theme accents.
+ *
+ * THE LOG IS A RING, AND ONLY ITS WINDOW IS IN THE DOM. The backend sends a rolling 250-line tail on every
+ * poll; the lines are folded (by `seq`) into a 2,000-line circular buffer (logRing.js) that is shared by every
+ * mounted terminal, so the history outlives a tab switch and the live -> finished remount. The list is windowed
+ * (@tanstack/react-virtual): a 10,000-line burst costs ~30 mounted rows, not 10,000. Lines that scrolled past the
+ * backend's window while no terminal was mounted are not recovered; that is what the cap does NOT promise.
  */
+
+// One ring for the whole app. Process-local on purpose: see the note above.
+const sharedRing = createLogRing(LOG_RING_CAPACITY);
 
 const fmtMB = (b) => (!b ? '' : b >= 1073741824 ? `${(b / 1073741824).toFixed(1)} GB` : `${Math.round(b / 1048576)} MB`);
 const fmtN = (n) => (n == null ? '' : Number(n).toLocaleString());
@@ -178,24 +190,23 @@ export default function ProcessingTerminal({
   runtime = null, expanded = false, onToggleExpand = null,
 }) {
   const scrollRef = useRef(null);
-  const bottomRef = useRef(null);
   const tabsRef = useRef(null);
   const searchInputRef = useRef(null);
-  const [tab, setTab] = useState('all');          // 'all' | 'errors' | part index
+  const [tab, setTab] = useState('all');          // 'all' | part index
+  const [sev, setSev] = useState('ALL');          // one of SEVERITIES
   const [copied, setCopied] = useState(false);
   const [showReport, setShowReport] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [showSearch, setShowSearch] = useState(false);
   const [autoScroll, setAutoScroll] = useState(true);
 
-  const isError = (line) => {
-    if (!line) return false;
-    if (line.level === 'ERROR' || line.level === 'WARNING') return true;
-    if (line.category === 'ERRORS' || line.category === 'WARNINGS') return true;
-    return /error|fail|abort|⚠/i.test(line.msg || '');
-  };
-
-  const errorCount = useMemo(() => log.filter(isError).length, [log]);
+  // Fold this poll's tail into the ring. Idempotent by `seq`, so a second render (StrictMode, a re-poll of the
+  // same tail) adds nothing. `snapshot()` hands back the SAME array until the ring changes.
+  const { lines, ringCounts } = useMemo(() => {
+    sharedRing.ingest(log);
+    return { lines: sharedRing.snapshot(), ringCounts: sharedRing.counts() };
+  }, [log]);
+  const severityCount = (s) => (s === 'ALL' ? lines.length : ringCounts[s] || 0);
 
   // A long render has one part per ROOP_RESUME_CHUNK frames, so the strip can
   // hold dozens: keep the newest (the one being written) in view.
@@ -204,11 +215,10 @@ export default function ProcessingTerminal({
     if (el) el.scrollLeft = el.scrollWidth;
   }, [parts.length]);
 
-  // A part that disappears (new run) or cleared errors must not leave a dead tab selected.
+  // A part that disappears (new run) must not leave a dead tab selected.
   useEffect(() => {
     if (typeof tab === 'number' && !parts.some((p) => p.index === tab)) setTab('all');
-    if (tab === 'errors' && errorCount === 0) setTab('all');
-  }, [parts, tab, errorCount]);
+  }, [parts, tab]);
 
   const lineTone = (msg) => {
     const m = (msg || '').toLowerCase();
@@ -226,11 +236,12 @@ export default function ProcessingTerminal({
     return lineTone(line?.msg);
   };
 
+  // Severity is stamped on each line once, when it enters the ring, so switching the filter is a single pass over
+  // at most LOG_RING_CAPACITY entries with no regex work: instant.
   const baseShown = useMemo(() => {
-    if (tab === 'errors') return log.filter(isError);
-    if (typeof tab === 'number') return log.filter((l) => (l.part || 0) === tab);
-    return log;
-  }, [log, tab]);
+    const inPart = typeof tab === 'number' ? lines.filter((l) => (l.part || 0) === tab) : lines;
+    return bySeverity(inPart, sev);
+  }, [lines, tab, sev]);
 
   const shown = useMemo(() => {
     if (!searchQuery.trim()) return baseShown;
@@ -249,11 +260,26 @@ export default function ProcessingTerminal({
     setAutoScroll(nearBottom);
   }, []);
 
-  useEffect(() => {
-    if (autoScroll && scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
-  }, [shown.length, lastShownSeq, tab, autoScroll]);
+  // Windowed rows with measured heights: a line that wraps is taller than one that does not, and the
+  // virtualizer re-measures each mounted row through its own ResizeObserver.
+  const rowVirtualizer = useVirtualizer({
+    count: shown.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => 22,
+    overscan: 14,
+    getItemKey: (i) => shown[i]?.seq ?? i,
+    // Something to mount on the first render, before the ResizeObserver reports the real height.
+    initialRect: { width: 0, height: 300 },
+  });
+  const virtualRows = rowVirtualizer.getVirtualItems();
+  const totalHeight = rowVirtualizer.getTotalSize();
+
+  // Follow the tail. Layout effect, and keyed on the TOTAL height as well as the line count: measuring a wrapped
+  // line changes the height without changing the count, and a pin that ignored it would stop short of the end.
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (autoScroll && el) el.scrollTop = el.scrollHeight;
+  }, [shown.length, lastShownSeq, tab, sev, autoScroll, totalHeight]);
 
   const cleanLogText = (msg) => String(msg || '').replace(/(?:\u001b|\x1b)\[[0-9;]*[a-zA-Z]|\r/g, '');
 
@@ -333,16 +359,25 @@ export default function ProcessingTerminal({
             <span className="shrink-0 px-1 text-nano font-semibold uppercase tracking-[0.14em] text-muted">
               {parts.length ? `${parts.length} part${parts.length > 1 ? 's' : ''}` : 'no parts yet'}
             </span>
-            {errorCount > 0 && (
-              <button
-                onClick={() => setTab('errors')}
-                className={`${chip(tab === 'errors')} inline-flex items-center gap-1 text-red-300`}
-                title="Warnings and errors only"
-                aria-label={`Show only the ${errorCount} warnings and errors`}
-              >
-                <Icon.warning size={11} /> {errorCount}
-              </button>
-            )}
+            <span role="group" aria-label="Filter by severity" className="flex shrink-0 items-center gap-1 border-l border-white/10 pl-1.5">
+              {SEVERITIES.map((s) => {
+                const n = severityCount(s);
+                const tone = s === 'ERROR' && n > 0 ? 'text-red-300' : s === 'WARN' && n > 0 ? 'text-amber-300' : '';
+                return (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => setSev(s)}
+                    aria-pressed={sev === s}
+                    data-testid={`sev-${s.toLowerCase()}`}
+                    className={`${chip(sev === s)} ${tone}`}
+                    title={s === 'ALL' ? 'Every line' : s === 'WARN' ? 'Warnings only' : s === 'ERROR' ? 'Errors only' : 'Throughput and timing lines only'}
+                  >
+                    {s}{n > 0 ? <span className="ml-1 tabular-nums opacity-70">{n}</span> : null}
+                  </button>
+                );
+              })}
+            </span>
             {parts.map((p) => (
               <button
                 key={p.index}
@@ -411,6 +446,25 @@ export default function ProcessingTerminal({
               <span className="hidden sm:inline">Filter</span>
             </button>
           )}
+
+          <button
+            type="button"
+            onClick={() => {
+              const next = !autoScroll;
+              setAutoScroll(next);
+              if (next) scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
+            }}
+            aria-pressed={autoScroll}
+            data-testid="terminal-follow"
+            className={`flex items-center gap-1 px-2 py-1 rounded-lg text-micro font-semibold border transition-all active:scale-95 ${
+              autoScroll
+                ? 'bg-[var(--accent)]/20 border-[var(--accent)]/50 text-white'
+                : 'bg-white/5 border-white/10 text-neutral-300 hover:bg-white/10 hover:text-white'
+            }`}
+            title={autoScroll ? 'Following the newest line. Scroll up (or click) to stop following' : 'Not following. Click (or scroll to the bottom) to follow the newest line'}
+          >
+            {autoScroll ? 'Following' : 'Paused'}
+          </button>
 
           <button
             type="button"
@@ -497,22 +551,43 @@ export default function ProcessingTerminal({
       <div
         ref={scrollRef}
         onScroll={handleScroll}
+        data-testid="terminal-body"
+        data-ring-size={lines.length}
+        data-shown={shown.length}
+        data-mounted={virtualRows.length}
         className={`selectable ${bodyClass} min-h-0 overflow-y-auto px-3.5 py-2.5 text-mini leading-relaxed custom-scrollbar`}
+        // We pin to the tail ourselves; the browser's scroll anchoring would fight the pin as rows are measured.
+        style={{ overflowAnchor: 'none', contain: 'layout style paint' }}
       >
         {shown.length === 0 ? (
           <div className="text-muted italic py-4 text-center">
-            {log.length === 0 ? 'waiting for engine output…' : searchQuery ? 'no log entries match the search filter' : 'nothing logged for this chapter yet…'}
+            {lines.length === 0 ? 'waiting for engine output…'
+              : searchQuery ? 'no log entries match the search filter'
+                : sev !== 'ALL' ? `no ${sev} lines in the last ${lines.length.toLocaleString()}`
+                  : 'nothing logged for this chapter yet…'}
           </div>
         ) : (
-          shown.map((l) => (
-            <div key={l.seq} className="flex gap-2.5 py-0.5 whitespace-pre-wrap break-words hover:bg-white/[0.02] rounded px-1 -mx-1 transition-colors">
-              <span className="shrink-0 text-muted tabular-nums font-mono text-micro select-none">{l.t}</span>
-              <span className="shrink-0 text-white/25 select-none">›</span>
-              <FormattedLogMessage msg={l.msg} toneClass={structuredLineTone(l)} />
-            </div>
-          ))
+          <div style={{ height: totalHeight, position: 'relative', width: '100%' }}>
+            {virtualRows.map((v) => {
+              const l = shown[v.index];
+              if (!l) return null;
+              return (
+                <div
+                  key={v.key}
+                  data-index={v.index}
+                  ref={rowVirtualizer.measureElement}
+                  style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translate3d(0, ${v.start}px, 0)` }}
+                >
+                  <div className="flex gap-2.5 py-0.5 whitespace-pre-wrap break-words hover:bg-white/[0.02] rounded px-1 -mx-1 transition-colors">
+                    <span className="shrink-0 text-muted tabular-nums font-mono text-micro select-none">{l.t}</span>
+                    <span className="shrink-0 text-white/25 select-none">›</span>
+                    <FormattedLogMessage msg={l.msg} toneClass={structuredLineTone(l)} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         )}
-        <div ref={bottomRef} />
       </div>
 
       {/* Floating auto-scroll snap button */}

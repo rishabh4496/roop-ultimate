@@ -1,6 +1,7 @@
 import React, {
   forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState,
 } from 'react';
+import { dividerTransform } from './wipeTransform';
 
 // ── <CompareSlider /> — the A/B curtain & 360 Vector Wipe ─────────────────
 //
@@ -10,6 +11,7 @@ import React, {
 // with an interactive rotation handle for diagonal wipes across face contours.
 
 const clampPct = (v) => Math.max(0, Math.min(100, v));
+
 
 const CompareSlider = forwardRef(function CompareSlider({
   /** Ref to a PreviewCanvas. When present the wipe is applied on the canvas. */
@@ -54,24 +56,7 @@ const CompareSlider = forwardRef(function CompareSlider({
     const div = dividerRef.current;
     const a = angleRef.current || 0;
 
-    if (div) {
-      if (a !== 0) {
-        // Vector split wipe geometry along arbitrary angle
-        const rad = (a * Math.PI) / 180;
-        const normDist = (100 - pct - 50); // -50% to +50%
-        div.style.left = `calc(50% + ${normDist * Math.cos(rad)}%)`;
-        div.style.top = `calc(50% + ${normDist * Math.sin(rad)}%)`;
-        div.style.transform = `translate(-50%, -50%) rotate(${a + 90}deg)`;
-      } else if (horizontal) {
-        div.style.left = '0';
-        div.style.top = `${100 - pct}%`;
-        div.style.transform = '';
-      } else {
-        div.style.top = '0';
-        div.style.left = `${100 - pct}%`;
-        div.style.transform = '';
-      }
-    }
+    if (div) div.style.transform = dividerTransform(pct, a, horizontal, hostRef.current);
 
     const handle = handleRef.current;
     if (handle) {
@@ -107,12 +92,6 @@ const CompareSlider = forwardRef(function CompareSlider({
 
   // Re-apply after a direction change
   useEffect(() => {
-    const div = dividerRef.current;
-    if (div && angleRef.current === 0) {
-      div.style.top = '';
-      div.style.left = '';
-      div.style.transform = '';
-    }
     apply(posRef.current, { notify: false });
   }, [direction, apply]);
 
@@ -265,17 +244,13 @@ const CompareSlider = forwardRef(function CompareSlider({
         <div
           ref={dividerRef}
           className="absolute z-40 pointer-events-none"
-          style={isRotated ? {
-            left: '50%',
-            top: '50%',
-            width: '200vmax',
-            height: 0,
-            transformOrigin: 'center center',
-            transform: `translate(-50%, -50%) rotate(${curAngle + 90}deg)`,
-          } : (horizontal
-            ? { left: 0, right: 0, top: `${100 - initial}%`, height: 0 }
-            : { top: 0, bottom: 0, left: `${100 - initial}%`, width: 0 }
-          )}
+          style={{
+            willChange: 'transform',
+            transform: dividerTransform(initial, curAngle, horizontal, hostRef.current),
+            ...(isRotated
+              ? { left: '50%', top: '50%', width: '200vmax', height: 0, transformOrigin: 'center center' }
+              : { left: 0, top: 0, width: '100%', height: '100%' }),
+          }}
         >
           {/* Split Line */}
           <div

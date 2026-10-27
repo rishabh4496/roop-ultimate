@@ -9,8 +9,10 @@ the next clip meant waiting for the current one, or stopping it.
 The progress panel is now the Processing tab, and Face Swap keeps its layout at
 all times. Three things hold that up, and each of them fails quietly:
 
-  * The tab is a lazy chunk. `lazy(() => import(...))` that is never RENDERED
-    builds fine, ships a chunk nobody fetches, and shows an empty tab body.
+  * The tab is declared in the tab list but must also be RENDERED. (It was a lazy
+    chunk until Stage 8; `lazy(() => import(...))` that is never rendered builds
+    fine, ships a chunk nobody fetches and shows an empty tab body. It is now a
+    static import, which has the same failure: imported, never rendered.)
   * The tab is transient — it is filtered out of the strip when no run is on —
     so a stale `TABS` reference in the nav or the command palette would either
     show it permanently or lose the filter's effect entirely.
@@ -55,10 +57,28 @@ class ProcessingTabWiring(unittest.TestCase):
                       "the Processing tab must be transient — it exists only for a run")
         self.assertRegex(code, r"tab === 'processing'\s*&&\s*\(?\s*<Processing",
                          "the Processing tab is declared but never rendered")
-        # lazyPanel is React.lazy that can be retried after a failed chunk (a bare
-        # lazy memoizes its rejection forever); it is still one import() per tab.
-        self.assertIn("const Processing = lazyPanel(loadProcessing)", code,
-                      "Processing is not code-split like the other tab panels")
+        # Stage 8 (2026-10-27): Processing is EAGER. A run switches to it the instant Start is pressed,
+        # so it must never show a chunk spinner or fail to download mid-launch. It used to be
+        # `lazyPanel(loadProcessing)` and this assertion pinned that; the secondary routes (Face
+        # Manager, Editor, Outputs, History, Settings) are the lazy tier and are pinned below.
+        self.assertIn("import Processing from './components/Processing'", code,
+                      "Processing is no longer a static import (it ships in the entry chunk)")
+        self.assertNotIn("lazyPanel(loadProcessing)", code,
+                         "Processing went back to a code-split chunk")
+
+    def test_eager_and_lazy_route_tiers(self):
+        code = _code(APP_JSX)
+        self.assertIn("import FaceSwap from './components/FaceSwap'", code,
+                      "Face Swap (the default route) is not eagerly loaded")
+        for name, loader in (('FaceManager', 'loadFaceManager'), ('Extras', 'loadExtras'),
+                             ('Gallery', 'loadGallery'), ('RunHistory', 'loadRunHistory'),
+                             ('Settings', 'loadSettings')):
+            self.assertIn(f"const {name} = lazyPanel({loader})", code,
+                          f"{name} is not a lazy route any more")
+        # An eager route has nothing to warm, and a dynamic import of a module that is also
+        # imported statically defeats the split and makes the build warn.
+        self.assertNotRegex(code, r"import\(\s*'\./components/(FaceSwap|Processing)'\s*\)",
+                            "an eager route is also dynamically imported")
 
     def test_props_app_passes_are_the_props_processing_reads(self):
         app = _code(APP_JSX)

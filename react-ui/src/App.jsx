@@ -28,9 +28,15 @@ import { SETTINGS_CATALOG, focusSetting } from './components/settingsCatalog';
 import { motion, AnimatePresence, MotionConfig, spring, viewTransition } from './motion';
 import { Icon } from './icons';
 
-// Tab panels are code-split so the initial bundle only ships the shell + the
-// first tab's dependencies. Each is fetched on first visit (Vite emits one
-// chunk per lazy import), trimming a ~530 KB single bundle into per-tab pieces.
+// ROUTE LOADING, in two tiers.
+//
+// EAGER: Face Swap and Processing are statically imported, so they ship in the entry chunk. Face Swap is the
+// default route and Processing is where a run lands the instant Start is pressed (App switches to it on the
+// edge); neither may ever show a chunk spinner, and neither can fail to download after the shell has loaded.
+// The cost is a larger entry chunk, which is measured in docs/CHANGELOG.md (2026-10-27, Stage 8).
+//
+// LAZY: every other route is code-split, so the entry only ships the shell plus those two. Each is fetched on first
+// visit (Vite emits one chunk per lazy import).
 //
 // The raw importer is kept alongside the lazy component so we can WARM a chunk
 // before it is needed (pointer/focus on its tab button, and an idle sweep after
@@ -39,13 +45,13 @@ import { Icon } from './icons';
 // spinner, so a tab change is a pure animation instead of a network round trip.
 // A rejected prefetch is ignored — React.lazy retries on real render, and the
 // ErrorBoundary below owns the failure case.
-const loadHome = () => import('./components/Home');
+import FaceSwap from './components/FaceSwap';
+import Processing from './components/Processing';
 import useRenderLite, { cycleRenderLiteMode, RENDER_LITE_LABEL }
   from './components/faceswap/useRenderLite';
 
-const loadFaceSwap = () => import('./components/FaceSwap');
+const loadHome = () => import('./components/Home');
 const loadBatchSwap = () => import('./components/BatchSwap');
-const loadProcessing = () => import('./components/Processing');
 const loadSettings = () => import('./components/Settings');
 const loadFaceManager = () => import('./components/FaceManager');
 const loadExtras = () => import('./components/Extras');
@@ -53,9 +59,7 @@ const loadGallery = () => import('./components/Gallery');
 const loadRunHistory = () => import('./components/RunHistory');
 
 const Home = lazyPanel(loadHome);
-const FaceSwap = lazyPanel(loadFaceSwap);
 const BatchSwap = lazyPanel(loadBatchSwap);
-const Processing = lazyPanel(loadProcessing);
 const Settings = lazyPanel(loadSettings);
 const FaceManager = lazyPanel(loadFaceManager);
 const Extras = lazyPanel(loadExtras);
@@ -85,9 +89,9 @@ function TabFallback() {
 // resolve a tab by id whether or not it is currently on screen.
 const ALL_TABS = [
   { id: 'home', label: 'Home', icon: Icon.home, preload: loadHome },
-  { id: 'faceswap', label: 'Face Swap', icon: Icon.faceswap, preload: loadFaceSwap },
+  { id: 'faceswap', label: 'Face Swap', icon: Icon.faceswap },                  // eager: nothing to preload
   { id: 'batch', label: 'Batch Matrix', icon: Icon.batch, preload: loadBatchSwap },
-  { id: 'processing', label: 'Processing', icon: Icon.meter, preload: loadProcessing, transient: true },
+  { id: 'processing', label: 'Processing', icon: Icon.meter, transient: true },  // eager: nothing to preload
   { id: 'facemgr', label: 'Face Manager', icon: Icon.faces, preload: loadFaceManager },
   { id: 'extras', label: 'Editor', icon: Icon.editor, preload: loadExtras },
   { id: 'gallery', label: 'Outputs', icon: Icon.outputs, preload: loadGallery },
@@ -567,7 +571,6 @@ export default function App() {
       if (!startTime) setStartTime(progress.started_at ? progress.started_at * 1000 : Date.now());
       // Follow the run. Only on the edge, so going back to Face Swap mid-render
       // to line up the next job is not undone a second later.
-      warmTab('processing');
       // replace, not push: this switch is a consequence of the run starting,
       // so Back should return to where the user actually was.
       setTab('processing', { replace: true });
@@ -1153,7 +1156,7 @@ export default function App() {
           once you have wandered off it. */}
       <button
         type="button"
-        onClick={() => { warmTab('processing'); setTab('processing'); }}
+        onClick={() => setTab('processing')}
         title="Open the Processing tab"
         className={`hover:underline ${stopping ? 'text-red-400/90' : progress.paused || progress.pause_requested ? 'text-amber-400/90' : 'text-accent'}`}
       >
@@ -1421,7 +1424,7 @@ export default function App() {
                     setProgress={setProgress}
                     startTime={startTime}
                     setStartTime={setStartTime}
-                    onOpenProcessing={() => { warmTab('processing'); setTab('processing'); }}
+                    onOpenProcessing={() => setTab('processing')}
                     onStopRun={() => runControl('stop')}
                   />
                 )}

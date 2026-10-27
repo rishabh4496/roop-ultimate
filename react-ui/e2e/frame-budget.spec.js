@@ -214,7 +214,8 @@ test('timeline drag', async ({ page }) => {
   const expected = 1 + 0.9 * (max - 1);
   expect(Math.abs(Number(after) - expected), `released at 90% of ${max} frames: expected ~${expected.toFixed(0)}, got ${after}`)
     .toBeLessThanOrEqual(Math.max(2, max * 0.01));
-  const left = await track.locator('div.z-30.pointer-events-none').first().evaluate((el) => parseFloat(el.style.left));
+  // The playhead moves by transform now (Stage 8): translate3d(P%, 0, 0) on a full-width wrapper, not `left: P%`.
+  const left = await track.getByTestId('timeline-playhead').evaluate((el) => parseFloat(/translate3d\(([-\d.]+)%/.exec(el.style.transform)?.[1]));
   const drawn = (Number(after) - 1) / Math.max(1, max - 1) * 100;
   expect(Math.abs(left - drawn), `playhead drawn at ${left}%, committed frame ${after} is at ${drawn.toFixed(2)}%`).toBeLessThanOrEqual(0.5);
 });

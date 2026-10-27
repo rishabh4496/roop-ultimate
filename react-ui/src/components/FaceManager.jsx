@@ -3,6 +3,7 @@ import { postJSON, postFiles, postFile, fileUrl, API } from '../api';
 import { Section, Slider, Toggle, Button } from './ui';
 import MorphLab from './facemgr/MorphLab';
 import PoseRadar from './facemgr/PoseRadar';
+import { VirtualGrid } from './virtual/VirtualScroll';
 
 // The two jobs this screen does: build a faceset from footage, or blend existing identities into a new one.
 const VIEWS = [
@@ -275,9 +276,24 @@ function FaceQualityGrid({ faces, scores, meta, threshold, selected, onSelect })
   if (!faces.length) {
     return <div className="text-sm text-muted py-8 text-center border border-dashed border-white/10 rounded-lg">No faces yet</div>;
   }
+  // Windowed: a 500-crop faceset mounts the ~5 rows in view (each crop is an <img> with a base64 payload), so
+  // selecting, scoring and scrolling it stay cheap however large the set gets. Tiles are square, so a row is as tall
+  // as a cell is wide.
   return (
-    <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
-      {faces.map((src, i) => {
+    <VirtualGrid
+      items={faces}
+      minCell={84}
+      gap={8}
+      cellHeight={(w) => Math.round(w)}
+      getKey={(_src, i) => i}
+      overscan={4}
+      maxCols={8}
+      // p-1: the selection ring and the keyboard focus ring (2px + 2px offset) sit outside a tile, and the scroller
+      // clips its children to its own box.
+      className="max-h-[60vh] p-1"
+      label="Faces in the faceset"
+      testId="face-grid"
+      renderCell={(src, i) => {
         const s = scores[i];
         const has = typeof s === 'number';
         const tone = has ? TONE[scoreTone(s)] : TONE.amber;
@@ -288,7 +304,6 @@ function FaceQualityGrid({ faces, scores, meta, threshold, selected, onSelect })
           : 'quality unknown';
         return (
           <button
-            key={i}
             type="button"
             onClick={() => onSelect(i)}
             title={title}
@@ -309,7 +324,7 @@ function FaceQualityGrid({ faces, scores, meta, threshold, selected, onSelect })
             )}
           </button>
         );
-      })}
-    </div>
+      }}
+    />
   );
 }

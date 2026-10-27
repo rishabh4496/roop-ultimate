@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getJSON, postJSON } from '../../api';
 import { Section, Slider, Toggle, Button } from '../ui';
+import { VirtualGrid } from '../virtual/VirtualScroll';
 import {
   MAX_IDENTITIES, MIN_IDENTITIES, clampToPad, evenWeights, padVertices, pointAtWeights, setWeight, toPercents,
   togglePick, weightsAtPoint,
@@ -188,12 +189,23 @@ export default function MorphLab({ notify, setTab }) {
                 Nothing to blend yet. Add source faces in Face Swap, save a faceset to the library, or build one here in the Faceset builder tab.
               </p>
             ) : (
-              <ul className="grid grid-cols-3 sm:grid-cols-4 gap-2 list-none p-0 m-0" aria-label="Identities">
-                {candidates.map((c) => {
+              // Windowed: the library can hold hundreds of .fsz banks, and each card carries a thumbnail.
+              <VirtualGrid
+                items={candidates}
+                minCell={104}
+                gap={8}
+                cellHeight={(w) => Math.round(w) + 52}
+                getKey={(c) => c?.id}
+                maxCols={6}
+                overscan={3}
+                className="max-h-[56vh] p-1"
+                label="Identities"
+                testId="morph-candidates"
+                renderCell={(c) => {
                   const idx = picked.indexOf(c.id);
                   const on = idx >= 0;
                   return (
-                    <li key={c.id}>
+                    <div>
                       <button
                         type="button" onClick={() => pick(c.id)} disabled={!c.available}
                         aria-pressed={on} data-testid={`morph-pick-${c.id}`}
@@ -210,10 +222,10 @@ export default function MorphLab({ notify, setTab }) {
                                 style={{ background: COLORS[idx] }}>{idx + 1}</span>
                         )}
                       </button>
-                    </li>
+                    </div>
                   );
-                })}
-              </ul>
+                }}
+              />
             )}
         </Section>
 

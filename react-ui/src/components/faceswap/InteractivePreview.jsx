@@ -1257,7 +1257,7 @@ export default function InteractivePreview({
   return (
     <div
       ref={containerRef}
-      className={`relative w-full max-h-[65vh] min-h-[260px] rounded-2xl overflow-hidden preview-stage select-none group border border-white/10 shadow-2xl ${
+      className={`relative w-full max-h-[65vh] min-h-[260px] rounded-2xl overflow-hidden preview-stage contain-panel select-none group border border-white/10 shadow-2xl ${
         isFullscreen ? 'h-screen w-screen max-h-none' : ''
       } ${displayRatio ? '' : 'aspect-video'}`}
       onDoubleClick={handleDoubleClick}
@@ -1590,7 +1590,7 @@ export default function InteractivePreview({
         <div
           ref={brushCursorRef}
           className="absolute pointer-events-none z-50 -translate-x-1/2 -translate-y-1/2"
-          style={{ width: brushSize, height: brushSize }}
+          style={{ width: brushSize, height: brushSize, willChange: 'transform' }}
         >
           {/* Outer dashed ring (radius) */}
           <div
@@ -1614,7 +1614,7 @@ export default function InteractivePreview({
         <div
           ref={lensGlassRef}
           className="absolute rounded-full border-2 border-cyan-400 shadow-[0_0_35px_rgba(6,182,212,0.7)] overflow-hidden pointer-events-none z-50 bg-black"
-          style={{ width: 180, height: 180, left: 0, top: 0, display: 'none' }}
+          style={{ width: 180, height: 180, left: 0, top: 0, display: 'none', willChange: 'transform' }}
         >
           {/* Split Loupe: Left half Before (Original) | Right half After (Swapped) */}
           {loupeSplit ? (
