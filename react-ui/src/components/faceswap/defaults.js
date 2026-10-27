@@ -128,6 +128,13 @@ export const FACESWAP_DEFAULTS = {
   expression_restore_region: 'all',
   expression_gaze_follow: 0,
   expression_blink_sync: false,
+  // Stage 11: Expression & Gaze Fidelity and the identity lock. All bit-exact no-ops at these values.
+  pupil_gaze_retention: 0,
+  micro_expression_restore: 0,
+  inner_mouth_preserve: false,
+  identity_lock: false,
+  identity_lock_margin: 0.08,
+  identity_lock_hold: 3,
 
   // Video parameters
   no_face_action: 'Use untouched original frame',

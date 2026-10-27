@@ -58,6 +58,8 @@ import { num, fmtTime } from './faceswap/utils';
 import useProfiles from './faceswap/useProfiles';
 import { useSystemTelemetryPoller } from './faceswap/useTelemetry';
 import { FACESWAP_DEFAULTS } from './faceswap/defaults';
+import { addPin, makePin, removePin, serializePins, trackLabel } from './faceswap/identityLock';
+import { anchorsOf, serialize as serializeRotoZones } from './faceswap/rotoModel';
 import InspectorGroup, { Disclosure } from './faceswap/InspectorGroup';
 import RecipePresetBar from './faceswap/RecipePresetBar';
 import LinkedPaddingControl from './faceswap/LinkedPaddingControl';
@@ -162,6 +164,7 @@ export default function FaceSwap({
   // context and is cleared whenever either input changes.
   const [selectedDetectedFace, setSelectedDetectedFace] = useState(null);
   const [previewKps, setPreviewKps] = useState([]);
+  const [previewAnchors, setPreviewAnchors] = useState([]);   // [nose, chin] per face, for the Pen tool's pin
   // (yaw, pitch, roll) per face, solved server-side by the SAME solve_pose_5pt
   // the non-frontal mask router gates on — see the
   // preview endpoint for why it is not re-derived here.
@@ -912,6 +915,8 @@ export default function FaceSwap({
       selection_version: selectionVersion,
       imagemask: maskJson,
       identity_blend: identityBlend,
+      roto_polygons: rotoPayload,
+      identity_pins: pinsPayload,
     };
   };
 
@@ -1106,6 +1111,24 @@ export default function FaceSwap({
     setMaskVersion((v) => v + 1);
   };
 
+  // ── Stage 11: Pen-tool zones and identity pins ───────────────────────────
+  // Per CLIP, keyed by the target's media id: a zone drawn around a microphone in one video must never
+  // ride into the next video's render (the brush mask above is not keyed and can; these are). The
+  // request carries only the serialised form, and the backend CLEARS both lists on any request that
+  // does not carry them, so what is sent is the whole truth for this render.
+  const clipKey = activeTargetMediaId || `legacy-index-${selTarget}`;
+  const [rotoByMedia, setRotoByMedia] = useState({});
+  const [pinsByMedia, setPinsByMedia] = useState({});
+  const [rotoSelectedId, setRotoSelectedId] = useState(null);
+  const NO_ITEMS = useMemo(() => [], []);
+  const rotoZones = rotoByMedia[clipKey] || NO_ITEMS;
+  const identityPins = pinsByMedia[clipKey] || NO_ITEMS;
+  const setRotoZones = (next) => setRotoByMedia((all) => ({
+    ...all, [clipKey]: typeof next === 'function' ? next(all[clipKey] || []) : next,
+  }));
+  const rotoPayload = useMemo(() => serializeRotoZones(rotoZones), [rotoZones]);
+  const pinsPayload = useMemo(() => serializePins(identityPins), [identityPins]);
+
   // "Slider Effect: BYPASSED" neutralises the eight Slider Tracker values.
   // This MUST be applied to the render payload too, not just the preview —
   // otherwise the preview shows a bypassed result while Run quietly renders
@@ -1197,6 +1220,12 @@ export default function FaceSwap({
       expression_restore_region: activeParams.expression_restore_region || 'all',
       expression_gaze_follow: num(activeParams.expression_gaze_follow, 0),
       expression_blink_sync: !!activeParams.expression_blink_sync,
+      pupil_gaze_retention: num(activeParams.pupil_gaze_retention, 0),
+      micro_expression_restore: num(activeParams.micro_expression_restore, 0),
+      inner_mouth_preserve: !!activeParams.inner_mouth_preserve,
+      identity_lock: !!activeParams.identity_lock,
+      identity_lock_margin: num(activeParams.identity_lock_margin, 0.08),
+      identity_lock_hold: num(activeParams.identity_lock_hold, 3),
       swap_model: activeParams.swap_model, default_det_size: activeParams.default_det_size,
       face_detector_size: activeParams.face_detector_size, face_detector_threshold: activeParams.face_detector_threshold,
       face_detector_nms: activeParams.face_detector_nms,
@@ -1249,6 +1278,9 @@ export default function FaceSwap({
       // Manual brush mask (JSON string, '' when nothing is painted).
       imagemask: maskJson,
       identity_blend: identityBlend,
+      // Stage 11: closed Pen-tool zones and the user's identity pins for THIS clip.
+      roto_polygons: rotoPayload,
+      identity_pins: pinsPayload,
       ...overrides,
     };
   };
@@ -1455,6 +1487,7 @@ export default function FaceSwap({
         setPreviewFaces(cached.faces);
         setPreviewPersonIds(cached.personIds || []);
         setPreviewKps(cached.kps || []);
+        setPreviewAnchors(cached.anchors || []);
         setPreviewPose(cached.pose || []);
         setPreviewDiagnostic(cached.diagnostic || null);
         if (cached.sar !== undefined) setPreviewSar(cached.sar);
@@ -1537,6 +1570,7 @@ export default function FaceSwap({
           const own = dataUrlToOwnedBlobUrl(res.image, previewOwner);
           setCachedPreviewByKey(request.key, {
             faces: res.faces || [], personIds: res.person_ids || [], kps: res.kps || [],
+            anchors: res.anchors || [],
             pose: res.pose || [], image: own,
             diagnostic: res.selection_diagnostic || (res.target_required ? 'target_required' : null),
             signature: res.preview_signature || null, requestId: res.request_id || null,
@@ -1558,6 +1592,7 @@ export default function FaceSwap({
       if (res.faces) setPreviewFaces(res.faces);
       setPreviewPersonIds(res.person_ids || []);
       setPreviewKps(res.kps || []);
+      setPreviewAnchors(res.anchors || []);
       setPreviewPose(res.pose || []);
       if (res.sar_val !== undefined) setPreviewSar(res.sar_val);
       if (res.dar_val !== undefined) setPreviewDar(res.dar_val);
@@ -1579,6 +1614,7 @@ export default function FaceSwap({
       if (blobSrc) {
         setCachedPreviewByKey(request.key, {
           faces: res.faces || [], personIds: res.person_ids || [], kps: res.kps || [],
+          anchors: res.anchors || [],
           pose: res.pose || [], image: blobSrc, diagnostic,
           signature: res.preview_signature || null, requestId: res.request_id || null,
           sar: res.sar_val ?? 1.0, dar: res.dar_val ?? 0.0,
@@ -2106,6 +2142,31 @@ export default function FaceSwap({
       }),
     };
   });
+
+  // Stage 11. Per detected face: the source it swaps from (the same mapping the payload carries, indexed by
+  // person rank), and its nose/chin. The Pen tool pins to the former's face and the latter's landmarks.
+  const mappingByRank = getFaceMappingArray();
+  const faceSources = previewFaces.map((_, i) => {
+    const rank = previewPersonIds[i] === null || previewPersonIds[i] === undefined || previewPersonIds[i] === ''
+      ? NaN : Number(previewPersonIds[i]);
+    const s = Number.isInteger(rank) ? mappingByRank[rank] : null;
+    return Number.isInteger(s) && s >= 0 ? s : null;
+  });
+  const faceAnchors = previewFaces.map((bbox, i) => {
+    const a = anchorsOf(previewAnchors, i);
+    return a ? { source_index: faceSources[i], nose: a.nose, chin: a.chin, bbox } : null;
+  }).filter(Boolean);
+
+  const onPinIdentity = (faceIndex) => {
+    const bbox = previewFaces[faceIndex];
+    const pin = makePin({
+      frame, bbox, personId: previewPersonIds[faceIndex], sourceIndex: faceSources[faceIndex], faceIndex,
+    });
+    if (!pin) { notify('This face has no source to lock: map it to a source first', 'error'); return; }
+    setPinsByMedia((all) => ({ ...all, [clipKey]: addPin(all[clipKey] || [], pin) }));
+    notify(`Pinned ${trackLabel(previewPersonIds[faceIndex])} to its source on frame ${frame}`, 'info');
+  };
+  const onUnpinIdentity = (id) => setPinsByMedia((all) => ({ ...all, [clipKey]: removePin(all[clipKey] || [], id) }));
 
   const onToggleFaceExclusion = (faceIndex) => {
     const info = previewFaceRoles[faceIndex];
@@ -3542,6 +3603,47 @@ export default function FaceSwap({
           <Slider label="Eye-gaze follow" info="Weight on LivePortrait's eye keypoints, which carry both where the eye looks and how open the lids are. 0 = the swap's own eyes. MEASURED 2026-09-25, 1014 frames: at 1.0 the eye-direction error got WORSE, not better (0.043 → 0.055, dark-iris position on wide-open eyes) — the swap already keeps the target's eye direction and re-rendering the eyes adds error. It does catch blinks (100%) but less precisely than Blink sync, and together with Blink sync the lids are worse than Blink sync alone (lid error 0.040 vs 0.019). Kept for footage where the swap's eye direction is visibly wrong; check the result." min={0} max={1} step={0.05} value={num(p.expression_gaze_follow, 0)} onChange={(v) => set('expression_gaze_follow', v)} defaultValue={FACESWAP_DEFAULTS.expression_gaze_follow} />
         </InspectorGroup>
 
+        <InspectorGroup id="fidelity" title="Expression & Gaze Fidelity" icon={Icon.preview}>
+          <Slider label="Pupil & eye-gaze retention" settingKey="pupil_gaze_retention" min={0} max={1} step={0.05}
+                  value={num(p.pupil_gaze_retention, 0)} onChange={(v) => set('pupil_gaze_retention', v)}
+                  defaultValue={FACESWAP_DEFAULTS.pupil_gaze_retention}
+                  info="Keeps where the TARGET is looking. Finds the iris in the original frame and in the swap, slides the swapped iris (its colour and brightness intact) to where the original's is, erases it from where it was, matches its pupil / limbal contrast to the original's, and takes the sclera's lid shading. Unlike 'Restore original eyes' it does not bring back the target's lids, lashes or eye colour. A blink in the original (no iris found) leaves the swap alone, and so does an iris too pale for the detector to find. Fades out past 25° of head turn. 0 = off (bit-exact). Checked on synthetic eyes and one real clip: judge it on your footage." />
+          <Slider label="Micro-expression & lip-sync tension" settingKey="micro_expression_restore" min={0} max={1} step={0.05}
+                  value={num(p.micro_expression_restore, 0)} onChange={(v) => set('micro_expression_restore', v)}
+                  defaultValue={FACESWAP_DEFAULTS.micro_expression_restore}
+                  info="Puts back the creases a 128 px swap averages away: the nasolabial folds, the inner brows and the mouth corners. Inside soft regions built from the five keypoints it transplants the ORIGINAL's mid-frequency luminance (a difference of Gaussians scaled to the face); the swap's colour, tone and fine skin texture are left alone. It restores shading, not geometry: it does not warp the swapped face. 0 = off (bit-exact). Calibrated on a synthetic crease only: judge it on your footage." />
+          <Toggle label="Inner-mouth & teeth preservation" settingKey="inner_mouth_preserve"
+                  info="On a WIDE-open mouth (the gap between the inner lips is over a fifth of the mouth's width: a shout, a wide vowel) keep the target's real teeth and tongue instead of the swap's, whether or not the swap broke them. Off, the app only repairs a mouth it detects as clamped or blurry. CAUTION: restoring the target's cavity unconditionally was measured to give grey, mottled, doubled teeth when the two people's teeth differ, which is why this is opt-in and limited to wide-open frames. The 'wide' threshold is a starting value, not yet calibrated on footage."
+                  checked={!!p.inner_mouth_preserve} onChange={(v) => set('inner_mouth_preserve', v)} />
+          <Toggle label="Identity crossover lock" settingKey="identity_lock"
+                  info="When two people cross, one face's crop is briefly half the other's and the per-frame check can say 'another person fits better' about someone who never changed, switching the swap off them. With the lock on, an established identity is not stripped by a short, weak challenge (the challenger must beat it by an extra margin, and by more again while the face is following its own predicted path); a challenge that persists is still honoured, after the hold. Pins always win. OFF by default until it has been A/B'd on a crossing clip."
+                  checked={!!p.identity_lock} onChange={(v) => set('identity_lock', v)} />
+          {p.identity_lock && (
+            <>
+              <Slider label="Lock margin" settingKey="identity_lock_margin" min={0} max={0.3} step={0.01} value={num(p.identity_lock_margin, 0.08)}
+                      onChange={(v) => set('identity_lock_margin', v)} defaultValue={FACESWAP_DEFAULTS.identity_lock_margin}
+                      info="Extra cosine distance a challenger must win by, on top of the matcher's own margin, before it counts." />
+              <Slider label="Lock hold (frames)" settingKey="identity_lock_hold" min={1} max={12} step={1} value={num(p.identity_lock_hold, 3)}
+                      onChange={(v) => set('identity_lock_hold', v)} defaultValue={FACESWAP_DEFAULTS.identity_lock_hold}
+                      info="A challenge burst up to this many frames long is absorbed; the next frame of it is honoured." />
+            </>
+          )}
+          {identityPins.length > 0 && (
+            <div className="space-y-1" data-testid="pin-list">
+              <div className="text-nano font-semibold uppercase tracking-[0.14em] text-muted">Identity pins ({identityPins.length})</div>
+              {identityPins.map((pin) => (
+                <div key={pin.id} className="flex items-center justify-between gap-2 rounded-lg bg-white/[0.04] px-2 py-1 text-note">
+                  <span className="truncate">
+                    📌 {trackLabel(pin.track_id !== null ? pin.track_id - 1 : null)} → source {pin.source_index + 1} · frame {pin.frame}
+                  </span>
+                  <button type="button" className="rounded px-1.5 text-muted hover:bg-white/10 hover:text-white"
+                          aria-label={`Remove the pin on frame ${pin.frame}`} onClick={() => onUnpinIdentity(pin.id)}>×</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </InspectorGroup>
+
         <InspectorGroup id="pose" title="Pose, angle & system" icon={Icon.tune}>
           <Toggle label="3D source pose matching" info="Only affects image-source swappers (BlendSwap / UniFace) — feeds them a pose-matched source crop. Has NO effect on inswapper/ghost/hyperswap/simswap (their identity vector is pose-invariant, so warping the source would only degrade it)." checked={!!p.use_3d_recon} onChange={(v) => set('use_3d_recon', v)} />
           <Toggle label="Multi-angle source bank" info="auto-pick best source per frame" checked={!!p.use_source_bank} onChange={(v) => set('use_source_bank', v)} />
@@ -4081,6 +4183,15 @@ export default function FaceSwap({
                     onSelectFace={onFaceBoxClick}
                     faceRoles={previewFaceRoles}
                     onToggleExclude={onToggleFaceExclusion}
+                    rotoZones={rotoZones}
+                    onRotoZones={setRotoZones}
+                    rotoSelectedId={rotoSelectedId}
+                    onRotoSelect={setRotoSelectedId}
+                    faceAnchors={faceAnchors}
+                    faceSources={faceSources}
+                    pins={identityPins}
+                    onPinIdentity={onPinIdentity}
+                    onUnpinIdentity={onUnpinIdentity}
                     splitView={splitView}
                     compare={compare}
                     onToggleCompare={() => setCompare((v) => { const n = !v; if (n) { setComparingEnhancers(false); setComparingMasks(false); setComparingSwappers(false); setComparingUpscalers(false); } return n; })}
@@ -4183,6 +4294,7 @@ export default function FaceSwap({
                   onSegmentClick={jumpToSegment}
                   sceneCuts={sceneCuts}
                   targetIndex={selTarget}
+                  matchThreshold={num(p.max_face_distance, 0.75)}
                   running={!!progress.processing}
                   renderLog={renderLog.log}
                   fpPieces={timelinePieces}

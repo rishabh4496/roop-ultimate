@@ -1,8 +1,10 @@
 import React, { useEffect, useMemo, useRef } from 'react';
 import { useLaneCanvas } from './useLaneCanvas';
 import {
-  LANE_H, MAX_PRESENCE_ROWS, drawCacheStrip, drawFilmstrip, drawOverrides, drawRuler, drawScenes, sceneLaneHeight,
+  LANE_H, MAX_PRESENCE_ROWS, drawCacheStrip, drawFilmstrip, drawIdentityConfidence, drawOverrides, drawRuler,
+  drawScenes, identityLaneHeight, sceneLaneHeight, MAX_IDENTITY_ROWS, IDENTITY_ROW_H,
 } from './lanes';
+import { laneCells } from '../identityLock';
 import { overrideLaneHit, sceneLaneHit } from './hit';
 import { fmtTimecode, frameAtX, normalizeView, placeView, viewSpan } from './viewMath';
 import { scenesFromCuts } from './laneModel';
@@ -125,6 +127,63 @@ export function SceneLane({
       aria-label="Scene cuts and who is on screen"
       onPointerMove={onMove}
       onClick={onClick}
+      className="block w-full"
+      style={{ height: h }}
+    />
+  );
+}
+
+/**
+ * Who the matcher was sure about, and where it was not. One thin row per person; an amber cell is a
+ * sampled detection near the match threshold (or barely ahead of the next person). Clicking a cell
+ * seeks to that frame - one click from "that looks off" to the frame itself. It reads the Face Bank's
+ * SAMPLED detections, like the presence lane, not the render's per-frame matcher.
+ */
+export function IdentityLane({ view, maxFrames, rows, emptyNote, onSeek }) {
+  // Cells are laid out once per data change, never per paint (a repaint only walks the visible ones).
+  const laid = useMemo(() => rows.map((r) => ({ ...r, cells: laneCells(r.points, maxFrames) })), [rows, maxFrames]);
+  const h = identityLaneHeight(laid.length);
+  const ref = useLaneCanvas(
+    (ctx, g) => { drawIdentityConfidence(ctx, g, { view, maxFrames, rows: laid, emptyNote }); },
+    [view.start, view.end, maxFrames, laid, emptyNote],
+  );
+
+  const cellAt = (e) => {
+    const el = ref.current;
+    if (!el) return null;
+    const rect = el.getBoundingClientRect();
+    const v = normalizeView(view, maxFrames);
+    const frame = frameFromEvent(e, el, v, maxFrames);
+    const row = Math.floor((e.clientY - rect.top - 1) / IDENTITY_ROW_H);
+    const r = laid[Math.min(row, MAX_IDENTITY_ROWS - 1)];
+    if (!r || row < 0) return null;
+    const cell = r.cells.find((c) => frame >= c.start && frame <= c.end);
+    return cell ? { row: r, cell } : null;
+  };
+
+  const onMove = (e) => {
+    const el = ref.current;
+    if (!el) return;
+    const hit = cellAt(e);
+    const tip = hit
+      ? `${hit.row.name} at frame ${hit.cell.frame}: ${Math.round(hit.cell.confidence * 100)}% confidence${hit.cell.amber ? ' - near the match threshold, click to inspect this frame' : ''}`
+      : '';
+    if (el.title !== tip) el.title = tip;
+    el.style.cursor = hit ? 'pointer' : 'default';
+  };
+
+  return (
+    <canvas
+      ref={ref}
+      data-testid="lane-identity"
+      role="img"
+      aria-label="Identity match confidence per person. Amber marks frames near the match threshold."
+      onPointerMove={onMove}
+      onClick={(e) => {
+        const hit = cellAt(e);
+        if (hit) onSeek?.(hit.cell.frame);
+        else if (ref.current) onSeek?.(frameFromEvent(e, ref.current, normalizeView(view, maxFrames), maxFrames));
+      }}
       className="block w-full"
       style={{ height: h }}
     />

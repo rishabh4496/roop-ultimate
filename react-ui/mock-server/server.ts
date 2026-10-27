@@ -247,6 +247,13 @@ let appSettings: Record<string, any> = {
   temporal_smart_skip: false,
   auto_bypass_restorer_native_swap: false,
   restore_ultra_frequency_blend: true,
+  // Stage 11 (app/settings.py): Expression & Gaze Fidelity and the identity crossover lock.
+  pupil_gaze_retention: 0.0,
+  micro_expression_restore: 0.0,
+  inner_mouth_preserve: false,
+  identity_lock: false,
+  identity_lock_margin: 0.08,
+  identity_lock_hold: 3,
   mask_engine_2: 'None',
   mask_clip_text: 'cup,hands,hair,banana',
   face_detection_mode: 'Selected face',
@@ -994,6 +1001,25 @@ async function startServer() {
     }
     return people;
   };
+  // Identity confidence per SAMPLED detection, with the SAME rules as roop/identity_lock.py
+  // (confidence = 1 - distance / threshold; amber when <= 0.25, or the runner-up is within 0.06),
+  // so the strip the mock draws is the strip the backend would. Deterministic: every 9th sample of a
+  // person is a crossing where the match dips toward the threshold.
+  const mockIdentityConfidence = (frames: number, stride: number, threshold: number) =>
+    [0, 1].map((r) => {
+      const points: number[][] = [];
+      const amber: number[] = [];
+      for (let f = 0, i = 0; f < frames; f += stride, i++) {
+        const dip = (i + r * 4) % 9 === 4;
+        const own = dip ? 0.62 : 0.22 + 0.05 * Math.sin(i + r);
+        const other = dip ? 0.66 : 0.78;
+        const conf = Math.max(0, Math.min(1, 1 - own / threshold));
+        const isAmber = conf <= 0.25 || other - own <= 0.06;
+        points.push([f + 1, Math.round(conf * 1e4) / 1e4, isAmber ? 1 : 0]);
+        if (isAmber) amber.push(f + 1);
+      }
+      return { person_id: `tp_${r}`, name: `Actor ${r + 1}`, points, amber, threshold };
+    });
   app.get('/api/target/timeline_tracks', (req, res) => {
     const idx = Number(req.query.index ?? selectedTargetIndex);
     const target = targetEntries[idx];
@@ -1001,11 +1027,16 @@ async function startServer() {
     const frames = target.frames || 1;
     const fps = target.fps || 30;
     const isVideo = frames > 1;
+    const asked = Number(req.query.threshold);
+    const threshold = asked > 0 ? asked : Number(appSettings.max_face_distance) || 0.75;
     res.json({
       target_media_id: target.media_id,
       scene_cuts: isVideo ? mockCuts(frames, fps) : [],
       presence: isVideo ? mockPresence(frames, fps) : [],
       presence_source: isVideo ? 'face_bank_sampled' : 'none',
+      identity_confidence: isVideo ? mockIdentityConfidence(frames, 30, threshold) : [],
+      identity_confidence_source: isVideo ? 'face_bank_sampled' : 'none',
+      identity_threshold: threshold,
       sample_stride: isVideo ? 30 : 0,
       render: {
         video_matches: isVideo,
@@ -1073,6 +1104,8 @@ async function startServer() {
       faces: [[190, 60, 140, 160]],
       person_ids: ['Person 1 (Target Match)'],
       kps: [[[240, 130], [280, 130], [260, 150], [246, 170], [274, 170]]],
+      // (nose, chin) per face: what roop/roto_polygons.face_anchors reports for the Pen tool's 2-point pin
+      anchors: [[[260, 150], [260, 215]]],
       pose: [{ pitch: -1.4, yaw: 8.2, roll: 0.4 }],
       enhancer: appSettings.selected_enhancer,
       swap_model: appSettings.swap_model,

@@ -2,7 +2,8 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import useThrottledFrameRequest from './useThrottledFrameRequest';
 import Minimap from './timeline/Minimap';
 import OverrideInspector from './timeline/OverrideInspector';
-import { CacheLane, FilmCanvas, OverrideLane, RulerLane, SceneLane } from './timeline/Lanes.jsx';
+import { CacheLane, FilmCanvas, IdentityLane, OverrideLane, RulerLane, SceneLane } from './timeline/Lanes.jsx';
+import { allAmber, nextAmber } from './identityLock';
 import { LANE_H, STATE_COLORS, STATE_LABELS } from './timeline/lanes.js';
 import { useSceneOverrides } from './timeline/useSceneOverrides';
 import { useFilmstrip, useTimelineTracks, useWaveform } from './timeline/useTimelineData';
@@ -150,6 +151,8 @@ export default function Timeline({
   sceneCuts = EMPTY,
   /** True while a render is in flight: the filmstrip stops fetching and the track maps refresh. */
   running = false,
+  /** The user's match distance (Max face distance): what "near the threshold" is measured against. */
+  matchThreshold = null,
   /** [{start, end, fp}] finished renders of this clip, and the fingerprints in force NOW, per stretch. */
   renderLog = EMPTY,
   fpPieces = EMPTY,
@@ -314,8 +317,10 @@ export default function Timeline({
 
   // ── Data: tracks, waveform, stills ─────────────────────────────────────────
   const { tracks, scanPresence, scanning } = useTimelineTracks({
-    targetIndex, targetKey, maxFrames, poll: running,
+    targetIndex, targetKey, maxFrames, poll: running, threshold: matchThreshold,
   });
+  // Every amber frame across people, for the prev / next buttons beside the strip.
+  const amberFrames = useMemo(() => allAmber(tracks.identity), [tracks.identity]);
   const cuts = useMemo(() => {
     const merged = new Set([...(tracks.sceneCuts || []), ...(sceneCuts || [])].filter(Number.isFinite));
     return [...merged].sort((a, b) => a - b);
@@ -784,6 +789,26 @@ export default function Timeline({
           selectedPersonId={pick?.id} selectedInterval={pick?.interval} emptyNote={presenceNote}
           onSeek={setFrame} onJumpCut={setFrame} onPresenceClick={onPresenceClick}
         />
+
+        {/* Identity confidence: where the match was weak, in amber */}
+        {tracks.identity.length > 0 && (
+          <>
+            <LaneHeader title="Identity confidence">
+              <span className="font-mono text-note tabular-nums text-[var(--text-muted)]" data-testid="identity-amber-count">
+                {amberFrames.length ? `${amberFrames.length} amber` : 'all clear'}
+              </span>
+              <button type="button" className={smallBtn} disabled={!amberFrames.length}
+                      data-testid="identity-prev"
+                      onClick={() => { const f = nextAmber(amberFrames, frame, -1); if (f !== null) setFrame(f); }}
+                      title="Jump to the previous frame where the identity match is near the threshold">◂ Prev amber</button>
+              <button type="button" className={smallBtn} disabled={!amberFrames.length}
+                      data-testid="identity-next"
+                      onClick={() => { const f = nextAmber(amberFrames, frame, 1); if (f !== null) setFrame(f); }}
+                      title="Jump to the next frame where the identity match is near the threshold">Next amber ▸</button>
+            </LaneHeader>
+            <IdentityLane view={v} maxFrames={maxFrames} rows={tracks.identity} onSeek={setFrame} />
+          </>
+        )}
 
         {/* Per-segment overrides */}
         <LaneHeader title="Scene overrides">

@@ -1472,6 +1472,7 @@ _SETTINGS_INT_RANGES = {
     "num_swap_steps": (1, 5),
     "trt_contexts": (1, 4),
     "stabilization_workers": (1, 12),
+    "identity_lock_hold": (1, 30),
 }
 _SETTINGS_FLOAT_RANGES = {
     "face_detector_threshold": (0.0, 1.0),
@@ -1481,6 +1482,9 @@ _SETTINGS_FLOAT_RANGES = {
     "codeformer_fidelity": (0.0, 1.0),
     "ultramax_detail_weight": (0.0, 1.0),
     "merger_sharpness_headroom": (0.25, 3.0),
+    "pupil_gaze_retention": (0.0, 1.0),
+    "micro_expression_restore": (0.0, 1.0),
+    "identity_lock_margin": (0.0, 0.5),
 }
 
 
@@ -2998,7 +3002,7 @@ def target_scene_cuts(index: int = None, media_id: str = None):
 
 
 @app.get("/api/target/timeline_tracks")
-def target_timeline_tracks(index: int = None, media_id: str = None):
+def target_timeline_tracks(index: int = None, media_id: str = None, threshold: float = None):
     """Everything the timeline's lanes read for one target, in UI numbering (1-based, absolute).
 
     ``scene_cuts``  first frame of each new shot, from the Face Bank scan (empty until it has run on
@@ -3007,6 +3011,12 @@ def target_timeline_tracks(index: int = None, media_id: str = None):
                     ``sample_stride`` frames; ``presence_source`` says where it came from.
     ``render``      the last run's Stage 1 face-free ranges and Stage 2 planned smart-skip reuse
                     frames, and whether they belong to this video (``video_matches``).
+    ``identity_confidence``  per person, how far inside the match threshold each SAMPLED detection
+                    sat (1 = identical, 0 = at the threshold) and which samples are amber - close to
+                    the threshold, or barely ahead of the next person. The threshold is the caller's
+                    ``threshold`` (the UI sends its current match distance), else the configured one.
+                    Measured against the Face Bank's own cluster means, so it is the same SAMPLED
+                    estimate as ``presence``, not the render's per-frame matcher.
     Nothing is invented: a lane with no data gets an empty list and a source of ``"none"``.
     """
     target_index, resolved_id = _target_index_for_ref(index=index, media_id=media_id)
@@ -3014,8 +3024,17 @@ def target_timeline_tracks(index: int = None, media_id: str = None):
         return JSONResponse(status_code=404, content={"message": "no target"})
     entry = list_files_process[target_index]
     filename = entry.filename
+    try:
+        match_threshold = float(threshold) if threshold is not None else float(
+            getattr(roop_globals.CFG, "max_face_distance", 0.75))
+    except (TypeError, ValueError):
+        match_threshold = 0.75
+    if not (match_threshold > 0.0):
+        match_threshold = 0.75
     out = {"target_media_id": resolved_id, "scene_cuts": [], "presence": [], "presence_source": "none",
-           "sample_stride": 0, "render": _timeline_tracks.render_maps(filename)}
+           "sample_stride": 0, "render": _timeline_tracks.render_maps(filename),
+           "identity_confidence": [], "identity_confidence_source": "none",
+           "identity_threshold": match_threshold}
     try:
         from roop.face_bank import get_face_bank
         bank = get_face_bank()
@@ -3034,6 +3053,19 @@ def target_timeline_tracks(index: int = None, media_id: str = None):
                 })
             if out["presence"]:
                 out["presence_source"] = "face_bank_sampled"
+            from roop import identity_lock as _identity_lock
+            for rank, ch in enumerate(getattr(bank, "characters", []) or []):
+                scores = ch.get("frame_scores") or []
+                if not scores:
+                    continue
+                lane = _identity_lock.confidence_lane(
+                    [(s[0], s[1], s[2] if len(s) > 2 else None) for s in scores], match_threshold)
+                if lane["points"]:
+                    out["identity_confidence"].append({
+                        "person_id": ch.get("person_id"),
+                        "name": ch.get("name") or f"Actor {rank + 1}", **lane})
+            if out["identity_confidence"]:
+                out["identity_confidence_source"] = "face_bank_sampled"
     except Exception as exc:
         _swallowed("api.py:target_timeline_tracks", exc, "timeline tracks query error")
     return out
@@ -4680,6 +4712,39 @@ def _apply_eye_restore_settings(payload):
         setattr(roop_globals, key, value)
 
 
+def _apply_stage11_settings(payload, preview_frame=None):
+    """Stage 11 "Expression & Gaze Fidelity", the identity lock and the per-clip lists, onto roop.globals.
+
+    Same reasoning as _apply_eye_restore_settings: /api/preview and /api/swap must apply these
+    identically or the preview stops predicting the render. The two LISTS (identity pins, roto
+    zones) are per clip, not settings: they arrive with the request and are CLEARED by any request
+    that does not carry them, so a zone drawn for one clip can never leak into the next render.
+    `preview_frame` is the UI frame /api/preview is drawing (a preview calls process_frame with no
+    frame index), None for a render, whose frame base is set from the clip's start frame.
+    """
+    from roop import identity_lock as _il
+    from roop import roto_polygons as _roto
+    cfg = roop_globals.CFG
+
+    def _num(key, default, lo, hi, cast=float):
+        try:
+            v = cast(payload.get(key, getattr(cfg, key, default)))
+        except (TypeError, ValueError):
+            v = default
+        return min(hi, max(lo, v))
+
+    roop_globals.pupil_gaze_retention = _num("pupil_gaze_retention", 0.0, 0.0, 1.0)
+    roop_globals.micro_expression_restore = _num("micro_expression_restore", 0.0, 0.0, 1.0)
+    roop_globals.inner_mouth_preserve = bool(payload.get(
+        "inner_mouth_preserve", getattr(cfg, "inner_mouth_preserve", False)))
+    roop_globals.identity_lock = bool(payload.get("identity_lock", getattr(cfg, "identity_lock", False)))
+    roop_globals.identity_lock_margin = _num("identity_lock_margin", 0.08, 0.0, 0.5)
+    roop_globals.identity_lock_hold = _num("identity_lock_hold", 3, 1, 30, int)
+    roop_globals.identity_pins = _il.sanitize_pins(payload.get("identity_pins"))
+    roop_globals.roto_polygons = _roto.sanitize(payload.get("roto_polygons"))
+    roop_globals.roto_preview_frame = None if preview_frame is None else int(preview_frame)
+
+
 def _apply_surgical_settings(payload):
     """Mouth-aperture restore + XSeg occlusion governance onto roop.globals.
 
@@ -4954,6 +5019,7 @@ def preview(payload: dict = Body(...)):
         roop_globals.detector_scale_pyramid = payload.get("detector_scale_pyramid", getattr(roop_globals.CFG, "detector_scale_pyramid", "auto"))
         _apply_merger_settings(payload)
         _apply_eye_restore_settings(payload)
+        _apply_stage11_settings(payload, preview_frame=frame)
         _apply_surgical_settings(payload)
         _apply_parser_region_settings(payload)
         _apply_enhancer_settings(payload)
@@ -5003,6 +5069,7 @@ def preview(payload: dict = Body(...)):
         faces_list = []
         person_ids = []
         kps_list = []
+        anchors_list = []
         pose_list = []
         try:
             from roop.face_util import solve_pose_5pt
@@ -5016,6 +5083,11 @@ def preview(payload: dict = Body(...)):
                     k = f.get("kps") if isinstance(f, dict) else getattr(f, "kps", None)
                     kps = np.asarray(k).astype(float).tolist() if k is not None else None
                     kps_list.append(kps)
+                    # (nose, chin) a roto zone is pinned to - the SAME function the render
+                    # recomputes per frame, so a pin's reference and its tracking agree.
+                    from roop import roto_polygons as _roto_anchors
+                    _anc = _roto_anchors.face_anchors(f)
+                    anchors_list.append([_anc[0].tolist(), _anc[1].tolist()] if _anc else None)
                     # Head pose for the debug overlay.
                     pose = solve_pose_5pt(k) if k is not None else None
                     pose_list.append([round(float(v), 1) for v in pose] if pose is not None else None)
@@ -5031,7 +5103,7 @@ def preview(payload: dict = Body(...)):
                 "image": _bgr_to_preview_dataurl(current_frame),
                 "faces": faces_list,
                 "person_ids": person_ids,
-                "kps": kps_list,
+                "kps": kps_list, "anchors": anchors_list,
                 "pose": pose_list,
                 "face_index_order": _TARGET_FACE_INDEX_ORDER,
                 **echo,
@@ -5047,7 +5119,7 @@ def preview(payload: dict = Body(...)):
             }
 
         if not fake or len(roop_globals.INPUT_FACESETS) < 1:
-            return {"image": _bgr_to_preview_dataurl(current_frame), "faces": faces_list, "person_ids": person_ids, "kps": kps_list, "pose": pose_list, "face_index_order": _TARGET_FACE_INDEX_ORDER, **echo, **sar_fields, "target_index": idx, "target_media_id": media_id}
+            return {"image": _bgr_to_preview_dataurl(current_frame), "faces": faces_list, "person_ids": person_ids, "kps": kps_list, "anchors": anchors_list, "pose": pose_list, "face_index_order": _TARGET_FACE_INDEX_ORDER, **echo, **sar_fields, "target_index": idx, "target_media_id": media_id}
 
         try:
             from roop.core import live_swap, get_processing_plugins
@@ -5095,8 +5167,8 @@ def preview(payload: dict = Body(...)):
                           if audit_after[key] - audit_before.get(key, 0)}
             print(f"[Preview] request={processing_request['request_id']} swap_audit={swap_audit}", flush=True)
             if swapped is None:
-                return {"image": _bgr_to_preview_dataurl(current_frame), "faces": faces_list, "person_ids": person_ids, "kps": kps_list, "pose": pose_list, "face_index_order": _TARGET_FACE_INDEX_ORDER, **echo, **sar_fields, "swap_audit": swap_audit, "target_index": idx, "target_media_id": media_id}
-            return {"image": _bgr_to_preview_dataurl(swapped), "faces": faces_list, "person_ids": person_ids, "kps": kps_list, "pose": pose_list, "face_index_order": _TARGET_FACE_INDEX_ORDER, **echo, **sar_fields, "swap_audit": swap_audit, "target_index": idx, "target_media_id": media_id}
+                return {"image": _bgr_to_preview_dataurl(current_frame), "faces": faces_list, "person_ids": person_ids, "kps": kps_list, "anchors": anchors_list, "pose": pose_list, "face_index_order": _TARGET_FACE_INDEX_ORDER, **echo, **sar_fields, "swap_audit": swap_audit, "target_index": idx, "target_media_id": media_id}
+            return {"image": _bgr_to_preview_dataurl(swapped), "faces": faces_list, "person_ids": person_ids, "kps": kps_list, "anchors": anchors_list, "pose": pose_list, "face_index_order": _TARGET_FACE_INDEX_ORDER, **echo, **sar_fields, "swap_audit": swap_audit, "target_index": idx, "target_media_id": media_id}
         except Exception:
             traceback.print_exc()
             return JSONResponse(status_code=500, content={
@@ -5104,7 +5176,7 @@ def preview(payload: dict = Body(...)):
                 "error": "swap failed",
                 "faces": faces_list,
                 "person_ids": person_ids,
-                "kps": kps_list,
+                "kps": kps_list, "anchors": anchors_list,
                 "pose": pose_list,
                 "face_index_order": _TARGET_FACE_INDEX_ORDER,
                 **sar_fields,
@@ -5506,6 +5578,7 @@ def _run_swap(payload):
         roop_globals.temporal_detection = bool(payload.get("temporal_detection", getattr(roop_globals.CFG, "temporal_detection", False)))
         _apply_merger_settings(payload)
         _apply_eye_restore_settings(payload)
+        _apply_stage11_settings(payload)
         _apply_surgical_settings(payload)
         _apply_parser_region_settings(payload)
         _apply_enhancer_settings(payload)

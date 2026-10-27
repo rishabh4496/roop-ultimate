@@ -2172,6 +2172,46 @@ class TrackingMixin:
         track_src = {t['id']: None for t in tracks}
         refused_margin = 0
 
+        # ── User pins (Stage 11) ────────────────────────────────────────────
+        # A pin names a box on a frame and the source that person must get. The pre-pass track
+        # passing through that box is bound to that source BEFORE any automatic gate runs - the
+        # absolute, margin and bystander gates exist to estimate exactly what the user has just
+        # said - and registered with the person so the concurrency gate still refuses a second
+        # track for the same person on the same frames. No `person_anchor` is set from a pin: the
+        # margin gate measures against an embedding distance, and a pin has none.
+        self._pinned_tracks = {}
+        self._pin_report = {'pins': 0, 'bound': 0, 'unresolved': 0}
+        _pins = list(getattr(roop.globals, 'identity_pins', None) or [])
+        if _pins:
+            from roop import identity_lock as _il
+            _base = int(getattr(roop.globals, 'roto_frame_base', 1) or 1)
+            _bound, _unresolved = _il.resolve_pin_tracks(
+                _pins, per_frame or {}, to_key=lambda ui: ui - _base)
+            _src_group = {}
+            for _g in persons:
+                _m = self._resolve_target_person_source(_g, rank[_g])
+                if _m is not None and _m != -1:
+                    _src_group.setdefault(_m, _g)
+            for _tid, _pin in _bound.items():
+                _g = _src_group.get(_pin['source_index'])
+                if _g is None or _tid not in track_map:
+                    _unresolved.append(_pin)
+                    continue
+                _t = track_map[_tid]
+                track_src[_tid] = _pin['source_index']
+                self._pinned_tracks[_tid] = _pin
+                person_owner.setdefault(_g, _tid)
+                _tf = self._track_frames(_t, frames_of)
+                if _tf is not None:
+                    person_assigned_frames[_g].update(_tf)
+                person_assigned_spans[_g].append(
+                    (int(_t.get('first_seen', 0)), int(_t.get('last_seen', 0))))
+            self._pin_report = {'pins': len(_pins), 'bound': len(self._pinned_tracks),
+                                'unresolved': len(_unresolved)}
+            print(f"[Pins] {len(_pins)} identity pin(s): {len(self._pinned_tracks)} track(s) bound, "
+                  f"{len(_unresolved)} unresolved (no track at the pinned box, a conflicting pin, "
+                  f"or a source no selected person maps to).", flush=True)
+
         for d, g, tid in candidates:
             if track_src[tid] is not None:
                 continue

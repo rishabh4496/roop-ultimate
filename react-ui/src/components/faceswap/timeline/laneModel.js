@@ -217,6 +217,23 @@ export function presenceRows(people, maxFrames) {
   }));
 }
 
+/**
+ * The identity-confidence rows the strip draws, one per person, keyed like the presence rows so the two
+ * lanes agree on whose colour is whose. `points` is [[frame, confidence, amber], ...] in UI frames and
+ * `amber` the frames worth a look; both are passed through as the backend decided them.
+ */
+export function identityRows(lanes) {
+  return (lanes || []).map((l, i) => ({
+    id: String(l.person_id ?? l.id ?? i),
+    name: l.name || `Person ${i + 1}`,
+    rank: i,
+    color: personColor(i),
+    points: (l.points || []).filter((p) => Array.isArray(p) && Number.isFinite(Number(p[0]))),
+    amber: (l.amber || []).map(Number).filter(Number.isFinite),
+    threshold: Number(l.threshold) || 0,
+  }));
+}
+
 /** The row/interval under a frame in a given row, or null. */
 export function presenceHit(row, frame) {
   if (!row) return null;

@@ -100,6 +100,15 @@ class FaceBank:
         unique_labels = sorted(set(cluster_labels))
         characters = []
 
+        # Every cluster's mean first: a sample's runner-up (the number the timeline's identity
+        # confidence strip needs) is the NEAREST OTHER cluster's mean, which cannot be known until
+        # all of them exist.
+        cluster_means: Dict[Any, Any] = {}
+        for c_id in unique_labels:
+            e = np.asarray([collected_faces[i]['embedding']
+                            for i, lbl in enumerate(cluster_labels) if lbl == c_id], dtype=np.float32)
+            cluster_means[c_id] = normalize_embedding(np.mean(e, axis=0))
+
         for c_id in unique_labels:
             indices = [i for i, lbl in enumerate(cluster_labels) if lbl == c_id]
             members = [collected_faces[i] for i in indices]
@@ -108,6 +117,17 @@ class FaceBank:
             embs = np.asarray([m['embedding'] for m in members], dtype=np.float32)
             mean_raw = np.mean(embs, axis=0)
             mean_norm = normalize_embedding(mean_raw)
+
+            # Per sampled detection: [frame, distance to this person's mean, distance to the nearest
+            # OTHER person's mean | None]. SAMPLED, like `frames` - one look every `stride` frames.
+            frame_scores = []
+            if mean_norm is not None:
+                others = [v for k, v in cluster_means.items() if k != c_id and v is not None]
+                for m in members:
+                    own = compute_cosine_distance(m['embedding'], mean_norm)
+                    runner = min((compute_cosine_distance(m['embedding'], v) for v in others), default=None)
+                    frame_scores.append([int(m['frame_idx']), float(own),
+                                         None if runner is None else float(runner)])
 
             # Sort by quality: low off-axis + high detection score
             members.sort(key=lambda m: (m['off_axis'], -m['det_score']))
@@ -136,6 +156,7 @@ class FaceBank:
                 # Every sampled frame this person was detected in (0-based), for the timeline's
                 # presence lane. Sampled, not exhaustive: see roop.timeline_tracks.presence_intervals.
                 'frames': sorted({int(m['frame_idx']) for m in members}),
+                'frame_scores': frame_scores,
                 'off_axis': float(best_member['off_axis']),
                 'det_score': float(best_member['det_score']),
                 'mean_embedding': mean_norm.tolist() if mean_norm is not None else [],

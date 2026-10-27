@@ -112,6 +112,9 @@ class BatchProcessingMixin:
         # The pre-pass's 1-euro filter states its cutoffs in Hz, so it needs the clip's frame rate too.
         self._video_fps = fps
         self._lipsync_frame_start = frame_start
+        # Stage 11: roto zones and identity pins are keyed by the UI's 1-based absolute frame number.
+        roop.globals.roto_frame_base = int(frame_start or 0) + 1
+        roop.globals.roto_preview_frame = None
         self._lipsync_audio = None
         self._memory_stage_log = []
         self._stage_profiler = None

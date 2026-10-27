@@ -3464,6 +3464,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 pass
         # Fast-path: avoid frame.copy() before face detection & target matching
         self._count_stage3('gpu_frames')
+        self._tls.roto_faces = []
         num_swapped, resimg = self.swap_faces(frame, None, stabilize=True, frame_idx=frame_idx)
         try:
             from roop import watchdog
@@ -3473,7 +3474,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             pass
         if num_swapped > 0:
             self._count_stage3('swapped_frames')
-            temp_frame = resimg
+            temp_frame = self._apply_roto_exclusions(resimg, frame, frame_idx)
             if roop.globals.no_face_action == eNoFaceAction.SKIP_FRAME_IF_DISSIMILAR:
                 if len(self.input_face_datas) > num_swapped:
                     return None
@@ -3527,6 +3528,43 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         ret = self.retry_rotated(frame)
         self._publish_live(ret)
         return ret
+
+    # ── Stage 11 helpers ──────────────────────────────────────────────────────
+    @staticmethod
+    def _roto_frame_ui(frame_idx):
+        """The UI's 1-based absolute frame number: a render maps its 0-based clip-relative index
+        through the clip's start frame, a preview (no index) uses the frame it was asked to draw."""
+        if frame_idx is not None:
+            return int(frame_idx) + int(getattr(roop.globals, 'roto_frame_base', 1) or 1)
+        return getattr(roop.globals, 'roto_preview_frame', None)
+
+    def _apply_roto_exclusions(self, result, plate, frame_idx):
+        """Restore the plate inside the user's roto exclusion zones, once per frame."""
+        polys = getattr(roop.globals, 'roto_polygons', None)
+        if not polys:
+            return result
+        try:
+            from roop import roto_polygons
+            faces = list(getattr(self._tls, 'roto_faces', None) or [])
+            return roto_polygons.apply_exclusions(
+                result, plate, polys, self._roto_frame_ui(frame_idx), faces)
+        except Exception as _degrade_error:
+            _swallowed("roop/ProcessMgr.py:roto_exclusions", _degrade_error,
+                       "roto exclusion skipped for this frame")
+            return result
+
+    def _identity_lock(self):
+        """This worker's `TrackLock`, or None when the lock is off. Rebuilt if the settings changed."""
+        if not getattr(roop.globals, 'identity_lock', False):
+            return None
+        from roop import identity_lock as _il
+        cfg = _il.LockConfig(
+            margin=float(getattr(roop.globals, 'identity_lock_margin', 0.08)),
+            hold=int(getattr(roop.globals, 'identity_lock_hold', 3)))
+        bank = getattr(self, '_identity_lock_bank', None)
+        if bank is None or bank.cfg != cfg:
+            bank = self._identity_lock_bank = _il.LockBank(cfg)
+        return bank.lock()
 
     def retry_rotated(self, frame):
         # `swap_faces` records the faces found by the initial detector pass in
@@ -4404,6 +4442,12 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                                 # the frames they touch and un-vetoes them when
                                 # they part — which is the reported flicker.
                                 pass
+                            elif tid is not None and tid in (getattr(self, '_pinned_tracks', None) or {}):
+                                # The user pinned THIS track to THIS source (Stage 11). Their word is
+                                # the ground truth the relative and absolute tests below are trying to
+                                # estimate, so neither may overrule it. "Source already used this frame"
+                                # above still applies: a pin cannot put one source on two faces.
+                                pass
                             elif (multi_person and d_own is not None
                                     and d_own > _ada.scale(_TRACK_VETO_DIST, threshold)
                                     and not (d_other is not None and d_own < d_other)):
@@ -4438,6 +4482,31 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                                     and d_other + _ada.scale(_TRACK_VETO_MARGIN, threshold) < d_own):
                                 veto = f'another person fits better ({d_other:.2f} vs {d_own:.2f})'
                                 veto_kind = VETO_OTHER_FITS
+                            # Stage 11 identity lock (roop/identity_lock.py): the vetoes above are
+                            # memoryless, one noisy embedding per frame, so a three-frame crossing
+                            # where the crop is half the neighbour strips the swap off a person who
+                            # never changed. The lock feeds EVERY frame of the track through a small
+                            # state machine (a clean frame is evidence too) and turns a short, weak
+                            # challenge into a hold. Off by default; preview has no frame order.
+                            _lock = (self._identity_lock()
+                                     if (tid is not None and frame_idx is not None) else None)
+                            if _lock is not None:
+                                _is_identity_veto = veto_kind in (VETO_OTHER_FITS, VETO_FAR_FROM_OWN,
+                                                                  VETO_SINGLE_ABS)
+                                _excess = 0.0
+                                if _is_identity_veto and d_own is not None:
+                                    if veto_kind == VETO_OTHER_FITS and d_other is not None:
+                                        _excess = (d_own - d_other) - _ada.scale(_TRACK_VETO_MARGIN, threshold)
+                                    elif veto_kind == VETO_FAR_FROM_OWN:
+                                        _excess = d_own - _ada.scale(_TRACK_VETO_DIST, threshold)
+                                    elif veto_kind == VETO_SINGLE_ABS:
+                                        _excess = d_own - _ada.scale(_TRACK_VETO_SINGLE, threshold)
+                                _verdict = _lock.update(tid, frame_idx, face.bbox, _is_identity_veto,
+                                                        max(0.0, _excess))
+                                if _is_identity_veto and _verdict.hold:
+                                    _audit_hit('identity lock held a veto')
+                                    veto = None
+                                    veto_kind = None
                             if veto:
                                 # Remember which person the track pointed to
                                 # BEFORE clearing src_index, so the per-frame
@@ -5525,6 +5594,14 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         # lost increment under thread races is harmless for a coarse average.
         self.total_swaps += 1
 
+        # Stage 11: where this face's nose and chin are, for roto zones pinned to a face. Taken
+        # BEFORE autorotate rebinds the frame, so it is in the coordinates the zones were drawn in.
+        if getattr(roop.globals, 'roto_polygons', None) and getattr(self._tls, 'roto_faces', None) is not None:
+            from roop import roto_polygons as _roto
+            _anc = _roto.face_anchors(target_face)
+            if _anc is not None:
+                self._tls.roto_faces.append((face_index, _anc))
+
         # Capture full-frame dimensions before any rotation rebind.
         # 'frame' may be reassigned to a smaller rotcutframe below when
         # autorotate_faces is active.  mask_ref_kps are always in the
@@ -6399,6 +6476,27 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                             _img_mask, target_face.kps, self._cur_stab_t(),
                             guide=aligned_img,
                             track_id=self._temporal_track_id(target_face))
+                # Stage 11 inclusion zones: where the user has drawn "swap here", the occluder mask
+                # (1 = restore the plate) is cancelled before it is composited. Frame-space geometry
+                # warped into this crop by the same affine the swap used; skipped under autorotate,
+                # where the frame the zone was drawn on is not the frame this crop came from.
+                if (_img_mask is not None and rotation_action is None
+                        and getattr(roop.globals, 'roto_polygons', None)):
+                    try:
+                        from roop import roto_polygons as _roto
+                        _inc = _roto.inclusion_for_crop(
+                            roop.globals.roto_polygons, (orig_fh, orig_fw), aligned_img.shape[:2], M,
+                            self._roto_frame_ui(getattr(self._tls, 'frame_idx', None)),
+                            faces=[a for a in (getattr(self._tls, 'roto_faces', None) or [])
+                                   if a[0] == face_index] or None)
+                        if _inc is not None:
+                            _im = np.asarray(_img_mask, dtype=np.float32)
+                            if _inc.shape != _im.shape[:2]:
+                                _inc = cv2.resize(_inc, (_im.shape[1], _im.shape[0]), interpolation=cv2.INTER_LINEAR)
+                            _img_mask = _im * (1.0 - (_inc if _im.ndim == 2 else _inc[:, :, None]))
+                    except Exception as _degrade_error:
+                        _swallowed("roop/ProcessMgr.py:roto_inclusion", _degrade_error,
+                                   "inclusion zone skipped for this face")
                 # The mask calls above deliberately returned the raw targets.
                 # Composite exactly once per target, after optional temporal
                 # filtering, so no quality path observes the pre-filter mask.
@@ -7240,6 +7338,23 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     mask_offsets[5], yaw=_hy, pitch=_hp, region=region,
                     strength=_mouth_strength)
 
+        # Stage 11 Expression & Gaze Fidelity (roop/expression_fidelity.py). Same slot and the same
+        # (result, plate, target_face) as the eye restore above, so `result`/`plate` are in the
+        # coordinates the keypoints are in even under autorotate. Both are bit-exact no-ops at 0.
+        _pgr = float(getattr(roop.globals, 'pupil_gaze_retention', 0.0) or 0.0)
+        _mer = float(getattr(roop.globals, 'micro_expression_restore', 0.0) or 0.0)
+        if _pgr > 0.0 or _mer > 0.0:
+            try:
+                from roop import expression_fidelity as _ef
+                _hy, _hp = _head_angles()
+                _kps = getattr(target_face, 'kps', None)
+                if _pgr > 0.0:
+                    result = _ef.retain_iris_pupil(result, plate, _kps, _pgr, yaw=_hy, pitch=_hp, region=region)
+                if _mer > 0.0:
+                    result = _ef.restore_micro_expression(result, plate, _kps, _mer, yaw=_hy, pitch=_hp, region=region)
+            except Exception as e:
+                bar_write(f"[ProcessMgr] expression fidelity failed: {e}")
+
         # ── Lip-sync (post-composite) ──────────────────────────────────────────
         # Same slot as restore_original_mouth/apply_eyes_area: full-frame space,
         # after paste-back, so the generated mouth has the final composited
@@ -7289,10 +7404,15 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             and float(_expression_plan.get('mouth_strength', 0.0) or 0.0) > 0.0)
         if (not self.options.restore_original_mouth and not lipsync_wins
                 and not _expression_mouth_active):
-            if getattr(roop.globals, 'oral_cavity_restore', True):
+            _oral = bool(getattr(roop.globals, 'oral_cavity_restore', True))
+            _force_mouth = bool(getattr(roop.globals, 'inner_mouth_preserve', False))
+            if _oral or _force_mouth:
                 from roop.oral_cavity import reconstruct_inner_mouth_geometry
+                # `repair=_oral`: with the automatic repair OFF, the opt-in wide-mouth mode must not
+                # smuggle it back in on ordinary frames.
                 result = reconstruct_inner_mouth_geometry(result, plate, target_face,
-                                                         region=region)
+                                                         region=region, force_wide=_force_mouth,
+                                                         repair=_oral)
             else:
                 result = self.preserve_visible_teeth(result, plate, target_face,
                                                       region=region)

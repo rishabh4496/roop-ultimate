@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { getJSON, postJSON, API } from '../../../api';
-import { mergeIntervals, presenceRows } from './laneModel';
+import { mergeIntervals, presenceRows, identityRows } from './laneModel';
 
 // Everything the lanes read from the backend, in one place, each with its own cache and its own
 // "no data" answer. The lanes never invent data: an empty answer draws an empty lane with a line
@@ -9,6 +9,7 @@ import { mergeIntervals, presenceRows } from './laneModel';
 const EMPTY_TRACKS = Object.freeze({
   loaded: false, sceneCuts: [], presence: [], presenceSource: 'none', sampleStride: 0,
   faceFree: [], reuse: [], renderRange: null, renderVideoMatches: false,
+  identity: [], identitySource: 'none', identityThreshold: 0,
 });
 
 /**
@@ -17,7 +18,7 @@ const EMPTY_TRACKS = Object.freeze({
  * `poll` makes it re-ask every few seconds (a run is in flight, so the maps are filling in);
  * otherwise it asks once per target and again on `refresh()`.
  */
-export function useTimelineTracks({ targetIndex, targetKey, maxFrames, poll = false }) {
+export function useTimelineTracks({ targetIndex, targetKey, maxFrames, poll = false, threshold = null }) {
   const [tracks, setTracks] = useState(EMPTY_TRACKS);
   const [scanning, setScanning] = useState(false);
   const aliveRef = useRef(true);
@@ -26,7 +27,10 @@ export function useTimelineTracks({ targetIndex, targetKey, maxFrames, poll = fa
   const load = useCallback(async () => {
     if (targetIndex === null || targetIndex === undefined || targetIndex < 0 || maxFrames <= 1) return;
     try {
-      const res = await getJSON(`/api/target/timeline_tracks?index=${targetIndex}`);
+      // The strip is measured against the match threshold the user has set, so moving that slider
+      // moves what is amber (the backend clamps a nonsense value back to the configured one).
+      const q = Number.isFinite(Number(threshold)) && Number(threshold) > 0 ? `&threshold=${Number(threshold)}` : '';
+      const res = await getJSON(`/api/target/timeline_tracks?index=${targetIndex}${q}`);
       if (!aliveRef.current) return;
       setTracks({
         loaded: true,
@@ -38,12 +42,15 @@ export function useTimelineTracks({ targetIndex, targetKey, maxFrames, poll = fa
         reuse: mergeIntervals(res.render?.reuse || [], 1, maxFrames),
         renderRange: res.render?.range || null,
         renderVideoMatches: !!res.render?.video_matches,
+        identity: identityRows(res.identity_confidence),
+        identitySource: res.identity_confidence_source || 'none',
+        identityThreshold: Number(res.identity_threshold) || 0,
       });
     } catch {
       // The lanes are decoration over the clip: a failed fetch leaves what was there.
       if (aliveRef.current) setTracks((t) => (t.loaded ? t : { ...EMPTY_TRACKS, loaded: true }));
     }
-  }, [targetIndex, maxFrames]);
+  }, [targetIndex, maxFrames, threshold]);
 
   useEffect(() => { setTracks(EMPTY_TRACKS); load(); }, [targetKey, load]);
   useEffect(() => {

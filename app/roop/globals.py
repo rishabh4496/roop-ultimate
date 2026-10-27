@@ -221,6 +221,19 @@ expression_restore_region = 'all'
 # direction AND lid), independent of the strength above. None = the eyes follow
 # `expression_restore_strength` per the region, i.e. the pre-split behaviour.
 expression_gaze_follow = None
+# Stage 11 (roop/expression_fidelity.py, roop/identity_lock.py, roop/roto_polygons.py). The scalar
+# controls default to a bit-exact no-op; the two per-clip lists (user pins, roto zones) arrive with
+# the request and are cleared whenever a request does not carry them.
+pupil_gaze_retention = 0.0
+micro_expression_restore = 0.0
+inner_mouth_preserve = False
+identity_lock = False
+identity_lock_margin = 0.08
+identity_lock_hold = 3
+identity_pins = []
+roto_polygons = []
+roto_frame_base = 1          # UI frame number of pipeline frame 0 (frame_start + 1)
+roto_preview_frame = None    # UI frame number of the frame /api/preview is drawing
 # Blink sync: pin the swapped lids to the target's measured opening with
 # LivePortrait's eye retargeting MLP. Runs the stage even at strength 0.
 expression_blink_sync = False

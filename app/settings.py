@@ -1303,6 +1303,17 @@ class Settings:
         # Blink sync: pin the swapped lids to the target's measured opening
         # (LivePortrait eye retargeting). Loads ~115 MB of models on first use.
         self.expression_blink_sync = self.default_get(data, 'expression_blink_sync', False)
+        # Stage 11 "Expression & Gaze Fidelity" (roop/expression_fidelity.py): all three are bit-exact
+        # no-ops at their defaults. Not default-on: the iris and crease passes are calibrated on
+        # synthetic faces only, and the wide-mouth mode replaces the swap's teeth (see oral_cavity).
+        self.pupil_gaze_retention = self.default_get(data, 'pupil_gaze_retention', 0.0)
+        self.micro_expression_restore = self.default_get(data, 'micro_expression_restore', 0.0)
+        self.inner_mouth_preserve = self.default_get(data, 'inner_mouth_preserve', False)
+        # Stage 11 identity crossover lock (roop/identity_lock.py): hysteresis over the per-frame
+        # source veto. Off until A/B'd on a crossing clip (AGENTS.md: measure before a gate defaults on).
+        self.identity_lock = self.default_get(data, 'identity_lock', False)
+        self.identity_lock_margin = self.default_get(data, 'identity_lock_margin', 0.08)
+        self.identity_lock_hold = self.default_get(data, 'identity_lock_hold', 3)
         self.rescue_small_faces = self.default_get(data, 'rescue_small_faces', True)
         self.detector_engine = self.default_get(data, 'detector_engine', 'retinaface_r50')
         self.detector_scale_pyramid = self.default_get(data, 'detector_scale_pyramid', 'auto')
@@ -1641,6 +1652,12 @@ class Settings:
             'expression_restore_region': self.expression_restore_region,
             'expression_gaze_follow': self.expression_gaze_follow,
             'expression_blink_sync': self.expression_blink_sync,
+            'pupil_gaze_retention': self.pupil_gaze_retention,
+            'micro_expression_restore': self.micro_expression_restore,
+            'inner_mouth_preserve': self.inner_mouth_preserve,
+            'identity_lock': self.identity_lock,
+            'identity_lock_margin': self.identity_lock_margin,
+            'identity_lock_hold': self.identity_lock_hold,
             'rescue_small_faces': self.rescue_small_faces,
             'detector_engine': self.detector_engine,
             'detector_scale_pyramid': self.detector_scale_pyramid,

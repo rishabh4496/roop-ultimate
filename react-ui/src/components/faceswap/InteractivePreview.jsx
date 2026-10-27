@@ -7,6 +7,8 @@ import PreviewCanvas from './PreviewCanvas';
 import CompareSlider from './CompareSlider';
 import FrameUnavailable from './FrameUnavailable';
 import { brushSample } from './maskBrush';
+import RotoLayer, { RotoToolbar } from './RotoLayer';
+import { trackLabel } from './identityLock';
 import FastCanvasPlayer from '../player/FastCanvasPlayer';
 import RadarNavigator from './RadarNavigator';
 import SkinToneScope from './SkinToneScope';
@@ -44,6 +46,17 @@ export default function InteractivePreview({
   scrubbing = false,
   onMaskChange,
   maskApplied = false,
+  // Stage 11: vector roto zones (Pen tool) and identity pins. `faceAnchors` is
+  // [{ source_index, nose, chin, bbox }] for the faces on THIS preview frame.
+  rotoZones = [],
+  onRotoZones,
+  rotoSelectedId = null,
+  onRotoSelect,
+  faceAnchors = [],
+  faceSources = [],
+  pins = [],
+  onPinIdentity,
+  onUnpinIdentity,
   playbackSource = null,
   frameUnavailable = false,
   onRetryFrame,
@@ -110,6 +123,16 @@ export default function InteractivePreview({
   const [brushFeather, setBrushFeather] = useState(0.35); // 0.0 (hard) .. 1.0 (soft)
   const [, setIsDrawingMask] = useState(false);
   const brushCursorRef = useRef(null);
+
+  // Stage 11: the Pen tool (P). Mutually exclusive with the Mask Brush: both want the left button.
+  const [rotoActive, setRotoActive] = useState(false);
+  const [rotoNewMode, setRotoNewMode] = useState('exclude');
+  const toggleBrush = useCallback(() => {
+    setMaskBrushActive((b) => { if (!b) setRotoActive(false); return !b; });
+  }, []);
+  const toggleRoto = useCallback(() => {
+    setRotoActive((a) => { if (!a) setMaskBrushActive(false); return !a; });
+  }, []);
 
   // Feature: Mini RGB Parade / Skin-Tone Vectorscope
   const [scopeActive, setScopeActive] = useState(false);
@@ -259,7 +282,7 @@ export default function InteractivePreview({
 
   // Double Click toggles Fit <-> 2.5x
   const handleDoubleClick = useCallback((e) => {
-    if (maskBrushActive) return;
+    if (maskBrushActive || rotoActive) return;
     stopInertia();
     setLockTargetFace(false);
     if (zoomRef.current > 1.05) {
@@ -272,7 +295,7 @@ export default function InteractivePreview({
       );
       updateViewport(z, p, true);
     }
-  }, [maskBrushActive, stopInertia, handlePresetFit, updateViewport]);
+  }, [maskBrushActive, rotoActive, stopInertia, handlePresetFit, updateViewport]);
 
   // Imperative Slider Wipe Manipulation
   const handleSliderMove = useCallback((clientX, clientY) => {
@@ -484,6 +507,7 @@ export default function InteractivePreview({
           return;
         }
         stopInertia();
+        if (rotoActive) return;           // the Pen tool's layer handles its own pointer
         if (maskBrushActive) {
           setIsDrawingMask(true);
           drawMaskStroke(event, true);
@@ -491,6 +515,9 @@ export default function InteractivePreview({
       },
 
       onDrag: ({ delta: [dx, dy], velocity: [vx, vy], direction: [dirX, dirY], event, down }) => {
+        // While the Pen is active only a middle-button or Space drag may pan; a plain left drag is
+        // the tool's, and must not also move the compare divider underneath it.
+        if (rotoActive && !(event.button === 1 || event.buttons === 4 || isSpaceDownRef.current)) return;
         if (maskBrushActive && down) {
           drawMaskStroke(event, false);
           return;
@@ -673,7 +700,11 @@ export default function InteractivePreview({
         setMagnifierActive((m) => !m);
       } else if (e.key.toLowerCase() === 'b' && !splitMode) {
         // Mask Brush (B)
-        setMaskBrushActive((b) => !b);
+        toggleBrush();
+      } else if (e.key.toLowerCase() === 'p' && !splitMode) {
+        // Pen tool: vector exclusion / inclusion zones (P)
+        e.preventDefault();
+        toggleRoto();
       } else if (e.key.toLowerCase() === 'x' && compare && !splitMode) {
         setCompareDir((d) => (d === 'vertical' ? 'horizontal' : 'vertical'));
       } else if (e.key.toLowerCase() === 'w' && compare && !splitMode) {
@@ -700,7 +731,7 @@ export default function InteractivePreview({
     };
   }, [
     compare, compareMode, handlePreset1to1, handlePreset200, handlePreset400,
-    handlePresetFit, maskBrushActive, splitMode, zoomBy,
+    handlePresetFit, maskBrushActive, splitMode, zoomBy, toggleBrush, toggleRoto,
   ]);
 
   useEffect(() => {
@@ -743,6 +774,11 @@ export default function InteractivePreview({
           : info.role === 'swapped' ? 'bg-[var(--accent)]'
             : 'bg-zinc-700';
       const togglable = typeof onToggleExclude === 'function' && info && info.canExclude;
+      // Stage 11: pin this person's identity to the track passing through this box on this frame.
+      const pinSource = Number.isInteger(faceSources[i]) && faceSources[i] >= 0 ? faceSources[i] : null;
+      const pinned = pinSource !== null
+        ? (pins.find((p) => p.source_index === pinSource && p.frame === frame) || null) : null;
+      const pinnable = typeof onPinIdentity === 'function' && pinSource !== null;
       return (
         <div
           key={i}
@@ -768,6 +804,21 @@ export default function InteractivePreview({
               {roleLabel}
             </span>
           )}
+          {pinnable && (
+            <button
+              type="button"
+              data-testid="pin-identity"
+              aria-pressed={!!pinned}
+              className={`absolute left-1 bottom-1 ${pinned ? 'bg-sky-500 text-black' : 'bg-black/80 text-white hover:bg-sky-600'} backdrop-blur text-nano font-bold px-1.5 py-0.5 rounded whitespace-nowrap pointer-events-auto cursor-pointer`}
+              title={pinned
+                ? 'Remove the pin: the renderer goes back to deciding who this is automatically'
+                : `Tell the renderer this person is ${trackLabel(personIds[i] ?? i)} on this frame. The tracker's track through this box is then locked to this person's source and is never re-assigned.`}
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => { e.stopPropagation(); if (pinned) onUnpinIdentity?.(pinned.id); else onPinIdentity(i); }}
+            >
+              {pinned ? `📌 Pinned · ${trackLabel(personIds[i] ?? i)}` : `Pin Identity to ${trackLabel(personIds[i] ?? i)}`}
+            </button>
+          )}
           {togglable && (
             <button
               type="button"
@@ -781,7 +832,8 @@ export default function InteractivePreview({
         </div>
       );
     });
-  }, [faces, imgDim, showBoxes, personIds, selectedFaceIndex, onSelectFace, faceRoles, onToggleExclude]);
+  }, [faces, imgDim, showBoxes, personIds, selectedFaceIndex, onSelectFace, faceRoles, onToggleExclude,
+    faceSources, pins, frame, onPinIdentity, onUnpinIdentity]);
 
   // ── Landmark Telemetry Debug Overlay ──────────────────────────────────────
   const debugOverlay = useMemo(() => {
@@ -1060,7 +1112,7 @@ export default function InteractivePreview({
         {!splitMode && (
           <button
             type="button"
-            onClick={() => setMaskBrushActive((b) => !b)}
+            onClick={toggleBrush}
             title="Toggle sub-pixel Mask Brush (B)"
             className={`px-2 h-7 rounded-lg text-micro font-bold flex items-center gap-1 transition-colors ${
               maskBrushActive
@@ -1069,6 +1121,24 @@ export default function InteractivePreview({
             }`}
           >
             Mask Brush
+          </button>
+        )}
+
+        {/* Pen tool: vector Bezier / polygon exclusion & inclusion zones */}
+        {!splitMode && onRotoZones && (
+          <button
+            type="button"
+            onClick={toggleRoto}
+            aria-pressed={rotoActive}
+            data-testid="roto-toggle"
+            title="Pen tool (P): draw a Bezier / polygon zone around a microphone, hand, glasses rim or watermark to keep it, or to force the swap inside it"
+            className={`px-2 h-7 rounded-lg text-micro font-bold flex items-center gap-1 transition-colors ${
+              rotoActive
+                ? 'text-rose-300 bg-rose-500/20 border border-rose-400/40 shadow-[0_0_10px_rgba(251,113,133,0.3)]'
+                : 'hud-glass-button text-white/70'
+            }`}
+          >
+            Pen{rotoZones.length ? ` (${rotoZones.length})` : ''}
           </button>
         )}
 
@@ -1175,6 +1245,11 @@ export default function InteractivePreview({
       {maskBrushActive && !splitMode && (
         <span className="rounded-lg bg-pink-500/20 text-pink-300 backdrop-blur-md px-2 py-1 text-nano font-bold uppercase tracking-wider border border-pink-400/30">
           Brush ({brushMode} · {brushSize}px · {Math.round(brushFeather * 100)}% feather)
+        </span>
+      )}
+      {rotoActive && !splitMode && (
+        <span className="rounded-lg bg-rose-500/20 text-rose-300 backdrop-blur-md px-2 py-1 text-nano font-bold uppercase tracking-wider border border-rose-400/30">
+          Pen ({rotoNewMode})
         </span>
       )}
     </div>
@@ -1435,6 +1510,22 @@ export default function InteractivePreview({
         </div>
       )}
 
+      {/* ── Pen tool toolbar ──────────────────────────────────────────────── */}
+      {rotoActive && !splitMode && onRotoZones && (
+        <RotoToolbar
+          zones={rotoZones}
+          selectedId={rotoSelectedId}
+          onSelect={onRotoSelect || (() => {})}
+          onChange={onRotoZones}
+          newMode={rotoNewMode}
+          setNewMode={setRotoNewMode}
+          frame={frame}
+          maxFrames={maxFrames}
+          faces={faceAnchors}
+          onDone={() => setRotoActive(false)}
+        />
+      )}
+
       {/* ── Sub-Pixel Mask Brush Toolbar ───────────────────────────────────── */}
       {maskBrushActive && (
         <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 px-3 py-1.5 rounded-xl bg-black/85 backdrop-blur-md border border-white/15 shadow-2xl">
@@ -1562,6 +1653,22 @@ export default function InteractivePreview({
                 aria-hidden
               />
             </>
+          )}
+
+          {/* Pen tool zones (always drawn; interactive only while the tool is on) */}
+          {imgDim && onRotoZones && (
+            <RotoLayer
+              imgDim={imgDim}
+              zones={rotoZones}
+              onChange={onRotoZones}
+              selectedId={rotoSelectedId}
+              onSelect={onRotoSelect || (() => {})}
+              active={rotoActive && !splitMode}
+              frame={frame}
+              faces={faceAnchors}
+              newMode={rotoNewMode}
+              zoom={zoom}
+            />
           )}
 
           {/* 360 Vector Wipe A/B Slider */}

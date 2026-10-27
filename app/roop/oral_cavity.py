@@ -43,6 +43,11 @@ MOUTH_CORNERS_106 = (52, 61)
 # Mean inner-lip gap, as a fraction of mouth width, above which the mouth is
 # open. Closed lips measure ~0.02-0.05 (landmark noise); the frame above: 0.03.
 OPEN_GAP_RATIO = 0.10
+# Above this the mouth counts as wide open (a shout, a wide vowel): the aperture is over a fifth of
+# the mouth's width. Only `force_wide` reads it. UNCALIBRATED - a starting value, not a measurement;
+# before changing it (or defaulting `inner_mouth_preserve` on) measure the distribution of
+# `_inner_gap_ratio` over real speech frames, as AGENTS.md requires of any gate.
+WIDE_GAP_RATIO = 0.22
 
 
 def _inner_gap_ratio(face):
@@ -217,9 +222,19 @@ def detect_clamped_lip_artifact(swapped_frame: Frame, plate_frame: Frame, face, 
 
 def reconstruct_inner_mouth_geometry(swapped_frame: Frame, plate_frame: Frame, face,
                                      phoneme_energy: float = 0.0, viseme_openness: float = 0.0,
-                                     teeth_sharpness: float = 0.85, parser=None, region=None) -> Frame:
+                                     teeth_sharpness: float = 0.85, parser=None, region=None,
+                                     force_wide: bool = False, repair: bool = True) -> Frame:
     """Reconstruct natural inner-mouth geometry (teeth boundaries, tongue placement, oral depth)
     conditioned on active speech phonemes. Prevents clamped-lip and blurry-teeth artifacts.
+
+    `force_wide` is the opt-in "Inner-mouth & teeth preservation" mode: on a WIDE-open mouth
+    (inner-lip gap >= WIDE_GAP_RATIO of the mouth width, i.e. shouting or a wide vowel) the target's
+    own cavity is restored whether or not the swap broke it. The default stays conditional on a
+    detected artifact because restoring unconditionally was measured to be a regression (see the
+    comment at the artifact gate below); forced mode trades that for keeping the real teeth and
+    tongue sharp on the frames where the plate shows the most of them, and says so in the UI.
+    `repair=False` turns the automatic clamped-lip / blurry-teeth repair off (the caller's
+    `oral_cavity_restore` setting), leaving only the forced wide-mouth restore.
     """
     if swapped_frame is None or plate_frame is None or face is None:
         return swapped_frame
@@ -245,7 +260,13 @@ def reconstruct_inner_mouth_geometry(swapped_frame: Frame, plate_frame: Frame, f
     # mouths, 0 clamped, 0 blurry. The detector below is the one this module
     # was written around; nothing called it. Speech-driven openness (lip-sync)
     # keeps restoring, since there the target mouth is being re-driven.
-    if viseme_openness < 0.20:
+    wide = False
+    if force_wide:
+        gap = _inner_gap_ratio(face)
+        wide = gap is not None and gap >= WIDE_GAP_RATIO
+    if viseme_openness < 0.20 and not wide:
+        if not repair:
+            return swapped_frame        # automatic repair is off and this is not a forced frame
         artifact = detect_clamped_lip_artifact(swapped_frame, plate_frame, face, metrics)
         if not (artifact['clamped_lip'] or artifact['blurry_teeth']):
             return swapped_frame

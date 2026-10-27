@@ -13,6 +13,10 @@ export const LANE_H = { ruler: 26, cache: 4, film: 78, over: 26 };
 export const SCENE_ROW_H = 13;
 export const SCENE_CUT_H = 16;
 export const MAX_PRESENCE_ROWS = 6;
+export const IDENTITY_ROW_H = 9;
+export const MAX_IDENTITY_ROWS = 4;
+export const identityLaneHeight = (rows) => clamp(rows, 1, MAX_IDENTITY_ROWS) * IDENTITY_ROW_H + 2;
+export const IDENTITY_AMBER = '#f59e0b';
 export const sceneLaneHeight = (rows) => SCENE_CUT_H + clamp(rows, 1, MAX_PRESENCE_ROWS) * SCENE_ROW_H + 3;
 
 export const STATE_COLORS = {
@@ -64,6 +68,67 @@ function fitText(ctx, text, maxW) {
     if (ctx.measureText(`${text.slice(0, mid)}…`).width <= maxW) lo = mid; else hi = mid - 1;
   }
   return lo > 0 ? `${text.slice(0, lo)}…` : '';
+}
+
+// ── identity confidence ─────────────────────────────────────────────────────
+
+/**
+ * One thin row per person. Each SAMPLED detection is a cell covering half the gap to its neighbours:
+ * green when the match is comfortably inside the threshold, dimmer when it is fair, AMBER when it sits
+ * near the threshold or barely ahead of the next person. Amber cells get a bright top edge so they stay
+ * visible when the strip is zoomed out far enough that a cell is a single pixel.
+ */
+export function drawIdentityConfidence(ctx, { w, h, theme }, { view, maxFrames, rows, emptyNote }) {
+  const v = normalizeView(view, maxFrames);
+  ctx.font = FONT;
+  ctx.fillStyle = theme.surface;
+  ctx.fillRect(0, 0, w, h);
+  const shown = rows.slice(0, MAX_IDENTITY_ROWS);
+  if (!shown.length) {
+    if (emptyNote) { ctx.fillStyle = theme.muted; ctx.fillText(emptyNote, 8, IDENTITY_ROW_H); }
+    return;
+  }
+  shown.forEach((row, r) => {
+    const y = 1 + r * IDENTITY_ROW_H;
+    const ph = IDENTITY_ROW_H - 2;
+    ctx.fillStyle = r % 2 ? 'rgba(255,255,255,0.02)' : 'rgba(255,255,255,0.04)';
+    ctx.fillRect(0, y - 1, w, IDENTITY_ROW_H);
+    const cells = row.cells;
+    // cells are sorted and non-overlapping: binary-search the first visible one, stop at the last.
+    let lo = 0;
+    let hi = cells.length;
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (cells[mid].end < v.start) lo = mid + 1; else hi = mid; }
+    for (let i = lo; i < cells.length && cells[i].start <= v.end; i++) {
+      const c = cells[i];
+      const x0 = xAtFrame(c.start - 0.5, w, v);
+      const x1 = xAtFrame(c.end + 0.5, w, v);
+      const px0 = Math.max(0, x0);
+      const pw = Math.max(1.5, Math.min(w, x1) - px0);
+      if (c.amber) {
+        ctx.fillStyle = IDENTITY_AMBER;
+        ctx.globalAlpha = 0.95;
+        ctx.fillRect(px0, y, pw, ph);
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = '#fff4d6';
+        ctx.fillRect(px0, y, pw, 1.5);
+      } else {
+        ctx.fillStyle = row.color;
+        // strength reads as opacity: a fair match is visibly fainter than a strong one
+        ctx.globalAlpha = c.tone === 'ok' ? 0.85 : 0.45;
+        ctx.fillRect(px0, y, pw, ph);
+        ctx.globalAlpha = 1;
+      }
+    }
+    const label = fitText(ctx, row.name, 70);
+    if (label) {
+      const lw = ctx.measureText(label).width + 8;
+      ctx.fillStyle = 'rgba(0,0,0,0.62)';
+      roundRect(ctx, 2, y, lw, ph, 3);
+      ctx.fill();
+      ctx.fillStyle = row.color;
+      ctx.fillText(label, 6, y + ph - 1.5);
+    }
+  });
 }
 
 // ── ruler ───────────────────────────────────────────────────────────────────

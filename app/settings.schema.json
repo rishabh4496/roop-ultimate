@@ -1082,6 +1082,30 @@
       "default": false,
       "type": "bool"
     },
+    "pupil_gaze_retention": {
+      "default": 0.0,
+      "type": "float"
+    },
+    "micro_expression_restore": {
+      "default": 0.0,
+      "type": "float"
+    },
+    "inner_mouth_preserve": {
+      "default": false,
+      "type": "bool"
+    },
+    "identity_lock": {
+      "default": false,
+      "type": "bool"
+    },
+    "identity_lock_margin": {
+      "default": 0.08,
+      "type": "float"
+    },
+    "identity_lock_hold": {
+      "default": 3,
+      "type": "int"
+    },
     "rescue_small_faces": {
       "default": true,
       "type": "bool"
