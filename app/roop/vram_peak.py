@@ -49,6 +49,7 @@ class PeakSampler:
         with self._lock:
             self.total_bytes: Optional[int] = None
             self.base_used: Optional[int] = None
+            self.last_used: Optional[int] = None        # the newest sample: what the terminal dashboard calls "allocated"
             self.peak_used: Optional[int] = None
             self.by_stage: Dict[str, int] = {}
             self.samples = 0
@@ -62,6 +63,7 @@ class PeakSampler:
         stage = self._stage_of()
         with self._lock:
             self.samples += 1
+            self.last_used = used
             self.total_bytes = int(total)
             if self.base_used is None:
                 self.base_used = used
@@ -91,6 +93,11 @@ class PeakSampler:
         if t is not None and t is not threading.current_thread():
             t.join(timeout=2.0)
         self._thread = None
+
+    def current_gb(self) -> Optional[float]:
+        """Device-wide used VRAM at the newest sample (GiB), or None before one exists."""
+        with self._lock:
+            return None if self.last_used is None else round(self.last_used / GIB, 3)
 
     def report(self) -> Dict[str, Optional[float]]:
         """GiB, or None when no sample was ever taken (no CUDA device / torch not loaded): never a 0."""

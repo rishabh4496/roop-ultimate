@@ -880,6 +880,13 @@ def _run_one(job):
     with _lock:
         spec = _segment_spec_for(job)
     roop_globals._segment_spec = spec
+    # The terminal dashboard's Swap Profile names the job and its place in the queue (roop/terminal_dashboard.py).
+    with _lock:
+        _queue_ids = [j["id"] for j in _queue["jobs"]]
+    roop_globals._dashboard_job = {
+        "job_id": job["id"],
+        "batch_index": (_queue_ids.index(job["id"]) + 1) if job["id"] in _queue_ids else 1,
+        "batch_count": max(1, len(_queue_ids))}
     if spec is not None:
         _announce_segment(job, spec, "PROCESSING")
     try:
@@ -894,6 +901,7 @@ def _run_one(job):
                 _run_swap(payload)
     finally:
         roop_globals._segment_spec = None
+        roop_globals._dashboard_job = None
 
     if before is not None and _outputs_since:
         try:

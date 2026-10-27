@@ -192,6 +192,41 @@ def _reset_retired() -> None:
         _retire_win.clear()
 
 
+def retired_total() -> int:
+    """Frames the output writer has accepted this Stage 3 (public read for the terminal dashboard)."""
+    return _retired_total()
+
+
+def ops_totals() -> Dict[str, tuple]:
+    """Every `_prof` stage timed while Stage 3 ran: name -> (seconds summed across workers, calls).
+
+    A copy, so a reader can diff two of them. Unlike `_ops_ms` this is not limited to the six HUD columns -
+    the terminal dashboard groups the raw names itself (roop/terminal_dashboard.py LATENCY_COLUMNS)."""
+    with _ops_lock:
+        return {k: (v[0], v[1]) for k, v in _ops.items()}
+
+
+def vram_view() -> Dict[str, Optional[float]]:
+    """Device-wide VRAM (GiB): the newest sample, this render's peak and the card's total; None before a sample."""
+    rep = _vram.report()
+    return {"allocated_gb": _vram.current_gb(), "peak_gb": rep.get("peak_gb"), "total_gb": rep.get("total_gb")}
+
+
+def progress_view() -> Dict[str, Any]:
+    """Live per-stage counters for a reader that must not depend on the web sampler.
+
+    `stage3.done` is NOT written from the frame loop (see the module docstring), so a headless run - the batch runner,
+    `run.py --project --render` - has no `set_main_progress` caller. The dashboard therefore reads the raw counters here:
+    state / done / total / since / ended per stage, and the run's frame total."""
+    with _lock:
+        stages = {n: {"state": s["state"], "done": int(s.get("done") or 0), "total": int(s.get("total") or 0),
+                      "since": s.get("since"), "ended": s.get("ended")} for n, s in _stages.items()}
+        c1 = dict(_counters.get(STAGE_1_SPARSE_PRESCAN) or {})
+        return {"stages": stages, "total_frames": _run.get("total_frames") or 0,
+                "scene_cuts": c1.get("scene_cuts"), "skipped_frames_pct": _skipped_pct(),
+                "smart_skip": _stage3_rates(None, dict(_counters.get(STAGE_3_MAIN_SWAP) or {}), running=False)}
+
+
 def _retired_total() -> int:
     with _retire_lock:
         return _retired

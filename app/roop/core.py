@@ -1601,6 +1601,11 @@ def _clear_terminal_for_new_run() -> None:
     if not _terminal_has_previous_run:
         _terminal_has_previous_run = True
         return
+    # Escape codes belong to terminals. Into a pipe, a CI log or a pytest capture they are noise (and `\x1b[3J` is
+    # not a no-op in every log viewer), so a non-TTY stdout keeps its history untouched.
+    from roop import terminal_dashboard
+    if not terminal_dashboard.stream_is_tty():
+        return
     try:
         if sys.platform == 'win32':
             import ctypes
@@ -1614,6 +1619,35 @@ def _clear_terminal_for_new_run() -> None:
     except Exception as _degrade_error:
         _swallowed("roop/core.py:1307", _degrade_error, "fallback continued")
         pass
+
+
+def _dashboard_begin(path: str, fps, frames, index: int, count: int, is_image: bool = False) -> None:
+    """Start the terminal dashboard for one target (roop/terminal_dashboard.py): the Swap Profile banner, then the
+    four-stage display. The queue stamps the job id / position on `roop.globals._dashboard_job` and a split render's
+    slice on `_segment_spec`. Never raises: a banner is not worth a render."""
+    from roop import terminal_dashboard as dash
+    try:
+        job = dict(getattr(roop.globals, '_dashboard_job', None) or {})
+        spec = getattr(roop.globals, '_segment_spec', None)
+        if spec is not None:
+            from roop import segment_output
+            seconds = ((spec.end_frame - spec.start_frame) / float(fps)) if fps else None
+            job['segment'] = {
+                'group': spec.group, 'index': spec.index, 'count': spec.count, 'start': spec.start_frame,
+                'end': spec.end_frame, 'seconds': round(seconds, 1) if seconds else None,
+                'custody_dir': segment_output.segments_dir(roop.globals.output_path, spec.group)}
+        if count > 1 and not job.get('batch_count'):
+            job['batch_index'], job['batch_count'] = index + 1, count
+        job['label'] = os.path.basename(path)
+        if is_image:
+            job['mode'] = 'image'
+        profile = dash.collect_swap_profile(process_mgr, job, path, fps, frames)
+        job['mode'] = profile['job']['mode']
+        dash.begin_job(job, profile)
+        dash.s1_step('media probe')
+        dash.s1_step('audio stream')
+    except Exception as _degrade_error:
+        _swallowed("roop/core.py:_dashboard_begin", _degrade_error, "terminal dashboard not started for this target")
 
 
 def _warn_single_worker_on_gpu() -> None:
@@ -1732,7 +1766,12 @@ def batch_process(output_method, files:list[ProcessEntry], use_new_method) -> No
                 origimages.append(f.filename)
                 fakeimages.append(f.finalname)
 
-            process_mgr.run_batch(origimages, fakeimages, roop.globals.execution_threads)
+            _dashboard_begin(origimages[0], None, len(origimages), 0, len(origimages), is_image=True)
+            try:
+                process_mgr.run_batch(origimages, fakeimages, roop.globals.execution_threads)
+            finally:
+                from roop import terminal_dashboard as _dash
+                _dash.end_job(ok=bool(roop.globals.processing))
             from roop import synthetic_label
             if synthetic_label.label_enabled():
                 for _out in fakeimages:
@@ -1766,6 +1805,7 @@ def batch_process(output_method, files:list[ProcessEntry], use_new_method) -> No
                 if is_streaming_only == False:
                     update_status(f'Creating {os.path.basename(v.finalname)} with {fps} FPS...')
 
+                _dashboard_begin(v.filename, fps, int(v.endframe - v.startframe), index, len(videofiles))
                 start_processing = time()
                 _swaps_before = getattr(process_mgr, 'total_swaps', 0)
                 _has_per_frame_masks = bool(getattr(roop.globals, 'mask_per_frame', {}))
@@ -1904,6 +1944,10 @@ def batch_process(output_method, files:list[ProcessEntry], use_new_method) -> No
                             expected_frames=int(v.endframe - v.startframe),
                             skip_audio=skip_audio, stopped=stopped)
                         roop.globals.last_finalize.append(_fin)
+                        from roop import terminal_dashboard as _dash
+                        _dash.s4_step('audio remux', _fin.get('mux_s'))
+                        _dash.s4_step('output verification', ((_fin.get('verify') or {}).get('probe_ms') or 0) / 1000.0)
+                        _dash.s4_end(ok=bool(_fin.get('ok')))
                         if not _fin['ok']:
                             update_status(f'FINALIZE FAILED for {os.path.basename(destination)}: '
                                           + '; '.join(_fin['problems'])
@@ -1960,6 +2004,8 @@ def batch_process(output_method, files:list[ProcessEntry], use_new_method) -> No
                 except Exception as _degrade_error:
                     _swallowed("roop/core.py:1606", _degrade_error, "fallback continued")
                     pass
+                from roop import terminal_dashboard as _dash
+                _dash.end_job(ok=bool(destination))
                 import gc
                 gc.collect()
                 try:
@@ -2021,7 +2067,9 @@ def ensure_video_encoder() -> bool:
 
 def end_processing(msg:str):
     from roop import keep_awake
+    from roop import terminal_dashboard
     keep_awake.release()
+    terminal_dashboard.end_job(ok=(msg == 'Finished'))     # idempotent: its closing lines print before the status line
     update_status(msg)
     roop.globals.target_folder_path = None
     release_resources()

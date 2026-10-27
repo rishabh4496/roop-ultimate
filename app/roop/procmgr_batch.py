@@ -60,6 +60,7 @@ class BatchProcessingMixin:
         import gc
         import os
         import sys
+        import time
         import cv2
         import roop
         from roop import baseline_probe as _bp
@@ -84,6 +85,7 @@ class BatchProcessingMixin:
         from roop import hdr_pipeline as _hdr_pipeline
         from roop import video_io_hw as _video_io_hw
         from roop import runtime_banner as _runtime_banner
+        from roop import terminal_dashboard as _dash
         from roop import gpu_event_timer as _gpu_event_timer
         import roop.util_ffmpeg as util_ffmpeg
         from roop.degrade import swallowed as _swallowed
@@ -754,6 +756,7 @@ class BatchProcessingMixin:
                         dar=_src_dar,
                         color=_src_color,
                     )
+        _dash.s1_step("segment/GOP probe")      # the writer above ran the resume / segment-custody probe
         if self.output_to_cam:
             self.streamwriter = StreamWriter((width, height), int(fps))
 
@@ -815,6 +818,7 @@ class BatchProcessingMixin:
         print("\n[Pipeline] === Stage 0: Source Identity Pre-Flight ===", flush=True)
         from roop import stage0_preflight as _stage0_preflight
         self._stage0 = _stage0_preflight.freeze_for(self)
+        _dash.s1_step("source identity")
 
         # Sparse auto-range pre-scan: sample keyframes, detect target presence, and
         # determine active swap ranges so non-target frames pass through at full speed.
@@ -825,6 +829,7 @@ class BatchProcessingMixin:
         # Per-stage progress for /ws/telemetry (roop/stage_telemetry.py): written here, sampled by the web side.
         from roop import stage_telemetry as _st
         _st.begin_run(frame_count)
+        _dash.s1_finish()                       # probe/demux/identity are done; the registry's stages take over from here
         # The timeline's cache lane shows THIS run's Stage 1 / Stage 2 maps, never the previous run's.
         try:
             from roop import timeline_tracks as _timeline_tracks
@@ -1197,6 +1202,8 @@ class BatchProcessingMixin:
                 # encode cost; write_frame alone misses the final lifecycle.
                 writer = self.videowriter
                 failed = self._writer_error is not None or sys.exc_info()[1] is not None
+                _custody_t0 = time.perf_counter()
+                _dash.manager.s4_begin()
                 try:
                     with _prof('encode_finalize'):
                         if failed and hasattr(writer, 'abort'):
@@ -1220,6 +1227,8 @@ class BatchProcessingMixin:
                         bar_write(f'[ProcessMgr] output cleanup failed after render error: {exc}')
                     else:
                         raise
+                if not failed:
+                    _dash.s4_step("segment custody & concat", time.perf_counter() - _custody_t0)
                 self.videowriter = None
             if self.output_to_cam and self.streamwriter is not None:
                 self.streamwriter.Close()

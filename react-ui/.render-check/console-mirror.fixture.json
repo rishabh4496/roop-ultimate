@@ -1,0 +1,285 @@
+{
+ "running": {
+  "schema": 1,
+  "active": true,
+  "mode": "log",
+  "updated_at": 1792000016.0,
+  "job": {
+   "job_id": "job-42",
+   "mode": "segmented",
+   "label": "clip.mp4",
+   "batch_index": 3,
+   "batch_count": 8,
+   "started_at": 1792000000.0
+  },
+  "has_profile": true,
+  "current": "S3",
+  "stages": {
+   "S1": {
+    "id": "S1",
+    "name": "Probe",
+    "title": "Audio, demux & GOP/segment probe",
+    "state": "DONE",
+    "pct": 100.0,
+    "done": 4,
+    "total": 4,
+    "unit": "steps",
+    "elapsed_s": 0.0,
+    "rate": null,
+    "paused": false,
+    "eta_s": null,
+    "eta_at": null,
+    "detail": {
+     "steps": [
+      "media probe",
+      "audio stream"
+     ]
+    }
+   },
+   "S2": {
+    "id": "S2",
+    "name": "Pre-scan",
+    "title": "Pre-scan, scene cuts & face tracking",
+    "state": "DONE",
+    "pct": 100.0,
+    "done": 1350,
+    "total": 1350,
+    "unit": "frames",
+    "elapsed_s": 10.0,
+    "rate": null,
+    "paused": false,
+    "eta_s": null,
+    "eta_at": null,
+    "detail": {
+     "phase": null,
+     "prescan_fps": 30.0,
+     "scene_cuts": 7,
+     "face_free_bypass_pct": 25.0
+    }
+   },
+   "S3": {
+    "id": "S3",
+    "name": "Swap",
+    "title": "Core swap & restoration",
+    "state": "RUNNING",
+    "pct": 16.7,
+    "done": 300,
+    "total": 1800,
+    "unit": "frames",
+    "elapsed_s": 6.0,
+    "rate": 50.0,
+    "paused": false,
+    "eta_s": 30,
+    "eta_at": 1792000046.0,
+    "detail": {
+     "fps_basis": "retired",
+     "short_by": 0,
+     "fps_avg": 50.0
+    }
+   },
+   "S4": {
+    "id": "S4",
+    "name": "Finalize",
+    "title": "Custody, lossless concat & remux",
+    "state": "PENDING",
+    "pct": 0.0,
+    "done": 0,
+    "total": 3,
+    "unit": "steps",
+    "elapsed_s": null,
+    "rate": null,
+    "paused": false,
+    "eta_s": null,
+    "eta_at": null,
+    "detail": {
+     "steps": [],
+     "walls_s": {},
+     "ok": null
+    }
+   }
+  },
+  "telemetry": {
+   "window_s": 10.0,
+   "frames": 300,
+   "basis": "thread-seconds per delivered frame; share = column / all recorded operation time (not a speedup budget)",
+   "latency_ms": {
+    "decode": 4.0,
+    "detect": 6.0,
+    "swap": 8.0,
+    "mask": 4.0,
+    "restore": 32.0,
+    "blend": 2.0,
+    "encode": 3.0,
+    "other": 0.0
+   },
+   "bottleneck": {
+    "stage": "restore",
+    "label": "Restore",
+    "share_pct": 54.0,
+    "severity": "yellow"
+   },
+   "hit_rates": {
+    "smart_skip_roi_reused_pct": 10.0,
+    "smart_skip_enabled": false,
+    "stage2_face_free_skipped_pct": 25.0,
+    "vram_allocated_gb": 7.25,
+    "vram_peak_gb": 8.5,
+    "vram_total_gb": 12.0
+   }
+  }
+ },
+ "final": {
+  "schema": 1,
+  "active": false,
+  "mode": "log",
+  "updated_at": 1792000017.0,
+  "job": {
+   "job_id": "job-42",
+   "mode": "segmented",
+   "label": "clip.mp4",
+   "batch_index": 3,
+   "batch_count": 8,
+   "started_at": 1792000000.0
+  },
+  "has_profile": true,
+  "current": null,
+  "stages": {
+   "S1": {
+    "id": "S1",
+    "name": "Probe",
+    "title": "Audio, demux & GOP/segment probe",
+    "state": "DONE",
+    "pct": 100.0,
+    "done": 4,
+    "total": 4,
+    "unit": "steps",
+    "elapsed_s": 0.0,
+    "rate": null,
+    "paused": false,
+    "eta_s": null,
+    "eta_at": null,
+    "detail": {
+     "steps": [
+      "media probe",
+      "audio stream"
+     ]
+    }
+   },
+   "S2": {
+    "id": "S2",
+    "name": "Pre-scan",
+    "title": "Pre-scan, scene cuts & face tracking",
+    "state": "DONE",
+    "pct": 100.0,
+    "done": 1350,
+    "total": 1350,
+    "unit": "frames",
+    "elapsed_s": 10.0,
+    "rate": null,
+    "paused": false,
+    "eta_s": null,
+    "eta_at": null,
+    "detail": {
+     "phase": null,
+     "prescan_fps": 30.0,
+     "scene_cuts": 7,
+     "face_free_bypass_pct": 25.0
+    }
+   },
+   "S3": {
+    "id": "S3",
+    "name": "Swap",
+    "title": "Core swap & restoration",
+    "state": "DONE",
+    "pct": 16.7,
+    "done": 300,
+    "total": 1800,
+    "unit": "frames",
+    "elapsed_s": 6.0,
+    "rate": null,
+    "paused": false,
+    "eta_s": null,
+    "eta_at": null,
+    "detail": {
+     "fps_basis": "retired",
+     "short_by": 1500,
+     "fps_avg": 50.0
+    }
+   },
+   "S4": {
+    "id": "S4",
+    "name": "Finalize",
+    "title": "Custody, lossless concat & remux",
+    "state": "DONE",
+    "pct": 100.0,
+    "done": 3,
+    "total": 3,
+    "unit": "steps",
+    "elapsed_s": 0.0,
+    "rate": null,
+    "paused": false,
+    "eta_s": null,
+    "eta_at": null,
+    "detail": {
+     "steps": [
+      "segment custody & concat",
+      "audio remux",
+      "output verification"
+     ],
+     "walls_s": {
+      "segment custody & concat": 1.0,
+      "audio remux": 0.5,
+      "output verification": 0.1
+     },
+     "ok": true
+    }
+   }
+  },
+  "telemetry": {
+   "window_s": 10.0,
+   "frames": 300,
+   "basis": "thread-seconds per delivered frame; share = column / all recorded operation time (not a speedup budget)",
+   "latency_ms": {
+    "decode": 4.0,
+    "detect": 6.0,
+    "swap": 8.0,
+    "mask": 4.0,
+    "restore": 32.0,
+    "blend": 2.0,
+    "encode": 3.0,
+    "other": 0.0
+   },
+   "bottleneck": {
+    "stage": "restore",
+    "label": "Restore",
+    "share_pct": 54.0,
+    "severity": "yellow"
+   },
+   "hit_rates": {
+    "smart_skip_roi_reused_pct": 10.0,
+    "smart_skip_enabled": false,
+    "stage2_face_free_skipped_pct": 25.0,
+    "vram_allocated_gb": 7.25,
+    "vram_peak_gb": 8.5,
+    "vram_total_gb": 12.0
+   }
+  },
+  "finished_at": 1792000017.0
+ },
+ "console": {
+  "stage_lines": [
+   "S1 Probe    [####################] 100.0%  4/4 steps  elapsed 00m 00s  done  media probe, audio stream",
+   "S2 Pre-scan [####################] 100.0%  1,350/1,350 frames  elapsed 00m 10s  done  pre-scan 30.0 smp/s \u00b7 cuts 7 \u00b7 face-free 25.0%",
+   "S3 Swap     [###.................]  16.7%  300/1,800 frames  elapsed 00m 06s  ETA: 00m 30s -> 23:17:26  50.0 fps \u00b7 basis retired",
+   "S4 Finalize pending"
+  ],
+  "telemetry_lines": [
+   "ms/frame: Decode 4.0 | Detect 6.0 | Swap 8.0 | Mask/Parse 4.0 | Restore 32.0 | Color/Blend 2.0 | Encode 3.0 ms",
+   "[BOTTLENECK: Restore 54%]  Smart-Skip ROI reused 10.0% \u00b7 Stage-2 face-free skipped 25.0% \u00b7 VRAM 7.25 / peak 8.50 GB"
+  ]
+ },
+ "idle": {
+  "schema": 1,
+  "active": false
+ }
+}

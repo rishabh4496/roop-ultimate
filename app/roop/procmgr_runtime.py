@@ -1729,6 +1729,13 @@ class ChunkedProgress(tqdm):
     def __init__(self, *args, **kwargs):
         style = _progress_style()
         self._chunked = style == "chunk" or (style == "auto" and not _stream_is_terminal())
+        # While a job is live the terminal dashboard (roop/terminal_dashboard.py) paints the pipeline's own bars, so this
+        # one keeps all its arithmetic (n, rates, the UI's ETA) and prints nothing: two renderings of one counter would
+        # fight for the same lines. Any bar the dashboard does not claim (Upscaling, Interpolating) renders as before.
+        from roop import terminal_dashboard as _dashboard
+        self._dashboard = _dashboard.claims_bar(kwargs.get("desc"))
+        if self._dashboard:
+            self._chunked = True
         # Initialize throughput tracker state before super().__init__ because
         # tqdm's constructor immediately calls refresh() -> display() -> format_dict.
         started = time.perf_counter()
@@ -1755,6 +1762,8 @@ class ChunkedProgress(tqdm):
         # A resumed run starts the bar at a non-zero n; those frames were not
         # rendered by this stage and must not count toward its average.
         self._origin = (started, int(self.n))
+        if self._dashboard:
+            _dashboard.attach_bar(self)
 
     @property
     def rolling_rate(self):
@@ -1873,6 +1882,9 @@ class ChunkedProgress(tqdm):
         # emitted the terminal state at completion.
         if self._chunked and not self.disable and self.n and self.n != self._last_n:
             self._emit(time.perf_counter())
+        if getattr(self, "_dashboard", False):
+            from roop import terminal_dashboard as _dashboard
+            _dashboard.detach_bar(self)
         return super().close()
 
     def _emit(self, now):
@@ -1884,6 +1896,8 @@ class ChunkedProgress(tqdm):
         self._last_n = self.n
         self._last_t = now
         self._last_rate = rate          # what the web UI's ETA must divide by
+        if getattr(self, "_dashboard", False):
+            return                      # the dashboard prints this bar; the rate above is still what the UI divides by
         try:
             print(self._progress_line(rate), flush=True)
         except Exception as _degrade_error:

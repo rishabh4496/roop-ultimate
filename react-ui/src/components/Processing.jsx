@@ -12,6 +12,7 @@ import DiagnosticsPanel from './faceswap/DiagnosticsPanel';
 import RunModelsPanel from './faceswap/RunModelsPanel';
 import HeadPoseHud from './faceswap/HeadPoseHud';
 import PipelineHud from './faceswap/PipelineReport';
+import ConsoleMirror from './faceswap/ConsoleMirror';
 import ProviderBenchmark from './faceswap/ProviderBenchmark';
 import PipelinePill from './faceswap/PipelinePill';
 import LiveProcessingPeek from './faceswap/LiveProcessingPeek';
@@ -210,6 +211,9 @@ export default function Processing({ progress, settings, notify, setTab,
           counts, passthrough / GPU frames, peak VRAM, Stage 4 verification, speedup estimate). Above the
           live/finished split on purpose: the report arrives when the run ENDS, i.e. in the finished view. */}
       <PipelineHud runtime={progress.runtime} />
+      {/* The console's own dashboard (four stages, per-frame latency split, bottleneck, hit rates): the backend paints
+          the terminal from the object it sends here, so the numbers are the terminal's. Renders nothing before a job. */}
+      <ConsoleMirror />
       {/* 1-click CPU vs TensorRT vs OpenVINO provider matrix; report-only, needs an idle GPU. */}
       <ProviderBenchmark processing={!!processing} />
       {/* One pill per chunk of every segmented render: inspect, re-render one chunk, join. Renders nothing

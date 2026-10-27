@@ -26,6 +26,14 @@ def pipeline_status_snapshot(events: int = 50):
     return pipeline_status.snapshot(events=max(0, min(int(events), 200)))
 
 
+@router.get("/api/v1/pipeline/dashboard")
+def pipeline_dashboard_snapshot():
+    """The terminal dashboard's snapshot WITH the swap profile: the same dict the console paints from and
+    `/ws/telemetry` carries under `dashboard` (which leaves the profile out - it is constant per job)."""
+    from roop import terminal_dashboard
+    return terminal_dashboard.snapshot()
+
+
 @router.websocket("/ws/v1/pipeline/status")
 async def pipeline_status_stream(websocket: WebSocket) -> None:
     await websocket.accept()

@@ -21,7 +21,7 @@ import { usePipelineStatusSocket } from './usePipelineStatus';
 import { useJobStore } from './store/jobStore';
 import './store';
 import { useWorkspaceStore, LAYOUT_PRESETS } from './store/workspaceStore';
-import { setRunTelemetry, setPipelineTelemetry, selectProg, etaMsOf, clearEngineTelemetry } from './store/telemetryStore';
+import { setRunTelemetry, setPipelineTelemetry, setDashboardTelemetry, selectProg, etaMsOf, clearEngineTelemetry } from './store/telemetryStore';
 import { LiveText, LiveBar } from './components/LiveTelemetry';
 import { themeByName, allThemes, applyThemeToDom } from './themes';
 import { SETTINGS_CATALOG, focusSetting } from './components/settingsCatalog';
@@ -430,6 +430,7 @@ export default function App() {
     reportNet(true);
     setRunTelemetry(frame);
     setPipelineTelemetry(frame);
+    setDashboardTelemetry(frame);
     const structural = {
       processing: frame.processing,
       paused: frame.paused,

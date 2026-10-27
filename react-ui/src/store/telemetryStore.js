@@ -81,9 +81,14 @@ export const EMPTY_ENHANCER = {
   compilation: { compiling: false, progress: 1.0, stage: 'idle', status: 'ready', message: '' },
 };
 
+// The terminal dashboard's snapshot (roop/terminal_dashboard.py), exactly as the console painted it: four stages, the
+// per-frame latency split, the bottleneck and the hit rates. `{schema, active:false}` while idle.
+const EMPTY_DASHBOARD = { schema: 1, active: false };
+
 export const useTelemetryStore = create(() => ({
   run: EMPTY_RUN,
   pipeline: EMPTY_PIPELINE,
+  dashboard: EMPTY_DASHBOARD,
   /** /api/system/telemetry: gpu, vram_used/total, cpu_percent, ram_*, threads. */
   system: null,
   /** UltraMax / Enhancer telemetry and compilation status. */
@@ -129,6 +134,14 @@ export function setPipelineTelemetry(frame) {
   const cur = useTelemetryStore.getState().pipeline;
   if (cur && JSON.stringify(cur) === JSON.stringify(next)) return;
   useTelemetryStore.setState({ pipeline: next });
+}
+
+/** Take the `dashboard` of a telemetry frame; a frame without one (older backend, hello) cannot clear it. */
+export function setDashboardTelemetry(frame) {
+  if (!frame || typeof frame !== 'object' || !frame.dashboard || typeof frame.dashboard !== 'object') return;
+  const cur = useTelemetryStore.getState().dashboard;
+  if (cur && JSON.stringify(cur) === JSON.stringify(frame.dashboard)) return;
+  useTelemetryStore.setState({ dashboard: frame.dashboard });
 }
 
 export function resetRunTelemetry() {

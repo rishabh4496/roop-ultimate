@@ -65,6 +65,7 @@ from roop import stage_telemetry as _stage_telemetry
 from roop import render_policy as _render_policy
 from settings import TRT_PRECISION_CHOICES
 from roop import pipeline_status as _pipeline_status
+from roop import terminal_dashboard as _terminal_dashboard
 from roop import procmgr_runtime as _procmgr_runtime
 from roop import runtime_state as _runtime_state
 from roop.processing_request import (
@@ -6568,6 +6569,10 @@ def _telemetry_snapshot():
         'started_at': started,
         'live_seq': live_preview.seq(),
         **_stage_telemetry.snapshot(),
+        # The terminal dashboard's snapshot (roop/terminal_dashboard.py): the four-stage view, the per-frame latency
+        # split, the bottleneck and the optimizer hit rates, exactly as the console printed them. Idle it is the constant
+        # {"schema": 1, "active": False}, so the change-only sampler stays quiet; the profile is on the REST route.
+        'dashboard': _terminal_dashboard.telemetry_frame(),
         **_video_io_flat(),
         # "Compiling TensorRT Engine..." / canary state (roop/pipeline_status.py), flat and non-ticking
         # so the change-only sampler stays quiet between stages. Present while idle too (engine_state
