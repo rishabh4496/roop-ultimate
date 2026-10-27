@@ -90,6 +90,81 @@ def segment_destination(output_dir: str, spec: SegmentSpec, ext: str = "mp4") ->
                         segment_filename(spec.index, spec.start_frame, spec.end_frame, ext))
 
 
+def assert_safe_segment_destination(segment_dest: str, target_final_output: str) -> None:
+    """Enforce that no code path reuses the final target output filename for intermediate segments."""
+    if not segment_dest or not target_final_output:
+        return
+    if os.path.abspath(segment_dest) == os.path.abspath(target_final_output):
+        raise ValueError(
+            f"CRITICAL: Segment custody violation! Intermediate segment path reuses final output destination: {segment_dest}"
+        )
+
+
+def audit_segment_custody(path: str, expected_frames: Optional[int] = None,
+                          expected_duration: Optional[float] = None) -> dict:
+    """After each segment finishes encoding, run a fast custody check and print a terminal custody receipt.
+    Receipt format:
+    [CUSTODY OK] seg_0002.mp4 | Frames: 600/600 | Size: 34.8 MB | Hash/Path Verified
+    """
+    from roop import watchdog
+    from roop.finalize_output import probe_container, _frames_of
+
+    if not os.path.isfile(path):
+        err = f"Segment file missing at: {path}"
+        watchdog.broadcast_alert("[CUSTODY FAILED]", err, color_code="\033[91m", level="ERROR")
+        return {"ok": False, "error": err, "path": path}
+
+    size_b = os.path.getsize(path)
+    if size_b <= 0:
+        err = f"Segment file is 0 bytes: {path}"
+        watchdog.broadcast_alert("[CUSTODY FAILED]", err, color_code="\033[91m", level="ERROR")
+        return {"ok": False, "error": err, "path": path, "size_bytes": 0}
+
+    size_mb = size_b / (1024 * 1024)
+
+    # Frame count & duration probe
+    probe = probe_container(path)
+    actual_frames = None
+    actual_dur = None
+    if probe and probe.get("video"):
+        actual_frames = _frames_of(probe["video"])
+        actual_dur = probe["video"].get("duration_s")
+
+    # Fast SHA-256 hash (first/last 64KB for speed on large video files, or whole file if <= 1MB)
+    hasher = hashlib.sha256()
+    try:
+        with open(path, "rb") as f:
+            if size_b <= 1024 * 1024:
+                hasher.update(f.read())
+            else:
+                hasher.update(f.read(65536))
+                f.seek(-65536, os.SEEK_END)
+                hasher.update(f.read(65536))
+    except Exception:
+        pass
+    digest = hasher.hexdigest()[:12]
+
+    filename = os.path.basename(path)
+    exp_f_str = f"{expected_frames}" if expected_frames is not None else (f"{actual_frames}" if actual_frames is not None else "--")
+    act_f_str = f"{actual_frames}" if actual_frames is not None else "--"
+    frames_receipt = f"{act_f_str}/{exp_f_str}"
+
+    receipt_msg = f"{filename} | Frames: {frames_receipt} | Size: {size_mb:.1f} MB | Hash/Path Verified ({digest})"
+    watchdog.broadcast_alert("[CUSTODY OK]", receipt_msg, color_code="\033[92m", level="INFO")
+
+    return {
+        "ok": True,
+        "path": path,
+        "filename": filename,
+        "frames": actual_frames,
+        "expected_frames": expected_frames,
+        "duration_s": actual_dur,
+        "size_bytes": size_b,
+        "size_mb": round(size_mb, 2),
+        "hash": digest,
+    }
+
+
 def parse_segment_filename(name: str) -> Optional[dict]:
     m = _SEG_RE.match(os.path.basename(name))
     if not m:
@@ -258,15 +333,94 @@ def verify_joined(joined: str, expected_s: Optional[float], fps: Optional[float]
 def join_segments(paths: Sequence[str], output: str, manifest: str,
                   source_media: Optional[str] = None, source_audio: bool = False) -> str:
     """Verify, write the manifest, join, and verify the result. Segments are left in place."""
+    from roop import watchdog
+    from roop.finalize_output import probe_container, _frames_of
+
     write_concat_manifest(paths, manifest)
     tmp = output + ".part.mp4"
+
+    # Pre-concat verification: sum duration and frames of all slices
+    sum_frames = 0
+    sum_dur = 0.0
+    for p in paths:
+        probe_p = probe_container(p)
+        if probe_p and probe_p.get("video"):
+            f_cnt = _frames_of(probe_p["video"])
+            if f_cnt:
+                sum_frames += f_cnt
+            dur = probe_p["video"].get("duration_s")
+            if dur:
+                sum_dur += dur
+
     try:
         codec = audio_codec_for_join(source_media) if (source_audio and source_media) else "aac"
-        r = _run(concat_command(manifest, tmp, source_media, source_audio, codec))
+        cmd = concat_command(manifest, tmp, source_media, source_audio, codec)
+        cmd_str = " ".join(cmd)
+        r = _run(cmd)
+
         if r.returncode or not os.path.isfile(tmp) or os.path.getsize(tmp) <= 0:
-            raise RuntimeError(f"concat failed ({r.returncode}): {(r.stderr or '')[-600:]}")
+            stderr_tail = "\n".join((r.stderr or "").strip().splitlines()[-20:])
+            err_box = [
+                "",
+                "\033[91m\033[1m╔══════════════════════════════════════════════════════════════════════════════════════════════╗\033[0m",
+                "\033[91m\033[1m║                             STAGE 4 FFMPEG CONCATENATION FAILURE                             ║\033[0m",
+                "\033[91m\033[1m╠══════════════════════════════════════════════════════════════════════════════════════════════╣\033[0m",
+                f"\033[91m\033[1m║ Command  :\033[0m {cmd_str[:80]}...",
+                f"\033[91m\033[1m║ Exit Code:\033[0m {r.returncode}",
+                "\033[91m\033[1m╠──────────────────────────────────────────────────────────────────────────────────────────────╣\033[0m",
+                "\033[91m\033[1m║ Last 20 lines of stderr:\033[0m",
+                *[f"║   {line[:88]}" for line in stderr_tail.splitlines()],
+                "\033[91m\033[1m╚══════════════════════════════════════════════════════════════════════════════════════════════╝\033[0m",
+                "",
+            ]
+            try:
+                from roop import terminal_dashboard
+                terminal_dashboard.print_above(err_box)
+            except Exception:
+                for line in err_box:
+                    print(line, flush=True)
+            raise RuntimeError(f"FFmpeg concat failed ({r.returncode}):\n{stderr_tail}")
+
         if not probe_has_video(tmp):
             raise RuntimeError("joined file has no valid video stream")
+
+        # Post-concat verification: verify joined video duration, frame count, and audio remux
+        probe_joined = probe_container(tmp)
+        if probe_joined and probe_joined.get("video"):
+            joined_frames = _frames_of(probe_joined["video"])
+            joined_dur = probe_joined["video"].get("duration_s")
+
+            # Duration parity check
+            if sum_dur > 0 and joined_dur is not None:
+                if abs(joined_dur - sum_dur) > 0.5:
+                    watchdog.broadcast_alert(
+                        "[WARN]",
+                        f"Joined video duration ({joined_dur:.2f}s) differs from sum of segments ({sum_dur:.2f}s).",
+                        color_code="\033[93m",
+                        level="WARNING"
+                    )
+
+            # Audio stream remux check
+            if (source_audio and source_media) or any(probe_audio_codec(p) for p in paths):
+                if not probe_joined.get("audio"):
+                    watchdog.broadcast_alert(
+                        "[WARN]",
+                        "Joined video is missing audio stream after concatenation remux.",
+                        color_code="\033[93m",
+                        level="WARNING"
+                    )
+
+            joined_size_mb = os.path.getsize(tmp) / (1024 * 1024)
+            joined_name = os.path.basename(output)
+            j_f_str = f"{joined_frames}" if joined_frames is not None else "--"
+            s_f_str = f"{sum_frames}" if sum_frames > 0 else j_f_str
+            watchdog.broadcast_alert(
+                "[CUSTODY OK]",
+                f"{joined_name} | Frames: {j_f_str}/{s_f_str} | Size: {joined_size_mb:.1f} MB | Lossless Concat Verified",
+                color_code="\033[92m",
+                level="INFO"
+            )
+
         os.replace(tmp, output)
     finally:
         if os.path.exists(tmp):

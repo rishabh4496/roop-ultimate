@@ -23,9 +23,9 @@ const PERF_RE = /\bfps\b|faces\/s|throughput|ms\/frame|bottleneck|stage timing/i
  */
 export function severityOf(line) {
   if (!line) return 'INFO';
-  if (line.level === 'ERROR' || line.category === 'ERRORS' || ERROR_RE.test(line.msg || '')) return 'ERROR';
-  if (line.level === 'WARNING' || line.category === 'WARNINGS' || String(line.msg || '').startsWith('⚠')) return 'WARN';
-  if (line.category === 'PERFORMANCE' || line.category === 'PROFILE' || PERF_RE.test(line.msg || '')) return 'PERF';
+  if (line.level === 'ERROR' || line.category === 'ERRORS' || ERROR_RE.test(line.msg || '') || /\[BUG-DETECTED\]|\[CRASH AUTOPSY\]|\[CUSTODY FAILED\]/i.test(line.msg || '')) return 'ERROR';
+  if (line.level === 'WARNING' || line.category === 'WARNINGS' || String(line.msg || '').startsWith('⚠') || /\[WARN\]/i.test(line.msg || '')) return 'WARN';
+  if (line.category === 'PERFORMANCE' || line.category === 'PROFILE' || PERF_RE.test(line.msg || '') || /\[PERF-WARN\]/i.test(line.msg || '')) return 'PERF';
   return 'INFO';
 }
 

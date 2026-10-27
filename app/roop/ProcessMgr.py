@@ -3456,9 +3456,21 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             _engine = self._temporal_engine(_tname)
             if _engine is not None:
                 _engine.set_ordered(_ordered)
+        if frame_idx is not None:
+            try:
+                from roop import watchdog
+                watchdog.enter_frame(frame_idx, stage="Stage 3 (Swap / Restoration)")
+            except Exception:
+                pass
         # Fast-path: avoid frame.copy() before face detection & target matching
         self._count_stage3('gpu_frames')
         num_swapped, resimg = self.swap_faces(frame, None, stabilize=True, frame_idx=frame_idx)
+        try:
+            from roop import watchdog
+            _exp_faces = len(self._temporal_faces.get(frame_idx, [])) if (getattr(self, '_temporal_faces', None) is not None and frame_idx is not None) else 0
+            watchdog.check_zero_swap(frame_idx if frame_idx is not None else 0, _exp_faces, num_swapped, refusal_reason=getattr(self._tls, 'last_refusal_reason', None))
+        except Exception:
+            pass
         if num_swapped > 0:
             self._count_stage3('swapped_frames')
             temp_frame = resimg
@@ -6289,6 +6301,20 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                         pass
                 fake_frame = self.explode_pixel_boost(swap_result_frames, model_output_size, subsample_total, subsample_size)
                 fake_frame = fake_frame.astype(np.uint8)
+                try:
+                    from roop import watchdog
+                    _cur_fidx = getattr(self._tls, 'frame_idx', None)
+                    _cur_bbox = getattr(target_face, 'bbox', None) if not isinstance(target_face, dict) else target_face.get('bbox')
+                    watchdog.update_breadcrumb(
+                        model_name=getattr(p, 'processorname', getattr(p, 'name', 'swapper')),
+                        input_shape=getattr(fake_frame, 'shape', None),
+                        input_dtype=str(getattr(fake_frame, 'dtype', 'uint8')),
+                        bbox=_cur_bbox,
+                    )
+                    watchdog.check_tensor(fake_frame, model_name=getattr(p, 'processorname', getattr(p, 'name', 'swapper')), frame_idx=_cur_fidx, bbox=_cur_bbox)
+                    watchdog.check_vram_pressure(threshold_ratio=0.92)
+                except Exception:
+                    pass
 
                 # Reassemble the model's own face mask over the same tiling, into
                 # the crop's coordinates, so paste_upscale can trim to it. Stashed
@@ -6382,6 +6408,12 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     if _pre_mask_enhanced is not None:
                         enhanced_frame = self._composite_mask(
                             _img_mask, aligned_img, _pre_mask_enhanced)
+                    try:
+                        from roop import watchdog
+                        _cur_fidx = getattr(self._tls, 'frame_idx', None)
+                        watchdog.check_mask_geometry(_cur_fidx if _cur_fidx is not None else 0, _img_mask, scene_cut_id=getattr(self, '_stab_t', None))
+                    except Exception:
+                        pass
                 if self._stab_history is not None and _img_mask is not None:
                     _stab_track = self._temporal_track_id(target_face)
                     if _stab_track is not None:
@@ -6533,6 +6565,13 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                         if target_face is not None and hasattr(target_face, 'aligned_img'):
                             target_face.aligned_img = None
                             target_face._aligned_M = None
+                        try:
+                            from roop import watchdog
+                            _cur_fidx = getattr(self._tls, 'frame_idx', None)
+                            _cur_bbox = getattr(target_face, 'bbox', None) if not isinstance(target_face, dict) else target_face.get('bbox')
+                            watchdog.check_tensor(enhanced_frame, model_name=getattr(p, 'processorname', getattr(p, 'name', 'enhancer')), frame_idx=_cur_fidx, bbox=_cur_bbox)
+                        except Exception:
+                            pass
 
                 if _A is not None and enhanced_frame is not None:
                     # Back to swap-crop space. The enhancer may have returned a

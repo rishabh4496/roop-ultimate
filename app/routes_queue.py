@@ -985,6 +985,11 @@ def _loop(gen):
         except Exception as e:          # a crashed job must not kill the batch
             import traceback
             traceback.print_exc()
+            try:
+                from roop import crash_autopsy
+                crash_autopsy.generate_crash_report(e, job_id=job.get("id"), stage="Stage 3 (Queue Runner)")
+            except Exception:
+                pass
             status, error = "FAILED", str(e)
 
         try:
@@ -1018,6 +1023,14 @@ def _loop(gen):
                 final_job = _find(job["id"])
                 spec = _segment_spec_for(final_job) if final_job else None
             if spec is not None:
+                if status == "COMPLETED":
+                    try:
+                        from roop import segment_output
+                        seg_path = _segment_path(final_job, spec)
+                        exp_frames = int(spec.end_frame) - int(spec.start_frame) + 1
+                        segment_output.audit_segment_custody(seg_path, expected_frames=exp_frames)
+                    except Exception:
+                        pass
                 _announce_segment(final_job, spec, status, error=error)
                 if status == "COMPLETED":
                     _join_if_group_done(job["id"])

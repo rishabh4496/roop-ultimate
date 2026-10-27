@@ -5344,6 +5344,13 @@ def _run_swap(payload):
         _last_output.update({"version": "", "source": None})
         _routes_output._output_source["path"] = ""
         _push_log("▶ Starting job…", force=True)
+        try:
+            from roop import watchdog
+            watchdog.reset()
+            watchdog.set_job(job_id=project_id or payload.get("request_id") or "swap_job")
+            watchdog.add_log_listener(_push_log)
+        except Exception:
+            pass
         _resume_context.update({"base": 0.0, "total": 0})
         if project_id:
             try:
@@ -5727,8 +5734,25 @@ def _run_swap(payload):
         _progress["error"] = str(e)
         if project_id:
             _set_processing_project_state(project_id, "FAILED", str(e))
+        try:
+            from roop import crash_autopsy, watchdog
+            bcrumb = watchdog.get_active_breadcrumb()
+            crash_autopsy.generate_crash_report(
+                e,
+                job_id=project_id or bcrumb.get("job_id") or "swap_job",
+                stage=bcrumb.get("stage", "Stage 3 (Swap Processing)"),
+                frame_idx=bcrumb.get("frame_idx"),
+                segment_idx=bcrumb.get("segment_idx"),
+            )
+        except Exception:
+            pass
         _push_log("⚠ " + str(e), force=True)
     finally:
+        try:
+            from roop import watchdog
+            watchdog.remove_log_listener(_push_log)
+        except Exception:
+            pass
         _procmgr_runtime.pause_controller.finish()
         roop_globals.pause = False
         try:

@@ -2016,6 +2016,20 @@ def batch_process(output_method, files:list[ProcessEntry], use_new_method) -> No
                     _swallowed("roop/core.py:1614", _degrade_error, "fallback continued")
                     pass
         end_processing('Finished')
+    except Exception as exc:
+        try:
+            from roop import crash_autopsy, watchdog
+            bcrumb = watchdog.get_active_breadcrumb()
+            crash_autopsy.generate_crash_report(
+                exc,
+                job_id=bcrumb.get("job_id"),
+                stage=bcrumb.get("stage", "Stage 3 (Batch Processing)"),
+                frame_idx=bcrumb.get("frame_idx"),
+                segment_idx=bcrumb.get("segment_idx"),
+            )
+        except Exception:
+            pass
+        raise
     finally:
         # Guarantee the run is marked finished even if an exception escaped
         # batch_process (e.g. the legacy Gradio caller has no finally), so a
@@ -2037,8 +2051,10 @@ def final_video_destination(temp_video: str, source_path: str, index: int = 0) -
     segment_spec = getattr(roop.globals, '_segment_spec', None)
     if segment_spec is not None:
         from roop import segment_output
-        return segment_output.segment_destination(
+        dest = segment_output.segment_destination(
             roop.globals.output_path, segment_spec, os.path.splitext(temp_video)[1])
+        segment_output.assert_safe_segment_destination(dest, util.replace_template(temp_video, index=index))
+        return dest
     fixed_output = getattr(roop.globals, '_project_output_file', None)
     if fixed_output and index == 0:
         return os.path.join(roop.globals.output_path, fixed_output)

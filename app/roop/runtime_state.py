@@ -46,10 +46,14 @@ def classify_log(message: Any) -> tuple[str, str]:
     """
     text = str(message or "").strip()
     lowered = text.lower()
-    if re.search(r"error|exception|traceback|failed|failure|abort", lowered):
+    if re.search(r"error|exception|traceback|failed|failure|abort|bug-detected|crash autopsy|custody failed", lowered):
         return "ERRORS", "ERROR"
+    if "perf-warn" in lowered:
+        return "PERFORMANCE", "WARNING"
     if re.search(r"warning|warn|above the measured-safe|fallback|unavailable|skipped", lowered):
         return "WARNINGS", "WARNING"
+    if "custody ok" in lowered:
+        return "CHECKPOINT", "INFO"
     checks = (
         ("CHECKPOINT", r"checkpoint|partial output|segment|part \d+ written|resume"),
         ("QUEUE", r"\bqueue\b|queueing|job"),

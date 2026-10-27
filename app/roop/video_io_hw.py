@@ -150,6 +150,11 @@ class VideoIoTelemetry:
                 self._warned.append(line)
         if fresh and warn:
             try:
+                from roop import watchdog
+                watchdog.notify_zero_copy_broken(stage=str(what).split(':')[0] if ':' in str(what) else 'video_io', reason=line)
+            except Exception:
+                pass
+            try:
                 print(f"{HARDWARE_FALLBACK_BANNER} {line}", flush=True)
             except (OSError, UnicodeError):           # Pinokio's terminal pipe can be closed during shutdown
                 pass
