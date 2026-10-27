@@ -83,11 +83,17 @@ class FaceBank:
         self.characters: List[Dict[str, Any]] = []
         self.last_video_path: Optional[str] = None
         self.scene_cuts: Set[int] = set()
+        # Every frame the scan LOOKED at, with a face or without. Presence needs the misses as much
+        # as the hits: a sample where a person was absent is what ends their stretch.
+        self.sample_frames: Set[int] = set()
+        self.total_frames: int = 0
 
     def clear(self):
         self.characters.clear()
         self.last_video_path = None
         self.scene_cuts.clear()
+        self.sample_frames.clear()
+        self.total_frames = 0
 
     def _aggregate_characters(self, collected_faces: List[Dict[str, Any]], cluster_labels: Any) -> List[Dict[str, Any]]:
         """Aggregate clustered face detections into character records with thumbnails and pose angles."""
@@ -127,6 +133,9 @@ class FaceBank:
                 'thumbnail': thumb_url,
                 'cluster_size': len(members),
                 'best_frame': int(best_member['frame_idx']),
+                # Every sampled frame this person was detected in (0-based), for the timeline's
+                # presence lane. Sampled, not exhaustive: see roop.timeline_tracks.presence_intervals.
+                'frames': sorted({int(m['frame_idx']) for m in members}),
                 'off_axis': float(best_member['off_axis']),
                 'det_score': float(best_member['det_score']),
                 'mean_embedding': mean_norm.tolist() if mean_norm is not None else [],
@@ -190,6 +199,7 @@ class FaceBank:
                         for hw_f in batch:
                             if (time.time() - t0) > time_budget:
                                 return
+                            self.sample_frames.add(int(hw_f.index))
                             # Observe bitstream stats & GPU L1 tensor diff
                             if cut_detector.observe_hw_frame(hw_f):
                                 self.scene_cuts.add(hw_f.index)
@@ -273,6 +283,7 @@ class FaceBank:
             return []
 
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+        self.total_frames = total_frames
         fps = float(cap.get(cv2.CAP_PROP_FPS) or 25.0)
 
         # 1. Detect scene cuts and select sample frames
@@ -298,6 +309,7 @@ class FaceBank:
             ret, frame = cap.read()
             if not ret or frame is None:
                 continue
+            self.sample_frames.add(int(f_num))
 
             # Scene cut tracking
             if scene_detector.observe_frame(frame, f_num):

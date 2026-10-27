@@ -18,6 +18,7 @@ import useTelemetrySocket from './useTelemetrySocket';
 import CompileBanner from './components/CompileBanner';
 import { usePipelineStatusSocket } from './usePipelineStatus';
 import { useJobStore } from './store/jobStore';
+import './store';
 import { useWorkspaceStore, LAYOUT_PRESETS } from './store/workspaceStore';
 import { setRunTelemetry, setPipelineTelemetry, selectProg, etaMsOf, clearEngineTelemetry } from './store/telemetryStore';
 import { LiveText, LiveBar } from './components/LiveTelemetry';

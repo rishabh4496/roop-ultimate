@@ -2612,6 +2612,16 @@ class TrackingMixin:
         if _smart_skips_tot > 0:
             print(f"[TemporalSmartSkip] {_smart_skips_tot} near-static face(s) marked REUSE_FLOW_WARP "
                   f"(neural swap+enhance bypassed, forward flow warped).", flush=True)
+        # The timeline's cache lane: frames whose EVERY face is marked for reuse. This is the plan the
+        # pre-pass made (frame keys are clip-relative, like Stage 1's ranges); whether each marked face
+        # is really reused is decided per face at swap time, so the UI labels the lane "planned".
+        try:
+            from roop import timeline_tracks as _timeline_tracks
+            _timeline_tracks.publish_reuse_frames(
+                fi for fi, faces in self._temporal_faces.items()
+                if faces and all(f.get('reuse_flow_warp') for f in faces))
+        except Exception as _exc:
+            _swallowed("roop/procmgr_tracking.py:timeline_reuse", _exc, "smart-skip frames not shown on the timeline")
         if _FLOW_ALIGN and _fs.get('aligned'):
             print(f'[FlowAlign] {_fs["aligned"]} detected face(s) of {_fs.get("occ_steps", 0)} chain step(s) '
                   f'had their keypoints replaced by optical-flow-carried ones (face partly covered, '

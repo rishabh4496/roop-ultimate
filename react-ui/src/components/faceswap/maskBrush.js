@@ -27,18 +27,38 @@ export function containedRect(rect, w, h) {
 }
 
 /**
- * One brush sample. `brushSize` is the on-screen DIAMETER in visual pixels (the slider's number),
- * so the canvas radius is half of it times canvas-pixels-per-visual-pixel.
- * Returns null when the box has no size yet.
+ * Maps cursor coordinates accurately through the inverse viewport transform matrix
+ * into media pixel space at any zoom level (0.1x to 16x).
  */
-export function brushSample(rect, canvasW, canvasH, clientX, clientY, brushSize) {
+export function screenToMediaCoords(rect, canvasW, canvasH, clientX, clientY) {
   if (!rect || !rect.width || !rect.height || !canvasW || !canvasH) return null;
   const c = containedRect(rect, canvasW, canvasH);
   const scale = canvasW / c.width;
   return {
     x: (clientX - c.left) * scale,
     y: (clientY - c.top) * scale,
-    r: Math.max(0.5, (brushSize / 2) * scale),
+    scale,
+    onImage: clientX >= c.left && clientX <= c.left + c.width && clientY >= c.top && clientY <= c.top + c.height,
+  };
+}
+
+/**
+ * One brush sample. `brushSize` is the on-screen DIAMETER in visual pixels (the slider's number),
+ * so the canvas radius is half of it times canvas-pixels-per-visual-pixel.
+ * Returns null when the box has no size yet.
+ */
+export function brushSample(rect, canvasW, canvasH, clientX, clientY, brushSize, feather = 0) {
+  if (!rect || !rect.width || !rect.height || !canvasW || !canvasH) return null;
+  const c = containedRect(rect, canvasW, canvasH);
+  const scale = canvasW / c.width;
+  const r = Math.max(0.5, (brushSize / 2) * scale);
+  const innerR = Math.max(0, r * (1 - Math.max(0, Math.min(1, feather))));
+  return {
+    x: (clientX - c.left) * scale,
+    y: (clientY - c.top) * scale,
+    r,
+    innerR,
+    feather,
     scale,
     // Pointer on the picture, not on a letterbox bar. A stroke may still START outside and
     // wander in, so drawing does not require it; the caller may.

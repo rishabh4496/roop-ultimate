@@ -1,59 +1,51 @@
-import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import useThrottledFrameRequest from './useThrottledFrameRequest';
+import Minimap from './timeline/Minimap';
+import OverrideInspector from './timeline/OverrideInspector';
+import { CacheLane, FilmCanvas, OverrideLane, RulerLane, SceneLane } from './timeline/Lanes.jsx';
+import { LANE_H, STATE_COLORS, STATE_LABELS } from './timeline/lanes.js';
+import { useSceneOverrides } from './timeline/useSceneOverrides';
+import { useFilmstrip, useTimelineTracks, useWaveform } from './timeline/useTimelineData';
+import {
+  adjacentCut, buildRenderStrip, mergeIntervals, renderedForPieces, scenesFromCuts, sceneAt,
+} from './timeline/laneModel';
+import { overrideCandidates } from './timeline/hit';
+import { IDLE, reverseTick, shuttleKey, shuttleLabel, shuttleRate, stepSize } from './timeline/shuttle';
+import {
+  clamp, fitRange, fmtSeconds, fmtTimecode, followFrame, frameAtX, isZoomed, normalizeView, panView, placeView,
+  spanAtFraction, thumbSlots, viewSpan, zoomFraction, zoomView,
+} from './timeline/viewMath';
 
 /**
- * The clip timeline — an editor-style scrubber for the target video.
+ * The clip timeline - a multi-track NLE surface for the target video.
  *
- * Replaces the earlier inline block, which read dated for three reasons: the
- * "ruler" was five evenly-spaced timecodes that lined up with nothing on the
- * track, the trim range was stated twice (chips in the header AND a numeric
- * Range box in the toolbar), and the toolbar was four separately-bordered pill
- * groups on one wrapping row, so the eye had no order to follow.
+ * Top to bottom: the whole-clip MINIMAP (always visible, with zoom handles), an adaptive RULER
+ * (timecode -> seconds -> exact frame numbers as you zoom), a 4 px render / smart-skip CACHE strip,
+ * the FILMSTRIP + audio waveform (the scrub surface), the SCENE CUTS + FACE PRESENCE lane, and the
+ * per-segment OVERRIDE lane. Everything between the minimap and the overrides is drawn on canvases
+ * from plain data, and every loop in the drawing is bounded by what is on screen, so a 50,000-frame
+ * clip costs what a 100-frame one does.
  *
- * What it is now: a measured tick ruler whose marks sit at real time positions,
- * one editable statement of In/Out (the header chips ARE the inputs), a taller
- * filmstrip with pro-editor trim treatment (out-of-range is dimmed AND
- * desaturated), a playhead carrying its own timecode, and a single toolbar
- * surface split into read-out / transport / range zones. New: chapter markers
- * (add at the playhead, click to jump, alt-click to delete) persisted per clip.
+ * Scrub/drag geometry still lives in FaceSwap (it owns the pointer capture and the magnetic snap);
+ * this component takes the ref and the three handlers and renders on top of them, so the
+ * interaction contract is unchanged. The playhead is moved imperatively between React commits
+ * (playheadApiRef) exactly as before.
  *
- * Scrub/drag geometry still lives in FaceSwap (it owns the pointer capture and
- * the magnetic snap); this component takes the ref and the three handlers and
- * renders on top of them, so the interaction contract is unchanged.
+ * Gestures: Ctrl/Cmd + wheel zooms about the cursor; Shift + wheel (or a horizontal trackpad
+ * swipe, or middle-button drag) scrolls; dragging the minimap window scrolls and its handles zoom.
+ * Keys (when no field has focus): J / K / L shuttle, , and . step a frame (Shift: ten), I and O set
+ * In and Out, Up / Down jump to the previous / next scene cut, M drops a chapter marker.
  */
 
-// Label steps a human would choose. The ruler picks the smallest one that keeps
-// labels at least ~92px apart at the current track width, so the same clip is
-// legible in a narrow rail and a wide window without re-tuning.
-const NICE_SECONDS = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200];
-// Used instead of NICE_SECONDS once the view is zoomed past ~1s per label.
-const NICE_FRAMES = [1, 2, 5, 10, 15, 25, 50, 100];
 const SPEEDS = [0.25, 0.5, 1, 2, 4];
-const MINOR_PER_MAJOR = 4;
-
-const clamp = (v, lo, hi) => Math.max(lo, Math.min(v, hi));
 
 /** m:ss under an hour, h:mm:ss above it. */
-const fmtTC = (f, fps) => {
-  const total = Math.max(0, f) / (fps || 25);
-  const h = Math.floor(total / 3600);
-  const m = Math.floor((total % 3600) / 60);
-  const s = Math.floor(total % 60);
-  return h > 0
-    ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
-    : `${m}:${String(s).padStart(2, '0')}`;
-};
-
-/** Timecode with the frame remainder — what the playhead badge shows. */
-const fmtTCF = (f, fps) => {
-  const r = (fps || 25);
-  const idx = Math.max(0, f - 1);
-  return `${fmtTC(f, r)}:${String(Math.floor(idx % r)).padStart(2, '0')}`;
-};
+const fmtTC = (f, fps) => fmtSeconds(f + 1, fps);
 
 const markersKey = (k) => `roop_markers_${k || 'default'}`;
+const EMPTY = Object.freeze([]);
 
-/** Chip-shaped inline number field — the header's In/Out are editable in place. */
+/** Chip-shaped inline number field - the header's In/Out are editable in place. */
 function RangeField({ label, value, min, max, onCommit, accent = false }) {
   const [draft, setDraft] = useState(null);
   const commit = () => {
@@ -70,7 +62,7 @@ function RangeField({ label, value, min, max, onCommit, accent = false }) {
           ? 'border-[var(--accent)]/30 bg-[var(--accent)]/10'
           : 'border-[var(--border-color)] bg-[var(--surface-2)] hover:border-[var(--border-strong)]'
       }`}
-      title={`${label} point — click to type a frame number`}
+      title={`${label} point - click to type a frame number`}
     >
       <span className="text-nano font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">{label}</span>
       <input
@@ -92,13 +84,14 @@ function RangeField({ label, value, min, max, onCommit, accent = false }) {
 }
 
 /** Icon button used across the toolbar clusters. */
-const IconBtn = ({ title, onClick, active = false, children, className = '' }) => (
+const IconBtn = ({ title, onClick, active = false, children, className = '', disabled = false }) => (
   <button
     type="button"
     onClick={onClick}
     title={title}
     aria-label={title}
-    className={`grid place-items-center h-8 w-8 rounded-lg transition-colors ${
+    disabled={disabled}
+    className={`grid place-items-center h-8 w-8 rounded-lg transition-colors disabled:opacity-30 ${
       active
         ? 'bg-[var(--accent)]/12 text-accent'
         : 'text-[var(--text-muted)] hover:text-[var(--text-main)] hover:bg-white/[0.06]'
@@ -116,90 +109,15 @@ const Ico = ({ d, fill = false, size = 15 }) => (
   </svg>
 );
 
-/**
- * Whole-clip overview with the visible window drawn on it.
- *
- * Its own pointer handling (the main track's belongs to FaceSwap and means
- * "scrub"): press inside the window to drag it, on an edge to resize it,
- * anywhere else to centre it there.
- */
-function OverviewStrip({ maxFrames, vStart, vEnd, frame, startFrame, endFrame, markers, setView }) {
-  const ref = useRef(null);
-  const dragRef = useRef(null);
-  const span = Math.max(1, maxFrames - 1);
-  const pct = (f) => ((clamp(f, 1, maxFrames) - 1) / span) * 100;
-  const vSpan = Math.max(1, vEnd - vStart);
+const LaneHeader = ({ title, children }) => (
+  <div className="flex items-center gap-2 pt-1.5 pb-0.5 min-h-[22px]">
+    <span className="text-nano font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">{title}</span>
+    <span className="flex-1" />
+    {children}
+  </div>
+);
 
-  const frameAt = (clientX) => {
-    const rect = ref.current?.getBoundingClientRect();
-    if (!rect || !rect.width) return 1;
-    return clamp(Math.round(1 + ((clientX - rect.left) / rect.width) * span), 1, maxFrames);
-  };
-  const place = (start, width) => {
-    if (!setView) return;
-    const s = clamp(Math.round(start), 1, Math.max(1, maxFrames - width));
-    setView({ start: s, end: Math.min(maxFrames, s + width) });
-  };
-
-  // The drag handler needs the CURRENT window, but binding the listeners to it
-  // would re-subscribe on every playback tick (the auto-follow moves the window
-  // while playing). Latest values go through a ref so the listeners bind once.
-  const liveRef = useRef(null);
-  liveRef.current = { vStart, vEnd, vSpan, frameAt, place, setView, maxFrames };
-  useEffect(() => {
-    const onMove = (e) => {
-      const d = dragRef.current;
-      const L = liveRef.current;
-      if (!d || !L || !L.setView) return;
-      const f = L.frameAt(e.clientX);
-      if (d.mode === 'move') L.place(f - d.grab, L.vSpan);
-      // Never let a resize collapse the window below the zoom floor.
-      else if (d.mode === 'left') L.setView({ start: clamp(f, 1, L.vEnd - 24), end: L.vEnd });
-      else L.setView({ start: L.vStart, end: clamp(f, L.vStart + 24, L.maxFrames) });
-    };
-    const onUp = () => { dragRef.current = null; };
-    window.addEventListener('pointermove', onMove);
-    window.addEventListener('pointerup', onUp);
-    return () => {
-      window.removeEventListener('pointermove', onMove);
-      window.removeEventListener('pointerup', onUp);
-    };
-  }, []);
-
-  const onDown = (e) => {
-    const f = frameAt(e.clientX);
-    const rect = ref.current?.getBoundingClientRect();
-    const edgePx = 6;
-    const edgeFrames = rect ? Math.max(1, Math.round((edgePx / rect.width) * span)) : 1;
-    if (Math.abs(f - vStart) <= edgeFrames) dragRef.current = { mode: 'left' };
-    else if (Math.abs(f - vEnd) <= edgeFrames) dragRef.current = { mode: 'right' };
-    else if (f > vStart && f < vEnd) dragRef.current = { mode: 'move', grab: f - vStart };
-    else { place(f - Math.round(vSpan / 2), vSpan); dragRef.current = { mode: 'move', grab: Math.round(vSpan / 2) }; }
-  };
-
-  return (
-    <div
-      ref={ref}
-      onPointerDown={onDown}
-      className="relative mt-3 h-6 w-full rounded-md border border-[var(--border-color)] bg-[var(--input-bg)] overflow-hidden cursor-pointer"
-      title="Whole clip — drag the lit window to pan, its edges to zoom"
-    >
-      {/* selected render range, for orientation */}
-      <div className="absolute inset-y-0 bg-[var(--accent)]/15 pointer-events-none"
-           style={{ left: `${pct(startFrame)}%`, width: `${Math.max(0, pct(endFrame) - pct(startFrame))}%` }} />
-      {markers.map((m) => (
-        <span key={m} className="absolute inset-y-0 w-px bg-amber-300/50 pointer-events-none" style={{ left: `${pct(m)}%` }} />
-      ))}
-      <span className="absolute inset-y-0 w-px bg-white/80 pointer-events-none" style={{ left: `${pct(frame)}%` }} />
-      {/* the visible window */}
-      <div className="absolute inset-y-0 rounded-[3px] border border-white/45 bg-white/[0.10] pointer-events-none"
-           style={{ left: `${pct(vStart)}%`, width: `${Math.max(1.2, pct(vEnd) - pct(vStart))}%` }}>
-        <span className="absolute inset-y-0 -left-px w-[3px] rounded-full bg-white/70" />
-        <span className="absolute inset-y-0 -right-px w-[3px] rounded-full bg-white/70" />
-      </div>
-    </div>
-  );
-}
+const smallBtn = 'rounded-md px-1.5 py-0.5 text-note font-semibold text-[var(--text-muted)] hover:bg-white/[0.06] hover:text-[var(--text-main)] disabled:opacity-40 transition-colors';
 
 export default function Timeline({
   fps = 25,
@@ -215,7 +133,6 @@ export default function Timeline({
   onPointerLeave,
   hoverFrame = null,
   isScrubbing = false,
-  storyboardThumbs = [],
   isPlaying = false,
   setIsPlaying,
   buffering = false,
@@ -225,11 +142,28 @@ export default function Timeline({
   setPlaybackRate,
   thumbUrl,
   targetKey = '',
+  targetIndex = null,
   view,
   setView,
   segments = [],
   onSegmentClick,
-  sceneCuts = [],
+  sceneCuts = EMPTY,
+  /** True while a render is in flight: the filmstrip stops fetching and the track maps refresh. */
+  running = false,
+  /** [{start, end, fp}] finished renders of this clip, and the fingerprints in force NOW, per stretch. */
+  renderLog = EMPTY,
+  fpPieces = EMPTY,
+  /** {start, end, done} while a render is in flight, so the strip fills in as frames land. */
+  liveRange = null,
+  /** useSceneOverrides(): {overrides, selectedId, setSelectedId, add, update, remove}. */
+  sceneOverrides,
+  swapModels = EMPTY,
+  detectionMode = '',
+  baseValues,
+  onPresenceSelect,
+  onRenderRange,
+  onRenderOverrides,
+  renderBlockedReason = '',
   /**
    * A ref the parent calls `.current(frame)` on to move the playhead WITHOUT a React commit.
    * During a playhead drag the parent commits `frame` a few times a second (the preview can
@@ -239,24 +173,19 @@ export default function Timeline({
   playheadApiRef = null,
 }) {
   // ── View window ───────────────────────────────────────────────────────────
-  // The track shows [view.start, view.end] rather than the whole clip. `pctOf`
-  // is therefore a position on the VISIBLE track and can fall outside 0..100
-  // for frames scrolled off either edge — callers either clamp it (labels) or
-  // hide the element (handles, markers, playhead).
-  // Fall back to the whole clip for a missing or degenerate window — the parent
-  // seeds it in an effect, so the first paint after a target change would
-  // otherwise map every position against a one-frame span.
-  const valid = view && view.end > view.start;
-  const vStart = valid ? view.start : 1;
-  const vEnd = valid ? Math.min(view.end, maxFrames) : maxFrames;
-  const vSpan = Math.max(1, vEnd - vStart);
-  const zoomed = vSpan < maxFrames - 1;
+  // The lanes show [view.start, view.end] rather than the whole clip. Fall back to the whole clip
+  // for a missing or degenerate window - the parent seeds it in an effect, so the first paint after
+  // a target change would otherwise map every position against a one-frame span.
+  const v = useMemo(() => normalizeView(view, maxFrames), [view, maxFrames]);
+  const vStart = v.start;
+  const vEnd = v.end;
+  const vSpan = viewSpan(v);
+  const zoomed = isZoomed(v, maxFrames);
   const pctOf = (f) => ((f - vStart) / vSpan) * 100;
   const inView = (f) => f >= vStart && f <= vEnd;
 
   // The frame the playhead is DRAWN at. Between drag commits the parent's `frame` lags the pointer,
-  // so while scrubbing a re-render (hover state, a commit) must not snap the playhead back to it:
-  // it reads the last position the imperative API wrote. Outside a drag the two are one value.
+  // so while scrubbing a re-render must not snap the playhead back to it.
   const liveFrameRef = useRef(frame);
   if (!isScrubbing) liveFrameRef.current = frame;
   const shownFrame = isScrubbing ? liveFrameRef.current : frame;
@@ -267,41 +196,38 @@ export default function Timeline({
   const rangeLen = Math.max(0, endFrame - startFrame + 1);
   const rangeShare = Math.round((rangeLen / maxFrames) * 100);
 
-  /** Re-window around a pivot frame. factor > 1 zooms out, < 1 zooms in. */
-  const zoomAround = (pivot, factor) => {
-    if (!setView || maxFrames < 2) return;
-    // Floor at 24 visible frames — below that the filmstrip is a handful of
-    // near-identical stills and the frame box is the better tool anyway.
-    const nextSpan = clamp(Math.round(vSpan * factor), Math.min(24, maxFrames - 1), maxFrames - 1);
-    const ratio = clamp((pivot - vStart) / vSpan, 0, 1);
-    let s = Math.round(pivot - ratio * nextSpan);
-    s = clamp(s, 1, Math.max(1, maxFrames - nextSpan));
-    setView({ start: s, end: Math.min(maxFrames, s + nextSpan) });
-  };
-
-  const panBy = (deltaFrames) => {
-    if (!setView) return;
-    const s = clamp(vStart + deltaFrames, 1, Math.max(1, maxFrames - vSpan));
-    setView({ start: s, end: Math.min(maxFrames, s + vSpan) });
-  };
-
-  const resetView = () => setView && setView({ start: 1, end: maxFrames });
-
-  // Wheel over the track zooms about the cursor. Must be a NATIVE non-passive
-  // listener: React's onWheel is registered passive, so preventDefault there is
-  // ignored and the page scrolls behind the zoom.
-  //
-  // The handler reads the current window from a ref and the listener is bound
-  // ONCE. Keying it to [vStart, vSpan] instead meant re-subscribing on every
-  // zoom step, and with React free to defer the effect flush a fast wheel spin
-  // could hand several events to a listener still holding the previous window —
-  // each computing its step from a stale base, which reads as the zoom
-  // stuttering or fighting the cursor.
-  const wheelRef = useRef(null);
-  wheelRef.current = { vStart, vSpan, zoomAround, panBy, maxFrames };
+  // ── Geometry: the lanes share one x-extent, measured from the film track ───
+  const [trackW, setTrackW] = useState(0);
   useEffect(() => {
     const el = timelineRef?.current;
-    if (!el) return;
+    if (!el) return undefined;
+    setTrackW(el.getBoundingClientRect().width);
+    if (typeof ResizeObserver === 'undefined') return undefined;
+    const ro = new ResizeObserver(([e]) => setTrackW(e.contentRect.width));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [timelineRef, maxFrames]);
+
+  const setViewSafe = useCallback((next) => { if (setView) setView(next); }, [setView]);
+
+  /** Re-window around a pivot frame. factor > 1 zooms out, < 1 zooms in. */
+  const zoomAround = useCallback((pivot, factor, ratio) => {
+    if (!setView || maxFrames < 2) return;
+    setView(zoomView(v, maxFrames, trackW, factor, pivot, ratio));
+  }, [setView, maxFrames, trackW, v]);
+  const panBy = useCallback((deltaFrames) => { if (setView) setView(panView(v, maxFrames, deltaFrames)); }, [setView, v, maxFrames]);
+  const resetView = () => setViewSafe({ start: 1, end: maxFrames });
+
+  // Wheel over the lanes. Must be a NATIVE non-passive listener: React's onWheel is registered
+  // passive, so preventDefault there is ignored and the page scrolls behind the zoom. The handler
+  // reads the current window from a ref and the listener is bound once, so a fast spin never hands
+  // several events to a listener still holding the previous window.
+  const stackRef = useRef(null);
+  const wheelRef = useRef(null);
+  wheelRef.current = { v, vSpan, zoomAround, panBy, maxFrames, frame };
+  useEffect(() => {
+    const el = stackRef.current;
+    if (!el) return undefined;
     const onWheel = (e) => {
       const W = wheelRef.current;
       if (!W || W.maxFrames < 2) return;
@@ -309,69 +235,94 @@ export default function Timeline({
       // listener would otherwise fire alongside — zooming the track and the
       // whole UI on one gesture.
       if (e.ctrlKey || e.metaKey) return;
-      e.preventDefault();
       const rect = el.getBoundingClientRect();
       if (!rect.width) return;
-      const pivot = W.vStart + clamp((e.clientX - rect.left) / rect.width, 0, 1) * W.vSpan;
-      // Shift-wheel pans instead of zooming, matching every NLE.
-      if (e.shiftKey) W.panBy(Math.round((e.deltaY > 0 ? 0.15 : -0.15) * W.vSpan));
-      else W.zoomAround(pivot, e.deltaY > 0 ? 1.25 : 0.8);
+      e.preventDefault();
+      const ratio = clamp((e.clientX - rect.left) / rect.width, 0, 1);
+      const pivot = W.v.start + ratio * W.vSpan;
+      // A horizontal swipe (trackpad) or Shift + wheel scrolls.
+      if (e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
+        const d = e.shiftKey && Math.abs(e.deltaX) < Math.abs(e.deltaY) ? e.deltaY : e.deltaX;
+        W.panBy(Math.round((d / rect.width) * W.vSpan));
+        return;
+      }
+      // Smooth for both a notched mouse wheel (|dy| ~ 100) and a trackpad pinch (|dy| ~ 1-10).
+      const factor = Math.exp(clamp(e.deltaY, -240, 240) * 0.002);
+      W.zoomAround(pivot, factor, ratio);
     };
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
-  }, [timelineRef]);
+  }, []);
 
-  // Keep the playhead on screen while playing — a zoomed-in track that the
-  // playhead has already run off is just a still picture.
+  // Middle-button drag scrolls. Window-level move/up so the drag survives leaving the lanes.
+  const panDragRef = useRef(null);
+  useEffect(() => {
+    const el = stackRef.current;
+    if (!el) return undefined;
+    const onDown = (e) => {
+      if (e.button !== 1) return;
+      e.preventDefault();                       // no browser auto-scroll cursor
+      panDragRef.current = { x: e.clientX, start: wheelRef.current.v.start, w: el.getBoundingClientRect().width };
+    };
+    const onMove = (e) => {
+      const d = panDragRef.current;
+      if (!d) return;
+      const W = wheelRef.current;
+      const delta = -((e.clientX - d.x) / Math.max(1, d.w)) * W.vSpan;
+      setView?.(placeView(d.start + delta, W.vSpan, W.maxFrames));
+    };
+    const onUp = () => { panDragRef.current = null; };
+    el.addEventListener('pointerdown', onDown);
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    return () => {
+      el.removeEventListener('pointerdown', onDown);
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+    };
+  }, [setView]);
+
+  // Keep the playhead on screen while playing - a zoomed-in track that the playhead has already run
+  // off is just a still picture.
   useEffect(() => {
     if (!isPlaying || !zoomed || !setView) return;
-    if (frame >= vStart && frame <= vEnd) return;
-    const s = clamp(Math.round(frame - vSpan * 0.25), 1, Math.max(1, maxFrames - vSpan));
-    setView({ start: s, end: Math.min(maxFrames, s + vSpan) });
+    const next = followFrame(v, maxFrames, frame);
+    if (next !== v) setView(next);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [frame, isPlaying, zoomed]);
 
-  // ── Ruler ticks, measured from the real track width ───────────────────────
-  const [trackW, setTrackW] = useState(0);
-  useEffect(() => {
-    const el = timelineRef?.current;
-    if (!el) return;
-    setTrackW(el.getBoundingClientRect().width);
-    if (typeof ResizeObserver === 'undefined') return;
-    const ro = new ResizeObserver(([e]) => setTrackW(e.contentRect.width));
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [timelineRef, maxFrames]);
+  // ── Data: tracks, waveform, stills ─────────────────────────────────────────
+  const { tracks, scanPresence, scanning } = useTimelineTracks({
+    targetIndex, targetKey, maxFrames, poll: running,
+  });
+  const cuts = useMemo(() => {
+    const merged = new Set([...(tracks.sceneCuts || []), ...(sceneCuts || [])].filter(Number.isFinite));
+    return [...merged].sort((a, b) => a - b);
+  }, [tracks.sceneCuts, sceneCuts]);
+  const scenes = useMemo(() => scenesFromCuts(cuts, maxFrames), [cuts, maxFrames]);
 
-  const ticks = useMemo(() => {
-    if (!trackW || maxFrames < 2) return { major: [], minor: [], frameMode: false };
-    const want = Math.max(2, Math.floor(trackW / 92));
-    let step;
-    let frameMode = false;
-    if (vSpan / fps / want < 1) {
-      // Zoomed past one second per label — step in frames and show the frame
-      // remainder, otherwise every tick would read the same second.
-      const raw = vSpan / want;
-      step = NICE_FRAMES.find((n) => n >= raw) ?? Math.max(1, Math.round(fps));
-      frameMode = true;
-    } else {
-      const sec = NICE_SECONDS.find((s) => s >= vSpan / fps / want) ?? NICE_SECONDS[NICE_SECONDS.length - 1];
-      step = Math.max(1, Math.round(sec * fps));
-    }
-    // Ticks stay pinned to absolute clip time (multiples of `step` from frame 1)
-    // so they don't slide about under the material while panning.
-    const first = 1 + Math.ceil((vStart - 1) / step) * step;
-    const major = [];
-    const minor = [];
-    for (let f = first - step; f <= vEnd + step; f += step) {
-      if (f >= vStart && f <= vEnd && f >= 1) major.push(f);
-      for (let k = 1; k < MINOR_PER_MAJOR; k++) {
-        const mf = Math.round(f + (step * k) / MINOR_PER_MAJOR);
-        if (mf >= vStart && mf <= vEnd && mf >= 1 && mf <= maxFrames) minor.push(mf);
-      }
-    }
-    return { major, minor, frameMode };
-  }, [trackW, maxFrames, fps, vStart, vEnd, vSpan]);
+  const wave = useWaveform({ targetIndex, targetKey, fps, maxFrames, view: v, trackW, enabled: maxFrames > 1 });
+
+  const slotH = LANE_H.film;
+  const slots = useMemo(
+    () => thumbSlots(v, maxFrames, trackW, Math.round((slotH * 16) / 9)),
+    [v, maxFrames, trackW, slotH],
+  );
+  const filmstrip = useFilmstrip({ targetIndex, targetKey, slots, enabled: !running });
+
+  // ── The cache strip ───────────────────────────────────────────────────────
+  const spans = useMemo(() => {
+    const rendered = renderedForPieces(renderLog, fpPieces);
+    if (liveRange && liveRange.done > 0) rendered.push([liveRange.start, liveRange.start + liveRange.done - 1]);
+    const mapsApply = tracks.renderVideoMatches;
+    return buildRenderStrip({
+      lo: 1,
+      hi: Math.max(1, maxFrames),
+      rendered: mergeIntervals(rendered, 1, maxFrames),
+      bypass: mapsApply ? tracks.faceFree : EMPTY,
+      reuse: mapsApply ? tracks.reuse : EMPTY,
+    });
+  }, [renderLog, fpPieces, liveRange, tracks.faceFree, tracks.reuse, tracks.renderVideoMatches, maxFrames]);
 
   // ── Chapter markers, per clip ─────────────────────────────────────────────
   const [markers, setMarkers] = useState([]);
@@ -379,15 +330,9 @@ export default function Timeline({
     try {
       const raw = localStorage.getItem(markersKey(targetKey));
       const list = raw ? JSON.parse(raw) : null;
-      if (Array.isArray(list) && list.length > 0) {
-        setMarkers(list.filter((n) => Number.isFinite(n)));
-      } else if (Array.isArray(sceneCuts) && sceneCuts.length > 0) {
-        setMarkers(sceneCuts.filter((n) => Number.isFinite(n)));
-      } else {
-        setMarkers(Array.isArray(list) ? [] : []);
-      }
+      setMarkers(Array.isArray(list) ? list.filter((n) => Number.isFinite(n)) : []);
     } catch { setMarkers([]); }
-  }, [targetKey, sceneCuts]);
+  }, [targetKey]);
 
   const persistMarkers = (list) => {
     const next = [...new Set(list)].filter((f) => f >= 1 && f <= maxFrames).sort((a, b) => a - b);
@@ -395,65 +340,40 @@ export default function Timeline({
     try {
       if (next.length) localStorage.setItem(markersKey(targetKey), JSON.stringify(next));
       else localStorage.removeItem(markersKey(targetKey));
-    } catch { /* private mode / quota — markers are a convenience, not state we own */ }
+    } catch { /* private mode / quota - markers are a convenience, not state we own */ }
   };
 
   const markerAtPlayhead = markers.includes(frame);
   const toggleMarker = () =>
     persistMarkers(markerAtPlayhead ? markers.filter((m) => m !== frame) : [...markers, frame]);
 
-  // 'M' toggles a marker at the playhead. Same guards as the app's global
-  // shortcut handler so it never fires while typing or behind a modal. The
-  // handler is reached through a ref so the listener is bound once instead of
-  // re-subscribing on every frame the playback loop paints.
-  const toggleRef = useRef(toggleMarker);
-  toggleRef.current = toggleMarker;
-  useEffect(() => {
-    const onKey = (e) => {
-      if (e.key.toLowerCase() !== 'm' || e.ctrlKey || e.metaKey || e.altKey) return;
-      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName)) return;
-      if (document.querySelector('[role="dialog"]')) return;
-      e.preventDefault();
-      toggleRef.current();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, []);
-
   const jumpMarker = (dir) => {
     const next = dir > 0 ? markers.find((m) => m > frame) : [...markers].reverse().find((m) => m < frame);
     if (next !== undefined) setFrame(next);
+  };
+  const jumpCut = (dir) => {
+    const next = adjacentCut(cuts, frame, dir);
+    if (next !== null) setFrame(next);
+    return next !== null;
   };
 
   // ── Frame read-out field ──────────────────────────────────────────────────
   const [frameDraft, setFrameDraft] = useState(null);
 
-  // Hover thumbnail, loaded one at a time. Sweeping the pointer across the track
-  // names a new frame roughly every pixel, and each one is a video seek on the
-  // same decoder the playhead's own frame needs — so an unthrottled hover strip
-  // could bury the main preview under a hundred requests for stills that were
-  // out of date before they finished.
-  //
-  // This is the SAME decoder the scrubber competes for, so it gets the same
-  // treatment: 150 ms throttle, one in flight, and the superseded request
-  // ABORTED rather than left to run. A hover thumbnail is decoration; it must
-  // never be able to delay the frame the user is actually looking at, and the
-  // previous single-flight-only version could, because an <img> load cannot be
-  // cancelled. The <img> below points at the same URL and is answered from the
-  // browser cache the request already filled.
+  // Hover thumbnail, loaded one at a time and aborted when superseded (see git history for why:
+  // it competes with the playhead's own frame for the same decoder).
   const { frameSrc: hoverSrc } = useThrottledFrameRequest(
     hoverFrame !== null && thumbUrl ? thumbUrl(hoverFrame) : '',
     { throttleMs: 150 });
 
-  // Labels at the very edges would hang off the track; anchor those to the edge
-  // instead of centring them.
+  // Labels at the very edges would hang off the track; anchor those to the edge instead of centring.
   const anchor = (pct) => (pct < 3 ? 'translateX(0)' : pct > 97 ? 'translateX(-100%)' : 'translateX(-50%)');
 
-  // Imperative playhead: writes the same three things the JSX below renders (the line's `left`, the
-  // badge's `left`/`transform`/text/visibility) straight to the DOM. Re-registered on every render so
-  // it closes over the CURRENT view window and fps; React's own render of those values for the same
-  // frame is identical, so the two never disagree.
+  // Imperative playhead: writes the same things the JSX below renders (the lines' `left`, the
+  // badge's `left`/`transform`/text/visibility) straight to the DOM. Re-registered on every render
+  // so it closes over the CURRENT view window and fps.
   const playheadElRef = useRef(null);
+  const stackLineRef = useRef(null);
   const badgeElRef = useRef(null);
   const badgeTextRef = useRef(null);
   useLayoutEffect(() => {
@@ -462,21 +382,177 @@ export default function Timeline({
       liveFrameRef.current = f;
       const pct = pctOf(f);
       if (playheadElRef.current) playheadElRef.current.style.left = `${pct}%`;
+      if (stackLineRef.current) {
+        stackLineRef.current.style.left = `${pct}%`;
+        stackLineRef.current.style.display = inView(f) ? '' : 'none';
+      }
       const badge = badgeElRef.current;
       if (badge) {
         badge.style.left = `${pct}%`;
         badge.style.transform = anchor(pct);
         badge.style.display = inView(f) ? '' : 'none';
       }
-      if (badgeTextRef.current) badgeTextRef.current.textContent = fmtTCF(f, fps);
+      if (badgeTextRef.current) badgeTextRef.current.textContent = fmtTimecode(f, fps);
     };
     return () => { if (playheadApiRef) playheadApiRef.current = null; };
   });
 
   const step = (d) => setFrame((f) => clamp(f + d, 1, maxFrames));
 
+  // ── Scene overrides ───────────────────────────────────────────────────────
+  const fallbackOv = useSceneOverrides(targetKey, maxFrames);
+  const ov = sceneOverrides || fallbackOv;
+  const selectedOverride = ov.overrides.find((o) => o.id === ov.selectedId) || null;
+  const inout = useMemo(() => ({ start: startFrame, end: endFrame }), [startFrame, endFrame]);
+
+  const [menu, setMenu] = useState(null);       // {x, y, frame, items}
+  useEffect(() => {
+    if (!menu) return undefined;
+    const close = () => setMenu(null);
+    const onKey = (e) => { if (e.code === 'Escape') close(); };
+    window.addEventListener('pointerdown', close);
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('blur', close);
+    return () => {
+      window.removeEventListener('pointerdown', close);
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('blur', close);
+    };
+  }, [menu]);
+
+  const onContextMenu = (e) => {
+    if (maxFrames < 2) return;
+    const el = stackRef.current;
+    const rect = el.getBoundingClientRect();
+    e.preventDefault();
+    const f = frameAtX(e.clientX - rect.left, rect.width, v, maxFrames);
+    const items = overrideCandidates({ frame: f, scenes, startFrame, endFrame, maxFrames })
+      .map((c) => ({ id: `add-${c.kind}`, label: `+ Add Scene Override - ${c.label} (frames ${c.start}-${c.end})`, run: () => ov.add({ start: c.start, end: c.end }, c.label) }));
+    const hit = ov.overrides.filter((o) => f >= o.start && f <= o.end).pop();
+    if (hit) {
+      items.push({ id: 'edit', label: `Edit "${hit.label}"`, run: () => ov.setSelectedId(hit.id) });
+      items.push({ id: 'remove', label: `Remove "${hit.label}"`, run: () => ov.remove(hit.id) });
+    }
+    items.push({ id: 'cut', label: `Set In to ${f}`, run: () => setFrameMarkerVal('start', f) });
+    items.push({ id: 'cut-out', label: `Set Out to ${f}`, run: () => setFrameMarkerVal('end', f) });
+    setMenu({
+      x: clamp(((e.clientX - rect.left) / rect.width) * 100, 0, 100),
+      y: clamp(((e.clientY - rect.top) / rect.height) * 100, 0, 100),
+      frame: f,
+      items,
+    });
+  };
+
+  // ── Presence selection ────────────────────────────────────────────────────
+  const [pick, setPick] = useState(null);     // {id, interval}
+  useEffect(() => { setPick(null); }, [targetKey]);
+  const onPresenceClick = (row, interval) => {
+    setPick({ id: row.id, interval });
+    // The pill's interval is the scene this person is in: In/Out go to exactly that range.
+    setFrameMarkerVal('start', interval[0]);
+    setFrameMarkerVal('end', interval[1]);
+    setFrame(interval[0]);
+    onPresenceSelect?.(row, interval);
+  };
+
+  // ── Shuttle (J / K / L) ───────────────────────────────────────────────────
+  const [shuttle, setShuttle] = useState(IDLE);
+  const shuttleRef = useRef(shuttle);
+  shuttleRef.current = shuttle;
+  const latest = useRef({});
+  latest.current = {
+    frame, fps, isLooping, startFrame, endFrame, setFrame, playheadApiRef, markers, toggleMarker,
+    maxFrames, jumpCut, step, setFrameMarkerVal, setIsPlaying, setPlaybackRate,
+  };
+
+  // The buffered player owns forward playback; anything else that stops or starts it (Space, the
+  // end of the clip, the Play button) ends the shuttle so the read-out never lies.
+  useEffect(() => {
+    if (!isPlaying && shuttle.dir > 0) setShuttle(IDLE);
+    if (isPlaying && shuttle.dir < 0) setShuttle(IDLE);
+  }, [isPlaying, shuttle.dir]);
+
+  // Reverse has no buffer to ride, so the playhead is stepped on a clock. The playhead moves every
+  // animation frame through the imperative API; the frame is committed at most every 100 ms (the
+  // same pace as a scrub drag), which is all the preview can follow.
+  useEffect(() => {
+    if (shuttle.dir >= 0) return undefined;
+    let raf = 0;
+    let last = performance.now();
+    let cur = latest.current.frame;
+    let carry = 0;
+    let lastCommit = 0;
+    const rate = shuttleRate(shuttle);
+    const tick = (now) => {
+      const L = latest.current;
+      const floor = L.isLooping ? L.startFrame : 1;
+      const r = reverseTick({ frame: cur, carry }, now - last, rate, L.fps, floor);
+      last = now;
+      carry = r.carry;
+      cur = r.frame;
+      L.playheadApiRef?.current?.(cur);
+      if (now - lastCommit >= 100 || r.atStart) { lastCommit = now; L.setFrame(cur); }
+      if (r.atStart) {
+        if (L.isLooping && L.endFrame > cur) { cur = L.endFrame; carry = 0; }
+        else { setShuttle(IDLE); return; }
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [shuttle]);
+
+  // ── Keyboard ──────────────────────────────────────────────────────────────
+  // Same guards as the app's global shortcut handler so it never fires while typing or behind a
+  // modal. Reached through a ref so the listener is bound once instead of re-subscribing on every
+  // frame the playback loop paints. Each key is tested in the `e.key... === 'x'` form on purpose:
+  // test_ui_shortcut_keys.py reads those to prove no two components claim the same bare key.
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName)) return;
+      if (document.querySelector('[role="dialog"]')) return;
+      const L = latest.current;
+      if (L.maxFrames < 2) return;
+      const shuttleTo = (next) => {
+        setShuttle(next);
+        if (next.dir > 0) { L.setPlaybackRate?.(shuttleRate(next)); L.setIsPlaying?.(true); }
+        else L.setIsPlaying?.(false);
+      };
+      if (e.key.toLowerCase() === 'm') { e.preventDefault(); L.toggleMarker(); }
+      else if (e.key.toLowerCase() === 'j') { e.preventDefault(); shuttleTo(shuttleKey(shuttleRef.current, 'j')); }
+      else if (e.key.toLowerCase() === 'k') { e.preventDefault(); shuttleTo(shuttleKey(shuttleRef.current, 'k')); }
+      else if (e.key.toLowerCase() === 'l') { e.preventDefault(); shuttleTo(shuttleKey(shuttleRef.current, 'l')); }
+      else if (e.key.toLowerCase() === 'i') { e.preventDefault(); L.setFrameMarkerVal('start', L.frame); }
+      else if (e.key.toLowerCase() === 'o') { e.preventDefault(); L.setFrameMarkerVal('end', L.frame); }
+      else if (e.key === ',' || e.key === '<') { e.preventDefault(); L.step(-stepSize(e.shiftKey || e.key === '<')); }
+      else if (e.key === '.' || e.key === '>') { e.preventDefault(); L.step(stepSize(e.shiftKey || e.key === '>')); }
+      else if (e.key === 'ArrowUp') { if (L.jumpCut(-1)) e.preventDefault(); }
+      else if (e.key === 'ArrowDown') { if (L.jumpCut(1)) e.preventDefault(); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  // ── Zoom slider ───────────────────────────────────────────────────────────
+  const zoomT = zoomFraction(v, maxFrames, trackW);
+  const onZoomSlider = (e) => {
+    const t = Number(e.target.value);
+    const span = spanAtFraction(t, maxFrames, trackW);
+    setViewSafe(zoomView(v, maxFrames, trackW, span / vSpan, clamp(frame, v.start, v.end)));
+  };
+
+  const scene = sceneAt(scenes, frame);
+  const hasCuts = cuts.length > 0;
+  const presenceNote = tracks.presenceSource === 'none' && !tracks.presence.length
+    ? 'Who is on screen: press "Scan faces" to fill this lane'
+    : '';
+  const overrideNote = 'Right-click a scene or the In/Out range and choose + Add Scene Override';
+  const rangeIsWhole = startFrame <= 1 && endFrame >= maxFrames;
+
   return (
-    <div className="space-y-2.5 select-none">
+    <div className="space-y-2 select-none" data-testid="timeline"
+         data-view-start={vStart} data-view-end={vEnd} data-zoomed={zoomed ? 'true' : 'false'}>
       {/* ── Header: identity + the single, editable statement of the range ── */}
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
         <div className="flex items-baseline gap-2.5 min-w-0">
@@ -486,225 +562,283 @@ export default function Timeline({
           </span>
           {zoomed && (
             <span className="rounded-md border border-[var(--border-color)] bg-[var(--surface-2)] px-1.5 py-0.5 font-mono text-note tabular-nums text-[var(--text-muted)]"
-                  title="Visible range — the track is zoomed in">
-              showing {fmtTC(vStart, fps)}–{fmtTC(vEnd, fps)} · {Math.round((maxFrames - 1) / vSpan)}×
+                  title="Visible range - the track is zoomed in">
+              showing {fmtTC(vStart, fps)}-{fmtTC(vEnd, fps)} · {Math.round((maxFrames - 1) / vSpan)}×
             </span>
           )}
         </div>
         <div className="flex items-center gap-1.5">
           <RangeField label="In" value={startFrame} min={1} max={endFrame}
-                      onCommit={(v) => setFrameMarkerVal('start', v)} />
+                      onCommit={(n) => setFrameMarkerVal('start', n)} />
           <RangeField label="Out" value={endFrame} min={startFrame} max={maxFrames}
-                      onCommit={(v) => setFrameMarkerVal('end', v)} />
+                      onCommit={(n) => setFrameMarkerVal('end', n)} />
           <span className="inline-flex items-baseline gap-1.5 rounded-lg border border-[var(--accent)]/25 bg-[var(--accent)]/[0.08] px-2 py-1 font-mono text-mini tabular-nums text-accent"
-                title="Length of the selected range — this is what gets rendered">
+                title="Length of the selected range - this is what gets rendered">
             {fmtTC(rangeLen, fps)}
             <span className="text-note">{rangeLen.toLocaleString()} f · {rangeShare}%</span>
           </span>
         </div>
       </div>
 
-      {/* ── Ruler: real ticks + marker flags ─────────────────────────────── */}
-      <div className="relative h-6">
-        <div className="absolute inset-x-0 bottom-0 h-px bg-[var(--border-color)]" />
-        {ticks.minor.map((f, i) => (
-          <span key={`n${i}`} className="absolute bottom-0 w-px h-1.5 bg-[var(--text-muted)]/20"
-                style={{ left: `${pctOf(f)}%` }} />
-        ))}
-        {ticks.major.map((f) => {
-          const pct = pctOf(f);
-          return (
-            <React.Fragment key={f}>
-              <span className="absolute bottom-0 w-px h-2.5 bg-[var(--text-muted)]/40" style={{ left: `${pct}%` }} />
-              <span className="absolute bottom-3 font-mono text-note tabular-nums text-muted whitespace-nowrap"
-                    style={{ left: `${pct}%`, transform: anchor(pct) }}>
-                {ticks.frameMode ? fmtTCF(f, fps) : fmtTC(f, fps)}
-              </span>
-            </React.Fragment>
-          );
-        })}
+      {/* ── Minimap: the whole clip, with the visible window and its zoom handles ── */}
+      <Minimap
+        maxFrames={maxFrames}
+        view={v}
+        setView={setViewSafe}
+        frame={frame}
+        startFrame={startFrame}
+        endFrame={endFrame}
+        spans={spans}
+        cuts={cuts}
+        presence={tracks.presence}
+        trackW={trackW}
+      />
 
-        {/* Chapter markers — click to jump, alt-click to delete. */}
-        {markers.filter(inView).map((m) => (
-          <button
-            key={m}
-            type="button"
-            onClick={(e) => { if (e.altKey) persistMarkers(markers.filter((x) => x !== m)); else setFrame(m); }}
-            title={`Marker at frame ${m} (${fmtTC(m, fps)}) — click to jump, alt-click to remove`}
-            aria-label={`Marker at frame ${m}`}
-            className="absolute bottom-0 -translate-x-1/2 h-3.5 w-2.5 z-10 grid place-items-end"
-            style={{ left: `${pctOf(m)}%` }}
-          >
-            <span className={`block h-2.5 w-2 rounded-[2px] transition-transform hover:scale-125 ${
-              m === frame ? 'bg-amber-300' : 'bg-amber-400/70'}`} />
-          </button>
-        ))}
-      </div>
+      {/* ── Lane stack. One x-extent for every lane, so one playhead crosses them all. ── */}
+      <div ref={stackRef} className="relative" onContextMenu={onContextMenu} data-testid="timeline-stack">
+        <RulerLane
+          view={v} maxFrames={maxFrames} fps={fps}
+          onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerLeave={onPointerLeave}
+        />
+        <CacheLane view={v} maxFrames={maxFrames} spans={spans} />
 
-      {/* ── Track ────────────────────────────────────────────────────────── */}
-      <div className="relative">
-        {/* Hover scrub thumbnail */}
-        {hoverFrame !== null && thumbUrl && hoverSrc && (
-          <div
-            className="absolute bottom-[104px] z-50 flex flex-col items-center pointer-events-none -translate-x-1/2"
-            style={{ left: `${clamp(pctOf(hoverFrame), 9, 91)}%` }}
-          >
-            <div className="rounded-xl border border-[var(--border-strong)] bg-[var(--card-bg)] p-1.5 backdrop-blur-xl shadow-[0_10px_30px_rgba(0,0,0,0.55)]">
-              <img
-                src={hoverSrc}
-                alt=""
-                className="w-44 h-[99px] object-cover rounded-lg bg-black/60"
-                onError={(e) => { e.currentTarget.style.visibility = 'hidden'; }}
-                onLoad={(e) => { e.currentTarget.style.visibility = 'visible'; }}
-              />
-              <div className="mt-1 flex items-baseline justify-between px-0.5 font-mono text-note tabular-nums">
-                <span className="text-[var(--text-main)] font-semibold">{fmtTC(hoverFrame, fps)}</span>
-                <span className="text-muted">f {hoverFrame.toLocaleString()}</span>
+        {/* Filmstrip + waveform: the scrub surface */}
+        <div className="relative mt-1">
+          {/* Hover scrub thumbnail */}
+          {hoverFrame !== null && thumbUrl && hoverSrc && (
+            <div
+              className="absolute bottom-[90px] z-50 flex flex-col items-center pointer-events-none -translate-x-1/2"
+              style={{ left: `${clamp(pctOf(hoverFrame), 9, 91)}%` }}
+            >
+              <div className="rounded-xl border border-[var(--border-strong)] bg-[var(--card-bg)] p-1.5 backdrop-blur-xl shadow-[0_10px_30px_rgba(0,0,0,0.55)]">
+                <img
+                  src={hoverSrc}
+                  alt=""
+                  className="w-44 h-[99px] object-cover rounded-lg bg-black/60"
+                  onError={(e) => { e.currentTarget.style.visibility = 'hidden'; }}
+                  onLoad={(e) => { e.currentTarget.style.visibility = 'visible'; }}
+                />
+                <div className="mt-1 flex items-baseline justify-between px-0.5 font-mono text-note tabular-nums">
+                  <span className="text-[var(--text-main)] font-semibold">{fmtTimecode(hoverFrame, fps)}</span>
+                  <span className="text-muted">f {hoverFrame.toLocaleString()}</span>
+                </div>
               </div>
+              <span className="w-2.5 h-2.5 rotate-45 -mt-[6px] border-b border-r border-[var(--border-strong)] bg-[var(--card-bg)]" />
             </div>
-            <span className="w-2.5 h-2.5 rotate-45 -mt-[6px] border-b border-r border-[var(--border-strong)] bg-[var(--card-bg)]" />
+          )}
+
+          <div
+            ref={timelineRef}
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onPointerLeave={onPointerLeave}
+            className="relative w-full rounded-lg bg-[var(--input-bg)] border border-[var(--border-color)] overflow-hidden cursor-ew-resize timeline-track"
+            style={{ height: LANE_H.film }}
+          >
+            <FilmCanvas
+              view={v} maxFrames={maxFrames} fps={fps} slots={slots}
+              tileFor={filmstrip.tileFor} tileVersion={filmstrip.version}
+              waveCoarse={wave.coarse} waveFine={wave.fine}
+              thumbsHidden={false}
+            />
+
+            {/* Out-of-range: dimmed AND desaturated, the way an NLE greys the material you have
+                trimmed away. Percentages are clamped because once the view is zoomed the In/Out
+                points can sit outside it: a negative width is invalid CSS. */}
+            <div className="absolute inset-y-0 left-0 z-10 pointer-events-none bg-black/55 backdrop-saturate-0"
+                 style={{ width: `${clamp(startPct, 0, 100)}%` }} />
+            <div className="absolute inset-y-0 right-0 z-10 pointer-events-none bg-black/55 backdrop-saturate-0"
+                 style={{ left: `${clamp(endPct, 0, 100)}%` }} />
+
+            {/* Active range rails */}
+            <div className="absolute z-10 pointer-events-none border-y-2 border-[var(--accent)]/70 inset-y-0"
+                 style={{ left: `${clamp(startPct, 0, 100)}%`,
+                          width: `${Math.max(0, clamp(endPct, 0, 100) - clamp(startPct, 0, 100))}%` }} />
+
+            {/* In / Out handles - only when the point is actually on screen */}
+            {[['start', startFrame, startPct], ['end', endFrame, endPct]]
+              .filter(([, f]) => inView(f))
+              .map(([which, , pct]) => (
+              <div key={which} className="absolute inset-y-0 z-20 w-[3px] -translate-x-1/2 bg-white/90 pointer-events-none"
+                   style={{ left: `${pct}%` }}>
+                <span className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 h-9 w-2.5 rounded-full bg-white shadow-[0_1px_4px_rgba(0,0,0,0.7)] grid place-items-center gap-[2px]">
+                  <span className="block h-[7px] w-px bg-black/25" />
+                </span>
+                <span className={`absolute top-1 rounded px-1 bg-black/70 text-nano font-bold uppercase tracking-wider text-white ${
+                  which === 'start' ? 'left-1.5' : 'right-1.5'}`}>
+                  {which === 'start' ? 'In' : 'Out'}
+                </span>
+              </div>
+            ))}
+
+            {/* Chapter markers carried down onto the track (bounded: only those on screen) */}
+            {markers.filter(inView).slice(0, 400).map((m) => (
+              <span key={m} className="absolute inset-y-0 w-px bg-amber-300/45 z-10 pointer-events-none"
+                    style={{ left: `${pctOf(m)}%` }} />
+            ))}
+
+            {/* Segment bands: a thin strip along the bottom so several stay readable. */}
+            {segments.map((s, i) => {
+              const from = Math.max(s.start, vStart);
+              const to = Math.min(s.end, vEnd);
+              if (to < from) return null;
+              return (
+                <button
+                  key={s.id}
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); onSegmentClick?.(s); }}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  className="absolute bottom-0 h-1.5 z-20 rounded-sm bg-[var(--accent)]/75 hover:bg-[var(--accent)] border-x border-black/40 transition-colors"
+                  style={{ left: `${pctOf(from)}%`, width: `${Math.max(0.4, pctOf(to) - pctOf(from))}%` }}
+                  title={`Segment ${i + 1}: frames ${s.start}-${s.end}`}
+                  aria-label={`Segment ${i + 1}, frames ${s.start} to ${s.end}`}
+                />
+              );
+            })}
+
+            {/* Hover line */}
+            {hoverFrame !== null && (
+              <div className="absolute inset-y-0 w-px -translate-x-1/2 bg-white/35 z-20 pointer-events-none"
+                   style={{ left: `${pctOf(hoverFrame)}%` }} />
+            )}
+
+            {/* Playhead */}
+            <div ref={playheadElRef}
+                 className={`absolute inset-y-0 z-30 pointer-events-none ${isScrubbing ? '' : 'transition-[left] duration-100 ease-out'}`}
+                 style={{ left: `${currentPct}%` }}>
+              <div className="absolute inset-y-0 left-0 -translate-x-1/2 w-[2px] bg-white shadow-[0_0_0_1px_rgba(0,0,0,0.45)]" />
+              <div className="absolute -top-px left-0 -translate-x-1/2 h-0 w-0 border-x-[6px] border-x-transparent border-t-[8px] border-t-[var(--accent)]" />
+              <div className="absolute bottom-1 left-0 -translate-x-1/2 h-2 w-2 rounded-full bg-white shadow-[0_1px_3px_rgba(0,0,0,0.6)]" />
+            </div>
+          </div>
+
+          {/* Playhead timecode, riding under the film track. Always mounted (hidden with display:none
+              when out of view) so the imperative API has an element to write to. */}
+          <div ref={badgeElRef}
+               className={`absolute -bottom-2 z-30 pointer-events-none ${isScrubbing ? '' : 'transition-[left] duration-100 ease-out'}`}
+               style={{ left: `${currentPct}%`, transform: anchor(currentPct), display: inView(shownFrame) ? undefined : 'none' }}>
+            <span ref={badgeTextRef} className="rounded-md bg-[var(--accent)] px-1.5 py-0.5 font-mono text-note font-bold tabular-nums text-white shadow-[0_2px_6px_rgba(0,0,0,0.5)]">
+              {fmtTimecode(shownFrame, fps)}
+            </span>
+          </div>
+        </div>
+
+        {/* Scene cuts + who is on screen */}
+        <LaneHeader title="Scene cuts & faces">
+          <span className="font-mono text-note tabular-nums text-[var(--text-muted)]">
+            {cuts.length ? `${cuts.length} cut${cuts.length === 1 ? '' : 's'}` : 'no cuts found'}
+            {scene ? ` · scene ${scene.index + 1}/${scenes.length}` : ''}
+          </span>
+          <button type="button" className={smallBtn} disabled={!hasCuts} onClick={() => jumpCut(-1)}
+                  title="Jump to the previous scene cut (Up Arrow)">↑ Prev cut</button>
+          <button type="button" className={smallBtn} disabled={!hasCuts} onClick={() => jumpCut(1)}
+                  title="Jump to the next scene cut (Down Arrow)">↓ Next cut</button>
+          <button type="button" className={smallBtn} disabled={scanning || targetIndex === null} onClick={scanPresence}
+                  title="Sample the clip, cluster the faces and show where each person appears">
+            {scanning ? 'Scanning…' : tracks.presence.length ? 'Rescan faces' : 'Scan faces'}
+          </button>
+        </LaneHeader>
+        <SceneLane
+          view={v} maxFrames={maxFrames} fps={fps} cuts={cuts} presence={tracks.presence}
+          selectedPersonId={pick?.id} selectedInterval={pick?.interval} emptyNote={presenceNote}
+          onSeek={setFrame} onJumpCut={setFrame} onPresenceClick={onPresenceClick}
+        />
+
+        {/* Per-segment overrides */}
+        <LaneHeader title="Scene overrides">
+          {ov.overrides.length > 0 && (
+            <>
+              <span className="font-mono text-note tabular-nums text-[var(--text-muted)]">{ov.overrides.length}</span>
+              <label className="inline-flex items-center gap-1 text-note text-[var(--text-muted)]"
+                     title="Off: the overrides stay on the timeline, but the preview, the cache strip and the render use the clip's own settings">
+                <input type="checkbox" checked={ov.enabled !== false} aria-label="Apply scene overrides"
+                       onChange={(e) => ov.setEnabled?.(e.target.checked)} className="accent-[var(--accent)]" />
+                Apply
+              </label>
+            </>
+          )}
+          <button type="button" className={smallBtn}
+                  disabled={rangeIsWhole && !scene}
+                  onClick={() => {
+                    const r = rangeIsWhole ? { start: scene.start, end: scene.end, label: `Scene ${scene.index + 1}` }
+                      : { start: startFrame, end: endFrame, label: 'In/Out range' };
+                    ov.add({ start: r.start, end: r.end }, r.label);
+                  }}
+                  title={rangeIsWhole ? 'Add an override on the scene under the playhead' : 'Add an override on the In/Out range'}>
+            + Add Scene Override
+          </button>
+          <button type="button" className={smallBtn}
+                  disabled={!ov.overrides.length || !onRenderOverrides || !!renderBlockedReason}
+                  onClick={onRenderOverrides}
+                  title={renderBlockedReason || 'Queue the In/Out range as one job per piece (overrides applied), ready to join'}>
+            Queue with overrides
+          </button>
+        </LaneHeader>
+        <OverrideLane
+          view={v} maxFrames={maxFrames} overrides={ov.overrides} selectedId={ov.selectedId}
+          inout={inout} emptyNote={overrideNote}
+          onSelect={ov.setSelectedId} onUpdate={ov.update} onSeek={setFrame}
+        />
+
+        {/* Playhead continued across every lane */}
+        <div ref={stackLineRef}
+             className="absolute inset-y-0 z-30 w-px -translate-x-1/2 bg-white/70 pointer-events-none"
+             style={{ left: `${currentPct}%`, display: inView(shownFrame) ? undefined : 'none' }} />
+
+        {/* Right-click menu. Positioned in percent of the stack so the app-level CSS zoom cannot offset it. */}
+        {menu && (
+          <div
+            role="menu"
+            aria-label="Timeline actions"
+            data-testid="timeline-menu"
+            onPointerDown={(e) => e.stopPropagation()}
+            className="absolute z-[60] min-w-[220px] max-w-[320px] rounded-lg border border-[var(--border-strong)] bg-[var(--card-bg)] p-1 shadow-[0_12px_32px_rgba(0,0,0,0.55)] backdrop-blur-xl"
+            style={{ left: `${menu.x}%`, top: `${menu.y}%`, transform: `translate(${menu.x > 60 ? '-100%' : '0'}, ${menu.y > 55 ? '-100%' : '0'})` }}
+          >
+            {menu.items.map((it) => (
+              <button
+                key={it.id} type="button" role="menuitem"
+                onClick={() => { it.run(); setMenu(null); }}
+                className="block w-full rounded-md px-2.5 py-1.5 text-left text-mini text-[var(--text-main)] hover:bg-white/[0.08]"
+              >
+                {it.label}
+              </button>
+            ))}
           </div>
         )}
-
-        <div
-          ref={timelineRef}
-          onPointerDown={onPointerDown}
-          onPointerMove={onPointerMove}
-          onPointerLeave={onPointerLeave}
-          className="relative h-24 w-full rounded-xl bg-[var(--input-bg)] border border-[var(--border-color)] overflow-hidden cursor-ew-resize timeline-track"
-        >
-          {/* Filmstrip. Shown at full strength — the old 45% wash made every clip
-              look like grey mud; legibility comes from the scrim below instead. */}
-          {storyboardThumbs.length > 0 && (
-            <div className="absolute inset-0 flex pointer-events-none">
-              {/* An empty entry is a frame the server could not read. It keeps
-                  its slot (so the stills stay under the right timecodes) but
-                  must not become <img src="">, which re-requests the page. */}
-              {storyboardThumbs.map((url, i) => (
-                url
-                  ? <img key={i} src={url} alt="" loading="lazy"
-                         className="flex-1 min-w-0 h-full object-cover"
-                         onError={(e) => { e.currentTarget.style.opacity = '0'; }} />
-                  : <span key={i} className="flex-1 min-w-0 h-full" />
-              ))}
-            </div>
-          )}
-          <div className="absolute inset-0 pointer-events-none bg-gradient-to-t from-black/70 via-black/10 to-black/25" />
-
-          {/* Out-of-range: dimmed AND desaturated, the way an NLE greys the
-              material you have trimmed away — reads instantly as "not rendered".
-              Percentages are clamped because once the view is zoomed the In/Out
-              points can sit outside it: a negative width is invalid CSS, which
-              the browser drops, and the dim would silently vanish. */}
-          <div className="absolute inset-y-0 left-0 z-10 pointer-events-none bg-black/55 backdrop-saturate-0"
-               style={{ width: `${clamp(startPct, 0, 100)}%` }} />
-          <div className="absolute inset-y-0 right-0 z-10 pointer-events-none bg-black/55 backdrop-saturate-0"
-               style={{ left: `${clamp(endPct, 0, 100)}%` }} />
-
-          {/* Active range rails */}
-          <div className="absolute z-10 pointer-events-none border-y-2 border-[var(--accent)]/70 inset-y-0"
-               style={{ left: `${clamp(startPct, 0, 100)}%`,
-                        width: `${Math.max(0, clamp(endPct, 0, 100) - clamp(startPct, 0, 100))}%` }} />
-
-          {/* In / Out handles — only when the point is actually on screen */}
-          {[['start', startFrame, startPct], ['end', endFrame, endPct]]
-            .filter(([, f]) => inView(f))
-            .map(([which, , pct]) => (
-            <div key={which} className="absolute inset-y-0 z-20 w-[3px] -translate-x-1/2 bg-white/90 pointer-events-none"
-                 style={{ left: `${pct}%` }}>
-              <span className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 h-9 w-2.5 rounded-full bg-white shadow-[0_1px_4px_rgba(0,0,0,0.7)] grid place-items-center gap-[2px]">
-                <span className="block h-[7px] w-px bg-black/25" />
-              </span>
-              <span className={`absolute top-1 rounded px-1 bg-black/70 text-nano font-bold uppercase tracking-wider text-white ${
-                which === 'start' ? 'left-1.5' : 'right-1.5'}`}>
-                {which === 'start' ? 'In' : 'Out'}
-              </span>
-            </div>
-          ))}
-
-          {/* Marker ticks carried down onto the track */}
-          {markers.filter(inView).map((m) => (
-            <span key={m} className="absolute inset-y-0 w-px bg-amber-300/45 z-10 pointer-events-none"
-                  style={{ left: `${pctOf(m)}%` }} />
-          ))}
-
-          {/* Segment bands. Drawn as a thin strip along the bottom rather than a
-              full-height tint so several of them stay readable over the
-              filmstrip, and so they never compete with the In/Out shading that
-              says what THIS run will render. Clipped to the visible window. */}
-          {segments.map((s, i) => {
-            const from = Math.max(s.start, vStart);
-            const to = Math.min(s.end, vEnd);
-            if (to < from) return null;
-            return (
-              <button
-                key={s.id}
-                type="button"
-                onClick={(e) => { e.stopPropagation(); onSegmentClick?.(s); }}
-                onPointerDown={(e) => e.stopPropagation()}
-                className="absolute bottom-0 h-1.5 z-20 rounded-sm bg-[var(--accent)]/75 hover:bg-[var(--accent)] border-x border-black/40 transition-colors"
-                style={{ left: `${pctOf(from)}%`, width: `${Math.max(0.4, pctOf(to) - pctOf(from))}%` }}
-                title={`Segment ${i + 1}: frames ${s.start}–${s.end}`}
-                aria-label={`Segment ${i + 1}, frames ${s.start} to ${s.end}`}
-              />
-            );
-          })}
-
-          {/* Hover line */}
-          {hoverFrame !== null && (
-            <div className="absolute inset-y-0 w-px -translate-x-1/2 bg-white/35 z-20 pointer-events-none"
-                 style={{ left: `${pctOf(hoverFrame)}%` }} />
-          )}
-
-          {/* Playhead */}
-          <div ref={playheadElRef}
-               className={`absolute inset-y-0 z-30 pointer-events-none ${isScrubbing ? '' : 'transition-[left] duration-100 ease-out'}`}
-               style={{ left: `${currentPct}%` }}>
-            <div className="absolute inset-y-0 left-0 -translate-x-1/2 w-[2px] bg-white shadow-[0_0_0_1px_rgba(0,0,0,0.45)]" />
-            <div className="absolute -top-px left-0 -translate-x-1/2 h-0 w-0 border-x-[6px] border-x-transparent border-t-[8px] border-t-[var(--accent)]" />
-            <div className="absolute bottom-1 left-0 -translate-x-1/2 h-2 w-2 rounded-full bg-white shadow-[0_1px_3px_rgba(0,0,0,0.6)]" />
-          </div>
-        </div>
-
-        {/* Playhead timecode, riding under the track. Hidden when the playhead
-            has been scrolled out of the window — it sits outside the track's
-            overflow clip, so it would otherwise float free of its own line. */}
-        {/* Always mounted (hidden with display:none when out of view) so the imperative API above has an
-            element to write to when a drag carries the playhead back into view. */}
-        <div ref={badgeElRef}
-             className={`absolute -bottom-2 z-30 pointer-events-none ${isScrubbing ? '' : 'transition-[left] duration-100 ease-out'}`}
-             style={{ left: `${currentPct}%`, transform: anchor(currentPct), display: inView(shownFrame) ? undefined : 'none' }}>
-          <span ref={badgeTextRef} className="rounded-md bg-[var(--accent)] px-1.5 py-0.5 font-mono text-note font-bold tabular-nums text-white shadow-[0_2px_6px_rgba(0,0,0,0.5)]">
-            {fmtTCF(shownFrame, fps)}
-          </span>
-        </div>
       </div>
 
-      {/* ── Overview strip ───────────────────────────────────────────────────
-          The whole clip at a glance with the visible window drawn on it: the
-          one thing a zoomed track cannot tell you is where in the clip you are.
-          Drag the window to pan, drag its edges to resize, click anywhere to
-          jump the window there. Only shown once zoomed — at full extent it
-          would just restate the track. */}
-      {zoomed && (
-        <OverviewStrip
+      {/* Legend */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-note text-[var(--text-muted)]" data-testid="timeline-legend">
+        {Object.keys(STATE_COLORS).map((k) => (
+          <span key={k} className="inline-flex items-center gap-1.5">
+            <span className="h-1.5 w-3 rounded-full" style={{ background: STATE_COLORS[k], opacity: k === 'dirty' ? 0.6 : 1 }} />
+            {STATE_LABELS[k]}
+          </span>
+        ))}
+        {!tracks.renderVideoMatches && <span className="opacity-70">· face-free / smart-skip fill in after a run</span>}
+      </div>
+
+      {selectedOverride && (
+        <OverrideInspector
+          override={selectedOverride}
           maxFrames={maxFrames}
-          vStart={vStart}
-          vEnd={vEnd}
-          frame={frame}
-          startFrame={startFrame}
-          endFrame={endFrame}
-          markers={markers}
-          setView={setView}
+          swapModels={swapModels}
+          detectionMode={detectionMode}
+          baseValues={baseValues}
+          onChange={(patch) => ov.update(selectedOverride.id, patch)}
+          onRemove={() => ov.remove(selectedOverride.id)}
+          onJump={() => setFrame(selectedOverride.start)}
+          onUseAsRange={() => { setFrameMarkerVal('start', selectedOverride.start); setFrameMarkerVal('end', selectedOverride.end); }}
         />
       )}
 
       {/* ── Toolbar: one surface, three zones ────────────────────────────── */}
-      <div className="mt-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-2.5 rounded-xl border border-[var(--border-color)] bg-[var(--card-bg)] px-3 py-2">
+      <div className="mt-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-2.5 rounded-xl border border-[var(--border-color)] bg-[var(--card-bg)] px-3 py-2">
         {/* Read-out */}
         <div className="flex items-baseline gap-2 font-mono">
-          <span className="text-lead font-semibold tabular-nums text-[var(--text-main)]">{fmtTC(frame, fps)}</span>
-          <span className="text-mini tabular-nums text-muted">/ {fmtTC(maxFrames, fps)}</span>
+          <span className="text-lead font-semibold tabular-nums text-[var(--text-main)]" data-testid="timecode-readout">{fmtTimecode(frame, fps)}</span>
+          <span className="text-mini tabular-nums text-muted">/ {fmtTimecode(maxFrames, fps)}</span>
           <span className="mx-1 h-4 w-px bg-[var(--border-color)] self-center" />
           <input
             type="number"
@@ -726,6 +860,11 @@ export default function Timeline({
             aria-label="Frame number"
           />
           <span className="text-note tabular-nums text-muted">/ {maxFrames.toLocaleString()}</span>
+          {shuttle.dir !== 0 && (
+            <span className="ml-1 rounded-md bg-[var(--accent)]/15 px-1.5 py-0.5 text-note font-bold text-accent" data-testid="shuttle-readout">
+              {shuttleLabel(shuttle)}
+            </span>
+          )}
         </div>
 
         {/* Transport */}
@@ -751,8 +890,8 @@ export default function Timeline({
             }`}
           >
             {isPlaying && buffering
-              // Held waiting for frames. Saying so is the difference between
-              // "this is loading" and "this button is broken".
+              // Held waiting for frames. Saying so is the difference between "this is loading" and
+              // "this button is broken".
               ? <span className="h-4 w-4 rounded-full border-2 border-white/25 border-t-white animate-spin" />
               : isPlaying
                 ? <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1.2" /><rect x="14" y="4" width="4" height="16" rx="1.2" /></svg>
@@ -771,15 +910,15 @@ export default function Timeline({
         </div>
 
         {/* Range + playback options */}
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <div className="spring-cluster flex items-center gap-0.5 rounded-lg border border-[var(--border-color)] bg-[var(--surface-2)] p-0.5">
             <button type="button" onClick={() => setFrameMarkerVal('start', frame)}
-                    title="Set In point to the current frame ([)"
+                    title="Set In point to the current frame (I or [)"
                     className="px-2 py-1 rounded-md text-mini font-semibold text-[var(--text-muted)] hover:text-[var(--text-main)] hover:bg-white/[0.06] transition-colors">
               Set in
             </button>
             <button type="button" onClick={() => setFrameMarkerVal('end', frame)}
-                    title="Set Out point to the current frame (])"
+                    title="Set Out point to the current frame (O or ])"
                     className="px-2 py-1 rounded-md text-mini font-semibold text-[var(--text-muted)] hover:text-[var(--text-main)] hover:bg-white/[0.06] transition-colors">
               Set out
             </button>
@@ -790,6 +929,28 @@ export default function Timeline({
               Full
             </button>
           </div>
+
+          <button type="button"
+                  onClick={() => setIsLooping(!isLooping)}
+                  aria-pressed={isLooping}
+                  title="Loop the work area: playback wraps from Out back to In"
+                  className={`rounded-lg border px-2 py-1.5 text-mini font-semibold transition-colors ${
+                    isLooping
+                      ? 'border-[var(--accent)]/40 bg-[var(--accent)]/12 text-accent'
+                      : 'border-[var(--border-color)] bg-[var(--surface-2)] text-[var(--text-muted)] hover:text-[var(--text-main)]'}`}>
+            Loop Work Area
+          </button>
+
+          {onRenderRange && (
+            <button type="button"
+                    onClick={onRenderRange}
+                    disabled={!!renderBlockedReason}
+                    data-testid="render-range"
+                    title={renderBlockedReason || `Render only frames ${startFrame}-${endFrame}`}
+                    className="rounded-lg bg-[var(--accent)] px-2.5 py-1.5 text-mini font-semibold text-white hover:bg-[var(--accent-hover)] disabled:opacity-40 transition-colors">
+              Render In→Out Range Only
+            </button>
+          )}
 
           <div className="spring-cluster flex items-center gap-0.5 rounded-lg border border-[var(--border-color)] bg-[var(--surface-2)] p-0.5">
             <IconBtn title={markerAtPlayhead ? 'Remove the marker here (M)' : 'Add a marker at the playhead (M)'}
@@ -805,7 +966,7 @@ export default function Timeline({
             )}
           </div>
 
-          <div className="spring-cluster flex items-center rounded-lg border border-[var(--border-color)] bg-[var(--surface-2)] p-0.5" title="Playback speed">
+          <div className="spring-cluster flex items-center rounded-lg border border-[var(--border-color)] bg-[var(--surface-2)] p-0.5" title="Playback speed (J / K / L shuttle)">
             {SPEEDS.map((r) => (
               <button key={r} type="button" onClick={() => setPlaybackRate(r)}
                       className={`px-1.5 py-1 rounded-md text-note font-bold tabular-nums transition-colors ${
@@ -817,23 +978,24 @@ export default function Timeline({
             ))}
           </div>
 
-          <IconBtn title="Loop playback over the selected range" onClick={() => setIsLooping(!isLooping)} active={isLooping}
-                   className={`border ${isLooping ? 'border-[var(--accent)]/30' : 'border-[var(--border-color)]'}`}>
-            <Ico d={<><polyline points="17 1 21 5 17 9" /><path d="M3 11V9a4 4 0 0 1 4-4h14" /><polyline points="7 23 3 19 7 15" /><path d="M21 13v2a4 4 0 0 1-4 4H3" /></>} />
-          </IconBtn>
-
           {/* Zoom */}
-          <div className="spring-cluster flex items-center gap-0.5 rounded-lg border border-[var(--border-color)] bg-[var(--surface-2)] p-0.5"
-               title="Zoom the timeline — wheel over the track zooms about the cursor, shift-wheel pans">
+          <div className="spring-cluster flex items-center gap-1 rounded-lg border border-[var(--border-color)] bg-[var(--surface-2)] p-0.5 pr-2"
+               title="Zoom the timeline - Ctrl/Cmd + wheel zooms about the cursor, Shift + wheel scrolls">
             <IconBtn title="Zoom out" onClick={() => zoomAround(frame, 1.6)}>
               <Ico d={<><circle cx="11" cy="11" r="7" /><line x1="20" y1="20" x2="16.2" y2="16.2" /><line x1="8" y1="11" x2="14" y2="11" /></>} />
             </IconBtn>
+            <input
+              type="range" min={0} max={1} step={0.005} value={zoomT}
+              onChange={onZoomSlider}
+              aria-label="Timeline zoom"
+              data-testid="timeline-zoom"
+              className="h-1 w-24 accent-[var(--accent)]"
+            />
             <IconBtn title="Zoom in on the playhead" onClick={() => zoomAround(frame, 0.6)}>
               <Ico d={<><circle cx="11" cy="11" r="7" /><line x1="20" y1="20" x2="16.2" y2="16.2" /><line x1="8" y1="11" x2="14" y2="11" /><line x1="11" y1="8" x2="11" y2="14" /></>} />
             </IconBtn>
             <button type="button"
-                    onClick={() => (zoomed ? resetView() : setView && setView({
-                      start: Math.max(1, startFrame), end: Math.max(startFrame + 1, endFrame) }))}
+                    onClick={() => (zoomed ? resetView() : setViewSafe(fitRange(startFrame, endFrame, maxFrames, trackW)))}
                     title={zoomed ? 'Zoom out to the whole clip' : 'Zoom to the selected In/Out range'}
                     className="px-2 py-1 rounded-md text-note font-bold text-[var(--text-muted)] hover:text-[var(--text-main)] hover:bg-white/[0.06] transition-colors">
               {zoomed ? 'All' : 'Range'}

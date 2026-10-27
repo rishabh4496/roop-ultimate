@@ -59,6 +59,7 @@ from roop.ProcessEntry import ProcessEntry
 from roop import capture_seed
 from roop import segment_writer
 from roop import segment_output as _segment_output
+from roop import timeline_tracks as _timeline_tracks
 from roop import live_preview
 from roop import stage_telemetry as _stage_telemetry
 from roop import render_policy as _render_policy
@@ -2993,6 +2994,74 @@ def target_scene_cuts(index: int = None, media_id: str = None):
         "target_media_id": resolved_id,
         "scene_cuts": scene_cuts,
     }
+
+
+@app.get("/api/target/timeline_tracks")
+def target_timeline_tracks(index: int = None, media_id: str = None):
+    """Everything the timeline's lanes read for one target, in UI numbering (1-based, absolute).
+
+    ``scene_cuts``  first frame of each new shot, from the Face Bank scan (empty until it has run on
+                    THIS video).
+    ``presence``    per person, the frame intervals they were seen in - SAMPLED, one look every
+                    ``sample_stride`` frames; ``presence_source`` says where it came from.
+    ``render``      the last run's Stage 1 face-free ranges and Stage 2 planned smart-skip reuse
+                    frames, and whether they belong to this video (``video_matches``).
+    Nothing is invented: a lane with no data gets an empty list and a source of ``"none"``.
+    """
+    target_index, resolved_id = _target_index_for_ref(index=index, media_id=media_id)
+    if target_index is None or target_index < 0 or target_index >= len(list_files_process):
+        return JSONResponse(status_code=404, content={"message": "no target"})
+    entry = list_files_process[target_index]
+    filename = entry.filename
+    out = {"target_media_id": resolved_id, "scene_cuts": [], "presence": [], "presence_source": "none",
+           "sample_stride": 0, "render": _timeline_tracks.render_maps(filename)}
+    try:
+        from roop.face_bank import get_face_bank
+        bank = get_face_bank()
+        bank_path = getattr(bank, "last_video_path", None)
+        if bank_path and os.path.abspath(str(bank_path)) == os.path.abspath(str(filename)):
+            total = int(getattr(entry, "total_frames", 0) or getattr(bank, "total_frames", 0) or 0)
+            samples = sorted(int(f) for f in getattr(bank, "sample_frames", set()) or set())
+            # 0-based keyframe index -> the UI's 1-based first frame of the new shot.
+            out["scene_cuts"] = sorted({int(f) + 1 for f in getattr(bank, "scene_cuts", set()) or set()})
+            out["sample_stride"] = _timeline_tracks.median_stride(samples)
+            for rank, ch in enumerate(getattr(bank, "characters", []) or []):
+                out["presence"].append({
+                    "person_id": ch.get("person_id"),
+                    "name": ch.get("name") or f"Actor {rank + 1}",
+                    "intervals": _timeline_tracks.presence_intervals(ch.get("frames") or [], samples, total),
+                })
+            if out["presence"]:
+                out["presence_source"] = "face_bank_sampled"
+    except Exception as exc:
+        _swallowed("api.py:target_timeline_tracks", exc, "timeline tracks query error")
+    return out
+
+
+@app.get("/api/target/waveform")
+def target_waveform(index: int = None, media_id: str = None, t0: float = 0.0, t1: float = -1.0, bins: int = 2048):
+    """Audio amplitude peaks (0-255, square-root scale) for the filmstrip.
+
+    The envelope is built once per file by a background ffmpeg decode, so the first answer is
+    usually ``{"ready": false, "state": "building"}`` - ask again. ``state`` is ``"none"`` for a file
+    with no audio. ``[t0, t1]`` (seconds; t1 < 0 = to the end) is max-pooled down to ``bins`` values.
+    """
+    target_index, resolved_id = _target_index_for_ref(index=index, media_id=media_id)
+    if target_index is None or target_index < 0 or target_index >= len(list_files_process):
+        return JSONResponse(status_code=404, content={"message": "no target"})
+    filename = list_files_process[target_index].filename
+    if not util.is_video(filename):
+        return {"target_media_id": resolved_id, "ready": True, "state": "none", "duration": 0.0, "peaks": ""}
+    state_name, env = _timeline_tracks.envelope_state(filename)
+    if state_name != "ready" or env is None:
+        return {"target_media_id": resolved_id, "ready": state_name == "none", "state": state_name,
+                "duration": 0.0, "peaks": ""}
+    duration = len(env) / float(_timeline_tracks.ENVELOPE_HZ)
+    hi = duration if t1 < 0 else min(float(t1), duration)
+    peaks = _timeline_tracks.slice_peaks(env, max(0.0, float(t0)), hi, int(bins))
+    return {"target_media_id": resolved_id, "ready": True, "state": "ready", "duration": duration,
+            "t0": max(0.0, float(t0)), "t1": hi, "bins": int(len(peaks)),
+            "peaks": _timeline_tracks.peaks_b64(peaks)}
 
 
 @app.get("/api/target/preview_seq")

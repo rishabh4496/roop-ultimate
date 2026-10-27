@@ -825,6 +825,12 @@ class BatchProcessingMixin:
         # Per-stage progress for /ws/telemetry (roop/stage_telemetry.py): written here, sampled by the web side.
         from roop import stage_telemetry as _st
         _st.begin_run(frame_count)
+        # The timeline's cache lane shows THIS run's Stage 1 / Stage 2 maps, never the previous run's.
+        try:
+            from roop import timeline_tracks as _timeline_tracks
+            _timeline_tracks.begin_run(source_video, frame_start, frame_count)
+        except Exception as _exc:
+            _swallowed('roop/procmgr_batch.py:timeline_begin', _exc, 'timeline maps not recorded for this run')
         # The head-pose HUD reads the ACTIVE trajectory: the previous job's heads must not outlive its job.
         from roop import trajectory_cache as _trajectory_cache
         _trajectory_cache.clear_active()
@@ -884,6 +890,10 @@ class BatchProcessingMixin:
                 self._active_ranges = ranges
                 self._active_ranges_mask = mask
                 self._active_ranges_stats = stats
+                try:
+                    _timeline_tracks.publish_active_ranges(ranges)
+                except Exception as _exc:
+                    _swallowed('roop/procmgr_batch.py:timeline_ranges', _exc, 'face-free frames not shown on the timeline')
                 _st.set_ranges(len(ranges) if ranges is not None else None,
                                (stats or {}).get('active_frames'), (stats or {}).get('total_frames'))
                 if not _stage1_restored:

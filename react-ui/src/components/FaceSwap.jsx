@@ -37,6 +37,9 @@ import useQueue, {
 import QueuePanel from './faceswap/QueuePanel';
 import ProjectsPanel from './faceswap/ProjectsPanel';
 import useSegments from './faceswap/useSegments';
+import { useRenderLog, useSceneOverrides } from './faceswap/timeline/useSceneOverrides';
+import { canBypass, overrideAt, overridePieces, patchPayload, patchSettings } from './faceswap/timeline/overrides';
+import { fingerprint } from './faceswap/timeline/laneModel';
 import SegmentBar from './faceswap/SegmentBar';
 import SliderTrackerBar from './faceswap/SliderTrackerBar';
 import Timeline from './faceswap/Timeline';
@@ -616,6 +619,11 @@ export default function FaceSwap({
   // beside the queue because that is what consumes them: each segment becomes
   // one queued job (see queueSegments below).
   const segments = useSegments(targets[selTarget]?.name || String(selTarget), maxFrames);
+  // The timeline's per-scene overrides and its record of finished renders, per clip. The overrides
+  // reach a render the same way segments do (one queued job per piece); see timeline/overrides.js.
+  const timelineKey = activeTargetMediaId || targets[selTarget]?.name || String(selTarget);
+  const sceneOverrides = useSceneOverrides(timelineKey, maxFrames);
+  const renderLog = useRenderLog(timelineKey);
 
   // Pasted Files Dialog State
   const [pastedFiles, setPastedFiles] = useState(null);
@@ -1018,8 +1026,6 @@ export default function FaceSwap({
 
   const [isScrubbing, setIsScrubbing] = useState(false);
   const [dragType, setDragType] = useState('playhead'); // 'playhead', 'start', 'end'
-  const [storyboardThumbs, setStoryboardThumbs] = useState([]);
-  const storyboardRef = useRef([]);   // latest strip, for blob cleanup on unmount
   const [hoverFrame, setHoverFrame] = useState(null);
   // Timeline view window (inclusive frame range the track currently shows).
   // On a 95k-frame clip the full-width track puts ~100 frames in every pixel,
@@ -1257,7 +1263,13 @@ export default function FaceSwap({
       selection_version: null,
     }));
 
-  const previewKey = previewSignature(p, fakePreview);
+  // The settings IN FORCE at the playhead: the clip's, with the scene override covering this frame
+  // (if any) written over them. Same object as `p` when no override applies, so nothing downstream
+  // changes identity until the playhead crosses into one. Scrubbing into an override range
+  // therefore previews the override; the key below changes with it, so a cached preview of the
+  // un-overridden frame cannot be served for the overridden one.
+  const pAtFrame = patchSettings(p, overrideAt(sceneOverrides.activeOverrides, frame));
+  const previewKey = previewSignature(pAtFrame, fakePreview);
 
   // What the stage wants to show RIGHT NOW, readable from inside an async
   // response handler that closed over an older render. Updated every render.
@@ -1493,7 +1505,7 @@ export default function FaceSwap({
       const selection = buildProcessingSelection(p);
       request.requestId = selection.request_id;
       request.selection = selection;
-      const res = await postJSON('/api/preview', buildPreviewPayload(p, {
+      const res = await postJSON('/api/preview', buildPreviewPayload(patchSettings(p, overrideAt(sceneOverrides.activeOverrides, fr)), {
         index: idx, frame: fr, fake, target_media_id: requestedMediaId,
         processing_selection: selection,
       }), { abortOnUnmount: true, timeout: 0, signal: ctrl.signal });
@@ -1635,7 +1647,7 @@ export default function FaceSwap({
     // (falls back to the raw frame server-side when there are no source faces).
     let baseImage = '';
     try {
-      const baseRes = await postJSON('/api/preview', buildPreviewPayload(p, { index: selTarget, frame, fake: true }), { abortOnUnmount: true, timeout: 0 });
+      const baseRes = await postJSON('/api/preview', buildPreviewPayload(pAtFrame, { index: selTarget, frame, fake: true }), { abortOnUnmount: true, timeout: 0 });
       baseImage = baseRes.image || '';
     } catch (err) {
       reportFailure('Rendering the base frame for the upscale preview', err, { toast: false });
@@ -2179,6 +2191,12 @@ export default function FaceSwap({
 
   // ── start / stop ──
   const start = async () => {
+    // Scene overrides inside the In/Out range cannot ride in one payload (a run has one trim range
+    // and one set of settings), so the range goes out as one job per piece and the queue joins
+    // them. Without this a Start with overrides on the timeline would quietly render the clip's own
+    // settings everywhere - the timeline would say one thing and the file another.
+    if (overrideRangePlan().has) { await queueOverridePieces({ run: true }); return; }
+    runCtxRef.current = { start: startFrame, end: endFrame, fp: fingerprint(buildSwapPayload()) };
     try {
       await postJSON('/api/settings', p);            // persist CFG
       await postJSON('/api/swap', buildSwapPayload(), { timeout: 0 });
@@ -2190,7 +2208,7 @@ export default function FaceSwap({
       // immediately, before the first poll tick (~1s) confirms it.
       setProgress((pr) => ({ ...pr, processing: true, paused: false, pause_requested: false, stop_requested: false, progress: 0, desc: 'Starting…' }));
       notify('Processing started');
-    } catch (e) { notify(e.message, 'error'); }
+    } catch (e) { runCtxRef.current = null; notify(e.message, 'error'); }
   };
 
   // Stop stays here because the floating dock offers it from this tab. Pause and
@@ -2354,84 +2372,6 @@ export default function FaceSwap({
     try { await postJSON('/api/reveal', { path: out?.path }); }
     catch (e) { notify(e.message, 'error'); }
   };
-
-  // Storyboard loading effect. The strip spans the VISIBLE range, so zooming in
-  // re-samples it over the shorter span instead of leaving the same twelve
-  // whole-clip stills stretched behind a narrow window. Debounced because a
-  // wheel-zoom emits a burst of view updates and each strip is 12 backend
-  // seeks; only the range you settle on gets fetched.
-  //
-  // Skipped outright while a run is in flight. Twelve stills is twelve video
-  // seeks on the backend (a seek is a flat ~125-180 ms whatever the distance),
-  // so re-drawing the strip costs the render up to two seconds of decode it has
-  // to share the machine with — and Pinokio reloads this webview on every tab
-  // switch, so simply looking at the UI mid-run re-paid that each time. The
-  // strip is decoration and the filmstrip is not even on screen during a run;
-  // `progress.processing` is in the deps so it refills once the run ends.
-  useEffect(() => {
-    if (targets.length === 0 || maxFrames <= 1 || progress.processing) {
-      if (targets.length === 0 || maxFrames <= 1) setStoryboardThumbs([]);
-      return;
-    }
-    let cancelled = false;
-    const id = setTimeout(async () => {
-      // 12 across the strip: enough that the filmstrip reads as the shape of
-      // the clip rather than eight stretched stills, still only 12 seeks.
-      const numThumbs = 12;
-      const lo = Math.max(1, view.start);
-      const hi = Math.max(lo, Math.min(view.end, maxFrames));
-      const step = (hi - lo) / Math.max(1, numThumbs - 1);
-      const frames = [];
-      for (let i = 0; i < numThumbs; i++) {
-        frames.push(Math.max(1, Math.min(maxFrames, Math.round(lo + i * step))));
-      }
-      // ONE request for all twelve. As twelve separate <img> URLs they competed
-      // for the browser's six connections to this origin, so re-drawing the
-      // filmstrip after a zoom could stall the request that actually matters —
-      // the frame under the playhead — behind a strip nobody is looking at yet.
-      // The server also decodes them in ascending order, which at high zoom
-      // means walking a few frames rather than seeking twelve times.
-      try {
-        const res = await fetch(
-          `${API}/api/target/preview_grid?index=${selTarget}&frames=${frames.join(',')}&width=200`);
-        if (!res.ok) throw new Error('grid failed');
-        const buf = new Uint8Array(await res.arrayBuffer());
-        const urls = [];
-        let off = 0;
-        while (off + 4 <= buf.length) {
-          const len = (buf[off] << 24 | buf[off + 1] << 16 | buf[off + 2] << 8 | buf[off + 3]) >>> 0;
-          off += 4;
-          if (off + len > buf.length) break;
-          // A zero-length part is a frame the server could not read; keep its
-          // slot so the remaining stills stay under the right timecodes.
-          urls.push(len === 0 ? '' :
-            URL.createObjectURL(new Blob([buf.slice(off, off + len)], { type: 'image/jpeg' })));
-          off += len;
-        }
-        if (cancelled) { urls.forEach((u) => u && URL.revokeObjectURL(u)); return; }
-        // Revoke the outgoing strip HERE, not inside the setState updater:
-        // React 19 StrictMode runs updaters twice to check they are pure, and an
-        // updater that frees resources is not.
-        const outgoing = storyboardRef.current;
-        storyboardRef.current = urls;
-        setStoryboardThumbs(urls);
-        // Safe even though the old <img>s are still on screen for a tick:
-        // revoking a blob URL does not disturb an image that has already loaded
-        // from it, and any that had not are being unmounted anyway.
-        outgoing.forEach((u) => u && u.startsWith('blob:') && URL.revokeObjectURL(u));
-      } catch (err) {
-        reportFailure('Loading the frame strip', err, { toast: false });
-        // The strip is decoration; a failed fetch leaves the previous one up.
-      }
-    }, 220);
-    return () => { cancelled = true; clearTimeout(id); };
-  }, [selTarget, maxFrames, targets.length, view.start, view.end, progress.processing]);
-
-  // Release the last strip's blobs when the panel goes away. (storyboardRef is
-  // written next to the setState above, so it is always the live list.)
-  useEffect(() => () => {
-    storyboardRef.current.forEach((u) => u && u.startsWith('blob:') && URL.revokeObjectURL(u));
-  }, []);
 
   // ── Frame <-> track-position mapping, through the view window ─────────────
   // `pct` is 0..1 across the visible track, NOT across the clip. With the view
@@ -2619,6 +2559,9 @@ export default function FaceSwap({
 
   const handleTimelinePointerDown = (e) => {
     if (!timelineRef.current) return;
+    // Primary button only: the lanes give right-click a menu and middle-click a pan, and neither
+    // should also drag the playhead to wherever the pointer happened to be.
+    if (e.button !== undefined && e.button !== 0) return;
     const rect = timelineRef.current.getBoundingClientRect();
     const clientX = e.clientX ?? e.touches?.[0]?.clientX;
     if (clientX === undefined) return;
@@ -2907,6 +2850,115 @@ export default function FaceSwap({
 
   const startFrame = targets[selTarget]?.start_frame || 1;
   const endFrame = targets[selTarget]?.end_frame || maxFrames;
+
+  // ── Timeline: finished renders, scene overrides, and the actions on them ──
+  // A render's fingerprint names the settings it used. The cache strip calls a frame "rendered" only
+  // when a finished render of it used the settings in force AT THAT FRAME now (the clip's own, or the
+  // clip's with a scene override on top), so moving a slider turns the strip amber again instead of
+  // leaving it green. Recomputed only when those inputs change, not on every playback tick.
+  const timelinePieces = React.useMemo(() => {
+    const base = buildSwapPayload();
+    return overridePieces(sceneOverrides.activeOverrides, 1, Math.max(1, maxFrames))
+      .map((pc) => ({ start: pc.start, end: pc.end, fp: fingerprint(patchPayload(base, pc.override)) }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [p, selSource, activeTargetMediaId, selectionVersion, faceMapping, targetPersonIds, maskJson,
+    identityBlend, sceneOverrides.activeOverrides, maxFrames]);
+
+  // The range an in-flight run is working through, for the strip filling in as frames land. A queued
+  // piece reports its own range; a direct run reports the In/Out.
+  const liveJob = progress.processing
+    ? queue.jobs.find((j) => jobState(j) === 'PROCESSING' && j.frame_start != null && j.frame_end != null)
+    : null;
+  const liveRange = progress.processing ? (() => {
+    const lo = liveJob ? liveJob.frame_start : startFrame;
+    const hi = liveJob ? liveJob.frame_end : endFrame;
+    const frac = Math.max(0, Math.min(1, Number(progress.progress) || 0));
+    return { start: lo, end: hi, done: Math.round(frac * Math.max(0, hi - lo + 1)) };
+  })() : null;
+
+  // A direct run's range and settings, captured at Start, recorded when it completes cleanly (the
+  // same "finished" test App.jsx uses for its completion chime).
+  const runCtxRef = useRef(null);
+  const wasProcessingRef = useRef(false);
+  useEffect(() => {
+    const was = wasProcessingRef.current;
+    wasProcessingRef.current = !!progress.processing;
+    if (!was || progress.processing) return;
+    const ctx = runCtxRef.current;
+    runCtxRef.current = null;
+    if (ctx && !progress.error && (progress.progress || 0) >= 0.99) renderLog.record(ctx);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [progress.processing]);
+
+  // Queued jobs that finished: each is a render of its frame range with its own payload.
+  const loggedJobsRef = useRef(new Set());
+  useEffect(() => {
+    for (const j of queue.jobs) {
+      if (jobState(j) !== 'COMPLETED' || j.frame_start == null || j.frame_end == null || !j.payload) continue;
+      if (activeTargetMediaId && j.target_media_id !== activeTargetMediaId) continue;
+      if (loggedJobsRef.current.has(j.id)) continue;
+      loggedJobsRef.current.add(j.id);
+      renderLog.record({ start: j.frame_start, end: j.frame_end, fp: fingerprint(j.payload) });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [queue.jobs, activeTargetMediaId]);
+
+  /** The In/Out range cut into the pieces its scene overrides define. `has` = any piece differs. */
+  const overrideRangePlan = () => {
+    const pieces = overridePieces(sceneOverrides.activeOverrides, startFrame, endFrame);
+    return { pieces, has: pieces.some((pc) => pc.override) };
+  };
+
+  // One queued job per piece, each with its own range and its own payload, stamped as one split
+  // render so the queue joins the finished pieces into a single file by itself.
+  const queueOverridePieces = async ({ run = false } = {}) => {
+    if (targets.length === 0 || sourceFaces.length === 0) {
+      notify('Load a target and a source face first', 'error');
+      return false;
+    }
+    const { pieces, has } = overrideRangePlan();
+    if (!has) { notify('No scene override changes anything inside the In/Out range', 'info'); return false; }
+    if (pieces.some((pc) => pc.override?.bypass) && !canBypass(p.face_detection_mode)) {
+      notify('Bypass swap needs the "Selected face" detection mode: in the all-faces modes there is no match threshold to close.', 'error');
+      return false;
+    }
+    const base = buildSwapPayload();
+    const name = targets[selTarget]?.name || '';
+    const group = `ovr-${Date.now().toString(36)}`;
+    await queue.addMany(pieces.map((pc, i) => currentJob({
+      label: `${name} - ${pc.override ? pc.override.label : 'clip settings'} (${pc.start}-${pc.end})`,
+      frame_start: pc.start,
+      frame_end: pc.end,
+      payload: patchPayload(base, pc.override),
+      ...(pieces.length > 1 ? { segment: { group, index: i + 1, count: pieces.length } } : {}),
+    })));
+    notify(`Queued ${pieces.length} piece${pieces.length === 1 ? '' : 's'} of "${name}" with scene overrides`);
+    if (run && !queue.running) await queue.start();
+    return true;
+  };
+
+  // A pill on the presence lane is one person in one stretch: select that person (when they are one
+  // of the target people) the way clicking their face box does. The timeline has already moved the
+  // In/Out points and the playhead.
+  const selectPresencePerson = (row) => {
+    const records = targetPersonRecords({ targetGroups, targetPersonIds, targetReferenceFaceIds, targetNames });
+    const record = records.find((r) => r.targetPersonId === row.id);
+    if (!record) {
+      notify(`${row.name} is not one of the target people yet - In/Out were set to their scene. Add them as a target face to swap them.`, 'info');
+      return;
+    }
+    const firstFace = record.faceIndices[0] ?? 0;
+    setSelectedTargetPersonId(record.targetPersonId);
+    setSelectedReferenceFaceId(targetReferenceFaceIds[firstFace] || null);
+    setSelTargetFace(firstFace);
+    set('face_detection_mode', 'Selected face');
+    commitTargetContext({
+      selected_target_person_id: record.targetPersonId,
+      ...(targetReferenceFaceIds[firstFace] ? { selected_reference_face_id: targetReferenceFaceIds[firstFace] } : {}),
+      selected_target_face_index: firstFace,
+    });
+    notify(`Selected ${record.name || row.name} as the target person`);
+  };
 
   // Pre-run estimate (idle only) — heuristic baseline refined by what the
   // backend has measured for these exact settings. See
@@ -4091,7 +4143,6 @@ export default function FaceSwap({
                   onPointerLeave={handleTimelinePointerLeave}
                   hoverFrame={hoverFrame}
                   isScrubbing={isScrubbing}
-                  storyboardThumbs={storyboardThumbs}
                   view={view}
                   setView={setView}
                   isPlaying={isPlaying}
@@ -4106,6 +4157,24 @@ export default function FaceSwap({
                   segments={segments.segments}
                   onSegmentClick={jumpToSegment}
                   sceneCuts={sceneCuts}
+                  targetIndex={selTarget}
+                  running={!!progress.processing}
+                  renderLog={renderLog.log}
+                  fpPieces={timelinePieces}
+                  liveRange={liveRange}
+                  sceneOverrides={sceneOverrides}
+                  swapModels={meta.swap_models}
+                  detectionMode={p.face_detection_mode}
+                  baseValues={{
+                    mask_erosion: num(p.mask_erode_dilate_radius, 0),
+                    mask_feather: num(p.face_mask_blend, 20),
+                    restore_blend: num(p.restore_ultra_detail_weight, 0.75),
+                    swapper: p.swap_model,
+                  }}
+                  onPresenceSelect={selectPresencePerson}
+                  onRenderRange={start}
+                  onRenderOverrides={() => queueOverridePieces()}
+                  renderBlockedReason={startBlockedReason}
                   playheadApiRef={playheadApiRef}
                 />
                 <SegmentBar
@@ -4343,15 +4412,19 @@ export default function FaceSwap({
                 <div className="flex items-center justify-between"><span className="text-white/60">Set End Frame</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">]</kbd></div>
                 <div className="flex items-center justify-between"><span className="text-white/60">Reset Range</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">R</kbd></div>
                 <div className="flex items-center justify-between"><span className="text-white/60">Marker at playhead</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">M</kbd></div>
-                <div className="flex items-center justify-between"><span className="text-white/60">Zoom timeline</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">Wheel on track</kbd></div>
-                <div className="flex items-center justify-between"><span className="text-white/60">Pan timeline</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">Shift + Wheel</kbd></div>
+                <div className="flex items-center justify-between"><span className="text-white/60">Set In / Out</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">I / O</kbd></div>
+                <div className="flex items-center justify-between"><span className="text-white/60">Shuttle back / pause / fwd</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">J / K / L</kbd></div>
+                <div className="flex items-center justify-between"><span className="text-white/60">Step 1 / 10 frames</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">, . / Shift</kbd></div>
+                <div className="flex items-center justify-between"><span className="text-white/60">Prev / next scene cut</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">↑ / ↓</kbd></div>
+                <div className="flex items-center justify-between"><span className="text-white/60">Zoom timeline</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">Ctrl + Wheel</kbd></div>
+                <div className="flex items-center justify-between"><span className="text-white/60">Scroll timeline</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">Shift + Wheel</kbd></div>
               </div>
               <div className="space-y-2.5">
                 <h4 className="font-bold text-accent text-xs uppercase tracking-wider">Compare & Zoom</h4>
                 <div className="flex items-center justify-between"><span className="text-white/60">Zoom In / Out</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">+ / -</kbd></div>
                 <div className="flex items-center justify-between"><span className="text-white/60">Toggle Comparison</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">C</kbd></div>
                 <div className="flex items-center justify-between"><span className="text-white/60">Toggle Split View</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">S</kbd></div>
-                <div className="flex items-center justify-between"><span className="text-white/60">Blend / slider mode</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">O</kbd></div>
+                <div className="flex items-center justify-between"><span className="text-white/60">Blend / slider mode</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">W</kbd></div>
                 <div className="flex items-center justify-between"><span className="text-white/60">Split axis</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">X</kbd></div>
                 <div className="flex items-center justify-between"><span className="text-white/60">Auto-swipe</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">A</kbd></div>
               </div>
@@ -4360,6 +4433,7 @@ export default function FaceSwap({
                 <div className="flex items-center justify-between"><span className="text-white/60">Magnifier lens</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">G</kbd></div>
                 <div className="flex items-center justify-between"><span className="text-white/60">Mask brush</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">B</kbd></div>
                 <div className="flex items-center justify-between"><span className="text-white/60">Keypoints &amp; pose</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">D</kbd></div>
+                <div className="flex items-center justify-between"><span className="text-white/60">Lock to target face</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">T</kbd></div>
               </div>
               <div className="space-y-2.5">
                 <h4 className="font-bold text-accent text-xs uppercase tracking-wider">Queue & Process</h4>

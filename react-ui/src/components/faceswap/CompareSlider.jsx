@@ -2,32 +2,21 @@ import React, {
   forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState,
 } from 'react';
 
-// ── <CompareSlider /> — the A/B curtain ───────────────────────────────────
+// ── <CompareSlider /> — the A/B curtain & 360 Vector Wipe ─────────────────
 //
-// A vertical (or horizontal) divider dragged across the stage to wipe the
-// processed output back to the original target frame.
-//
-// The design point is that DRAGGING IT MUST NOT RE-RENDER REACT. The obvious
-// implementation — `position` in useState, `clipPath` in the style prop — puts
-// a full commit of the Face Swap panel between the pointer moving and the pixel
-// moving, which is what made the old slider feel like it was catching. Here the
-// position lives in a ref: the divider is moved by writing `style.left` on its
-// own node, and the picture is cut by calling `setWipe` on the canvas handle,
-// which repaints on its own rAF. Neither touches the React tree.
-//
-// `onCommit` fires on release only, for the callers that DO want the settled
-// value in state (persisting it, syncing a second view). Nothing needs it while
-// the pointer is down.
-//
-// Works over any child — the canvas is the fast path, but a `render` callback
-// receives the live percentage for callers that must cut something else.
+// An interactive divider dragged across the stage to wipe the processed output
+// back to the original target frame.
+// Supports both linear curtains (vertical/horizontal) and 360° Vector Split Wipe
+// with an interactive rotation handle for diagonal wipes across face contours.
 
 const clampPct = (v) => Math.max(0, Math.min(100, v));
 
 const CompareSlider = forwardRef(function CompareSlider({
   /** Ref to a PreviewCanvas. When present the wipe is applied on the canvas. */
   canvasRef,
-  direction = 'vertical',            // 'vertical' = a left/right curtain
+  direction = 'vertical',            // 'vertical' | 'horizontal'
+  angle = 0,                         // 0..360 vector wipe angle in degrees
+  onAngleChange,
   defaultPosition = 50,
   /** Controlled position (e.g. the auto-swipe animation). Optional. */
   position,
@@ -37,12 +26,6 @@ const CompareSlider = forwardRef(function CompareSlider({
   labelA = 'Original',
   labelB = 'Processed',
   accent = 'var(--accent)',
-  // Layout is the caller's. Overlaying an existing stage needs `absolute
-  // inset-0 pointer-events-none`, and Tailwind cannot express that as an
-  // OVERRIDE of a hardcoded `relative w-full h-full` — position utilities all
-  // have the same specificity, so which one wins is stylesheet order, not the
-  // order they appear in the attribute. Replacing the default is the only way
-  // that is actually deterministic.
   className = 'relative w-full h-full',
   style,
   children,
@@ -51,11 +34,16 @@ const CompareSlider = forwardRef(function CompareSlider({
   const hostRef = useRef(null);
   const dividerRef = useRef(null);
   const handleRef = useRef(null);
+  const rotateHandleRef = useRef(null);
+
   const posRef = useRef(position ?? defaultPosition);
+  const angleRef = useRef(angle);
   const draggingRef = useRef(false);
-  // Only for the caller-visible chrome (the handle's cursor, the label fade).
-  // Deliberately NOT the position — see the note above.
+  const rotatingRef = useRef(false);
+
   const [dragging, setDragging] = useState(false);
+  const [rotating, setRotating] = useState(false);
+  const [curAngle, setCurAngle] = useState(angle);
   const [, forceRenderTick] = useState(0);
 
   const horizontal = direction === 'horizontal';
@@ -64,29 +52,46 @@ const CompareSlider = forwardRef(function CompareSlider({
   const apply = useCallback((pct, { notify = true } = {}) => {
     posRef.current = pct;
     const div = dividerRef.current;
+    const a = angleRef.current || 0;
+
     if (div) {
-      if (horizontal) div.style.top = `${100 - pct}%`;
-      else div.style.left = `${100 - pct}%`;
+      if (a !== 0) {
+        // Vector split wipe geometry along arbitrary angle
+        const rad = (a * Math.PI) / 180;
+        const normDist = (100 - pct - 50); // -50% to +50%
+        div.style.left = `calc(50% + ${normDist * Math.cos(rad)}%)`;
+        div.style.top = `calc(50% + ${normDist * Math.sin(rad)}%)`;
+        div.style.transform = `translate(-50%, -50%) rotate(${a + 90}deg)`;
+      } else if (horizontal) {
+        div.style.left = '0';
+        div.style.top = `${100 - pct}%`;
+        div.style.transform = '';
+      } else {
+        div.style.top = '0';
+        div.style.left = `${100 - pct}%`;
+        div.style.transform = '';
+      }
     }
-    // The rendered `aria-valuenow` is a render-time snapshot, and dragging
-    // deliberately does not re-render — so without this the value announced to
-    // a screen reader freezes at wherever the last commit left it while the
-    // curtain visibly moves. Written on the node, like the divider's position.
+
     const handle = handleRef.current;
     if (handle) {
       const rounded = String(Math.round(pct));
       handle.setAttribute('aria-valuenow', rounded);
       handle.setAttribute('aria-valuetext', `${rounded}% ${labelB}`);
     }
-    // The canvas draws the cut itself: one clip rect inside its existing paint,
-    // versus a CSS clip-path that forces the compositor to re-rasterise a layer
-    // the size of the stage on every pointer move.
+
     canvasRef?.current?.setWipe?.(pct);
     if (notify && onChange) onChange(pct);
-    // `render` consumers need a commit to see the new value; they opt into that
-    // cost by passing the prop at all.
     if (render) forceRenderTick((n) => n + 1);
   }, [canvasRef, horizontal, labelB, onChange, render]);
+
+  const applyAngle = useCallback((deg, { notify = true } = {}) => {
+    angleRef.current = deg;
+    setCurAngle(deg);
+    canvasRef?.current?.setWipeAngle?.(deg);
+    apply(posRef.current, { notify: false });
+    if (notify && onAngleChange) onAngleChange(deg);
+  }, [apply, canvasRef, onAngleChange]);
 
   // Controlled mode: an external animation (auto-swipe) drives the position.
   useEffect(() => {
@@ -94,11 +99,20 @@ const CompareSlider = forwardRef(function CompareSlider({
     apply(clampPct(position), { notify: false });
   }, [position, apply]);
 
-  // Re-apply after a direction change — the divider node's inline style is
-  // written on the OTHER axis, and the stale one would leave it parked.
+  useEffect(() => {
+    angleRef.current = angle;
+    setCurAngle(angle);
+    apply(posRef.current, { notify: false });
+  }, [angle, apply]);
+
+  // Re-apply after a direction change
   useEffect(() => {
     const div = dividerRef.current;
-    if (div) { div.style.top = ''; div.style.left = ''; }
+    if (div && angleRef.current === 0) {
+      div.style.top = '';
+      div.style.left = '';
+      div.style.transform = '';
+    }
     apply(posRef.current, { notify: false });
   }, [direction, apply]);
 
@@ -108,6 +122,22 @@ const CompareSlider = forwardRef(function CompareSlider({
     const rect = host.getBoundingClientRect();
     const x = e.clientX ?? e.touches?.[0]?.clientX;
     const y = e.clientY ?? e.touches?.[0]?.clientY;
+
+    const a = angleRef.current || 0;
+    if (a !== 0) {
+      // Vector wipe projection along the normal angle
+      if (x === undefined || y === undefined || !rect.width || !rect.height) return posRef.current;
+      const rad = (a * Math.PI) / 180;
+      const nx = Math.cos(rad);
+      const ny = Math.sin(rad);
+      const cx = rect.left + rect.width / 2;
+      const cy = rect.top + rect.height / 2;
+      const dx = (x - cx) / rect.width;
+      const dy = (y - cy) / rect.height;
+      const proj = dx * nx + dy * ny; // -0.5 to +0.5
+      return clampPct((0.5 - proj) * 100);
+    }
+
     if (horizontal) {
       if (y === undefined || !rect.height) return posRef.current;
       return clampPct(100 - ((y - rect.top) / rect.height) * 100);
@@ -117,14 +147,11 @@ const CompareSlider = forwardRef(function CompareSlider({
   }, [horizontal]);
 
   const beginDrag = useCallback((e) => {
-    if (disabled) return;
-    e.stopPropagation();          // the stage below this pans on pointer-down
+    if (disabled || rotatingRef.current) return;
+    e.stopPropagation();
     e.preventDefault();
     draggingRef.current = true;
     setDragging(true);
-    // Pointer capture means a drag that leaves the stage — or the window —
-    // still tracks, and the release always lands on us. Without it, letting go
-    // outside left the curtain stuck to the pointer.
     try { e.currentTarget.setPointerCapture?.(e.pointerId); } catch { /* no capture */ }
     apply(pctFromEvent(e));
   }, [apply, disabled, pctFromEvent]);
@@ -143,11 +170,52 @@ const CompareSlider = forwardRef(function CompareSlider({
     onCommit?.(posRef.current);
   }, [onCommit]);
 
-  // A pointer released while the window was not focused (alt-tab mid-drag)
-  // never delivers pointerup to us, so the curtain would stay latched.
+  // Rotation Handle Dragging (0-360 degrees)
+  const beginRotate = useCallback((e) => {
+    if (disabled) return;
+    e.stopPropagation();
+    e.preventDefault();
+    rotatingRef.current = true;
+    setRotating(true);
+    try { e.currentTarget.setPointerCapture?.(e.pointerId); } catch { /* no capture */ }
+  }, [disabled]);
+
+  const moveRotate = useCallback((e) => {
+    if (!rotatingRef.current) return;
+    e.preventDefault();
+    const handle = handleRef.current;
+    if (!handle) return;
+    const hr = handle.getBoundingClientRect();
+    const hx = hr.left + hr.width / 2;
+    const hy = hr.top + hr.height / 2;
+    const cx = e.clientX ?? e.touches?.[0]?.clientX ?? hx;
+    const cy = e.clientY ?? e.touches?.[0]?.clientY ?? hy;
+    const rad = Math.atan2(cy - hy, cx - hx);
+    let deg = Math.round((rad * 180) / Math.PI);
+    if (deg < 0) deg += 360;
+    applyAngle(deg);
+  }, [applyAngle]);
+
+  const endRotate = useCallback((e) => {
+    if (!rotatingRef.current) return;
+    rotatingRef.current = false;
+    setRotating(false);
+    try { e?.currentTarget?.releasePointerCapture?.(e.pointerId); } catch { /* ignore */ }
+  }, []);
+
   useEffect(() => {
-    if (!dragging) return undefined;
-    const stop = () => { if (draggingRef.current) { draggingRef.current = false; setDragging(false); onCommit?.(posRef.current); } };
+    if (!dragging && !rotating) return undefined;
+    const stop = () => {
+      if (draggingRef.current) {
+        draggingRef.current = false;
+        setDragging(false);
+        onCommit?.(posRef.current);
+      }
+      if (rotatingRef.current) {
+        rotatingRef.current = false;
+        setRotating(false);
+      }
+    };
     window.addEventListener('pointerup', stop);
     window.addEventListener('pointercancel', stop);
     window.addEventListener('blur', stop);
@@ -156,7 +224,7 @@ const CompareSlider = forwardRef(function CompareSlider({
       window.removeEventListener('pointercancel', stop);
       window.removeEventListener('blur', stop);
     };
-  }, [dragging, onCommit]);
+  }, [dragging, rotating, onCommit]);
 
   const onKeyDown = useCallback((e) => {
     if (disabled) return;
@@ -176,11 +244,14 @@ const CompareSlider = forwardRef(function CompareSlider({
 
   useImperativeHandle(ref, () => ({
     set: (pct) => apply(clampPct(pct)),
+    setAngle: (deg) => applyAngle(deg),
     get: () => posRef.current,
-    reset: () => { apply(50); onCommit?.(50); },
-  }), [apply, onCommit]);
+    getAngle: () => angleRef.current,
+    reset: () => { apply(50); applyAngle(0); onCommit?.(50); },
+  }), [apply, applyAngle, onCommit]);
 
   const initial = posRef.current;
+  const isRotated = curAngle !== 0;
 
   return (
     <div
@@ -194,15 +265,26 @@ const CompareSlider = forwardRef(function CompareSlider({
         <div
           ref={dividerRef}
           className="absolute z-40 pointer-events-none"
-          style={horizontal
+          style={isRotated ? {
+            left: '50%',
+            top: '50%',
+            width: '200vmax',
+            height: 0,
+            transformOrigin: 'center center',
+            transform: `translate(-50%, -50%) rotate(${curAngle + 90}deg)`,
+          } : (horizontal
             ? { left: 0, right: 0, top: `${100 - initial}%`, height: 0 }
-            : { top: 0, bottom: 0, left: `${100 - initial}%`, width: 0 }}
+            : { top: 0, bottom: 0, left: `${100 - initial}%`, width: 0 }
+          )}
         >
-          {/* The line. Its own node so the handle below can be hit-tested
-              independently of it. */}
+          {/* Split Line */}
           <div
             className="absolute"
-            style={horizontal
+            style={isRotated ? {
+              left: 0, right: 0, top: -1, height: 2,
+              background: `linear-gradient(90deg, transparent 5%, ${accent} 25%, #fff 50%, ${accent} 75%, transparent 95%)`,
+              boxShadow: '0 0 14px rgba(0,0,0,0.8)',
+            } : (horizontal
               ? {
                 left: 0, right: 0, top: -1, height: 2,
                 background: `linear-gradient(90deg, ${accent}, #fff, ${accent})`,
@@ -212,9 +294,11 @@ const CompareSlider = forwardRef(function CompareSlider({
                 top: 0, bottom: 0, left: -1, width: 2,
                 background: `linear-gradient(180deg, ${accent}, #fff, ${accent})`,
                 boxShadow: '0 0 12px rgba(0,0,0,0.55)',
-              }}
+              }
+            )}
           />
-          {/* The grab handle. */}
+
+          {/* Central Grab & Rotation Control */}
           <div
             ref={handleRef}
             role="slider"
@@ -230,19 +314,20 @@ const CompareSlider = forwardRef(function CompareSlider({
             onPointerUp={endDrag}
             onPointerCancel={endDrag}
             onKeyDown={onKeyDown}
-            onDoubleClick={(e) => { e.stopPropagation(); apply(50); onCommit?.(50); }}
-            title={`Drag to wipe between ${labelA} and ${labelB} · double-click to centre · arrow keys to nudge`}
+            onDoubleClick={(e) => { e.stopPropagation(); apply(50); applyAngle(0); onCommit?.(50); }}
+            title={`Drag to wipe · Rotate knob for 360° diagonal split · double-click to reset`}
             className={`absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-9 h-9
-              rounded-full bg-black/80 backdrop-blur-md border border-white/30
+              rounded-full bg-black/85 backdrop-blur-md border border-white/30
               flex items-center justify-center pointer-events-auto
-              shadow-[0_4px_20px_rgba(0,0,0,0.7)] outline-none
+              shadow-[0_4px_24px_rgba(0,0,0,0.85)] outline-none
               focus-visible:ring-2 focus-visible:ring-[var(--accent)]
-              ${dragging ? 'scale-110' : 'transition-transform duration-200 hover:scale-110'}
-              ${horizontal ? 'cursor-ns-resize' : 'cursor-ew-resize'}`}
-            style={horizontal
-              ? { left: '50%', top: 0 }
-              : { top: '50%', left: 0 }}
+              ${dragging || rotating ? 'scale-115' : 'transition-transform duration-200 hover:scale-110'}
+              ${isRotated ? 'cursor-move' : (horizontal ? 'cursor-ns-resize' : 'cursor-ew-resize')}`}
+            style={isRotated
+              ? { left: '50%', top: 0, transform: `translate(-50%, -50%) rotate(${-(curAngle + 90)}deg)` }
+              : (horizontal ? { left: '50%', top: 0 } : { top: '50%', left: 0 })}
           >
+            {/* Arrows */}
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={accent}
               strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"
               style={horizontal ? { transform: 'rotate(90deg)', marginTop: -2 } : { marginRight: 2 }}>
@@ -253,6 +338,29 @@ const CompareSlider = forwardRef(function CompareSlider({
               style={horizontal ? { transform: 'rotate(-90deg)', marginBottom: -2 } : { transform: 'rotate(180deg)', marginLeft: 2 }}>
               <polyline points="15 18 9 12 15 6" />
             </svg>
+
+            {/* Orbiting 360 Vector Rotation Handle */}
+            <div
+              ref={rotateHandleRef}
+              onPointerDown={beginRotate}
+              onPointerMove={moveRotate}
+              onPointerUp={endRotate}
+              onPointerCancel={endRotate}
+              className={`absolute -right-3 -top-3 w-5 h-5 rounded-full bg-[var(--accent)] border border-white/60
+                shadow-[0_0_10px_var(--accent-glow)] flex items-center justify-center cursor-crosshair
+                hover:scale-125 transition-transform ${rotating ? 'scale-125 ring-2 ring-white' : ''}`}
+              title={`Rotate split angle: ${curAngle}° (drag around)`}
+            >
+              <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3">
+                <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
+              </svg>
+            </div>
+
+            {isRotated && (
+              <span className="absolute -bottom-6 left-1/2 -translate-x-1/2 px-1.5 py-0.5 rounded bg-black/90 backdrop-blur border border-white/20 text-nano font-mono font-bold text-white whitespace-nowrap shadow-md pointer-events-none">
+                {curAngle}°
+              </span>
+            )}
           </div>
         </div>
       )}

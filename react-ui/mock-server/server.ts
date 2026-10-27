@@ -825,6 +825,18 @@ async function startServer() {
   });
 
   app.post('/api/target/set_frame', (req, res) => {
+    const which = req.body?.which;
+    if (which === 'start' || which === 'end') {
+      // In / Out: the real route stores them on the target entry and answers with the target list.
+      const target = targetEntries.find((t) => t.media_id === req.body.target_media_id) || targetEntries[selectedTargetIndex];
+      const frame = Math.max(1, Math.round(Number(req.body.frame)));
+      if (target && Number.isFinite(frame)) {
+        if (which === 'start') { target.start_frame = frame; target.startframe = frame - 1; }
+        else { target.end_frame = frame; target.endframe = frame; }
+      }
+      res.json({ ok: true, frame, targets: targetEntries });
+      return;
+    }
     currentFrame = Number(req.body.frame ?? currentFrame);
     res.json({ ok: true, frame: currentFrame });
   });
@@ -954,6 +966,84 @@ async function startServer() {
     }
     res.setHeader('Content-Type', 'application/octet-stream');
     res.send(Buffer.concat(chunks));
+  });
+
+  // ── Timeline lanes: tracks + waveform (same shapes as app/api.py) ───
+  // Deterministic and derived from the target's frame count, so a spec can predict every lane.
+  // Cuts every ~7 s of video, three people with different coverage, a face-free gap and a smart-skip
+  // stretch in the render map; the waveform is a speech-like envelope with a quiet intro.
+  const mockCuts = (frames: number, fps: number): number[] => {
+    const every = Math.max(8, Math.round(fps * 7));
+    const out: number[] = [];
+    for (let f = every + 1; f < frames; f += every) out.push(f);
+    return out;
+  };
+  const mockPresence = (frames: number, fps: number) => {
+    const cuts = [1, ...mockCuts(frames, fps), frames + 1];
+    const people = [
+      { person_id: 'tp_0', name: 'Actor 1', intervals: [] as number[][] },
+      { person_id: 'tp_1', name: 'Actor 2', intervals: [] as number[][] },
+      { person_id: 'tp_2', name: 'Actor 3', intervals: [] as number[][] },
+    ];
+    for (let i = 0; i + 1 < cuts.length; i++) {
+      const a = cuts[i];
+      const b = cuts[i + 1] - 1;
+      people[0].intervals.push([a, b]);
+      if (i % 2 === 1) people[1].intervals.push([a, Math.max(a, Math.floor((a + b) / 2))]);
+      if (i % 3 === 2) people[2].intervals.push([Math.min(b, a + 3), b]);
+    }
+    return people;
+  };
+  app.get('/api/target/timeline_tracks', (req, res) => {
+    const idx = Number(req.query.index ?? selectedTargetIndex);
+    const target = targetEntries[idx];
+    if (!target) { res.status(404).json({ message: 'no target' }); return; }
+    const frames = target.frames || 1;
+    const fps = target.fps || 30;
+    const isVideo = frames > 1;
+    res.json({
+      target_media_id: target.media_id,
+      scene_cuts: isVideo ? mockCuts(frames, fps) : [],
+      presence: isVideo ? mockPresence(frames, fps) : [],
+      presence_source: isVideo ? 'face_bank_sampled' : 'none',
+      sample_stride: isVideo ? 30 : 0,
+      render: {
+        video_matches: isVideo,
+        range: isVideo ? [1, frames] : null,
+        stage1_ran: isVideo,
+        face_free: isVideo ? [[Math.floor(frames * 0.4), Math.floor(frames * 0.5)]] : [],
+        reuse: isVideo ? [[Math.floor(frames * 0.6), Math.floor(frames * 0.7)]] : [],
+      },
+    });
+  });
+  app.get('/api/target/waveform', (req, res) => {
+    const idx = Number(req.query.index ?? selectedTargetIndex);
+    const target = targetEntries[idx];
+    if (!target || !(target.frames > 1)) { res.json({ ready: true, state: 'none', duration: 0, peaks: '' }); return; }
+    const duration = target.frames / (target.fps || 30);
+    const t0 = Math.max(0, Number(req.query.t0 ?? 0));
+    const t1 = Number(req.query.t1 ?? -1) < 0 ? duration : Math.min(duration, Number(req.query.t1));
+    const bins = Math.max(1, Math.min(8192, Number(req.query.bins ?? 2048)));
+    const peaks = Buffer.alloc(bins);
+    for (let i = 0; i < bins; i++) {
+      const t = t0 + ((i + 0.5) / bins) * (t1 - t0);
+      const speech = 0.5 + 0.5 * Math.sin(t * 7.3) * Math.sin(t * 1.7);
+      peaks[i] = t < 1 ? 6 : Math.round(Math.min(255, 40 + 190 * speech * speech));
+    }
+    res.json({ ready: true, state: 'ready', duration, t0, t1, bins, peaks: peaks.toString('base64') });
+  });
+  // Test hook, mock only: resize a target so a spec can drive a 50,000-frame clip through the real UI.
+  app.post('/api/mock/target_frames', (req, res) => {
+    const idx = Number(req.body?.index ?? 0);
+    const frames = Math.max(1, Math.round(Number(req.body?.frames ?? 180)));
+    const target = targetEntries[idx];
+    if (!target) { res.status(404).json({ message: 'no target' }); return; }
+    target.frames = frames;
+    target.endframe = frames;
+    target.end_frame = frames;
+    target.start_frame = 0;      // a resized clip starts with In/Out back at the whole clip
+    target.startframe = 0;
+    res.json({ ok: true, frames });
   });
 
   // ── Preview Generation ──────────────────────────────────────────────

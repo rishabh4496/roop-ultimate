@@ -2,6 +2,7 @@ import React, {
   forwardRef, useCallback, useEffect, useImperativeHandle, useRef,
 } from 'react';
 import { decodeFrame, releaseFrame } from './frameDecoder';
+import { drawAmplifiedHeatmap } from './heatmap';
 
 // ── The preview stage, as an UNCONTROLLED canvas ──────────────────────────
 //
@@ -59,7 +60,10 @@ const PreviewCanvas = forwardRef(function PreviewCanvas({
   // 0..100. How much of the stage the TOP layer covers. 100 = fully swapped.
   wipe = 100,
   wipeDir = 'vertical',       // 'vertical' = a left/right curtain
-  mode = 'normal',            // 'normal' | 'blend' | 'diff'
+  wipeAngle = 0,              // 0..360 vector wipe angle in degrees
+  mode = 'normal',            // 'normal' | 'blend' | 'diff' | 'heatmap'
+  diffGain = 3.0,             // Amplified diff multiplier (1x - 10x)
+  diffColorMap = 'turbo',     // 'turbo' | 'inferno'
   fadeMs = 200,
   className = '',
   style,
@@ -76,8 +80,11 @@ const PreviewCanvas = forwardRef(function PreviewCanvas({
     top: { src: '', img: null, pending: null, prev: null, fadeStart: 0, external: false },
   });
   const wipeRef = useRef(wipe);
-  const cfgRef = useRef({ wipeDir, mode, fadeMs });
-  cfgRef.current = { wipeDir, mode, fadeMs };
+  const wipeAngleRef = useRef(wipeAngle);
+  const diffGainRef = useRef(diffGain);
+  const diffColorMapRef = useRef(diffColorMap);
+  const cfgRef = useRef({ wipeDir, wipeAngle, mode, diffGain, diffColorMap, fadeMs });
+  cfgRef.current = { wipeDir, wipeAngle, mode, diffGain, diffColorMap, fadeMs };
 
   const rafRef = useRef(0);
   const reportedDimRef = useRef('');
@@ -205,7 +212,21 @@ const PreviewCanvas = forwardRef(function PreviewCanvas({
 
     const pct = Math.max(0, Math.min(100, wipeRef.current)) / 100;
 
-    if (m === 'diff') {
+    if (m === 'heatmap') {
+      if (base.img && (top.img || top.prev)) {
+        drawAmplifiedHeatmap(
+          ctx,
+          base.img,
+          top.img || top.prev,
+          cw,
+          ch,
+          diffGainRef.current || 3.0,
+          diffColorMapRef.current || 'turbo',
+        );
+      } else {
+        drawTop();
+      }
+    } else if (m === 'diff') {
       ctx.globalCompositeOperation = 'difference';
       drawTop();
       ctx.globalCompositeOperation = 'source-over';
@@ -215,13 +236,29 @@ const PreviewCanvas = forwardRef(function PreviewCanvas({
     } else if (pct >= 0.999) {
       drawTop();
     } else if (pct > 0.0005) {
-      // The curtain. Clipped to the STAGE, not to the image box, so the divider
-      // the CompareSlider draws over it lines up with the cut at every size.
       ctx.save();
       ctx.beginPath();
-      if (dir === 'horizontal') ctx.rect(0, ch * (1 - pct), cw, ch * pct);
-      else ctx.rect(cw * (1 - pct), 0, cw * pct, ch);
-      ctx.clip();
+      const angle = wipeAngleRef.current || 0;
+      if (angle !== 0) {
+        const rad = (angle * Math.PI) / 180;
+        const diag = Math.hypot(cw, ch) * 2;
+        const nx = Math.cos(rad);
+        const ny = Math.sin(rad);
+        const d = (pct - 0.5) * Math.hypot(cw, ch);
+        const px = cw / 2 + d * nx;
+        const py = ch / 2 + d * ny;
+        ctx.translate(px, py);
+        ctx.rotate(rad);
+        ctx.rect(0, -diag, diag, diag * 2);
+        ctx.clip();
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+      } else if (dir === 'horizontal') {
+        ctx.rect(0, ch * (1 - pct), cw, ch * pct);
+        ctx.clip();
+      } else {
+        ctx.rect(cw * (1 - pct), 0, cw * pct, ch);
+        ctx.clip();
+      }
       drawTop();
       ctx.restore();
     }
@@ -327,7 +364,10 @@ const PreviewCanvas = forwardRef(function PreviewCanvas({
   // set it); the slider DRAG uses the imperative handle below and re-renders
   // nothing at all.
   useEffect(() => { wipeRef.current = wipe; requestPaint(); }, [wipe, requestPaint]);
-  useEffect(() => { requestPaint(); }, [mode, wipeDir, fadeMs, requestPaint]);
+  useEffect(() => { wipeAngleRef.current = wipeAngle; requestPaint(); }, [wipeAngle, requestPaint]);
+  useEffect(() => { diffGainRef.current = diffGain; requestPaint(); }, [diffGain, requestPaint]);
+  useEffect(() => { diffColorMapRef.current = diffColorMap; requestPaint(); }, [diffColorMap, requestPaint]);
+  useEffect(() => { requestPaint(); }, [mode, wipeDir, wipeAngle, diffGain, diffColorMap, fadeMs, requestPaint]);
 
   // Teardown must return the layers to their INITIAL state, `src` included.
   //
@@ -363,6 +403,11 @@ const PreviewCanvas = forwardRef(function PreviewCanvas({
     // Move the curtain with no React work at all — this is the drag path.
     setWipe(pct) { wipeRef.current = pct; requestPaint(); },
     getWipe() { return wipeRef.current; },
+    setWipeAngle(deg) { wipeAngleRef.current = deg; requestPaint(); },
+    getWipeAngle() { return wipeAngleRef.current; },
+    setDiffGain(gain) { diffGainRef.current = gain; requestPaint(); },
+    getDiffGain() { return diffGainRef.current; },
+    setMode(newMode) { cfgRef.current.mode = newMode; requestPaint(); },
     canvas: () => canvasRef.current,
     // Natural pixel size of the frame on screen, for overlay maths.
     naturalSize() {
