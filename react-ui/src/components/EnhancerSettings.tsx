@@ -1,6 +1,5 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
-  Activity,
   Cpu,
   Gauge,
   Zap,
@@ -16,8 +15,8 @@ import {
   HardDrive,
   Workflow,
   Radio,
-  Shield,
 } from 'lucide-react';
+import { useTelemetryStore, setEnhancerCompilation } from '../store/telemetryStore';
 
 export type PrecisionMode = 'hybrid_fp16_fp32' | 'strict_fp32';
 export type ExecutionProvider = 'tensorrt' | 'cuda' | 'cpu';
@@ -32,10 +31,6 @@ export interface UltraMaxSettings {
   batch_size: number;            // 1 - 8
   precision_mode: PrecisionMode;
   provider: ExecutionProvider;
-  restore_original_mouth: boolean;
-  mouth_open_threshold: number;  // 0.05 - 0.5
-  enable_xseg_occlusion: boolean;
-  occlusion_erosion: number;     // 1 - 5
 }
 
 export interface EngineCompilationStatus {
@@ -48,42 +43,9 @@ export interface EngineCompilationStatus {
   compilation_time_s?: number;
 }
 
-export interface PipelineQueueDepths {
-  decode: number;
-  preprocess: number;
-  detect_track: number;
-  swap: number;
-  enhance: number;
-  composite: number;
-  encode: number;
-  [key: string]: number;
-}
-
-export interface TelemetryData {
-  event?: string;
-  timestamp: number;
-  instantaneous_fps: number;
-  average_fps: number;
-  fps_now?: number;
-  fps?: number;
-  cpu_load_percentage: number;
-  system_ram_mb: number;
-  system_ram_total_mb: number;
-  system_ram_allocation?: number;
-  gpu_vram_used_mb: number;
-  gpu_vram_total_mb: number;
-  gpu_vram_usage?: number;
-  active_execution_provider: string;
-  active_provider?: string;
-  pipeline_queue_depths: PipelineQueueDepths;
-  compilation: EngineCompilationStatus;
-  settings?: UltraMaxSettings;
-}
-
 export interface EnhancerSettingsProps {
   initialSettings?: Partial<UltraMaxSettings>;
   onSettingsChange?: (settings: UltraMaxSettings) => void;
-  wsUrl?: string;
   className?: string;
 }
 
@@ -96,10 +58,6 @@ const DEFAULT_SETTINGS: UltraMaxSettings = {
   batch_size: 1,
   precision_mode: 'hybrid_fp16_fp32',
   provider: 'tensorrt',
-  restore_original_mouth: false,
-  mouth_open_threshold: 0.18,
-  enable_xseg_occlusion: false,
-  occlusion_erosion: 3,
 };
 
 const DEFAULT_COMPILATION: EngineCompilationStatus = {
@@ -108,28 +66,6 @@ const DEFAULT_COMPILATION: EngineCompilationStatus = {
   stage: 'ready',
   status: 'ready',
   message: 'TensorRT engine ready',
-};
-
-const DEFAULT_TELEMETRY: TelemetryData = {
-  timestamp: Date.now() / 1000,
-  instantaneous_fps: 0,
-  average_fps: 0,
-  cpu_load_percentage: 0,
-  system_ram_mb: 0,
-  system_ram_total_mb: 16384,
-  gpu_vram_used_mb: 0,
-  gpu_vram_total_mb: 12288,
-  active_execution_provider: 'tensorrt',
-  pipeline_queue_depths: {
-    decode: 0,
-    preprocess: 0,
-    detect_track: 0,
-    swap: 0,
-    enhance: 0,
-    composite: 0,
-    encode: 0,
-  },
-  compilation: DEFAULT_COMPILATION,
 };
 
 // ── Debounced Slider Subcomponent ──────────────────────────────────────────
@@ -141,10 +77,10 @@ interface DebouncedSliderProps {
   defaultValue: number;
   min: number;
   max: number;
-  step?: number;
+  step: number;
   unit?: string;
   icon?: React.ReactNode;
-  onChange: (value: number) => void;
+  onChange: (val: number) => void;
 }
 
 function DebouncedSlider({
@@ -154,94 +90,67 @@ function DebouncedSlider({
   defaultValue,
   min,
   max,
-  step = 0.01,
+  step,
   unit = '',
   icon,
   onChange,
 }: DebouncedSliderProps) {
-  const [localValue, setLocalValue] = useState<number>(value);
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const onChangeRef = useRef(onChange);
-  onChangeRef.current = onChange;
+  const [localVal, setLocalVal] = useState<number>(value);
 
   useEffect(() => {
-    setLocalValue(value);
+    setLocalVal(value);
   }, [value]);
 
-  useEffect(() => {
-    return () => {
-      if (timerRef.current) clearTimeout(timerRef.current);
-    };
-  }, []);
-
-  const commit = useCallback((val: number) => {
-    if (timerRef.current) {
-      clearTimeout(timerRef.current);
-      timerRef.current = null;
-    }
-    onChangeRef.current(val);
-  }, []);
-
-  const handleInput = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const val = parseFloat(e.target.value);
-    setLocalValue(val);
-    if (timerRef.current) clearTimeout(timerRef.current);
-    timerRef.current = setTimeout(() => {
-      commit(val);
-    }, 100);
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const next = parseFloat(e.target.value);
+    setLocalVal(next);
+    onChange(next);
   };
 
-  const handleBlur = () => {
-    if (timerRef.current) commit(localValue);
-  };
-
-  const handleReset = () => {
-    setLocalValue(defaultValue);
-    commit(defaultValue);
-  };
-
-  const isModified = Math.abs(localValue - defaultValue) > 1e-4;
+  const isModified = Math.abs(localVal - defaultValue) > 0.0001;
 
   return (
-    <div className="flex flex-col gap-1.5 p-3 rounded-xl bg-slate-900/40 border border-white/5 hover:border-white/10 transition-colors">
+    <div className="flex flex-col gap-1.5 p-3 rounded-xl bg-slate-900/50 border border-white/5 hover:border-white/10 transition-colors">
       <div className="flex items-center justify-between text-xs">
-        <div className="flex items-center gap-1.5 font-medium text-slate-200">
+        <span className="flex items-center gap-1.5 font-medium text-slate-200">
           {icon}
-          <span>{label}</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="font-mono text-cyan-400 font-semibold">
-            {localValue.toFixed(step >= 1 ? 0 : 2)}
-            {unit}
-          </span>
+          {label}
+        </span>
+        <div className="flex items-center gap-1.5">
           {isModified && (
             <button
               type="button"
-              onClick={handleReset}
-              className="text-micro text-slate-400 hover:text-cyan-400 underline transition-colors cursor-pointer"
+              aria-label={`Reset ${label} to default`}
+              onClick={() => {
+                setLocalVal(defaultValue);
+                onChange(defaultValue);
+              }}
+              className="text-micro text-amber-400/80 hover:text-amber-300 transition-colors cursor-pointer"
               title="Reset to default"
             >
-              reset
+              MOD
             </button>
           )}
+          <span className="font-mono text-cyan-400 font-semibold">
+            {localVal.toFixed(step < 0.1 ? 2 : 1)}
+            {unit}
+          </span>
         </div>
       </div>
 
-      <p className="text-mini text-slate-400 leading-tight">{info}</p>
+      <p className="text-micro text-muted line-clamp-1">{info}</p>
 
       <div className="flex items-center gap-2 pt-1">
         <span className="text-micro font-mono text-muted w-6">{min}</span>
         <input
           type="range"
-          aria-label={label}
           min={min}
           max={max}
           step={step}
-          value={localValue}
-          onChange={handleInput}
-          onBlur={handleBlur}
-          onPointerUp={handleBlur}
-          className="flex-1 h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-cyan-400 focus:outline-none focus:ring-1 focus:ring-cyan-500/50"
+          value={localVal}
+          onChange={handleChange}
+          aria-label={label}
+          className="flex-1 h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-cyan-400 focus:outline-none"
         />
         <span className="text-micro font-mono text-muted w-6 text-right">{max}</span>
       </div>
@@ -254,7 +163,6 @@ function DebouncedSlider({
 export default function EnhancerSettings({
   initialSettings,
   onSettingsChange,
-  wsUrl,
   className = '',
 }: EnhancerSettingsProps) {
   const [settings, setSettings] = useState<UltraMaxSettings>(() => ({
@@ -262,36 +170,17 @@ export default function EnhancerSettings({
     ...initialSettings,
   }));
 
-  const [telemetry, setTelemetry] = useState<TelemetryData>(DEFAULT_TELEMETRY);
-  const [wsConnected, setWsConnected] = useState<boolean>(false);
+  // Centralized telemetry from singleton store — zero redundant WebSockets
+  const systemTele = useTelemetryStore((s: any) => s.system) as Record<string, any> | null;
+  const runTele = useTelemetryStore((s: any) => s.run) as Record<string, any>;
+  const enhancerStore = useTelemetryStore((s: any) => s.enhancer) as Record<string, any>;
+
   const [isCompiling, setIsCompiling] = useState<boolean>(false);
   const [compileError, setCompileError] = useState<string | null>(null);
-
-  const wsRef = useRef<WebSocket | null>(null);
-  const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // Derive target WebSocket URL
-  const targetWsUrl = useMemo(() => {
-    if (wsUrl) return wsUrl;
-    if (typeof window !== 'undefined' && window.location) {
-      const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const host = window.location.host || '127.0.0.1:8001';
-      return `${proto}//${host}/ws/enhancer/telemetry`;
-    }
-    return 'ws://127.0.0.1:8001/ws/enhancer/telemetry';
-  }, [wsUrl]);
 
   // Sync settings update upward and to backend API
   const syncSettingsToBackend = useCallback(async (newSettings: UltraMaxSettings) => {
     try {
-      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-        wsRef.current.send(
-          JSON.stringify({
-            action: 'set_settings',
-            settings: newSettings,
-          })
-        );
-      }
       await fetch('/api/enhancer/ultramax/settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -314,109 +203,44 @@ export default function EnhancerSettings({
     [onSettingsChange, syncSettingsToBackend]
   );
 
-  // Connect WebSocket telemetry stream
+  // On mount, fetch current settings and compilation status once
   useEffect(() => {
-    let unmounted = false;
-
-    function connectWs() {
-      if (unmounted) return;
-      try {
-        const ws = new WebSocket(targetWsUrl);
-        wsRef.current = ws;
-
-        ws.onopen = () => {
-          if (!unmounted) setWsConnected(true);
-        };
-
-        ws.onmessage = (event) => {
-          if (unmounted) return;
-          try {
-            const data = JSON.parse(event.data);
-            if (data.event === 'telemetry' || data.event === 'hello') {
-              setTelemetry(data);
-              if (data.compilation) {
-                setIsCompiling(Boolean(data.compilation.compiling));
-              }
-            } else if (data.event === 'settings_updated' && data.settings) {
-              setSettings((prev) => ({ ...prev, ...data.settings }));
-            }
-          } catch {
-            // Ignored
-          }
-        };
-
-        ws.onclose = () => {
-          if (!unmounted) {
-            setWsConnected(false);
-            reconnectTimeoutRef.current = setTimeout(connectWs, 2000);
-          }
-        };
-
-        ws.onerror = () => {
-          ws.close();
-        };
-      } catch {
-        if (!unmounted) {
-          reconnectTimeoutRef.current = setTimeout(connectWs, 3000);
+    let active = true;
+    fetch('/api/enhancer/ultramax/settings')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (active && data) {
+          setSettings((prev) => ({ ...prev, ...data }));
         }
-      }
-    }
+      })
+      .catch(() => {});
 
-    connectWs();
-
-    // Fallback polling if WebSocket is not connecting
-    const pollInterval = setInterval(async () => {
-      if (!wsConnected && !unmounted) {
-        try {
-          const res = await fetch('/api/enhancer/ultramax/telemetry');
-          if (res.ok) {
-            const data: TelemetryData = await res.json();
-            setTelemetry(data);
-            if (data.compilation) {
-              setIsCompiling(Boolean(data.compilation.compiling));
-            }
-          }
-        } catch {
-          // Ignored
+    fetch('/api/enhancer/ultramax/status')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((status) => {
+        if (active && status) {
+          setEnhancerCompilation(status);
+          if (status.compiling) setIsCompiling(true);
         }
-      }
-    }, 1000);
+      })
+      .catch(() => {});
 
-    return () => {
-      unmounted = true;
-      clearInterval(pollInterval);
-      if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
-      if (wsRef.current) wsRef.current.close();
-    };
-  }, [targetWsUrl, wsConnected]);
-
-  // Initial settings load from REST
-  useEffect(() => {
-    let unmounted = false;
-    async function loadSettings() {
-      try {
-        const res = await fetch('/api/enhancer/ultramax/settings');
-        if (res.ok) {
-          const data: UltraMaxSettings = await res.json();
-          if (!unmounted) {
-            setSettings((prev) => ({ ...prev, ...data }));
-          }
-        }
-      } catch {
-        // Ignored
-      }
-    }
-    loadSettings();
-    return () => {
-      unmounted = true;
-    };
+    return () => { active = false; };
   }, []);
 
-  // Trigger TensorRT compilation
-  const handleTriggerCompilation = async () => {
-    setIsCompiling(true);
-    setCompileError(null);
+  // Trigger TensorRT Compilation
+  const handleTriggerCompilation = useCallback(async () => {
     try {
+      setIsCompiling(true);
+      setCompileError(null);
+      setEnhancerCompilation({
+        compiling: true,
+        progress: 0.05,
+        stage: 'optimizing_graph',
+        status: 'compiling',
+        message: 'Compilation triggered via workstation UI...',
+      });
+
       const res = await fetch('/api/enhancer/ultramax/compile', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -425,28 +249,37 @@ export default function EnhancerSettings({
           provider: settings.provider,
         }),
       });
+
       if (!res.ok) {
-        const err = await res.text();
-        setCompileError(err || 'Failed to start compilation');
-        setIsCompiling(false);
+        throw new Error(`Compilation trigger failed: ${res.statusText}`);
       }
-    } catch (err: unknown) {
-      setCompileError(err instanceof Error ? err.message : 'Compilation request failed');
+
+      const status: EngineCompilationStatus = await res.json();
+      setEnhancerCompilation(status);
+    } catch (err: any) {
+      setCompileError(err?.message || 'Engine compilation failed to start');
+      setEnhancerCompilation({
+        compiling: false,
+        status: 'failed',
+        stage: 'failed',
+        message: err?.message || 'Compilation error',
+      });
+    } finally {
       setIsCompiling(false);
     }
-  };
+  }, [settings.precision_mode, settings.provider]);
 
-  const vramPercent =
-    telemetry.gpu_vram_total_mb > 0
-      ? Math.min(100, Math.round((telemetry.gpu_vram_used_mb / telemetry.gpu_vram_total_mb) * 100))
-      : 0;
+  // Derived Telemetry Values
+  const comp = enhancerStore?.compilation || DEFAULT_COMPILATION;
+  const fpsValue = runTele.fps || runTele.fps_now || 0;
+  const vramUsed = systemTele?.vram_used || (enhancerStore?.gpu_vram_used_mb ? enhancerStore.gpu_vram_used_mb / 1024 : 0);
+  const vramTotal = systemTele?.vram_total || (enhancerStore?.gpu_vram_total_mb ? enhancerStore.gpu_vram_total_mb / 1024 : 12);
+  const vramPercent = vramTotal > 0 ? Math.round((vramUsed / vramTotal) * 100) : 0;
 
-  const ramPercent =
-    telemetry.system_ram_total_mb > 0
-      ? Math.min(100, Math.round((telemetry.system_ram_mb / telemetry.system_ram_total_mb) * 100))
-      : 0;
-
-  const comp = telemetry.compilation || DEFAULT_COMPILATION;
+  const ramUsed = systemTele?.ram_used || (enhancerStore?.system_ram_mb ? enhancerStore.system_ram_mb / 1024 : 0);
+  const ramTotal = systemTele?.ram_total || (enhancerStore?.system_ram_total_mb ? enhancerStore.system_ram_total_mb / 1024 : 16);
+  const ramPercent = ramTotal > 0 ? Math.round((ramUsed / ramTotal) * 100) : 0;
+  const cpuPercent = systemTele?.cpu_percent ?? enhancerStore?.cpu_load_percentage ?? 0;
 
   return (
     <div
@@ -472,17 +305,11 @@ export default function EnhancerSettings({
           </div>
         </div>
 
-        {/* Live WebSocket Status Pill */}
+        {/* Live Status Pill */}
         <div className="flex items-center gap-2 text-xs">
-          <div
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-mini font-medium border ${
-              wsConnected
-                ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'
-                : 'bg-amber-500/10 border-amber-500/20 text-amber-400'
-            }`}
-          >
-            <Radio className={`w-3 h-3 ${wsConnected ? 'animate-pulse' : ''}`} />
-            <span>{wsConnected ? 'Telemetry: 250ms Live' : 'Telemetry: Fallback Polling'}</span>
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-mini font-medium border bg-emerald-500/10 border-emerald-500/20 text-emerald-400">
+            <Radio className="w-3 h-3 animate-pulse" />
+            <span>Shared Telemetry Service</span>
           </div>
         </div>
       </div>
@@ -591,162 +418,53 @@ export default function EnhancerSettings({
             />
           </div>
 
-          {/* Stage 7: Surgical Mouth & Occlusion Controls */}
+          {/* Engine Execution Options */}
           <div className="p-3.5 rounded-xl bg-slate-900/40 border border-white/5 flex flex-col gap-3">
             <h4 className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
-              <Shield className="w-3.5 h-3.5 text-cyan-400" />
-              Surgical Mouth Dynamics & Occlusion Governance (Stage 7)
+              <Zap className="w-3.5 h-3.5 text-cyan-400" />
+              Engine Precision & Execution Provider
             </h4>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {/* Toggle: Restore Original Mouth */}
-              <div className="flex items-center justify-between p-2.5 rounded-lg bg-slate-950/60 border border-white/5">
-                <div className="flex flex-col gap-0.5 pr-2">
-                  <span className="text-xs font-medium text-slate-200">Restore Original Mouth</span>
-                  <span className="text-mini text-slate-400">
-                    Dynamic mouth aperture and dental restoration when open
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  aria-label="Toggle restore original mouth"
-                  onClick={() => updateParam('restore_original_mouth', !settings.restore_original_mouth)}
-                  className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-                    settings.restore_original_mouth ? 'bg-cyan-500' : 'bg-slate-700'
-                  }`}
+              <div>
+                <label htmlFor="enhancer-precision-mode" className="text-xs text-slate-400 mb-1.5 block">Precision Mode</label>
+                <select
+                  id="enhancer-precision-mode"
+                  value={settings.precision_mode}
+                  onChange={(e) => updateParam('precision_mode', e.target.value as PrecisionMode)}
+                  className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-white/10 text-white text-xs focus:outline-none focus:border-cyan-400"
                 >
-                  <span
-                    className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
-                      settings.restore_original_mouth ? 'translate-x-4' : 'translate-x-0'
-                    }`}
-                  />
-                </button>
+                  <option value="hybrid_fp16_fp32">Hybrid FP16/FP32 (Balanced Speed & Precision)</option>
+                  <option value="strict_fp32">Strict FP32 (Full Precision Reference)</option>
+                </select>
               </div>
 
-              {/* Mouth Open Threshold */}
-              <DebouncedSlider
-                label="Mouth Open Threshold (MAR)"
-                info="Aperture trigger threshold for mouth aspect ratio (default 0.18)"
-                value={settings.mouth_open_threshold}
-                defaultValue={0.18}
-                min={0.05}
-                max={0.5}
-                step={0.01}
-                icon={<Smile className="w-3.5 h-3.5 text-cyan-400" />}
-                onChange={(v) => updateParam('mouth_open_threshold', v)}
-              />
-
-              {/* Toggle: Enable XSeg Occlusion */}
-              <div className="flex items-center justify-between p-2.5 rounded-lg bg-slate-950/60 border border-white/5">
-                <div className="flex flex-col gap-0.5 pr-2">
-                  <span className="text-xs font-medium text-slate-200">DFL XSeg Occlusion</span>
-                  <span className="text-mini text-slate-400">
-                    Isolate hands, microphones, and foreign objects
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  aria-label="Toggle DFL XSeg occlusion"
-                  onClick={() => updateParam('enable_xseg_occlusion', !settings.enable_xseg_occlusion)}
-                  className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-                    settings.enable_xseg_occlusion ? 'bg-cyan-500' : 'bg-slate-700'
-                  }`}
+              <div>
+                <label htmlFor="enhancer-execution-provider" className="text-xs text-slate-400 mb-1.5 block">Execution Provider</label>
+                <select
+                  id="enhancer-execution-provider"
+                  value={settings.provider}
+                  onChange={(e) => updateParam('provider', e.target.value as ExecutionProvider)}
+                  className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-white/10 text-white text-xs focus:outline-none focus:border-cyan-400"
                 >
-                  <span
-                    className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
-                      settings.enable_xseg_occlusion ? 'translate-x-4' : 'translate-x-0'
-                    }`}
-                  />
-                </button>
-              </div>
-
-              {/* Occlusion Erosion */}
-              <DebouncedSlider
-                label="Occlusion Erosion Radius"
-                info="Morphological erosion kernel size (1 - 5 px) for occlusion edges"
-                value={settings.occlusion_erosion}
-                defaultValue={3}
-                min={1}
-                max={5}
-                step={1}
-                unit=" px"
-                icon={<Layers className="w-3.5 h-3.5 text-amber-400" />}
-                onChange={(v) => updateParam('occlusion_erosion', Math.round(v))}
-              />
-            </div>
-          </div>
-
-          {/* Engine Settings Box */}
-          <div className="p-3.5 rounded-xl bg-slate-900/40 border border-white/5 flex flex-col gap-3">
-            <h4 className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
-              <Zap className="w-3.5 h-3.5 text-amber-400" />
-              Engine Precision & Execution Target
-            </h4>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {/* Precision Mode */}
-              <div className="flex flex-col gap-1">
-                <span className="text-mini font-medium text-slate-400">Precision Mode</span>
-                <div className="grid grid-cols-2 gap-1.5 bg-slate-950 p-1 rounded-lg border border-white/5">
-                  <button
-                    type="button"
-                    onClick={() => updateParam('precision_mode', 'hybrid_fp16_fp32')}
-                    className={`text-xs py-1.5 px-2 rounded-md font-medium transition-colors cursor-pointer text-center ${
-                      settings.precision_mode === 'hybrid_fp16_fp32'
-                        ? 'bg-cyan-500 text-slate-950 shadow-sm'
-                        : 'text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    Hybrid FP16/32
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => updateParam('precision_mode', 'strict_fp32')}
-                    className={`text-xs py-1.5 px-2 rounded-md font-medium transition-colors cursor-pointer text-center ${
-                      settings.precision_mode === 'strict_fp32'
-                        ? 'bg-cyan-500 text-slate-950 shadow-sm'
-                        : 'text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    Strict FP32
-                  </button>
-                </div>
-              </div>
-
-              {/* Execution Provider */}
-              <div className="flex flex-col gap-1">
-                <span className="text-mini font-medium text-slate-400">Execution Provider</span>
-                <div className="grid grid-cols-3 gap-1 bg-slate-950 p-1 rounded-lg border border-white/5">
-                  {(['tensorrt', 'cuda', 'cpu'] as ExecutionProvider[]).map((p) => (
-                    <button
-                      key={p}
-                      type="button"
-                      onClick={() => updateParam('provider', p)}
-                      className={`text-xs py-1.5 px-1.5 rounded-md font-medium uppercase tracking-wider transition-colors cursor-pointer text-center ${
-                        settings.provider === p
-                          ? 'bg-cyan-500 text-slate-950 shadow-sm'
-                          : 'text-slate-400 hover:text-white'
-                      }`}
-                    >
-                      {p}
-                    </button>
-                  ))}
-                </div>
+                  <option value="tensorrt">NVIDIA TensorRT (Hardware Accelerated Plan)</option>
+                  <option value="cuda">CUDA (Direct Execution)</option>
+                  <option value="cpu">CPU Fallback</option>
+                </select>
               </div>
             </div>
           </div>
         </div>
 
-        {/* Right Column: Telemetry Dashboard & Compilation Progress (5 cols) */}
+        {/* Right Column: Live Telemetry & Compilation Status (5 cols) */}
         <div className="lg:col-span-5 flex flex-col gap-4">
           <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
-            <Activity className="w-3.5 h-3.5 text-emerald-400" />
-            Live Hardware Telemetry
+            <Gauge className="w-3.5 h-3.5 text-cyan-400" />
+            Live Hardware & Queue Telemetry
           </h3>
 
-          {/* Metric Cards Grid */}
           <div className="grid grid-cols-2 gap-2.5">
-            {/* FPS Card */}
+            {/* Speed / FPS Card */}
             <div className="p-3 rounded-xl bg-slate-900/60 border border-white/5 flex flex-col gap-1">
               <div className="flex items-center justify-between text-mini text-slate-400">
                 <span className="flex items-center gap-1">
@@ -754,18 +472,18 @@ export default function EnhancerSettings({
                   Speed (FPS)
                 </span>
                 <span className="font-mono text-micro text-muted">
-                  avg {telemetry.average_fps.toFixed(1)}
+                  avg {fpsValue.toFixed(1)}
                 </span>
               </div>
               <div className="text-2xl font-bold font-mono text-cyan-400 flex items-baseline gap-1">
-                {(telemetry.instantaneous_fps || telemetry.fps_now || 0).toFixed(1)}
+                {fpsValue.toFixed(1)}
                 <span className="text-xs text-muted font-normal">fps</span>
               </div>
               <div className="h-1 bg-slate-800 rounded-full overflow-hidden">
                 <div
                   className="h-full bg-cyan-400 transition-all duration-300"
                   style={{
-                    width: `${Math.min(100, (telemetry.instantaneous_fps / 60) * 100)}%`,
+                    width: `${Math.min(100, (fpsValue / 60) * 100)}%`,
                   }}
                 />
               </div>
@@ -781,9 +499,9 @@ export default function EnhancerSettings({
                 <span className="font-mono text-micro text-muted">{vramPercent}%</span>
               </div>
               <div className="text-lg font-bold font-mono text-amber-400 flex items-baseline gap-1">
-                {(telemetry.gpu_vram_used_mb / 1024).toFixed(1)}
+                {vramUsed.toFixed(1)}
                 <span className="text-xs text-muted font-normal">
-                  / {(telemetry.gpu_vram_total_mb / 1024).toFixed(1)} GB
+                  / {vramTotal.toFixed(1)} GB
                 </span>
               </div>
               <div className="h-1 bg-slate-800 rounded-full overflow-hidden">
@@ -804,16 +522,16 @@ export default function EnhancerSettings({
                   CPU Load
                 </span>
                 <span className="font-mono text-micro text-muted">
-                  {telemetry.cpu_load_percentage.toFixed(0)}%
+                  {cpuPercent.toFixed(0)}%
                 </span>
               </div>
               <div className="text-lg font-bold font-mono text-purple-300">
-                {telemetry.cpu_load_percentage.toFixed(1)}%
+                {cpuPercent.toFixed(1)}%
               </div>
               <div className="h-1 bg-slate-800 rounded-full overflow-hidden">
                 <div
                   className="h-full bg-purple-400 transition-all duration-300"
-                  style={{ width: `${Math.min(100, telemetry.cpu_load_percentage)}%` }}
+                  style={{ width: `${Math.min(100, cpuPercent)}%` }}
                 />
               </div>
             </div>
@@ -828,9 +546,9 @@ export default function EnhancerSettings({
                 <span className="font-mono text-micro text-muted">{ramPercent}%</span>
               </div>
               <div className="text-lg font-bold font-mono text-blue-300 flex items-baseline gap-1">
-                {(telemetry.system_ram_mb / 1024).toFixed(1)}
+                {ramUsed.toFixed(1)}
                 <span className="text-xs text-muted font-normal">
-                  / {(telemetry.system_ram_total_mb / 1024).toFixed(0)} GB
+                  / {ramTotal.toFixed(0)} GB
                 </span>
               </div>
               <div className="h-1 bg-slate-800 rounded-full overflow-hidden">
@@ -853,7 +571,7 @@ export default function EnhancerSettings({
             </div>
 
             <div className="grid grid-cols-4 gap-1.5 text-micro font-mono pt-1">
-              {Object.entries(telemetry.pipeline_queue_depths || {}).map(([stage, depth]) => (
+              {Object.entries(enhancerStore?.pipeline_queue_depths || { decode: 0, swap: 0, enhance: 0, encode: 0 }).map(([stage, depth]) => (
                 <div
                   key={stage}
                   className="p-1.5 rounded-lg bg-slate-950/60 border border-white/5 flex flex-col items-center justify-center"
@@ -861,10 +579,10 @@ export default function EnhancerSettings({
                   <span className="text-slate-400 truncate w-full text-center">{stage}</span>
                   <span
                     className={`font-bold ${
-                      depth > 4 ? 'text-rose-400' : depth > 2 ? 'text-amber-400' : 'text-cyan-400'
+                      (depth as number) > 4 ? 'text-rose-400' : (depth as number) > 2 ? 'text-amber-400' : 'text-cyan-400'
                     }`}
                   >
-                    {depth}
+                    {depth as number}
                   </span>
                 </div>
               ))}

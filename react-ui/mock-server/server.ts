@@ -6,7 +6,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { createServer as createViteServer } from 'vite';
 import multer from 'multer';
 import { installMockQueue } from './mockQueue';
-import { buildStages, precisionSection } from './pipelineTypes';
+import { buildStages, precisionSection, IdentityBlendResponse, TrtCacheSnapshot, AutotuneSnapshot, RecognitionCurrent, SegmentStatus, KeyframeOverride } from './pipelineTypes';
 
 // This is a MOCK of app/api.py: simulated swaps, invented telemetry, SVG
 // placeholders instead of frames. It exists so the React UI can be developed
@@ -754,6 +754,25 @@ async function startServer() {
     res.json({ source_faces: [], source_faces_info: [], selected_source_index: 0 });
   });
 
+  app.post('/api/source/move', (req, res) => {
+    const idx = Number(req.body.index ?? 0);
+    const direction = req.body.direction ?? 'right';
+    const targetIdx = direction === 'left' ? idx - 1 : idx + 1;
+    if (idx >= 0 && idx < sourceThumbs.length && targetIdx >= 0 && targetIdx < sourceThumbs.length) {
+      const [thumb] = sourceThumbs.splice(idx, 1);
+      const [info] = sourceInfo.splice(idx, 1);
+      sourceThumbs.splice(targetIdx, 0, thumb);
+      sourceInfo.splice(targetIdx, 0, info);
+      sourceInfo.forEach((inf, i) => { inf.index = i; });
+      if (selectedSourceIndex === idx) selectedSourceIndex = targetIdx;
+    }
+    res.json({ source_faces: sourceThumbs, source_faces_info: sourceInfo, selected_source_index: selectedSourceIndex });
+  });
+
+  app.post('/api/source/refresh_thumbs', (req, res) => {
+    res.json({ source_faces: sourceThumbs, source_faces_info: sourceInfo, selected_source_index: selectedSourceIndex });
+  });
+
   // ── Target Operations ───────────────────────────────────────────────
   app.post('/api/target/select', (req, res) => {
     const idx = Number(req.body.index ?? 0);
@@ -908,6 +927,14 @@ async function startServer() {
       );
     }
     res.json(getTargetFacesPayload());
+  });
+
+  app.post('/api/target/context', (req, res) => {
+    res.json(getTargetFacesPayload());
+  });
+
+  app.post('/api/target/face_bank', (req, res) => {
+    res.json(getTargetFacesPayload({ count: targetFacesList.length, characters: [] }));
   });
 
   // ── Preview Grid endpoint (binary JPEG stream) ─────────────────────
@@ -1782,6 +1809,400 @@ async function startServer() {
     const thumb = createSampleTargetSvg(`File: ${name}`, 1, 100, true, 303);
     res.setHeader('Content-Type', 'image/svg+xml');
     res.send(Buffer.from(thumb.split(',')[1], 'base64'));
+  });
+
+  // ── Terms & Compliance ──────────────────────────────────────────────
+  let termsAcknowledged = true;
+  app.get('/api/terms', (req, res) => {
+    res.json({
+      text: 'Roop Ultimate End-User License and Terms of Ethical AI Generation.',
+      version: '1.0',
+      acknowledged: termsAcknowledged,
+      source: 'TERMS.md',
+    });
+  });
+  app.post('/api/terms/acknowledge', (req, res) => {
+    termsAcknowledged = true;
+    res.json({ acknowledged: true, version: '1.0' });
+  });
+
+  // ── Models Integrity ────────────────────────────────────────────────
+  app.get('/api/models/integrity', (req, res) => {
+    res.json({
+      phase: 'idle',
+      message: 'All neural weights and ONNX models verified intact.',
+      busy: false,
+      files: [],
+      download_bytes_done: 0,
+      download_bytes_total: 0,
+      download_percent: null,
+      started_at: null,
+      finished_at: null,
+    });
+  });
+
+  // ── Live Stream & Frame Peek ─────────────────────────────────────────
+  app.get('/api/live_frame', (req, res) => {
+    const thumb = createSampleTargetSvg('Live Swapped Stream Frame', 1, 1, false, 777);
+    res.setHeader('Content-Type', 'image/svg+xml');
+    res.send(Buffer.from(thumb.split(',')[1], 'base64'));
+  });
+
+  app.get('/api/livecam/audio/devices', (req, res) => {
+    res.json({
+      devices: [
+        { id: 'default', name: 'Default Audio Input Device' },
+        { id: 'mic1', name: 'Studio Microphone (USB Audio)' },
+      ],
+    });
+  });
+
+  app.post('/api/lipsync/audio/add', upload.single('file'), (req, res) => {
+    res.json({
+      filename: req.file?.originalname || 'sample_dub.wav',
+      path: `temp/${req.file?.originalname || 'sample_dub.wav'}`,
+      duration: 14.5,
+    });
+  });
+
+  // ── File Serving (Query Parameter and Route Parameter) ──────────────
+  app.get('/api/file', (req, res) => {
+    const filePath = (req.query.path as string) || 'download';
+    const filename = path.basename(filePath);
+    const thumb = createSampleTargetSvg(`File: ${filename}`, 1, 100, true, 303);
+    res.setHeader('Content-Type', 'image/svg+xml');
+    res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+    res.send(Buffer.from(thumb.split(',')[1], 'base64'));
+  });
+
+  // ── Benchmark Management ────────────────────────────────────────────
+  app.get('/api/settings/benchmark_status', (req, res) => {
+    res.json({
+      running: false,
+      progress: 1.0,
+      current_fps: 24.5,
+      threads: 12,
+      elapsed_sec: 18,
+      logs: ['[Benchmark] completed in 18.2s', '[Benchmark] optimal threads: 12'],
+    });
+  });
+
+  app.post('/api/settings/benchmark_cancel', (req, res) => {
+    res.json({ status: 'cancelled' });
+  });
+
+  // ── Extras & Frame Post-Processing ──────────────────────────────────
+  app.post('/api/extras/apply', upload.single('file'), (req, res) => {
+    res.json({
+      path: '/outputs/edited_sample.png',
+      url: '/outputs/edited_sample.png',
+      name: 'edited_sample.png',
+      absolute_path: 'output/edited_sample.png',
+      kind: 'image',
+    });
+  });
+
+  app.post('/api/extras/enhance', upload.single('file'), (req, res) => {
+    const op = req.body?.operation || 'upscale';
+    const sub = req.body?.subtype || 'esrganx2';
+    res.json({
+      path: `/outputs/${op}_${sub}_sample.png`,
+      url: `/outputs/${op}_${sub}_sample.png`,
+      name: `${op}_${sub}_sample.png`,
+      absolute_path: `output/${op}_${sub}_sample.png`,
+      kind: 'image',
+    });
+  });
+
+  // ── Face Manager Archive ────────────────────────────────────────────
+  app.post('/api/facemgr/faceset', upload.single('file'), (req, res) => {
+    res.json({
+      faces: [],
+      count: 0,
+    });
+  });
+
+  // ── Identity Blender ────────────────────────────────────────────────
+  let identityBlendState: IdentityBlendResponse = {
+    recipe: { sources: [], dials: { age: 0, gender: 0, weight: 0 } },
+    active: false,
+    limits: {
+      max_sources: 4,
+      age_years: 15,
+      dial_sigmas: 2.0,
+      dials: ['age', 'gender', 'weight'],
+      default_min_cosine: 0.85,
+    },
+    directions: {
+      available: ['age', 'gender', 'weight'],
+      fitted_names: ['age', 'gender', 'weight'],
+      heldout: {},
+      corpus: {},
+      fitted: '2026-09-01',
+      dials: {
+        age: { metric: 'cosine', score: 0.94, writable: true, years_per_step: 5.0, guard_reach_years: 15.0 },
+        gender: { metric: 'cosine', score: 0.96, writable: true, guard_reach_dial: 1.0 },
+        weight: { metric: 'cosine', score: 0.91, writable: true, guard_reach_dial: 1.0 },
+      },
+    },
+    diagnostics: { note: 'Mock identity blender ready' },
+  };
+
+  app.get('/api/identity/blend', (req, res) => {
+    res.json(identityBlendState);
+  });
+
+  app.post('/api/identity/blend', (req, res) => {
+    identityBlendState.recipe = req.body || identityBlendState.recipe;
+    identityBlendState.active = Boolean(req.body && Object.keys(req.body).length > 0);
+    res.json(identityBlendState);
+  });
+
+  // ── TensorRT Cache Diagnostics & Pruning ────────────────────────────
+  app.get('/api/trt_cache', (req, res) => {
+    const snapshot: TrtCacheSnapshot = {
+      root: 'models/trt_cache',
+      provider_active: 'TensorrtExecutionProvider',
+      active_namespace: 'fp16_RTX4070_trt10.4_ort1.19_c1a2b3c4d5e6f7a8',
+      status: 'ready',
+      active_engines: 4,
+      total_mb: 842.5,
+      stale_mb: 184.2,
+      loose_mb: 42.0,
+      loose_engines: 1,
+      namespaces: [
+        {
+          name: 'fp16_RTX4070_trt10.4_ort1.19_c1a2b3c4d5e6f7a8',
+          kind: 'active',
+          size_mb: 616.3,
+          engines: 4,
+          modified: '2026-10-27 12:00',
+        },
+        {
+          name: 'fp16_RTX4070_trt10.2_ort1.18_c8f7e6d5c4b3a210',
+          kind: 'stale',
+          size_mb: 184.2,
+          engines: 3,
+          modified: '2026-09-15 10:30',
+        },
+      ],
+    };
+    res.json(snapshot);
+  });
+
+  app.post('/api/trt_cache/clear', (req, res) => {
+    res.json({ status: 'cleared', removed_mb: 184.2 });
+  });
+
+  // ── AutoTune Benchmarking ───────────────────────────────────────────
+  let autotuneRunning = false;
+  app.get('/api/autotune', (req, res) => {
+    const snapshot: AutotuneSnapshot = {
+      ready: true,
+      reason: null,
+      target: targetEntries[selectedTargetIndex]?.name || 'target_sample.mp4',
+      available_frames: 240,
+      progress: autotuneRunning ? { running: true, phase: 'screen', progress: 0.45, current_arm: 'cuda_b2' } : null,
+      result: null,
+      defaults: {
+        screen_frames: 30,
+        confirm_frames: 90,
+        batches: [1, 2, 4],
+        presets: ['p1', 'p4', 'p7'],
+      },
+    };
+    res.json(snapshot);
+  });
+
+  app.post('/api/autotune/start', (req, res) => {
+    autotuneRunning = true;
+    res.json({
+      status: 'started',
+      baseline: 'cuda_b1',
+      providers: ['CUDAExecutionProvider', 'TensorrtExecutionProvider'],
+      threads: 12,
+      available_frames: 240,
+    });
+  });
+
+  app.post('/api/autotune/cancel', (req, res) => {
+    autotuneRunning = false;
+    res.json({ status: 'cancelling' });
+  });
+
+  app.post('/api/autotune/revert', (req, res) => {
+    autotuneRunning = false;
+    res.json({ status: 'reverted', restored: {} });
+  });
+
+  // ── Recognition Model Hot-Swap & Advice ─────────────────────────────
+  app.get('/api/recognition/models', (req, res) => {
+    res.json({
+      models: [
+        { key: 'default', display_name: 'InsightFace w600k (ArcFace)', dim: 512, description: 'Default face recognition backbone', downloaded: true },
+        { key: 'adaface', display_name: 'AdaFace IR-101', dim: 512, description: 'Quality-adaptive margin loss backbone', downloaded: true },
+        { key: 'facenet512', display_name: 'FaceNet-512', dim: 512, description: 'VGGFace2 trained Inception-ResNet', downloaded: false },
+      ],
+    });
+  });
+
+  app.get('/api/recognition/current', (req, res) => {
+    const current: RecognitionCurrent = {
+      selection: { model: 'default', provider: 'app' },
+      advice: {
+        tier: 'TIER_DESKTOP_RTX4070',
+        label: 'Desktop RTX 4070 (12GB VRAM)',
+        device_name: 'NVIDIA GeForce RTX 4070',
+        vram_gb: 12.0,
+        compute_capability: '8.9',
+        architecture: 'Ada Lovelace',
+        provider: 'tensorrt',
+        strategy: 'TensorRT FP16 pooled engine execution',
+        model_hint: null,
+        reason: 'Optimal VRAM and compute capability for hardware acceleration',
+      },
+      providers: [
+        { value: 'app', label: 'Same as the app (Follow App)', available: true },
+        { value: 'cuda', label: 'CUDA', available: true },
+        { value: 'tensorrt', label: 'TensorRT', available: true },
+        { value: 'cpu', label: 'CPU', available: true },
+      ],
+      active: {
+        model_name: 'w600k',
+        provider: 'TensorrtExecutionProvider',
+        degraded: false,
+        active_providers: ['TensorrtExecutionProvider'],
+      },
+      scope: 'Used by the embedding API and IdentityBank.',
+    };
+    res.json(current);
+  });
+
+  app.post('/api/recognition/set', (req, res) => {
+    const model = req.body?.model_name || 'default';
+    const provider = req.body?.provider || 'app';
+    res.json({
+      model,
+      provider,
+      changed: true,
+      reinitialized: true,
+      downloaded: true,
+      degraded: false,
+      message: `Using ${model} on ${provider}.`,
+      scope: 'Used by the embedding API and IdentityBank.',
+    });
+  });
+
+  // ── UltraMax Enhancer REST Controls ─────────────────────────────────
+  let ultramaxParams = {
+    skin_texture_strength: 1.0,
+    eye_clarity: 1.0,
+    teeth_detail_weight: 0.5,
+    lip_detail_weight: 0.5,
+    blend_ratio: 0.75,
+    batch_size: 1,
+    precision_mode: 'hybrid_fp16_fp32',
+    provider: 'tensorrt',
+    restore_original_mouth: false,
+    mouth_open_threshold: 0.35,
+  };
+
+  app.get('/api/enhancer/ultramax/settings', (req, res) => {
+    res.json(ultramaxParams);
+  });
+
+  app.post('/api/enhancer/ultramax/settings', (req, res) => {
+    ultramaxParams = { ...ultramaxParams, ...req.body };
+    res.json(ultramaxParams);
+  });
+
+  app.get('/api/enhancer/ultramax/status', (req, res) => {
+    res.json({
+      compiling: false,
+      progress: 1.0,
+      stage: 'ready',
+      status: 'ready',
+      message: 'UltraMax TensorRT engine active and ready.',
+      compilation_time_s: 14.2,
+      engine_path: 'models/trt_cache/ultramax_fp16.engine',
+    });
+  });
+
+  app.post('/api/enhancer/ultramax/compile', (req, res) => {
+    res.json({
+      compiling: false,
+      progress: 1.0,
+      stage: 'ready',
+      status: 'ready',
+      message: 'Compilation complete.',
+    });
+  });
+
+  app.get('/api/enhancer/ultramax/telemetry', (req, res) => {
+    res.json({
+      event: 'telemetry',
+      timestamp: Date.now() / 1000,
+      instantaneous_fps: 28.4,
+      average_fps: 27.9,
+      fps_now: 28.4,
+      fps: 27.9,
+      cpu_load_percentage: 22.4,
+      system_ram_mb: 4820,
+      system_ram_total_mb: 32500,
+      system_ram_allocation: 4820,
+      gpu_vram_used_mb: 3150,
+      gpu_vram_total_mb: 12288,
+      gpu_vram_usage: 3150,
+      active_execution_provider: 'tensorrt',
+      active_provider: 'tensorrt',
+      pipeline_queue_depths: {
+        decode: 2,
+        preprocess: 2,
+        detect_track: 2,
+        swap: 1,
+        enhance: 1,
+        composite: 2,
+        encode: 1,
+      },
+      compilation: {
+        compiling: false,
+        progress: 1.0,
+        stage: 'ready',
+        status: 'ready',
+        message: 'Engine ready',
+      },
+      settings: ultramaxParams,
+    });
+  });
+
+  // ── Segments & Keyframe Overrides ───────────────────────────────────
+  let storedSegments: SegmentStatus[] = [];
+  let storedKeyframes: KeyframeOverride[] = [];
+
+  app.get('/api/segments', (req, res) => {
+    res.json({ segments: storedSegments, count: storedSegments.length });
+  });
+
+  app.post('/api/segments', (req, res) => {
+    if (Array.isArray(req.body?.segments)) {
+      storedSegments = req.body.segments;
+    } else if (req.body?.id) {
+      storedSegments.push(req.body);
+    }
+    res.json({ ok: true, segments: storedSegments, count: storedSegments.length });
+  });
+
+  app.get('/api/keyframes', (req, res) => {
+    res.json({ keyframes: storedKeyframes, count: storedKeyframes.length });
+  });
+
+  app.post('/api/keyframes', (req, res) => {
+    if (Array.isArray(req.body?.keyframes)) {
+      storedKeyframes = req.body.keyframes;
+    } else if (req.body?.frame !== undefined) {
+      storedKeyframes.push(req.body);
+    }
+    res.json({ ok: true, keyframes: storedKeyframes, count: storedKeyframes.length });
   });
 
   // Fallback for any unhandled /api/* endpoints so they never fall through to Vite SPA

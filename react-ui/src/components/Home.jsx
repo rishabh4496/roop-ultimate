@@ -8,6 +8,7 @@ import { TERMINAL_STATES, jobState } from './faceswap/useQueue';
 import { Icon } from '../icons';
 import { LiveText, LiveValue } from './LiveTelemetry';
 import { selectProg } from '../store/telemetryStore';
+import useTelemetry from './faceswap/useTelemetry';
 
 // ── Home ──────────────────────────────────────────────────────────────────
 // Everything on this page already existed somewhere — the run history, the
@@ -71,7 +72,7 @@ export default function Home({ progress, setTab, setSettings, notify }) {
   const [history, setHistory] = useState(null);   // null = still loading
   const [outputs, setOutputs] = useState(null);
   const [queue, setQueue] = useState(null);
-  const [telemetry, setTelemetry] = useState(null);
+  const telemetry = useTelemetry();
 
   useEffect(() => {
     let live = true;
@@ -86,7 +87,6 @@ export default function Home({ progress, setTab, setSettings, notify }) {
     pull('/api/history', setHistory, (r) => r.entries || []);
     pull('/api/output', setOutputs, (r) => ({ files: r.files || [], path: r.output_path || '' }));
     pull('/api/queue', setQueue, (r) => r.jobs || []);
-    pull('/api/system/telemetry', setTelemetry, (r) => (r.gpu ? r : null));
 
     return () => { live = false; };
   }, [getJSON]);

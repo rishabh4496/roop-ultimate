@@ -143,3 +143,121 @@ export function precisionSection(configured = 'mixed', effective = 'mixed'): Run
     },
   };
 }
+
+// ── Workstation UI & Engine Diagnostics Contracts ──────────────────────────────────────────
+
+export interface SegmentStatus {
+  id: string;
+  start: number;
+  end: number;
+  status: 'pending' | 'processing' | 'completed' | 'failed';
+  progress?: number;
+  output_path?: string;
+  job_id?: string;
+}
+
+export interface KeyframeOverride {
+  id?: string;
+  frame: number;
+  segmentId?: string;
+  settings?: Record<string, any>;
+  prompt?: string;
+  blend_ratio?: number;
+}
+
+export interface IdentityBlendLimits {
+  max_sources: number;
+  age_years: number;
+  dial_sigmas: number;
+  dials: string[];
+  default_min_cosine: number;
+}
+
+export interface IdentityBlendDirections {
+  available: string[];
+  fitted_names?: string[];
+  heldout?: Record<string, any>;
+  corpus?: Record<string, any>;
+  fitted?: string | null;
+  dials?: Record<string, any>;
+  reason?: string;
+}
+
+export interface IdentityBlendResponse {
+  recipe: Record<string, any>;
+  active: boolean;
+  limits: IdentityBlendLimits;
+  directions: IdentityBlendDirections;
+  diagnostics: Record<string, any>;
+}
+
+export interface TrtCacheNamespace {
+  name: string;
+  kind: 'active' | 'stale' | 'other' | 'unknown';
+  size_mb: number;
+  engines: number;
+  modified: string | null;
+}
+
+export interface TrtCacheSnapshot {
+  root: string;
+  provider_active: string;
+  active_namespace: string | null;
+  status: 'ready' | 'not_built' | 'not_loaded' | 'not_tensorrt';
+  active_engines: number;
+  total_mb: number;
+  stale_mb: number;
+  loose_mb: number;
+  loose_engines: number;
+  namespaces: TrtCacheNamespace[];
+}
+
+export interface AutotuneDefaults {
+  screen_frames: number;
+  confirm_frames: number;
+  batches: number[];
+  presets: string[];
+}
+
+export interface AutotuneSnapshot {
+  ready: boolean;
+  reason: string | null;
+  target: string | null;
+  available_frames: number;
+  progress: Record<string, any> | null;
+  result: Record<string, any> | null;
+  defaults: AutotuneDefaults;
+}
+
+export interface RecognitionSelection {
+  model: string;
+  provider: string;
+}
+
+export interface RecognitionHardwareAdvice {
+  tier: string;
+  label: string;
+  device_name: string;
+  vram_gb: number;
+  compute_capability: string;
+  architecture: string;
+  provider: string;
+  strategy: string;
+  model_hint: string | null;
+  reason: string;
+}
+
+export interface RecognitionProviderOption {
+  value: string;
+  label: string;
+  available: boolean;
+}
+
+export interface RecognitionCurrent {
+  selection: RecognitionSelection;
+  advice: RecognitionHardwareAdvice;
+  providers: RecognitionProviderOption[];
+  active: Record<string, any> | null;
+  scope: string;
+}
+

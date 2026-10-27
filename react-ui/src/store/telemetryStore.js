@@ -67,12 +67,39 @@ export const FAST_FIELDS = Object.keys(EMPTY_RUN);
 // Objects, not flat fields, so they are compared by value below instead of with `!==`.
 const EMPTY_PIPELINE = { stage: null, stages: {}, summary: {} };
 
+export const EMPTY_ENHANCER = {
+  instantaneous_fps: 0,
+  average_fps: 0,
+  cpu_load_percentage: 0,
+  system_ram_mb: 0,
+  system_ram_total_mb: 0,
+  gpu_vram_used_mb: 0,
+  gpu_vram_total_mb: 0,
+  active_execution_provider: 'tensorrt',
+  pipeline_queue_depths: { decode: 0, preprocess: 0, detect_track: 0, swap: 0, enhance: 0, composite: 0, encode: 0 },
+  compilation: { compiling: false, progress: 1.0, stage: 'idle', status: 'ready', message: '' },
+};
+
 export const useTelemetryStore = create(() => ({
   run: EMPTY_RUN,
   pipeline: EMPTY_PIPELINE,
   /** /api/system/telemetry: gpu, vram_used/total, cpu_percent, ram_*, threads. */
   system: null,
+  /** UltraMax / Enhancer telemetry and compilation status. */
+  enhancer: EMPTY_ENHANCER,
 }));
+
+export function setEnhancerTelemetry(patch) {
+  if (!patch) return;
+  const cur = useTelemetryStore.getState().enhancer;
+  useTelemetryStore.setState({ enhancer: { ...cur, ...patch } });
+}
+
+export function setEnhancerCompilation(compilation) {
+  if (!compilation) return;
+  const cur = useTelemetryStore.getState().enhancer;
+  useTelemetryStore.setState({ enhancer: { ...cur, compilation: { ...cur.compilation, ...compilation } } });
+}
 
 /** Merge fast run fields. Only keys present in `patch` are touched. */
 export function setRunTelemetry(patch) {

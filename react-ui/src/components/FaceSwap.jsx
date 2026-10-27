@@ -1059,6 +1059,15 @@ export default function FaceSwap({
   // same stale snapshot, so the second silently drops the first — which for
   // the region panel would mean toggling a region also reverted its grow.
   const setMany = (patch) => setSettings((s) => ({ ...s, ...patch }));
+  const [linkedPaddingSides, setLinkedPaddingSides] = useState(false);
+
+  const updatePaddingSide = (side, val) => {
+    if (linkedPaddingSides) {
+      setMany({ mask_top: val, mask_bottom: val, mask_left: val, mask_right: val });
+    } else {
+      set(`mask_${side}`, val);
+    }
+  };
 
   // Manual mask painted in the preview box. ProcessMgr already understands this
   // format ({"<faceset>": {exclude, canonical, ref_kps}}) — it was simply never
@@ -1379,17 +1388,10 @@ export default function FaceSwap({
   useEffect(() => {
     hydrateWorkspaceFromState({ restoreView: true }).catch(logFailure('Restoring the workspace', { toast: false }));
 
-    // Restore an in-flight swap so the run bar shows Pause/Resume/Stop and the
-    // progress %/desc again instead of falling back to "Start Swapping".
-    getJSON('/api/progress').then((pr) => {
-      setProgress(pr);
-      if (pr.processing) {
-        // Prefer the backend's own start time: the run has been going since
-        // before this mount, so starting a fresh clock here would report a
-        // long render as a few seconds old and skew the ETA with it.
-        if (!startTime) setStartTime(pr.started_at ? pr.started_at * 1000 : Date.now());
-      }
-    }).catch(logFailure('Restoring the running job', { toast: false }));
+    // Prefer the backend's own start time when in flight without extra network poll
+    if (progress?.processing && !startTime) {
+      setStartTime(progress.started_at ? progress.started_at * 1000 : Date.now());
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -3419,10 +3421,16 @@ export default function FaceSwap({
           )}
           <Toggle label="Protect eyeglass frames" info="Keeps the rim, bridge and temple arms of a pair of glasses from being painted over by the swap, while leaving the lens directly over each eye swappable so the eyes stay the faceset&apos;s own rather than the original person&apos;s. Needs a parser-backed masking engine (RealityUX or Face Parser) — the classes come from BiSeNet. Measured over ~800k parsed glasses pixels on three subjects: ~71% of the frame was being painted over, and the RealityUX fusion was contributing exactly nothing there, because XSeg reads ~0.003 on glasses and the accessory gate scales with XSeg. Costs no extra model call — it reuses the parse already being run." checked={p.glasses_frame_protect !== false} onChange={(v) => set('glasses_frame_protect', v)} />
           <Toggle label="Show mask overlay in preview" checked={!!p.show_mask_offsets} onChange={(v) => set('show_mask_offsets', v)} />
-          <Slider label="Offset face top" min={0} max={2} step={0.01} value={num(p.mask_top, 0)} onChange={(v) => set('mask_top', v)} />
-          <Slider label="Offset face bottom" min={0} max={2} step={0.01} value={num(p.mask_bottom, 0)} onChange={(v) => set('mask_bottom', v)} />
-          <Slider label="Offset face left" min={0} max={2} step={0.01} value={num(p.mask_left, 0)} onChange={(v) => set('mask_left', v)} />
-          <Slider label="Offset face right" min={0} max={2} step={0.01} value={num(p.mask_right, 0)} onChange={(v) => set('mask_right', v)} />
+          <Toggle
+            label="Link all padding sides"
+            info="When enabled, adjusting any face mask offset applies the same padding value to top, bottom, left, and right symmetrically."
+            checked={linkedPaddingSides}
+            onChange={setLinkedPaddingSides}
+          />
+          <Slider label="Offset face top" min={0} max={2} step={0.01} value={num(p.mask_top, 0)} onChange={(v) => updatePaddingSide('top', v)} />
+          <Slider label="Offset face bottom" min={0} max={2} step={0.01} value={num(p.mask_bottom, 0)} onChange={(v) => updatePaddingSide('bottom', v)} />
+          <Slider label="Offset face left" min={0} max={2} step={0.01} value={num(p.mask_left, 0)} onChange={(v) => updatePaddingSide('left', v)} />
+          <Slider label="Offset face right" min={0} max={2} step={0.01} value={num(p.mask_right, 0)} onChange={(v) => updatePaddingSide('right', v)} />
           <Slider label="Face mask edge blend" min={0} max={200} step={1} value={num(p.face_mask_blend, 20)} onChange={(v) => set('face_mask_blend', v)} />
           <Select label="Mask edge falloff" info="Shape of the ramp between swapped and original pixels. 'Gaussian' is the shipped behaviour and what 'Face mask edge blend' was calibrated against. 'Distance (soft)' derives the ramp from a distance transform, so it is the SAME WIDTH everywhere along the boundary — a Gaussian narrows wherever the mask is locally convex or thin, which is why one setting can look soft along the cheek and hard at the temple in the same frame." value={p.mask_edge_mode || 'gaussian'} onChange={(v) => set('mask_edge_mode', v)} options={[['gaussian', 'Gaussian (default)'], ['distance', 'Distance (soft, constant width)']]} />
           <Slider label="Boundary illumination match" info="Grades only the LOW frequencies of the pasted face toward the original plate, and only at the rim — exactly zero where the mask is fully opaque, so the identity region is untouched and no target texture is copied in. Use when a seam is still visible after the edge is soft: that residual line is a brightness step, not a geometry problem. 0 disables it entirely." min={0} max={1} step={0.05} value={num(p.boundary_illumination_strength, 0)} onChange={(v) => set('boundary_illumination_strength', v)} />
