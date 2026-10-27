@@ -1,10 +1,12 @@
 import React, { useEffect, useState, useCallback, useRef, useMemo, Suspense } from 'react';
 import { getJSON, postJSON, timeoutFor } from './api';
 import { logFailure, reportFailure, setFailureToast } from './failureLog';
-import { Toasts, Confetti, MotionIcon } from './components/ui';
+import { Toasts, Confetti } from './components/ui';
 import QualityProfilesModal, { BUILTIN_PROFILES } from './components/QualityProfilesModal';
 import CommandPalette from './components/CommandPalette';
-import HeaderControls from './components/HeaderNav';
+import WorkstationRail from './components/shell/WorkstationRail';
+import WorkstationHeader from './components/shell/WorkstationHeader';
+import useQueueSummary from './components/shell/useQueueSummary';
 import ModelSplash from './components/ModelSplash';
 import ErrorBoundary from './components/ErrorBoundary';
 import { lazyPanel, resetFailedPanels } from './components/lazyPanel';
@@ -16,6 +18,7 @@ import useTelemetrySocket from './useTelemetrySocket';
 import CompileBanner from './components/CompileBanner';
 import { usePipelineStatusSocket } from './usePipelineStatus';
 import { useJobStore } from './store/jobStore';
+import { useWorkspaceStore, LAYOUT_PRESETS } from './store/workspaceStore';
 import { setRunTelemetry, setPipelineTelemetry, selectProg, etaMsOf, clearEngineTelemetry } from './store/telemetryStore';
 import { LiveText, LiveBar } from './components/LiveTelemetry';
 import { themeByName, allThemes, applyThemeToDom } from './themes';
@@ -534,10 +537,17 @@ export default function App() {
   const [runTabOpen, setRunTabOpen] = useState(
     () => tabFromHash(window.location.hash, ALL_TABS.map((t) => t.id)) === 'processing'
   );
+  // Queued jobs count too: the rail's Processing badge is a count of work still
+  // to run, and a badge on a route that is not listed would be unreachable.
+  const queuePending = useQueueSummary();
   useEffect(() => {
-    if (progress.processing || tab === 'processing') setRunTabOpen(true);
+    if (progress.processing || tab === 'processing' || queuePending > 0) setRunTabOpen(true);
     else setRunTabOpen(false);
-  }, [progress.processing, tab]);
+  }, [progress.processing, tab, queuePending]);
+  const navBadges = useMemo(
+    () => ({ processing: Math.max(queuePending, progress.processing ? 1 : 0) }),
+    [queuePending, progress.processing],
+  );
 
   const visibleTabs = useMemo(
     () => ALL_TABS.filter((t) => !t.transient || runTabOpen),
@@ -594,7 +604,10 @@ export default function App() {
     localStorage.setItem('roop_zoom', String(zoom));
   }, [zoom]);
 
-  const [showHud, setShowHud] = useState(false);
+  const railCollapsed = useWorkspaceStore((st) => st.railCollapsed);
+  const toggleRail = useWorkspaceStore((st) => st.toggleRail);
+  const setWorkspaceMode = useWorkspaceStore((st) => st.setWorkspaceMode);
+  const setSettingsTab = useWorkspaceStore((st) => st.setSettingsTab);
   const [showShortcutsModal, setShowShortcutsModal] = useState(false);
   const [showProfilesModal, setShowProfilesModal] = useState(false);
   const [showSnapshotsModal, setShowSnapshotsModal] = useState(false);
@@ -671,9 +684,17 @@ export default function App() {
     }
   }, [notify]);
 
-  // Global keyboard shortcuts: ⌘/Ctrl-K palette, ?, and ⌘/Ctrl +/-/0 zoom.
+  // Global keyboard shortcuts: ⌘/Ctrl-K palette, ⌘/Ctrl-B rail, ?, and ⌘/Ctrl +/-/0 zoom.
   useEffect(() => {
     const onKey = (e) => {
+      // The palette opens from anywhere, a text field included: Ctrl/Cmd+K is not
+      // a character in any field this app has, and the settings search box is
+      // exactly where someone reaching for "find a setting" is standing.
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setShowPalette((v) => !v);
+        return;
+      }
       if (e.target && ['input', 'textarea', 'select'].includes(e.target.tagName?.toLowerCase())) return;
       if (e.key === '?' || (e.shiftKey && e.key === '/')) {
         e.preventDefault();
@@ -682,14 +703,14 @@ export default function App() {
       }
       if (!(e.metaKey || e.ctrlKey)) return;
       const k = e.key.toLowerCase();
-      if (k === 'k') { e.preventDefault(); setShowPalette((v) => !v); }
+      if (k === 'b') { e.preventDefault(); toggleRail(); }
       else if (e.key === '=' || e.key === '+') { e.preventDefault(); bumpZoom(0.05); }
       else if (e.key === '-' || e.key === '_') { e.preventDefault(); bumpZoom(-0.05); }
       else if (e.key === '0') { e.preventDefault(); setZoom(1); }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [bumpZoom]);
+  }, [bumpZoom, toggleRail]);
 
   // Ctrl/⌘ + wheel is the other half of the same gesture, and left alone it ran
   // the BROWSER's page zoom instead — stacking on top of the CSS zoom above, so
@@ -780,6 +801,15 @@ export default function App() {
     };
   }, []);
 
+  // Open Settings on its Runtime Diagnostics section. The section is held in the
+  // workspace store, which Settings reads when it mounts, so this works whether
+  // the lazy chunk is already loaded or arriving for the first time.
+  const openDiagnostics = useCallback(() => {
+    setSettingsTab('diagnostics');
+    warmTab('settings');
+    setTab('settings');
+  }, [setSettingsTab, setTab]);
+
   const commands = useMemo(() => {
     const cmds = [];
     // The tab's own icon and label carry straight into its palette row, so the
@@ -793,7 +823,29 @@ export default function App() {
     cmds.push({ id: 'act-split', section: 'Actions', icon: Icon.split, title: 'Toggle split view', run: () => runFaceswap('split') });
     cmds.push({ id: 'act-preview', section: 'Actions', icon: Icon.refresh, title: 'Refresh preview', run: () => runFaceswap('preview') });
     cmds.push({ id: 'act-shortcuts', section: 'Actions', icon: Icon.shortcuts, title: 'Show keyboard shortcuts', run: () => setShowShortcutsModal(true) });
-    cmds.push({ id: 'act-hud', section: 'Actions', icon: Icon.settings, title: 'Toggle Hardware Telemetry HUD', run: () => setShowHud((v) => !v) });
+    cmds.push({
+      id: 'act-diagnostics', section: 'Actions', icon: Icon.meter, title: 'Open runtime diagnostics',
+      subtitle: 'Settings, Runtime Diagnostics & Benchmark',
+      run: () => openDiagnostics(),
+    });
+    cmds.push({ id: 'act-rail', section: 'Layout', icon: Icon.panelLeft, title: 'Toggle navigation rail', subtitle: 'Ctrl B', run: () => toggleRail() });
+    LAYOUT_PRESETS.forEach((l) => cmds.push({
+      id: `layout-${l.id}`, section: 'Layout', icon: Icon.layout, title: `Layout: ${l.label}`, subtitle: l.hint,
+      run: () => { setWorkspaceMode(l.mode); setTab('faceswap'); },
+    }));
+    cmds.push({ id: 'act-mask-overlay', section: 'Canvas', icon: Icon.preview, title: 'Toggle mask overlay in preview', run: () => runFaceswap('maskOverlay') });
+    // Execution provider. The setting is read when inference sessions are built, so a
+    // switch made here takes effect after a restart; the toast says so rather than
+    // letting the row read as an instant change.
+    (meta?.providers || []).forEach((prov) => cmds.push({
+      id: `provider-${prov}`, section: 'Provider', icon: Icon.cpu, title: `Execution provider: ${prov}`,
+      subtitle: settings?.provider === prov ? 'Current' : 'Applies after restarting the app',
+      run: () => {
+        if (settings?.provider === prov) return;
+        setSettings((cur) => ({ ...(cur || {}), provider: prov }));
+        notify(`Provider set to ${prov}; restart the app to build sessions on it`, 'info');
+      },
+    }));
     // Lite UI is a performance control, and the only place it lived was the
     // Processing tab's dock -- i.e. reachable only while a render was in
     // flight, which is exactly when you are least likely to go looking for it.
@@ -849,7 +901,8 @@ export default function App() {
     }));
 
     return cmds;
-  }, [applyTheme, applyQualityProfile, runFaceswap, customThemes, presets, visibleTabs, liteMode, setTab]);
+  }, [applyTheme, applyQualityProfile, runFaceswap, customThemes, presets, visibleTabs, liteMode, setTab,
+    toggleRail, setWorkspaceMode, openDiagnostics, meta, settings?.provider, notify]);
 
   const registerFileListener = useCallback((cb) => {
     fileListenersRef.current.push(cb);
@@ -1083,10 +1136,90 @@ export default function App() {
 
   const stopping = !!progress.stop_requested || controlBusy === 'stop';
 
+  // The run chip is the one piece of the run that is on screen from every route,
+  // so it lives in the header and doubles as the way back to the run's own tab.
+  const runChip = progress.processing ? (
+            <div className="flex items-center gap-2 px-2.5 py-1 rounded-lg bg-[var(--accent)]/10 border border-[var(--accent)]/20 text-micro font-bold tracking-wide uppercase">
+      <span className={`h-1.5 w-1.5 rounded-full ${stopping ? 'bg-red-400' : progress.paused || progress.pause_requested ? 'bg-amber-400' : 'bg-[var(--accent)] animate-ping'}`} />
+      {/* The chip is the one piece of the run that is on screen from
+          every tab, so it doubles as the way back to the run's own tab
+          once you have wandered off it. */}
+      <button
+        type="button"
+        onClick={() => { warmTab('processing'); setTab('processing'); }}
+        title="Open the Processing tab"
+        className={`hover:underline ${stopping ? 'text-red-400/90' : progress.paused || progress.pause_requested ? 'text-amber-400/90' : 'text-accent'}`}
+      >
+        {stopping ? 'Stopping' : progress.paused ? 'Paused' : progress.pause_requested ? 'Pause requested' : (
+          <LiveText select={(s) => `Processing ${Math.round(selectProg(s) * 100)}%`} />
+        )}
+      </button>
+      {/* Same "time left" the Processing tab and the terminal show:
+          eta_s is the render's own progress bar, and the extrapolation
+          is only the fallback for the windows where nothing is counting
+          frames. Extrapolating throughout reads model loads and the
+          pre-pass as swap time and comes out roughly twice too high —
+          which is exactly what this chip used to say while the tab beside
+          it said something else. */}
+      {!(progress.paused || progress.pause_requested || stopping) && (
+        <LiveText
+          className="text-muted normal-case font-mono font-medium ml-1 empty:hidden"
+          select={(s) => {
+            const eta = etaMsOf(s.run, startTime ? Date.now() - startTime : 0);
+            return eta > 0 ? `ETA: ${fmtTime(eta)}` : '';
+          }}
+        />
+      )}
+      <div className="flex items-center gap-1.5 border-l border-white/10 pl-2 ml-1">
+        {progress.paused ? (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              runControl('resume').catch(logFailure('Resuming the job', { toast: false }));
+            }}
+            disabled={stopping || controlBusy === 'resume'}
+            className="grid place-items-center hover:text-white text-white/60 transition-colors cursor-pointer"
+            title="Resume Job" aria-label="Resume job"
+          >
+            <Icon.play size={13} />
+          </button>
+        ) : (
+          <button
+            type="button"
+            disabled={progress.pause_requested || stopping || controlBusy === 'pause' || controlBusy === 'resume'}
+            onClick={(e) => {
+              e.stopPropagation();
+              runControl('pause').catch(logFailure('Pausing the job', { toast: false }));
+            }}
+            className="grid place-items-center hover:text-white text-white/60 transition-colors cursor-pointer"
+            title={progress.pause_requested ? 'Pause requested' : 'Pause Job'} aria-label={progress.pause_requested ? 'Pause requested' : 'Pause job'}
+          >
+            <Icon.pause size={13} />
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={async (e) => {
+            e.stopPropagation();
+            if (await confirmDialog({ title: 'Stop job?', message: 'Stop the active job? The partial output so far is finalized and kept.', confirmLabel: 'Stop', danger: true })) {
+              runControl('stop').catch(logFailure('Stopping the job', { toast: false }));
+            }
+          }}
+          disabled={stopping}
+          className="grid place-items-center hover:text-red-400 text-white/60 transition-colors cursor-pointer"
+          title="Stop Job" aria-label="Stop job"
+        >
+          <Icon.stop size={13} />
+        </button>
+      </div>
+    </div>
+  ) : null;
+
 
   return (
     <MotionConfig reducedMotion="user">
-    <div className="min-h-screen flex flex-col relative overflow-hidden select-none">
+    <div className="min-h-screen flex relative overflow-x-clip select-none">
       <ModelSplash />
       {/* Floating Ambient Background Glows — static.
           These are two very large filter-blur discs. When they animated
@@ -1101,149 +1234,43 @@ export default function App() {
         <div className="absolute bottom-[-24%] right-[-18%] w-[60%] h-[60%] rounded-full bg-[#8B5CF6]/[0.03] blur-[160px]" />
       </div>
 
-      {/* Floating Header Capsule */}
-      <header className="sticky top-2 z-40 mx-auto max-w-[1920px] w-full px-3.5 sm:px-5 py-2.5 rounded-2xl glass-panel flex flex-col md:flex-row md:flex-wrap items-center justify-between gap-3 border-white/10">
-        <div className="flex items-center gap-3">
-          <MotionIcon icon={Icon.brand} size="md" variant="accent" animate="pulse" />
-          <div>
-            <h1 className="text-lead font-bold tracking-tight text-white/95 flex items-center gap-1.5">
-              Roop Ultimate <span className="text-muted font-medium">Studio</span>
-            </h1>
-            {(meta?.git_version || meta?.installed_commit?.short) && (
-              <span
-                data-small-ok="build stamp: the full commit is in the title" className="text-nano font-mono text-muted tracking-wider block mt-0.5"
-                title={meta?.installed_commit?.sha
-                  ? `commit ${meta.installed_commit.sha}${meta.installed_commit.date ? ` · ${meta.installed_commit.date}` : ''}`
-                  : undefined}
-              >
-                Engine {meta?.git_version || 'main'}
-                {meta?.installed_commit?.short && (
-                  <span className="text-white/70 ml-1.5 font-semibold">
-                    ({meta.installed_commit.short.slice(0, 7)})
-                  </span>
-                )}
-              </span>
-            )}
-          </div>
-          {progress.processing && (
-            <div className="ml-2 flex items-center gap-2 px-2.5 py-1 rounded-lg bg-[var(--accent)]/10 border border-[var(--accent)]/20 text-micro font-bold tracking-wide uppercase">
-              <span className={`h-1.5 w-1.5 rounded-full ${stopping ? 'bg-red-400' : progress.paused || progress.pause_requested ? 'bg-amber-400' : 'bg-[var(--accent)] animate-ping'}`} />
-              {/* The chip is the one piece of the run that is on screen from
-                  every tab, so it doubles as the way back to the run's own tab
-                  once you have wandered off it. */}
-              <button
-                type="button"
-                onClick={() => { warmTab('processing'); setTab('processing'); }}
-                title="Open the Processing tab"
-                className={`hover:underline ${stopping ? 'text-red-400/90' : progress.paused || progress.pause_requested ? 'text-amber-400/90' : 'text-accent'}`}
-              >
-                {stopping ? 'Stopping' : progress.paused ? 'Paused' : progress.pause_requested ? 'Pause requested' : (
-                  <LiveText select={(s) => `Processing ${Math.round(selectProg(s) * 100)}%`} />
-                )}
-              </button>
-              {/* Same "time left" the Processing tab and the terminal show:
-                  eta_s is the render's own progress bar, and the extrapolation
-                  is only the fallback for the windows where nothing is counting
-                  frames. Extrapolating throughout reads model loads and the
-                  pre-pass as swap time and comes out roughly twice too high —
-                  which is exactly what this chip used to say while the tab beside
-                  it said something else. */}
-              {!(progress.paused || progress.pause_requested || stopping) && (
-                <LiveText
-                  className="text-muted normal-case font-mono font-medium ml-1 empty:hidden"
-                  select={(s) => {
-                    const eta = etaMsOf(s.run, startTime ? Date.now() - startTime : 0);
-                    return eta > 0 ? `ETA: ${fmtTime(eta)}` : '';
-                  }}
-                />
-              )}
-              <div className="flex items-center gap-1.5 border-l border-white/10 pl-2 ml-1">
-                {progress.paused ? (
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      runControl('resume').catch(logFailure('Resuming the job', { toast: false }));
-                    }}
-                    disabled={stopping || controlBusy === 'resume'}
-                    className="grid place-items-center hover:text-white text-white/60 transition-colors cursor-pointer"
-                    title="Resume Job" aria-label="Resume job"
-                  >
-                    <Icon.play size={13} />
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    disabled={progress.pause_requested || stopping || controlBusy === 'pause' || controlBusy === 'resume'}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      runControl('pause').catch(logFailure('Pausing the job', { toast: false }));
-                    }}
-                    className="grid place-items-center hover:text-white text-white/60 transition-colors cursor-pointer"
-                    title={progress.pause_requested ? 'Pause requested' : 'Pause Job'} aria-label={progress.pause_requested ? 'Pause requested' : 'Pause job'}
-                  >
-                    <Icon.pause size={13} />
-                  </button>
-                )}
-                <button
-                  type="button"
-                  onClick={async (e) => {
-                    e.stopPropagation();
-                    if (await confirmDialog({ title: 'Stop job?', message: 'Stop the active job? The partial output so far is finalized and kept.', confirmLabel: 'Stop', danger: true })) {
-                      runControl('stop').catch(logFailure('Stopping the job', { toast: false }));
-                    }
-                  }}
-                  disabled={stopping}
-                  className="grid place-items-center hover:text-red-400 text-white/60 transition-colors cursor-pointer"
-                  title="Stop Job" aria-label="Stop job"
-                >
-                  <Icon.stop size={13} />
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-        <HeaderControls
-          tabs={visibleTabs}
-          tab={tab}
-          onSelect={setTab}
-          warmTab={warmTab}
-          runActive={progress.processing}
-          zoom={zoom}
-          onBumpZoom={bumpZoom}
-          onResetZoom={() => setZoom(1)}
-          profileName={activeQualityProfile ? (BUILTIN_PROFILES.find(p => p.id === activeQualityProfile)?.name.split(' ')[1] || 'Custom') : 'Standard'}
-          onOpenProfiles={() => setShowProfilesModal(true)}
-          showHud={showHud}
-          onToggleHud={() => setShowHud((v) => !v)}
-          onOpenSnapshots={() => setShowSnapshotsModal(true)}
-          onOpenPalette={() => setShowPalette(true)}
-        />
-      </header>
+      <WorkstationRail
+        tabs={visibleTabs}
+        tab={tab}
+        onSelect={setTab}
+        warmTab={warmTab}
+        collapsed={railCollapsed}
+        onToggleCollapse={toggleRail}
+        badges={navBadges}
+        runActive={progress.processing}
+        build={(meta?.git_version || meta?.installed_commit?.short) ? {
+          text: `Engine ${meta?.git_version || 'main'}${meta?.installed_commit?.short ? ` (${meta.installed_commit.short.slice(0, 7)})` : ''}`,
+          title: meta?.installed_commit?.sha
+            ? `commit ${meta.installed_commit.sha}${meta.installed_commit.date ? ` · ${meta.installed_commit.date}` : ''}`
+            : undefined,
+        } : null}
+      />
 
-      {/* Hardware Telemetry HUD Banner */}
-      {showHud && (
-        <div className="w-full max-w-[1920px] mx-auto mt-2 p-3 sm:p-3.5 bg-black/80 backdrop-blur-xl border border-white/10 rounded-2xl grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs text-white shadow-xl animate-slide-up z-30 relative">
-          <div className="flex flex-col">
-            <span className="text-nano font-semibold uppercase tracking-wider text-muted">Execution Engine</span>
-            <span className="font-mono text-emerald-400 font-bold">{hudValue(progress.runtime?.sections?.PROVIDER?.values?.effective)}</span>
-          </div>
-          <div className="flex flex-col">
-            <span className="text-nano font-semibold uppercase tracking-wider text-muted">VRAM Total</span>
-            <span className="font-mono text-amber-300 font-bold">{hudValue(progress.runtime?.sections?.HARDWARE?.values?.vram?.total_gb, ' GB')}</span>
-          </div>
-          <div className="flex flex-col">
-            <span className="text-nano font-semibold uppercase tracking-wider text-muted">Configured Workers</span>
-            <span className="font-mono text-cyan-300 font-bold">{hudValue(progress.runtime?.sections?.POOLING?.values?.workers?.configured)}</span>
-          </div>
-          <div className="flex flex-col">
-            <span className="text-nano font-semibold uppercase tracking-wider text-muted">Engine Connection</span>
-            <span className={`font-mono font-bold ${offline ? 'text-amber-300' : meta ? 'text-emerald-400' : 'text-white/60'}`}>
-              {offline ? 'Local engine unavailable' : meta ? 'Local engine connected' : 'Local engine checking'}
-            </span>
-          </div>
-        </div>
-      )}
+      <div className="relative z-10 flex min-w-0 flex-1 flex-col">
+      <WorkstationHeader
+        current={ALL_TABS.find((t) => t.id === tab)}
+        tab={tab}
+        onNavigate={setTab}
+        runChip={runChip}
+        engine={{
+          provider: hudValue(progress.runtime?.sections?.PROVIDER?.values?.effective),
+          workers: hudValue(progress.runtime?.sections?.POOLING?.values?.workers?.configured),
+          connection: offline ? 'Local engine unavailable' : meta ? 'Local engine connected' : 'Local engine checking',
+        }}
+        onOpenDiagnostics={openDiagnostics}
+        zoom={zoom}
+        onBumpZoom={bumpZoom}
+        onResetZoom={() => setZoom(1)}
+        profileName={activeQualityProfile ? (BUILTIN_PROFILES.find(p => p.id === activeQualityProfile)?.name.split(' ')[1] || 'Custom') : 'Standard'}
+        onOpenProfiles={() => setShowProfilesModal(true)}
+        onOpenSnapshots={() => setShowSnapshotsModal(true)}
+        onOpenPalette={() => setShowPalette(true)}
+      />
 
       {/* Shortcuts Cheat Sheet Modal */}
       {showShortcutsModal && (
@@ -1415,16 +1442,17 @@ export default function App() {
                   />
                 )}
                 {tab === 'facemgr' && <FaceManager notify={notify} registerFileListener={registerFileListener} />}
-                {tab === 'extras' && <Extras notify={notify} registerFileListener={registerFileListener} />}
+                {tab === 'extras' && <Extras notify={notify} registerFileListener={registerFileListener} meta={meta} settings={settings} setSettings={setSettings} setTab={setTab} />}
                 {tab === 'gallery' && <Gallery notify={notify} setSettings={setSettings} setTab={setTab} />}
                 {tab === 'history' && <RunHistory notify={notify} setSettings={setSettings} setTab={setTab} />}
-                {tab === 'settings' && <Settings meta={meta} settings={settings} setSettings={setSettings} notify={notify} />}
+                {tab === 'settings' && <Settings meta={meta} settings={settings} setSettings={setSettings} notify={notify} progress={progress} />}
               </Suspense>
               </ErrorBoundary>
             </motion.div>
           </AnimatePresence>
         )}
       </main>
+      </div>
 
       <Toasts toasts={toasts} onDismiss={dismissToast} />
 

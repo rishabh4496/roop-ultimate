@@ -28,7 +28,7 @@ async function idleCpu(browser, healthy) {
       ? route.fulfill({ status: 500, contentType: 'application/json', body: '{"detail":"boom"}' })
       : route.fallback()));
     await page.goto('/#/faceswap');
-    await page.locator('header nav button[aria-current="page"]').waitFor();
+    await page.locator('nav[aria-label="Main"] button[aria-current="page"]').waitFor();
     await page.waitForTimeout(SETTLE_MS);
 
     const cpuSeconds = async () => {

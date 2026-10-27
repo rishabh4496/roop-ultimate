@@ -45,7 +45,7 @@ const SETTLE_MS = 1500;
 // replaced its spinner.
 export async function openTab(page, id) {
   await page.goto(`/#/${id}`);
-  await page.locator('header nav button[aria-current="page"]').waitFor();
+  await page.locator('nav[aria-label="Main"] button[aria-current="page"]').waitFor();
   await page.locator('.deferred-fallback').waitFor({ state: 'detached' });
   // Let route-level fetches (state, settings panels) land so the first read of
   // the DOM is the loaded view, not its skeleton. NOT `networkidle`: Face Swap
@@ -53,6 +53,16 @@ export async function openTab(page, id) {
   // waiting for quiet would turn a finding into a 60 s timeout.
   await page.waitForTimeout(SETTLE_MS);
 }
+
+/**
+ * Open Settings on a given tab ('providers' | 'cpu' | 'paths' | 'diagnostics' | 'general') by seeding the
+ * value the app itself persists (store/workspaceStore.js, key roop_workspace), before the page loads.
+ * Settings is five tabs behind one hash; specs about a control name the tab it lives on instead of
+ * clicking through, and still go through the real route.
+ */
+export const startOnSettingsTab = (page, id) => page.addInitScript((tab) => {
+  try { window.localStorage.setItem('roop_workspace', JSON.stringify({ settingsTab: tab })); } catch { /* storage blocked */ }
+}, id);
 
 // Views that are not a tab of their own but a state a tab can be in, and that
 // have their own markup. The Batch Matrix tab is four different forms behind one
@@ -63,11 +73,17 @@ export const STATES = [
   { id: 'batch/grouped', tab: 'batch', strategy: 1 },
   { id: 'batch/matrix', tab: 'batch', strategy: 2 },
   { id: 'batch/recipes', tab: 'batch', strategy: 3 },
+  // Settings is five tabs behind one hash; auditing only the default left four of them unseen.
+  { id: 'settings/cpu', tab: 'settings', settingsTab: /^CPU/ },
+  { id: 'settings/paths', tab: 'settings', settingsTab: /^Paths/ },
+  { id: 'settings/diagnostics', tab: 'settings', settingsTab: /^Runtime Diagnostics/ },
+  { id: 'settings/general', tab: 'settings', settingsTab: /^Appearance/ },
 ];
 
 export async function openState(page, state) {
   await openTab(page, state.tab);
-  await page.locator(STRATEGY_BUTTONS).nth(state.strategy).click();
+  if (state.settingsTab) await page.getByRole('tab', { name: state.settingsTab }).click();
+  else await page.locator(STRATEGY_BUTTONS).nth(state.strategy).click();
   await page.waitForTimeout(600);
 }
 

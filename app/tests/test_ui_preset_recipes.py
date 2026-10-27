@@ -147,6 +147,44 @@ class PresetKeysTest(unittest.TestCase):
         for i, body in enumerate(presets):
             self._check(f'SliderTrackerBar preset {i}', _pairs(body))
 
+    def test_quick_recipes(self):
+        """The four recipes on the inspector's preset bar (faceswap/recipes.js).
+
+        Same two questions as every other preset source: is each key a real
+        setting, and is each enum value one the backend offers. A fifth question
+        specific to these: none of them may reach for a GLOBAL setting (provider,
+        threads, pools, TensorRT builder), because those are read when sessions are
+        built, so a recipe could only claim to have changed them.
+        """
+        src = _read(UI, 'faceswap', 'recipes.js')
+        recipes = _blocks(src, 'patch:')
+        self.assertEqual(len(recipes), 4, 'the four quick recipes were not parsed')
+        for i, body in enumerate(recipes):
+            params = _pairs(body)
+            self.assertTrue(params, f'quick recipe {i} parsed to no params')
+            self._check(f'quick recipe {i}', params)
+            for key in params:
+                self.assertNotRegex(key, r'^(provider|max_threads|perf_|cpu_|trt_)',
+                                    f'quick recipe {i} sets the global setting {key}')
+
+    def test_temporal_modes_only_set_real_settings(self):
+        """The four temporal modes (faceswap/temporalModes.js) write real settings.
+
+        These keys are NOT all in FACESWAP_DEFAULTS (temporal_smart_skip is a
+        pipeline lever shared with Settings), so the check here is the one that
+        matters: settings.py declares each of them, and stabilize_method is one of
+        the values the engine dispatches on.
+        """
+        src = _read(UI, 'faceswap', 'temporalModes.js')
+        modes = _blocks(src, 'patch:')
+        self.assertEqual(len(modes), 4, 'the four temporal modes were not parsed')
+        for i, body in enumerate(modes):
+            for key, value in _pairs(body).items():
+                with self.subTest(mode=i, key=key):
+                    self.assertIn(key, _SETTINGS_KEYS, f"temporal mode {i}: '{key}' is not a real setting")
+                    if key == 'stabilize_method':
+                        self.assertIn(value, ('one_euro', 'ema', 'kalman'))
+
     def test_the_factory_defaults_are_themselves_valid(self):
         """FACESWAP_DEFAULTS was the one table nothing checked.
 

@@ -278,10 +278,71 @@ export const Select = ({ label, info, value, onChange, options = [], modified, o
 // immediately so a drag still feels instant to everything downstream.
 const SLIDER_COMMIT_MS = 90;
 
-export const Slider = ({ label, info, value, onChange, min = 0, max = 1, step = 0.01, modified, onReset, settingKey }) => {
+// ── Studio slider behaviours ────────────────────────────────────────────────
+//
+//   double-click the track   -> reset to the default (`defaultValue`, else the
+//                               Settings panel's own `onReset` when modified)
+//   Backspace / Delete       -> the same reset, for the keyboard
+//   Shift + drag             -> fine adjustment: the pointer moves the value at a
+//                               tenth of the speed, snapped to 0.01 (or to `step`
+//                               when that is already coarser than a hundredth,
+//                               i.e. an integer control)
+//   Shift + Arrow keys       -> one fine step
+//   click the number         -> type an exact value (Enter on the focused slider
+//                               opens the same editor, which is the keyboard way in)
+//
+// The number is a mouse affordance with tabindex -1 and aria-hidden: the range
+// input already announces its own value, and a second tab stop per slider would
+// add ~60 stops to Face Swap alone (e2e/tab-stops.spec.js budgets them).
+const FINE_RATIO = 0.1;
+const FINE_STEP = 0.01;
+const decimalsOf = (step) => {
+  const s = String(step);
+  const i = s.indexOf('.');
+  return i < 0 ? 0 : s.length - i - 1;
+};
+const clampNum = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+// toFixed round-trip: 0.1 + 0.2 style drift must not reach the settings object.
+const snapTo = (v, step) => Number((Math.round(v / step) * step).toFixed(6));
+
+function NumberEditor({ initial, min, max, label, onDone }) {
+  const [draft, setDraft] = useState(initial);
+  const doneRef = useRef(false);
+  const finish = (commit) => {
+    if (doneRef.current) return;
+    doneRef.current = true;
+    const n = parseFloat(String(draft).replace(',', '.'));
+    onDone(commit && Number.isFinite(n) ? clampNum(Number(n.toFixed(4)), min, max) : null);
+  };
+  return (
+    <FocusedInput
+      select
+      type="text"
+      inputMode="decimal"
+      aria-label={`${label} value`}
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+        else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(false); }
+      }}
+      onBlur={() => finish(true)}
+      className="w-14 text-right text-xs font-semibold tabular-nums rounded px-1 py-0.5 bg-white/10 text-white outline outline-1 outline-[var(--accent)]"
+    />
+  );
+}
+
+export const Slider = ({ label, info, value, onChange, min = 0, max = 1, step = 0.01, modified, onReset, settingKey, defaultValue }) => {
   const [local, setLocal] = useState(value ?? 0);
+  const [editing, setEditing] = useState(false);
   const timerRef = useRef(null);
   const pendingRef = useRef(null);
+  const localRef = useRef(local);
+  localRef.current = local;
+  // Set while a Shift-drag owns the value; the native input events that the
+  // browser still fires for the same gesture are ignored for its duration.
+  const fineRef = useRef(null);
+  const pressedRef = useRef(false);
   // `onChange` is an inline arrow at nearly every call site, so it is a new
   // function each render; reading it through a ref keeps the commit effect from
   // being torn down and rebuilt on every one of them.
@@ -305,17 +366,79 @@ export const Slider = ({ label, info, value, onChange, min = 0, max = 1, step = 
     onChangeRef.current(v);
   };
 
-  const handleInput = (e) => {
-    const v = parseFloat(e.target.value);
+  // Local first, parent on the trailing debounce (or at once with `now`).
+  const setValue = (v, now = false) => {
     setLocal(v);
     if (timerRef.current) clearTimeout(timerRef.current);
-    timerRef.current = setTimeout(() => { timerRef.current = null; commit(v); }, SLIDER_COMMIT_MS);
+    if (now) commit(v);
+    else timerRef.current = setTimeout(() => { timerRef.current = null; commit(v); }, SLIDER_COMMIT_MS);
+  };
+
+  const handleInput = (e) => {
+    if (fineRef.current) return;
+    setValue(parseFloat(e.target.value));
   };
 
   // Release: commit now rather than waiting out the debounce. `blur` is in the
   // list so a value changed by keyboard and then tabbed away from is never left
   // uncommitted.
-  const flush = () => { if (timerRef.current) commit(local); };
+  const flush = () => { if (timerRef.current) commit(localRef.current); };
+
+  const fineStep = step >= 1 ? step : Math.min(step, FINE_STEP);
+  const hasDefault = defaultValue !== undefined && defaultValue !== null;
+  const canReset = hasDefault || (modified && !!onReset);
+  const reset = () => {
+    if (hasDefault) {
+      if (localRef.current === defaultValue && !timerRef.current && Number(value) === defaultValue) return;
+      setLocal(defaultValue);
+      commit(defaultValue);
+    } else if (modified && onReset) {
+      onReset();
+    }
+  };
+
+  const beginFine = (e) => {
+    fineRef.current = { x: e.clientX, v: localRef.current };
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* synthetic pointer: no capture */ }
+  };
+
+  const onPointerDown = (e) => {
+    pressedRef.current = true;
+    if (e.shiftKey) beginFine(e);
+  };
+  const onPointerMove = (e) => {
+    if (!pressedRef.current) return;
+    if (!e.shiftKey) { fineRef.current = null; return; }
+    if (!fineRef.current) beginFine(e);
+    const w = e.currentTarget.getBoundingClientRect().width || 1;
+    const raw = fineRef.current.v + ((e.clientX - fineRef.current.x) / w) * (max - min) * FINE_RATIO;
+    const v = clampNum(snapTo(raw, fineStep), min, max);
+    if (v !== localRef.current) setValue(v);
+  };
+  const onPointerEnd = () => {
+    pressedRef.current = false;
+    fineRef.current = null;
+    flush();
+  };
+
+  const onKeyDown = (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); setEditing(true); return; }
+    if ((e.key === 'Backspace' || e.key === 'Delete') && canReset) { e.preventDefault(); reset(); return; }
+    if (e.shiftKey && (e.key.startsWith('Arrow'))) {
+      const dir = e.key === 'ArrowRight' || e.key === 'ArrowUp' ? 1 : e.key === 'ArrowLeft' || e.key === 'ArrowDown' ? -1 : 0;
+      if (!dir) return;
+      e.preventDefault();
+      setValue(clampNum(snapTo(localRef.current + dir * fineStep, fineStep), min, max));
+    }
+  };
+
+  const decimals = Math.max(decimalsOf(step), step < 1 ? 2 : 0);
+  const nameText = typeof label === 'string' ? label : 'Value';
+  const hint = [
+    canReset ? 'Double-click to reset' : null,
+    'Shift+drag for fine control',
+    'Enter to type a value',
+  ].filter(Boolean).join(' · ');
 
   return (
     <Field label={label} info={info} modified={modified} onReset={onReset} settingKey={settingKey}>
@@ -327,14 +450,42 @@ export const Slider = ({ label, info, value, onChange, min = 0, max = 1, step = 
           type="range"
           min={min} max={max} step={step}
           value={local}
+          title={hint}
           onChange={handleInput}
-          onPointerUp={flush}
-          onPointerCancel={flush}
+          onMouseDown={(e) => { if (e.shiftKey) { e.preventDefault(); e.currentTarget.focus({ preventScroll: true }); } }}
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerEnd}
+          onPointerCancel={onPointerEnd}
+          onDoubleClick={reset}
+          onKeyDown={onKeyDown}
           onKeyUp={flush}
           onBlur={flush}
           className="flex-1 accent-[var(--accent)] h-1.5 apple-transition"
         />
-        <span className="w-12 text-right text-xs font-semibold tabular-nums text-white/60">{Number(local ?? 0).toFixed(step < 1 ? 2 : 0)}</span>
+        {editing ? (
+          <NumberEditor
+            initial={Number(local ?? 0).toFixed(decimals)}
+            min={min}
+            max={max}
+            label={nameText}
+            onDone={(v) => {
+              setEditing(false);
+              if (v !== null && v !== localRef.current) setValue(v, true);
+            }}
+          />
+        ) : (
+          <button
+            type="button"
+            tabIndex={-1}
+            aria-hidden="true"
+            title="Click to type a value"
+            onClick={(e) => { e.preventDefault(); setEditing(true); }}
+            className="w-12 text-right text-xs font-semibold tabular-nums text-white/60 hover:text-white hover:bg-white/10 rounded px-0.5 cursor-text apple-transition"
+          >
+            {Number(local ?? 0).toFixed(decimals)}
+          </button>
+        )}
       </div>
     </Field>
   );

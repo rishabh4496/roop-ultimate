@@ -44,11 +44,11 @@ test('a request is cancelled when the tab that made it unmounts', async ({ page 
   await page.route('**/api/history*', () => { started = true; return new Promise(() => {}); });    // never answers
 
   await page.goto('/#/home');
-  await page.locator('header nav button[aria-current="page"]').waitFor();
+  await page.locator('nav[aria-label="Main"] button[aria-current="page"]').waitFor();
   await expect.poll(() => started, { message: 'Home asked for the run history' }).toBe(true);
   expect(aborted, 'still in flight while Home is on screen').toHaveLength(0);
 
-  await page.locator('header nav > div:first-child button').last().click();       // Settings: Home unmounts
+  await page.locator('nav[aria-label="Main"] button[aria-label="Settings"]').click();       // Settings: Home unmounts
   await expect(page).toHaveURL(/#\/settings$/);
   await expect.poll(() => aborted.length, { message: 'the history request was aborted by the unmount', timeout: 10_000 }).toBeGreaterThan(0);
   // An abort is not a failure: nothing about it is shown to the user.
@@ -63,7 +63,7 @@ test('the default deadline is 15 s: a hung GET is cut off and says which request
 
   const asked = page.waitForRequest(/\/api\/settings\/defaults/);
   await page.goto('/#/settings');
-  await page.locator('header nav button[aria-current="page"]').waitFor();
+  await page.locator('nav[aria-label="Main"] button[aria-current="page"]').waitFor();
   await asked;                  // the deadline's timer starts when the request is made, not before
   await page.clock.fastForward(14_000);
   expect(logs.filter((l) => /defaults/.test(l)), 'not yet: 14 s is inside the deadline').toHaveLength(0);

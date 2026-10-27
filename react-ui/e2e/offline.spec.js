@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { TABS, openTab } from './helpers.js';
+import { TABS, openTab, startOnSettingsTab } from './helpers.js';
 
 // A local app must not need the internet to look right or to say so honestly.
 //
@@ -35,6 +35,7 @@ test('self-hosted fonts: no tab makes a request to a foreign origin', async ({ p
 test('Settings: "Check compatibility" reports UNVERIFIED when the machine is offline', async ({ page }) => {
   // The request itself fails (no route to anything): the UI must still answer.
   await page.route('**/api/update/check*', (route) => route.abort('internetdisconnected'));
+  await startOnSettingsTab(page, 'diagnostics');
   await openTab(page, 'settings');
   const button = page.getByRole('button', { name: 'Check compatibility' });
   await button.scrollIntoViewIfNeeded();
@@ -55,6 +56,7 @@ test('Settings: a backend that answers UNVERIFIED (git unreachable) is shown as 
       current: { sha: 'a'.repeat(40), date: '2026-09-22T00:00:00+00:00', branch: 'main' },
     }),
   }));
+  await startOnSettingsTab(page, 'diagnostics');
   await openTab(page, 'settings');
   const button = page.getByRole('button', { name: 'Check compatibility' });
   await button.scrollIntoViewIfNeeded();

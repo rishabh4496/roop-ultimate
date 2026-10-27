@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
-import { openTab } from './helpers.js';
+import { openTab, startOnSettingsTab } from './helpers.js';
 
 // The 3-stage pipeline controls (#/faceswap, #/settings) and their live telemetry (#/processing, #/settings) in a
 // real browser, against the mock server.
@@ -107,6 +107,7 @@ test('faceswap: the controls added no second Start (the run bar stays the one ru
 });
 
 test('settings: the same four controls, bound to the same settings (an edit on one tab is the other\'s value)', async ({ page }) => {
+  await startOnSettingsTab(page, 'general');
   await openTab(page, 'settings');
   await expect(page.getByRole('heading', { name: '3-stage pipeline' })).toBeVisible();
   await expect(controls(page)).toHaveCount(1);
@@ -121,7 +122,7 @@ test('settings: the same four controls, bound to the same settings (an edit on o
   await expect(page.getByTestId('stride-note')).toContainText('K = 3');
 
   await page.goto('/#/faceswap');
-  await page.locator('header nav button[aria-current="page"]').waitFor();
+  await page.locator('nav[aria-label="Main"] button[aria-current="page"]').waitFor();
   await expect(swapper(page)).toHaveValue('hyperswap_512');
   await expect(stride(page)).toHaveValue('3');
 });
@@ -257,6 +258,7 @@ test('settings: the canary precision status sits under the last-run report', asy
     json: { state: 'ready', initialized: true, ...precision({ xseg: { passed: true, reason: '' } }),
       sections: { ...precision({ xseg: { passed: true, reason: '' } }).sections, PERFORMANCE: { status: 'AVAILABLE', values: { pipeline_report: 'UNKNOWN' } } } },
   }));
+  await startOnSettingsTab(page, 'diagnostics');
   await openTab(page, 'settings');
   await expect(page.getByTestId('canary-status')).toHaveAttribute('data-state', 'PASSED');
 });
@@ -266,7 +268,9 @@ test('axe: the pipeline controls and every telemetry state above have no violati
   const onFaceSwap = await new AxeBuilder({ page }).include('[data-testid="pipeline-controls"]').withTags(AXE_TAGS).analyze();
   expect(onFaceSwap.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(' ')).join(' | ')}`)).toEqual([]);
 
+  // Same document as Face Swap (a hash change), so seeding the stored tab would not be re-read: click it.
   await openTab(page, 'settings');
+  await page.getByRole('tab', { name: /^Appearance/ }).click();
   const onSettings = await new AxeBuilder({ page }).include('[data-testid="pipeline-controls"]').withTags(AXE_TAGS).analyze();
   expect(onSettings.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(' ')).join(' | ')}`)).toEqual([]);
 });

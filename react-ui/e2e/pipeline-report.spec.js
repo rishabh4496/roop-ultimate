@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test';
 import { readFileSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { startOnSettingsTab } from './helpers.js';
 
 // The per-job pipeline report in a real browser, fed a REAL report (the `cfr_3stage_trim` run of
 // app/tests/verify_stage4_report.py: a trimmed 3-stage render of the Phase 5 clip through the production path).
@@ -94,6 +95,7 @@ test('settings: "Last run report" is the runtime state\'s pipeline_report', asyn
   await page.route('**/api/runtime/state', (route) => route.fulfill({
     json: { state: 'ready', initialized: true, sections: { PERFORMANCE: { status: 'AVAILABLE', source: 'runtime monitor/profile', values: { pipeline_report: report } } } },
   }));
+  await startOnSettingsTab(page, 'diagnostics');
   await page.goto('/#/settings');
   const card = page.getByTestId('pipeline-report');
   await expect(card).toBeVisible();
@@ -114,6 +116,7 @@ test('settings: with no live report the newest history entry that has one is use
       { id: 1, time: 1789990000, outputs: ['with_report.mp4'], settings: {}, duration_s: 50, frames: 360, fps: 7, report },
     ] },
   }));
+  await startOnSettingsTab(page, 'diagnostics');
   await page.goto('/#/settings');
   await expect(page.getByText(/From History: with_report\.mp4/)).toBeVisible();
   await expect(page.getByTestId('pipeline-report')).toBeVisible();
@@ -146,6 +149,7 @@ test('a failed Stage 4 is shown as FAILED with its reason', async ({ page }) => 
   await page.route('**/api/runtime/state', (route) => route.fulfill({
     json: { state: 'ready', initialized: true, sections: { PERFORMANCE: { status: 'AVAILABLE', values: { pipeline_report: failed } } } },
   }));
+  await startOnSettingsTab(page, 'diagnostics');
   await page.goto('/#/settings');
   const card = page.getByTestId('pipeline-report');
   await expect(card).toContainText('FAILED');

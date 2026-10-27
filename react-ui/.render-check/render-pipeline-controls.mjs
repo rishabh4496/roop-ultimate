@@ -103,10 +103,14 @@ console.log('── 2. the component ──────────────�
     ['Off / Auto-Bypass ≥256px', 'Laplacian Split RF++', 'Full RF++', 'Custom · UltraMax'].every((x) => t.includes(x)));
   ok('the stride is a 1..8 range input', /<input[^>]*type="range"[^>]*min="1"[^>]*max="8"/.test(h) || /<input[^>]*min="1"[^>]*max="8"[^>]*type="range"/.test(h), h.slice(0, 400));
   ok('the smart-skip toggle is a real checkbox', /<input[^>]*type="checkbox"/.test(h));
-  // The shared primitives render a "?" info badge and a MOD marker as buttons; nothing else may be one here.
-  const buttonTexts = [...h.matchAll(/<button[^>]*>([\s\S]*?)<\/button>/g)].map((m) => text(m[1]).trim());
-  ok('there is no run control in it (every button is an info badge; the run bar stays the one Start)',
-    buttonTexts.length > 0 && buttonTexts.every((x) => x === '?' || x === 'MOD'), JSON.stringify(buttonTexts));
+  // The shared primitives render a "?" info badge, a MOD marker and a slider's click-to-type VALUE as buttons;
+  // nothing else may be one here. The value badge is mouse-only (tabindex -1, aria-hidden) so it adds no tab stop.
+  const buttons = [...h.matchAll(/<button([^>]*)>([\s\S]*?)<\/button>/g)].map((m) => ({ attrs: m[1], txt: text(m[2]).trim() }));
+  const isValueBadge = (b) => /title="Click to type a value"/.test(b.attrs) && /^-?\d+(\.\d+)?$/.test(b.txt);
+  ok('there is no run control in it (every button is an info badge or a slider value; the run bar stays the one Start)',
+    buttons.length > 0 && buttons.every((b) => b.txt === '?' || b.txt === 'MOD' || isValueBadge(b)), JSON.stringify(buttons.map((b) => b.txt)));
+  ok('a slider value badge is not a tab stop and is hidden from assistive tech (the range input announces its own value)',
+    buttons.filter(isValueBadge).length > 0 && buttons.filter(isValueBadge).every((b) => /tabindex="-1"/.test(b.attrs) && /aria-hidden="true"/.test(b.attrs)));
   ok('the stride caption states K and what it means', t.includes('K = 1: Detect every frame.'));
 
   // Drive the handlers through the element tree PipelineControls returns (it has no hooks of its own).

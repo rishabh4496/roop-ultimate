@@ -76,7 +76,7 @@ test('keyboard only: refresh the preview, then start a swap', async ({ page }) =
 
   // The UI follows a started run to its own tab.
   await expect(page).toHaveURL(/#\/processing$/, { timeout: 15_000 });
-  await expect(page.locator('header nav button[aria-current="page"]')).toContainText('Processing');
+  await expect(page.locator('nav[aria-label="Main"] button[aria-current="page"]')).toHaveAccessibleName(/Processing/);
 
   test.info().annotations.push({
     type: 'tab presses',

@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  Cpu,
   Gauge,
   Zap,
   Sliders,
@@ -11,8 +10,6 @@ import {
   Eye,
   Smile,
   Layers,
-  Flame,
-  HardDrive,
   Workflow,
   Radio,
 } from 'lucide-react';
@@ -171,7 +168,6 @@ export default function EnhancerSettings({
   }));
 
   // Centralized telemetry from singleton store — zero redundant WebSockets
-  const systemTele = useTelemetryStore((s: any) => s.system) as Record<string, any> | null;
   const runTele = useTelemetryStore((s: any) => s.run) as Record<string, any>;
   const enhancerStore = useTelemetryStore((s: any) => s.enhancer) as Record<string, any>;
 
@@ -269,17 +265,10 @@ export default function EnhancerSettings({
     }
   }, [settings.precision_mode, settings.provider]);
 
-  // Derived Telemetry Values
+  // Derived Telemetry Values. (VRAM / CPU / RAM are not here: the header's telemetry pill is the one place
+  // the app shows hardware, and subscribing to the 3 s system sample made this panel re-render on an idle tab.)
   const comp = enhancerStore?.compilation || DEFAULT_COMPILATION;
   const fpsValue = runTele.fps || runTele.fps_now || 0;
-  const vramUsed = systemTele?.vram_used || (enhancerStore?.gpu_vram_used_mb ? enhancerStore.gpu_vram_used_mb / 1024 : 0);
-  const vramTotal = systemTele?.vram_total || (enhancerStore?.gpu_vram_total_mb ? enhancerStore.gpu_vram_total_mb / 1024 : 12);
-  const vramPercent = vramTotal > 0 ? Math.round((vramUsed / vramTotal) * 100) : 0;
-
-  const ramUsed = systemTele?.ram_used || (enhancerStore?.system_ram_mb ? enhancerStore.system_ram_mb / 1024 : 0);
-  const ramTotal = systemTele?.ram_total || (enhancerStore?.system_ram_total_mb ? enhancerStore.system_ram_total_mb / 1024 : 16);
-  const ramPercent = ramTotal > 0 ? Math.round((ramUsed / ramTotal) * 100) : 0;
-  const cpuPercent = systemTele?.cpu_percent ?? enhancerStore?.cpu_load_percentage ?? 0;
 
   return (
     <div
@@ -460,10 +449,10 @@ export default function EnhancerSettings({
         <div className="lg:col-span-5 flex flex-col gap-4">
           <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
             <Gauge className="w-3.5 h-3.5 text-cyan-400" />
-            Live Hardware & Queue Telemetry
+            Live Throughput & Queue Telemetry
           </h3>
 
-          <div className="grid grid-cols-2 gap-2.5">
+          <div className="grid grid-cols-1 gap-2.5">
             {/* Speed / FPS Card */}
             <div className="p-3 rounded-xl bg-slate-900/60 border border-white/5 flex flex-col gap-1">
               <div className="flex items-center justify-between text-mini text-slate-400">
@@ -489,75 +478,6 @@ export default function EnhancerSettings({
               </div>
             </div>
 
-            {/* GPU VRAM Card */}
-            <div className="p-3 rounded-xl bg-slate-900/60 border border-white/5 flex flex-col gap-1">
-              <div className="flex items-center justify-between text-mini text-slate-400">
-                <span className="flex items-center gap-1">
-                  <Flame className="w-3.5 h-3.5 text-amber-400" />
-                  GPU VRAM
-                </span>
-                <span className="font-mono text-micro text-muted">{vramPercent}%</span>
-              </div>
-              <div className="text-lg font-bold font-mono text-amber-400 flex items-baseline gap-1">
-                {vramUsed.toFixed(1)}
-                <span className="text-xs text-muted font-normal">
-                  / {vramTotal.toFixed(1)} GB
-                </span>
-              </div>
-              <div className="h-1 bg-slate-800 rounded-full overflow-hidden">
-                <div
-                  className={`h-full transition-all duration-300 ${
-                    vramPercent > 85 ? 'bg-rose-500' : vramPercent > 70 ? 'bg-amber-400' : 'bg-emerald-400'
-                  }`}
-                  style={{ width: `${vramPercent}%` }}
-                />
-              </div>
-            </div>
-
-            {/* CPU Load Card */}
-            <div className="p-3 rounded-xl bg-slate-900/60 border border-white/5 flex flex-col gap-1">
-              <div className="flex items-center justify-between text-mini text-slate-400">
-                <span className="flex items-center gap-1">
-                  <Cpu className="w-3.5 h-3.5 text-purple-400" />
-                  CPU Load
-                </span>
-                <span className="font-mono text-micro text-muted">
-                  {cpuPercent.toFixed(0)}%
-                </span>
-              </div>
-              <div className="text-lg font-bold font-mono text-purple-300">
-                {cpuPercent.toFixed(1)}%
-              </div>
-              <div className="h-1 bg-slate-800 rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-purple-400 transition-all duration-300"
-                  style={{ width: `${Math.min(100, cpuPercent)}%` }}
-                />
-              </div>
-            </div>
-
-            {/* System RAM Card */}
-            <div className="p-3 rounded-xl bg-slate-900/60 border border-white/5 flex flex-col gap-1">
-              <div className="flex items-center justify-between text-mini text-slate-400">
-                <span className="flex items-center gap-1">
-                  <HardDrive className="w-3.5 h-3.5 text-blue-400" />
-                  System RAM
-                </span>
-                <span className="font-mono text-micro text-muted">{ramPercent}%</span>
-              </div>
-              <div className="text-lg font-bold font-mono text-blue-300 flex items-baseline gap-1">
-                {ramUsed.toFixed(1)}
-                <span className="text-xs text-muted font-normal">
-                  / {ramTotal.toFixed(0)} GB
-                </span>
-              </div>
-              <div className="h-1 bg-slate-800 rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-blue-400 transition-all duration-300"
-                  style={{ width: `${ramPercent}%` }}
-                />
-              </div>
-            </div>
           </div>
 
           {/* Pipeline Stage Queue Depths */}

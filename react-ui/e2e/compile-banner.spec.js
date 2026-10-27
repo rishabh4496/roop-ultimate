@@ -46,7 +46,7 @@ test('banner: names model + precision, persists across routes, clears when the s
   await mock(request, [stage('STAGE_COMPILING_TRT', 'codeformer', 'FP16')]);
   await expect(banner).toBeVisible();
   await page.getByRole('button', { name: /^Settings$/ }).first().click().catch(() => {});
-  await expect(page.locator('header nav button[aria-current="page"]')).toBeVisible();
+  await expect(page.locator('nav[aria-label="Main"] button[aria-current="page"]')).toBeVisible();
 });
 
 test('deadline: a 15 s request is not timed out while compiling, and gets a fresh deadline after', async ({ page, request }) => {
@@ -59,7 +59,7 @@ test('deadline: a 15 s request is not timed out while compiling, and gets a fres
 
   const asked = page.waitForRequest(/\/api\/settings\/defaults/);
   await page.goto('/#/settings');
-  await page.locator('header nav button[aria-current="page"]').waitFor();
+  await page.locator('nav[aria-label="Main"] button[aria-current="page"]').waitFor();
   await asked;
 
   await page.clock.fastForward(20_000);                                          // well past 15 s

@@ -6,7 +6,10 @@ import ThemeGallery from './ThemeGallery';
 import ThemeStudio from './ThemeStudio';
 import { allThemes } from '../themes';
 import { fmtVal } from './settingsDiff';
-import { FOCUS_SETTING_EVENT } from './settingsCatalog';
+import { FOCUS_SETTING_EVENT, SETTINGS_CATALOG } from './settingsCatalog';
+import { TAB_LABELS, tabForSetting } from './settingsTabs';
+import RuntimeSections from './RuntimeSections';
+import { SETTINGS_TABS, useWorkspaceStore } from '../store/workspaceStore';
 import { confirmDialog } from './confirm';
 import { Icon } from '../icons';
 import StorageManager from './StorageManager';
@@ -65,7 +68,7 @@ function FilterSection({ title, icon, query, onlyModified, onResetKeys, children
   return <Section title={title} icon={icon} action={action} className="break-inside-avoid mb-4" {...rest}>{kids}</Section>;
 }
 
-export default function Settings({ meta, settings, setSettings, notify }) {
+export default function Settings({ meta, settings, setSettings, notify, progress }) {
   const { postJSON, getJSON } = useApi();
   const m = meta || {};
   const p = settings || {};
@@ -126,6 +129,14 @@ export default function Settings({ meta, settings, setSettings, notify }) {
   // marker, chip and reset below simply does not render.
   const [defaults, setDefaults] = useState(null);
   const [onlyModified, setOnlyModified] = useState(false);
+  // The open tab lives in the workspace store so the palette and the telemetry
+  // popover can open one (e.g. Runtime Diagnostics) and it survives a reload.
+  const tab = useWorkspaceStore((st) => st.settingsTab);
+  const setTab = useWorkspaceStore((st) => st.setSettingsTab);
+  // A search or the changed-only filter looks across ALL tabs: a result hidden on
+  // another tab would read as "no such setting".
+  const flat = query.trim() !== '' || onlyModified;
+  const show = (id) => flat || tab === id;
 
   useEffect(() => {
     let live = true;
@@ -203,6 +214,8 @@ export default function Settings({ meta, settings, setSettings, notify }) {
       if (!key) return;
       setQuery('');
       setOnlyModified(false);
+      // The control may be on a tab that is not showing; open its tab first.
+      setTab(tabForSetting(key, SETTINGS_CATALOG.find((c) => c.key === key)?.section));
       requestAnimationFrame(() => requestAnimationFrame(() => {
         const el = document.querySelector(`[data-setting="${CSS.escape(key)}"]`);
         if (!el) return;
@@ -217,7 +230,7 @@ export default function Settings({ meta, settings, setSettings, notify }) {
     };
     window.addEventListener(FOCUS_SETTING_EVENT, onFocusSetting);
     return () => window.removeEventListener(FOCUS_SETTING_EVENT, onFocusSetting);
-  }, []);
+  }, [setTab]);
 
   const customThemes = Array.isArray(p.custom_themes) ? p.custom_themes : [];
   const darkNames = allThemes(customThemes).filter((t) => t.mode !== 'light').map((t) => t.name);
@@ -318,65 +331,42 @@ export default function Settings({ meta, settings, setSettings, notify }) {
           </>
         )}
       </div>
-      <div className="columns-1 md:columns-2 xl:columns-3 4xl:columns-4 gap-4 [column-fill:_balance]">
-        <FilterSection title="Server" icon={Icon.settings} query={query} onlyModified={onlyModified} onResetKeys={resetKeys}>
-          <Toggle label="Public server (share)" {...bindToggle('server_share')} />
-          <Toggle label="Clear output folder before each run" {...bindToggle('clear_output')} />
-          <TextInput label="Server name" info="blank = local" {...bind('server_name', '')} placeholder="127.0.0.1" />
-          <TextInput label="Server port" info="0 = default" type="number" {...bind('server_port', 0)} />
-          <TextInput label="Filename output template" info="{file} {time} {date} {i} {timestamp}" {...bind('output_template', '')} placeholder="{file}_{timestamp}" />
-          <TextInput label="Faceset library folder" info="Where saved facesets live. Blank = app/facesets. Point at a cloud folder (OneDrive/Dropbox/Google Drive) to sync facesets across devices." {...bind('faceset_library_path', '')} placeholder="e.g. C:\Users\you\OneDrive\roop-facesets" />
-        </FilterSection>
+      <div role="tablist" aria-label="Settings sections" className="flex flex-wrap gap-1 rounded-xl border border-white/10 bg-black/25 p-1">
+        {SETTINGS_TABS.map((id) => (
+          <button
+            key={id}
+            id={`settings-tab-${id}`}
+            type="button"
+            role="tab"
+            aria-selected={tab === id}
+            aria-controls="settings-panel"
+            tabIndex={tab === id ? 0 : -1}
+            onClick={() => setTab(id)}
+            onKeyDown={(e) => {
+              const i = SETTINGS_TABS.indexOf(id);
+              const to = { ArrowRight: (i + 1) % SETTINGS_TABS.length, ArrowLeft: (i - 1 + SETTINGS_TABS.length) % SETTINGS_TABS.length, Home: 0, End: SETTINGS_TABS.length - 1 }[e.key];
+              if (to === undefined) return;
+              e.preventDefault();
+              setTab(SETTINGS_TABS[to]);
+              document.getElementById(`settings-tab-${SETTINGS_TABS[to]}`)?.focus();
+            }}
+            className={`rounded-lg px-3 py-2 text-mini font-semibold transition-colors ${
+              tab === id && !flat ? 'bg-[var(--accent)]/20 text-white shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--accent)_45%,transparent)]' : 'text-muted hover:bg-white/[0.06] hover:text-white/90'
+            }`}
+          >
+            {TAB_LABELS[id]}
+          </button>
+        ))}
+      </div>
+      {flat && (
+        <p className="-mt-3 text-mini text-muted">Showing matches from every section while a search or the changed-only filter is on.</p>
+      )}
 
-        {/* "Theme" belongs in the title: the search matches on a child's label
-            or info, and this section's children are a bare heading and the
-            gallery — neither carries one, so under the old title searching for
-            the most obvious word for this control hid it. */}
-        <FilterSection title="Appearance & Theme" icon={Icon.theme} query={query}>
-          {/* Light/dark pairing. With this on, `selected_theme` is ignored and
-              the OS decides which half of the pair is live — so the gallery
-              below switches to picking that half rather than the theme. */}
-          <div className="rounded-xl bg-white/[0.03] border border-white/10 p-3 space-y-3">
-            <Toggle
-              label="Follow system light / dark"
-              info="Use the operating system's appearance setting to pick between a dark and a light theme automatically, instead of one fixed theme."
-              checked={!!p.theme_follow_system}
-              onChange={(v) => setMany({ theme_follow_system: v })}
-            />
-            {p.theme_follow_system && (
-              <div className="grid grid-cols-2 gap-2">
-                <Select
-                  label="When dark"
-                  value={p.theme_dark || 'Default'}
-                  onChange={(v) => setMany({ theme_dark: v })}
-                  options={darkNames}
-                />
-                <Select
-                  label="When light"
-                  value={p.theme_light || 'Glass Light'}
-                  onChange={(v) => setMany({ theme_light: v })}
-                  options={lightNames}
-                />
-              </div>
-            )}
-          </div>
-
-          <div className="flex items-center justify-between mb-1">
-            <span className="text-xs font-medium text-white/70">Interface Theme</span>
-            <span className="text-micro text-accent font-bold">
-              {p.theme_follow_system ? 'Following system' : (p.selected_theme || 'Default')}
-            </span>
-          </div>
-          <ThemeGallery
-            value={p.theme_follow_system ? null : p.selected_theme}
-            customThemes={p.custom_themes}
-            onChange={(v) => setMany({ selected_theme: v, theme_follow_system: false })}
-            onCreate={() => setStudio({ open: true, initial: null })}
-            onEdit={(t) => setStudio({ open: true, initial: t })}
-          />
-        </FilterSection>
-
-        <FilterSection title="Performance" icon={Icon.cpu} query={query} onlyModified={onlyModified} onResetKeys={resetKeys}>
+      <div id="settings-panel" role="tabpanel" aria-labelledby={`settings-tab-${tab}`} className="space-y-4">
+        {show('providers') && (
+          <>
+            <div className="columns-1 md:columns-2 xl:columns-3 4xl:columns-4 gap-4 [column-fill:_balance]">
+          <FilterSection title="Execution Providers & TensorRT Engines" icon={Icon.cpu} query={query} onlyModified={onlyModified} onResetKeys={resetKeys}>
           {/* ── GPU Acceleration & Full Potential Suite ── */}
           <div className="rounded-2xl border border-white/10 bg-gradient-to-br from-emerald-500/[0.08] via-black/40 to-cyan-500/[0.05] p-4 space-y-3 shadow-lg">
             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -615,56 +605,8 @@ export default function Settings({ meta, settings, setSettings, notify }) {
             />
           )}
           <Toggle label="Force CPU for face analyser" {...bindToggle('force_cpu')} />
-
-          <Toggle
-            label="Auto thread selection"
-            info="Automatically scale thread execution dynamically for the selected hardware tier and workload mode (Standard, Enhanced, Heavy)."
-            {...bindToggle('auto_thread_selection')}
-          />
-
-          <Slider
-            label="Face detection threshold"
-            min={0.10}
-            max={0.90}
-            step={0.05}
-            {...bind('face_detector_threshold', 0.60)}
-          />
-          <Slider
-            label="Overlap NMS threshold"
-            min={0.10}
-            max={0.90}
-            step={0.05}
-            {...bind('face_detector_nms', 0.40)}
-          />
-          <Select
-            label="Detector scale pyramid"
-            info="Multi-scale dynamic pyramid levels for close-up faces (> 75% height or border-cut). 'auto' triggers pyramid dynamically when close-ups are encountered."
-            {...bind('detector_scale_pyramid', 'auto')}
-            options={['auto', '0.5,0.75,1.0', '0.5,1.0', '0.75,1.0', 'none']}
-          />
-          {!(p.auto_thread_selection ?? true) && (
-            <Slider label="Max threads" info="default 3 (Manual mode)" min={1} max={32} step={1} {...bind('max_threads', 3)} />
-          )}
-          <Slider label="Max memory (GB)" info="0 = no limit" min={0} max={128} step={1} {...bind('memory_limit', 0)} />
-
-        </FilterSection>
-
-        <FilterSection title="3-stage pipeline" icon={Icon.meter} query={query} onlyModified={onlyModified} onResetKeys={resetKeys}>
-          <PipelineControls
-            label="Swapper model Restorer mode Auto-Bypass Restorer on >=256px Native Swap Pre-pass optical-flow stride Temporal Smart-Skip"
-            modified={pipelineModified.length > 0}
-            modifiedKeys={pipelineModified}
-            values={p}
-            models={m.swap_models}
-            onChange={set}
-            onChangeMany={setMany}
-            bind={pipelineBind}
-          />
-          <p className="text-note text-muted">The same four controls sit on the Face Swap tab. Stride, Smart-Skip and the restorer bypass take effect on the next render; they are re-exported when the setting is saved.</p>
-        </FilterSection>
-
-        <FilterSection title="Advanced performance (restart to apply)" icon={Icon.meter} query={query} onlyModified={onlyModified} onResetKeys={resetKeys}>
-          <p className="text-xs text-muted -mt-2">These override the launcher env and the VRAM auto-tuner. Leave on "auto" unless you know what you're tuning. Changes take effect after restarting the app.</p>
+          </FilterSection>
+          <FilterSection title="TensorRT build options (restart to apply)" icon={Icon.meter} query={query} onlyModified={onlyModified} onResetKeys={resetKeys}>
           {showTrtSettings && <>
             {isTrtDegraded && (
               <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-200/90 -mt-1 mb-2">
@@ -693,6 +635,52 @@ export default function Settings({ meta, settings, setSettings, notify }) {
               disabled={!isTrtActive}
             />
           </>}
+          </FilterSection>
+            </div>
+                <Section title="Auto-tune (provider, swap batch, NVENC)" icon={Icon.meter} className="mb-4">
+                  <AutoTunePanel
+                    notify={notify}
+                    onSettingsApplied={async () => {
+                      try {
+                        const fresh = await getJSON('/api/settings');
+                        if (fresh && typeof fresh === 'object') setSettings((s) => ({ ...s, ...fresh }));
+                      } catch (err) {
+                        reportFailure('Reloading settings', err);
+                        // ignore
+                      }
+                    }}
+                  />
+                </Section>
+          </>
+        )}
+
+        {show('cpu') && (
+          <div className="columns-1 md:columns-2 xl:columns-3 4xl:columns-4 gap-4 [column-fill:_balance]">
+          <FilterSection title="CPU threads & memory" icon={Icon.cpu} query={query} onlyModified={onlyModified} onResetKeys={resetKeys}>
+          <Toggle
+            label="Auto thread selection"
+            info="Automatically scale thread execution dynamically for the selected hardware tier and workload mode (Standard, Enhanced, Heavy)."
+            {...bindToggle('auto_thread_selection')}
+          />
+
+          {!(p.auto_thread_selection ?? true) && (
+            <Slider label="Max threads" info="default 3 (Manual mode)" min={1} max={32} step={1} {...bind('max_threads', 3)} />
+          )}
+          <Slider label="Max memory (GB)" info="0 = no limit" min={0} max={128} step={1} {...bind('memory_limit', 0)} />
+
+          </FilterSection>
+            <Section title="P/E-core placement" icon={Icon.cpu} className="break-inside-avoid mb-4">
+              <p className="text-mini leading-relaxed text-muted">
+                By default the operating system's scheduler places the worker threads on P and E cores itself, and that is what
+                the measured defaults assume. An explicit policy exists for controlled A/B runs: set
+                {' '}<code className="font-mono text-white/70">ROOP_CPU_DISTRIBUTION</code> in the launcher environment
+                to <code className="font-mono text-white/70">p_only</code> or <code className="font-mono text-white/70">p_plus_e</code> and
+                restart. It is deliberately not a setting here, because affinity is never inferred and a wrong choice costs speed.
+              </p>
+            </Section>
+        <FilterSection title="Thread pools & advanced performance (restart to apply)" icon={Icon.meter} query={query} onlyModified={onlyModified} onResetKeys={resetKeys}>
+          <p className="text-xs text-muted -mt-2">These override the launcher env and the VRAM auto-tuner. Leave on "auto" unless you know what you're tuning. Changes take effect after restarting the app.</p>
+
           <Select label="Swapper TRT pool" info="ROOP_TRT_POOL — TensorRT contexts for the SWAPPER only; it does not affect face detection. 'auto' selects by VRAM: <7GB = 0 (single context, TensorRT remains enabled), 7-11.5GB = 2, 11.5-15.5GB = 2, 15.5GB+ = 4. Lower this first if you need to free VRAM for another pool. 0 on a small card is deliberate and costs little: the pooled config needs 4100MB against 2346MB, which a 6GB card cannot pay beside the desktop, and since the GPU lock was split per stage the unpooled path measures 20.84 fps against the pooled 22.22. TAKES EFFECT ON RESTART: pool sizes are baked into the TensorRT contexts when the models load, so changing this writes the setting but the current backend keeps running the old value — restart the app to apply it. Diagnostics shows what is actually running." {...bind('perf_trt_pool', 'auto')} options={m.pool_sizes || ['auto', '1', '2', '3', '4', '5', '6', '7', '8']} />
           <Select label="Detect/Mask pool" info="ROOP_DETMASK_POOL — TensorRT contexts for face detection and masking, and the width of 'Analyzing faces'. LOWERING it slows that stage close to proportionally. DO NOT just raise it to match Max threads. Each instance carries its own model set plus a copy of the detector (retinaface_r50 is ~104MB), and on a 12GB card 8 does not fit alongside the swapper pool: measured, it ran out of VRAM and thrashed from 11.8 fps down to 0.5 and still falling, at 95% VRAM. The auto tier (12GB = 2) is chosen to leave that headroom. TAKES EFFECT ON RESTART: pool sizes are baked into the TensorRT contexts when the models load, so changing this writes the setting but the current backend keeps running the old value — restart the app to apply it. Diagnostics shows what is actually running. If you raise it, go one step at a time and watch VRAM — 5 or 6 may fit, 8 does not. Raising it only helps when the stage is DETECTION-bound. Check STAGE TIMING (ROOP_PROFILE=1): if track_decode per frame exceeds track_detect divided by this pool size, the stage is waiting on the video decoder instead and more instances buy nothing but VRAM." {...bind('perf_detmask_pool', 'auto')} options={m.pool_sizes || ['auto', '1', '2', '3', '4', '5', '6', '7', '8']} />
           <Select label="Detector pool" info="ROOP_DETECTOR_POOL — Independent instances of the standalone DETECTOR, as distinct from the detect/mask pool above. The hybrid engines (retinaface, yoloface, yunet) bring their own detector and only borrow buffalo_l's aux models, so widening the detect/mask pool alone parallelises recognition and landmarks while the detector itself stays single-file. 'auto' follows the detect/mask pool. The two do not necessarily want the same width: on an RTX 4070 the benchmark measured the detector still scaling at 4 instances while recognition plateaued at 2. Turn this DOWN before the detect/mask pool when VRAM is tight — retinaface_r50 is ~104MB per instance (yoloface_8n ~9MB, yunet ~350KB, so those are nearly free). TAKES EFFECT ON RESTART: pool sizes are baked into the TensorRT contexts when the models load, so changing this writes the setting but the current backend keeps running the old value — restart the app to apply it. Diagnostics shows what is actually running." {...bind('perf_detector_pool', 'auto')} options={m.pool_sizes || ['auto', '1', '2', '3', '4', '5', '6', '7', '8']} />
@@ -716,111 +704,199 @@ export default function Settings({ meta, settings, setSettings, notify }) {
           <Slider label="Skip restorer below face size (px)" info={`ROOP_ENHANCE_MIN_FACE_PX -- do not run the face restorer on faces whose shorter detected-box side is under this many pixels in the frame; the swapped crop is pasted as-is. A 512px restoration of a 70px face is detail the paste throws away, and the restorer is the one stage that costs its network's full GPU time. 0 = off (default) because this changes how small faces look; 96 is a sensible start. A face has to grow 15% past the limit before it is restored again, so one at the edge does not flicker. The terminal prints how many faces were skipped. Takes effect on the next render.${Number(p.enhance_min_face_px ?? 0) > 0 ? ' CURRENTLY ON.' : ''}`} min={0} max={256} step={8} {...bind('enhance_min_face_px', 0)} />
           <Slider label="Face tracking interval (frames)" info={`ROOP_TEMPORAL_STEP -- detect faces every Nth frame in the tracking pre-pass and INTERPOLATE the ones between. Leave it at 1: at 2, landmark error on turned heads measured 6x worse (13.9% of eye distance at p95), and interpolated faces skip the identity checks. Raise it only for static, near-frontal footage.${Number(p.temporal_step ?? 1) > 1 ? ' CURRENTLY ABOVE 1.' : ''}`} min={1} max={10} step={1} {...bind('temporal_step', 1)} />
         </FilterSection>
+          </div>
+        )}
 
-        <FilterSection title="Identity &amp; tracking (restart to apply)" icon={Icon.users ?? Icon.meter} query={query} onlyModified={onlyModified} onResetKeys={resetKeys}>
-          <p className="text-xs text-muted -mt-2">Who the pipeline thinks each face is, and how it follows them between frames. Every one of these ships ON and "auto" keeps it that way — turn one off only to see what it was doing. Changes take effect after restarting the app.</p>
-          <Select label="Recognition model" info="ROOP_ADAFACE — Which model decides whether two faces are the same person. 'default' is buffalo_l's w600k; 'adaface' is a second model with its own distance scale, and every identity constant in the pipeline is rescaled to match it rather than reused blindly, so the gates keep their intended relationship to the match threshold. Worth trying when people who look alike keep getting confused." {...bind('recognizer', 'default')} options={m.recognizers || ['default', 'adaface']} />
-          <Slider label="Identity confidence threshold" info="ROOP_IDENTITY_CONFIDENCE_THRESHOLD — Minimum cosine similarity (0.0 to 1.0) required to swap a face. If similarity drops below this (due to extreme profile angle or motion blur), the swap is cleanly skipped rather than mapping onto an incorrect person. 0.0 disables." min={0.0} max={1.0} step={0.01} {...bind('identity_confidence_threshold', 0.0)} />
-          <Select label="Interacting-face demarcation" info="ROOP_FACE_DEMARCATE — When two swapped faces touch, decides which pixels belong to whom along the contact boundary instead of letting the two swaps bleed into each other. Off = the older behaviour, where a face near the join could take on its neighbour's swap." {...bind('face_demarcate', 'auto')} options={m.tristate || ['auto', 'on', 'off']} />
-          <Select label="Track stitching" info="ROOP_TRACK_STITCH — Chains fragments of one person's track back together after a cut or a brief occlusion. Without it a broken track loses its source assignment and the swap switches off for whole stretches — that symptom is usually a broken track, not a failed match." {...bind('track_stitch', 'auto')} options={m.tristate || ['auto', 'on', 'off']} />
-          <Select label="Swap outcome guard" info="ROOP_VERIFY_SWAP — Re-detects the swapped result and undoes the swap when the face is no longer where the original was. It exists for one specific failure: past roughly 90 degrees of yaw a head shows cheek and ear and no face, the detector still reports one confidently, and a whole frontal face gets painted onto the side of a head pointing away. Costs one extra detection per swapped face, and only on faces that are rolled or well off-axis." {...bind('verify_swap', 'auto')} options={m.tristate || ['auto', 'on', 'off']} />
-          <Select label="Upright re-measure (rolled faces)" info="ROOP_UPRIGHT_REMEASURE — Re-reads a heavily rolled or upside-down face on an uprighted frame before anything uses its keypoints or embedding. On an inverted face the detector does not fail, it succeeds badly: it returns confident keypoints for an upright face that is not there, which alone makes the same person score as a stranger and stops the swap entirely." {...bind('upright_remeasure', 'auto')} options={m.tristate || ['auto', 'on', 'off']} />
-          <Select label="Pre-pass landmark filter" info="ROOP_PREPASS_FILTER -- the filter the tracking pre-pass runs over each face's keypoints and landmarks before the swap aligns to them. 'adaptive' (default): the causal velocity-ramped smoother; measured on three real clips it runs 1-5% of the eye distance behind a fast-moving head. 'zero_phase': the same smoother run forward and backward - the calmest on a still face, but it still smears fast turns (up to 8% of the eye distance off the raw track on the fastest clip). 'one_euro': an adaptive-cutoff 1-euro filter run forward and backward over the whole track at once (on the GPU for very long tracks) - no lag, still-frame jitter at or below 'adaptive', and fast motion held within 1-3% of the eye distance of the raw track. Takes effect on the next render." {...bind('prepass_landmark_filter', 'adaptive')} options={['adaptive', 'zero_phase', 'one_euro']} />
-          <Select label="Process priority" info="ROOP_PRIORITY — Windows scheduling priority class while rendering. 'high' is the default and finishes soonest; drop to 'normal' to keep the rest of the machine more responsive. EcoQoS power throttling is always opted out of regardless of this — being backgrounded by Windows used to cost real throughput, and that is not a setting." {...bind('process_priority', 'auto')} options={m.priorities || ['auto', 'high', 'above_normal', 'normal']} />
-        </FilterSection>
+        {show('paths') && (
+          <>
+            <div className="columns-1 md:columns-2 xl:columns-3 4xl:columns-4 gap-4 [column-fill:_balance]">
+            <FilterSection title="Server" icon={Icon.settings} query={query} onlyModified={onlyModified} onResetKeys={resetKeys}>
+              <Toggle label="Public server (share)" {...bindToggle('server_share')} />
+              <Toggle label="Clear output folder before each run" {...bindToggle('clear_output')} />
+              <TextInput label="Server name" info="blank = local" {...bind('server_name', '')} placeholder="127.0.0.1" />
+              <TextInput label="Server port" info="0 = default" type="number" {...bind('server_port', 0)} />
+              <TextInput label="Filename output template" info="{file} {time} {date} {i} {timestamp}" {...bind('output_template', '')} placeholder="{file}_{timestamp}" />
+              <TextInput label="Faceset library folder" info="Where saved facesets live. Blank = app/facesets. Point at a cloud folder (OneDrive/Dropbox/Google Drive) to sync facesets across devices." {...bind('faceset_library_path', '')} placeholder="e.g. C:\Users\you\OneDrive\roop-facesets" />
+            </FilterSection>
+            <FilterSection title="Output" icon={Icon.outputs} query={query} onlyModified={onlyModified} onResetKeys={resetKeys}>
+              <Select label="Image format" {...bind('output_image_format')} options={m.image_formats || ['jpg', 'png']} />
+              <Select label="Video format" {...bind('output_video_format')} options={m.video_formats || ['mp4', 'mkv', 'webm']} />
+              <Select label="Video codec" {...bind('output_video_codec')} options={m.video_codecs || ['libx264', 'libx265']} />
+              {(() => {
+                // NVENC codecs use -cq (a different scale than libx264/265 -crf); the
+                // same number produces a much bigger, near-lossless file on GPU encoders.
+                // Make the label/help reflect which rate control is actually in effect.
+                const codec = p.output_video_codec || '';
+                const isNvenc = /_nvenc$/.test(codec);
+                // Encoder-accepted range: x264/x265 and NVENC -cq stop at 51, the
+                // VP9/AV1 family at 63. The slider used to go to 100; past the limit
+                // libx265 (the default) and both NVENC encoders fail the render
+                // outright, while libx264 quietly clamps. Measured, not assumed.
+                const qMax = /libvpx|vp9|aom|av1/i.test(codec) ? 63 : 51;
+                const qLabel = isNvenc ? 'Video quality (cq)' : 'Video quality (crf)';
+                const qInfo = isNvenc
+                  ? `NVENC uses -cq, not CRF: LOWER = bigger/near-lossless (14 is huge). Try ~23 for a normal-size file. Max ${qMax}.`
+                  : `default 14 (libx264/265 CRF: lower = bigger). Try ~23 for a normal-size file. Max ${qMax}.`;
+                return (
+                  <Slider label={qLabel} info={qInfo} min={0} max={qMax} step={1} {...bind('video_quality', 14)} value={Math.min(p.video_quality ?? 14, qMax)} />
+                );
+              })()}
+              <Select label="HDR / high-bit-depth colour path" info="ROOP_HDR — auto: a PQ/HLG source, or any source deeper than 8 bits, is decoded at full depth, shown to the models through an ACEScg to Rec.709 view, and written back at 10 bit in the SOURCE's own curve, primaries and tags. Only the pixels the swap changed are re-encoded; every other pixel keeps its original code value. off: the legacy 8-bit path. on: also for 8-bit sources." {...bind('hdr_pipeline', 'auto')} options={['auto', 'on', 'off']} />
+              <Select label="Source transfer curve (HDR)" info="ROOP_HDR_TRANSFER — auto reads the stream tag (PQ, HLG, BT.709). S-Log3 and Canon Log have no tag of their own (cameras write bt709 or nothing), so choose them here for Log footage." {...bind('hdr_source_transfer', 'auto')} options={['auto', 'pq', 'hlg', 'bt709', 'slog3', 'clog', 'clog2', 'clog3']} />
+              <Select label="Source colour primaries (HDR)" info="ROOP_HDR_PRIMARIES — auto reads the stream tag; a Log curve over a bt709/missing tag assumes its camera gamut (S-Gamut3.Cine for S-Log3, Cinema Gamut for Canon Log)." {...bind('hdr_source_primaries', 'auto')} options={['auto', 'bt709', 'bt2020', 'p3d65', 'dcip3', 'sgamut3', 'sgamut3cine', 'cinemagamut']} />
+              <Select label="HDR output codec" info="ROOP_HDR_CODEC — auto keeps your video codec when it can carry 10 bit (hevc_nvenc, av1_nvenc, libx265) and otherwise picks HEVC (h264_nvenc has no 10-bit profile). NVENC output is p010le with PQ/HLG/BT.2020 tags; only libx265 also carries HDR10 mastering-display / MaxCLL SEI." {...bind('hdr_output_codec', 'auto')} options={['auto', 'hevc_nvenc', 'av1_nvenc', 'libx265']} />
+              <Toggle label="Use OS temp folder" {...bindToggle('use_os_temp_folder')} />
+              <Toggle label="Show video in browser (re-encodes)" {...bindToggle('output_show_video')} />
+              <Toggle label="Label output as synthetic media (metadata tag)" info="Writes a comment + synthetic_media=true tag into MP4/MKV/WebM, PNG and JPEG output. Pixels are untouched. A label, not a signature: a re-encode can strip it." {...bindToggle('synthetic_label')} />
+              <Toggle label="Visible watermark on output" info="Stamps the text below on every output frame (bottom-right). Alters pixels; off by default." {...bindToggle('synthetic_watermark')} />
+              <TextInput label="Watermark text" {...bind('synthetic_watermark_text', 'AI face swap')} placeholder="AI face swap" />
+            </FilterSection>
+            </div>
+                <StorageManager notify={notify} />
+          </>
+        )}
 
-        <FilterSection title="Surgical mouth &amp; occlusion (Stage 7)" icon={Icon.faces ?? Icon.meter} query={query} onlyModified={onlyModified} onResetKeys={resetKeys}>
-          <Toggle label="Restore dynamic original mouth" info="When speech or mouth opening (MAR) is detected, composite the original target mouth aperture with adaptive dental and tongue isolation." {...bindToggle('restore_original_mouth')} />
-          <Slider label="Mouth open MAR threshold" info="Mouth Aspect Ratio (MAR) threshold (default 0.18) calculated from inner lip landmarks. When exceeded, activates mouth restoration sub-pass." min={0.05} max={0.5} step={0.01} {...bind('mouth_open_threshold', 0.18)} />
-          <Toggle label="DFL XSeg occlusion governance" info="Run GPU XSeg occlusion inference to detect foreign objects (hands, microphones, glassware) and composite them cleanly in foreground." {...bindToggle('enable_xseg_occlusion')} />
-          <Slider label="Occlusion erosion kernel size" info="Morphological erosion kernel size (1 - 5) for clean occlusion boundary trimming without border bleeding." min={1} max={5} step={1} {...bind('occlusion_erosion', 3)} />
-        </FilterSection>
+        {show('diagnostics') && (
+          <>
+            <RuntimeSections runtime={progress?.runtime} />
+                {/* Hardware Benchmark & Optimization Suite */}
+                <BenchmarkPanel
+                  notify={notify}
+                  onSettingsApplied={async () => {
+                    try {
+                      const fresh = await getJSON('/api/settings');
+                      if (fresh && typeof fresh === 'object') {
+                        setSettings((s) => ({ ...s, ...fresh }));
+                      }
+                    } catch (err) {
+                      reportFailure('Reloading settings', err);
+                      // ignore
+                    }
+                  }}
+                />
+                {/* Standing environment evidence and the update compatibility verdict.
+                    Both were previously unreachable while idle: the runtime report only
+                    rendered inside the Processing tab, and the updater's classification
+                    only existed once you had already run the updater. */}
+                <EnvironmentHealth notify={notify} meta={meta} />
+          </>
+        )}
 
-        <Section title="Identity API: embedding backend" icon={Icon.faces} className="break-inside-avoid mb-4">
-          <RecognitionPanel notify={notify} onApplied={(sel) => setSettings((s) => mergeSelection(s, sel))} />
-        </Section>
+        {show('general') && (
+          <div className="columns-1 md:columns-2 xl:columns-3 4xl:columns-4 gap-4 [column-fill:_balance]">
+            {/* "Theme" belongs in the title: the search matches on a child's label
+                or info, and this section's children are a bare heading and the
+                gallery — neither carries one, so under the old title searching for
+                the most obvious word for this control hid it. */}
+            <FilterSection title="Appearance & Theme" icon={Icon.theme} query={query}>
+              {/* Light/dark pairing. With this on, `selected_theme` is ignored and
+                  the OS decides which half of the pair is live — so the gallery
+                  below switches to picking that half rather than the theme. */}
+              <div className="rounded-xl bg-white/[0.03] border border-white/10 p-3 space-y-3">
+                <Toggle
+                  label="Follow system light / dark"
+                  info="Use the operating system's appearance setting to pick between a dark and a light theme automatically, instead of one fixed theme."
+                  checked={!!p.theme_follow_system}
+                  onChange={(v) => setMany({ theme_follow_system: v })}
+                />
+                {p.theme_follow_system && (
+                  <div className="grid grid-cols-2 gap-2">
+                    <Select
+                      label="When dark"
+                      value={p.theme_dark || 'Default'}
+                      onChange={(v) => setMany({ theme_dark: v })}
+                      options={darkNames}
+                    />
+                    <Select
+                      label="When light"
+                      value={p.theme_light || 'Glass Light'}
+                      onChange={(v) => setMany({ theme_light: v })}
+                      options={lightNames}
+                    />
+                  </div>
+                )}
+              </div>
 
-        <FilterSection title="Output" icon={Icon.outputs} query={query} onlyModified={onlyModified} onResetKeys={resetKeys}>
-          <Select label="Image format" {...bind('output_image_format')} options={m.image_formats || ['jpg', 'png']} />
-          <Select label="Video format" {...bind('output_video_format')} options={m.video_formats || ['mp4', 'mkv', 'webm']} />
-          <Select label="Video codec" {...bind('output_video_codec')} options={m.video_codecs || ['libx264', 'libx265']} />
-          {(() => {
-            // NVENC codecs use -cq (a different scale than libx264/265 -crf); the
-            // same number produces a much bigger, near-lossless file on GPU encoders.
-            // Make the label/help reflect which rate control is actually in effect.
-            const codec = p.output_video_codec || '';
-            const isNvenc = /_nvenc$/.test(codec);
-            // Encoder-accepted range: x264/x265 and NVENC -cq stop at 51, the
-            // VP9/AV1 family at 63. The slider used to go to 100; past the limit
-            // libx265 (the default) and both NVENC encoders fail the render
-            // outright, while libx264 quietly clamps. Measured, not assumed.
-            const qMax = /libvpx|vp9|aom|av1/i.test(codec) ? 63 : 51;
-            const qLabel = isNvenc ? 'Video quality (cq)' : 'Video quality (crf)';
-            const qInfo = isNvenc
-              ? `NVENC uses -cq, not CRF: LOWER = bigger/near-lossless (14 is huge). Try ~23 for a normal-size file. Max ${qMax}.`
-              : `default 14 (libx264/265 CRF: lower = bigger). Try ~23 for a normal-size file. Max ${qMax}.`;
-            return (
-              <Slider label={qLabel} info={qInfo} min={0} max={qMax} step={1} {...bind('video_quality', 14)} value={Math.min(p.video_quality ?? 14, qMax)} />
-            );
-          })()}
-          <Select label="HDR / high-bit-depth colour path" info="ROOP_HDR — auto: a PQ/HLG source, or any source deeper than 8 bits, is decoded at full depth, shown to the models through an ACEScg to Rec.709 view, and written back at 10 bit in the SOURCE's own curve, primaries and tags. Only the pixels the swap changed are re-encoded; every other pixel keeps its original code value. off: the legacy 8-bit path. on: also for 8-bit sources." {...bind('hdr_pipeline', 'auto')} options={['auto', 'on', 'off']} />
-          <Select label="Source transfer curve (HDR)" info="ROOP_HDR_TRANSFER — auto reads the stream tag (PQ, HLG, BT.709). S-Log3 and Canon Log have no tag of their own (cameras write bt709 or nothing), so choose them here for Log footage." {...bind('hdr_source_transfer', 'auto')} options={['auto', 'pq', 'hlg', 'bt709', 'slog3', 'clog', 'clog2', 'clog3']} />
-          <Select label="Source colour primaries (HDR)" info="ROOP_HDR_PRIMARIES — auto reads the stream tag; a Log curve over a bt709/missing tag assumes its camera gamut (S-Gamut3.Cine for S-Log3, Cinema Gamut for Canon Log)." {...bind('hdr_source_primaries', 'auto')} options={['auto', 'bt709', 'bt2020', 'p3d65', 'dcip3', 'sgamut3', 'sgamut3cine', 'cinemagamut']} />
-          <Select label="HDR output codec" info="ROOP_HDR_CODEC — auto keeps your video codec when it can carry 10 bit (hevc_nvenc, av1_nvenc, libx265) and otherwise picks HEVC (h264_nvenc has no 10-bit profile). NVENC output is p010le with PQ/HLG/BT.2020 tags; only libx265 also carries HDR10 mastering-display / MaxCLL SEI." {...bind('hdr_output_codec', 'auto')} options={['auto', 'hevc_nvenc', 'av1_nvenc', 'libx265']} />
-          <Toggle label="Use OS temp folder" {...bindToggle('use_os_temp_folder')} />
-          <Toggle label="Show video in browser (re-encodes)" {...bindToggle('output_show_video')} />
-          <Toggle label="Label output as synthetic media (metadata tag)" info="Writes a comment + synthetic_media=true tag into MP4/MKV/WebM, PNG and JPEG output. Pixels are untouched. A label, not a signature: a re-encode can strip it." {...bindToggle('synthetic_label')} />
-          <Toggle label="Visible watermark on output" info="Stamps the text below on every output frame (bottom-right). Alters pixels; off by default." {...bindToggle('synthetic_watermark')} />
-          <TextInput label="Watermark text" {...bind('synthetic_watermark_text', 'AI face swap')} placeholder="AI face swap" />
-        </FilterSection>
-
-        <FilterSection title="Lighting &amp; Harmonization" icon={Icon.theme} query={query} onlyModified={onlyModified} onResetKeys={resetKeys}>
-          <Toggle label="Light Harmonizer" info="Neural environment re-lighting and normal harmonization: decomposes 3D surface normals, diffuse albedo, and specular environment maps from the scene to re-shade the swapped face, restore corneal catchlights, and cast dynamic shadows." {...bindToggle('light_harmonizer')} />
-          <Slider label="Key light intensity" min={0} max={2} step={0.05} {...bind('light_harmonizer_key_intensity', 1.0)} />
-          <Slider label="Ambient light bias" min={-0.5} max={0.5} step={0.05} {...bind('light_harmonizer_ambient_bias', 0.0)} />
-          <Slider label="Eye specular catchlight restoration" min={0} max={1} step={0.05} {...bind('light_harmonizer_eye_specular', 0.8)} />
-          <Slider label="Dynamic shadow casting" min={0} max={1} step={0.05} {...bind('light_harmonizer_shadow_occlusion', 0.6)} />
-        </FilterSection>
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-xs font-medium text-white/70">Interface Theme</span>
+                <span className="text-micro text-accent font-bold">
+                  {p.theme_follow_system ? 'Following system' : (p.selected_theme || 'Default')}
+                </span>
+              </div>
+              <ThemeGallery
+                value={p.theme_follow_system ? null : p.selected_theme}
+                customThemes={p.custom_themes}
+                onChange={(v) => setMany({ selected_theme: v, theme_follow_system: false })}
+                onCreate={() => setStudio({ open: true, initial: null })}
+                onEdit={(t) => setStudio({ open: true, initial: t })}
+              />
+            </FilterSection>
+            <FilterSection title="3-stage pipeline" icon={Icon.meter} query={query} onlyModified={onlyModified} onResetKeys={resetKeys}>
+              <PipelineControls
+                label="Swapper model Restorer mode Auto-Bypass Restorer on >=256px Native Swap Pre-pass optical-flow stride Temporal Smart-Skip"
+                modified={pipelineModified.length > 0}
+                modifiedKeys={pipelineModified}
+                values={p}
+                models={m.swap_models}
+                onChange={set}
+                onChangeMany={setMany}
+                bind={pipelineBind}
+              />
+              <p className="text-note text-muted">The same four controls sit on the Face Swap tab. Stride, Smart-Skip and the restorer bypass take effect on the next render; they are re-exported when the setting is saved.</p>
+            </FilterSection>
+          <FilterSection title="Detection defaults" icon={Icon.faces} query={query} onlyModified={onlyModified} onResetKeys={resetKeys}>
+          <Slider
+            label="Face detection threshold"
+            min={0.10}
+            max={0.90}
+            step={0.05}
+            {...bind('face_detector_threshold', 0.60)}
+          />
+          <Slider
+            label="Overlap NMS threshold"
+            min={0.10}
+            max={0.90}
+            step={0.05}
+            {...bind('face_detector_nms', 0.40)}
+          />
+          <Select
+            label="Detector scale pyramid"
+            info="Multi-scale dynamic pyramid levels for close-up faces (> 75% height or border-cut). 'auto' triggers pyramid dynamically when close-ups are encountered."
+            {...bind('detector_scale_pyramid', 'auto')}
+            options={['auto', '0.5,0.75,1.0', '0.5,1.0', '0.75,1.0', 'none']}
+          />
+          </FilterSection>
+            <FilterSection title="Identity &amp; tracking (restart to apply)" icon={Icon.users ?? Icon.meter} query={query} onlyModified={onlyModified} onResetKeys={resetKeys}>
+              <p className="text-xs text-muted -mt-2">Who the pipeline thinks each face is, and how it follows them between frames. Every one of these ships ON and "auto" keeps it that way — turn one off only to see what it was doing. Changes take effect after restarting the app.</p>
+              <Select label="Recognition model" info="ROOP_ADAFACE — Which model decides whether two faces are the same person. 'default' is buffalo_l's w600k; 'adaface' is a second model with its own distance scale, and every identity constant in the pipeline is rescaled to match it rather than reused blindly, so the gates keep their intended relationship to the match threshold. Worth trying when people who look alike keep getting confused." {...bind('recognizer', 'default')} options={m.recognizers || ['default', 'adaface']} />
+              <Slider label="Identity confidence threshold" info="ROOP_IDENTITY_CONFIDENCE_THRESHOLD — Minimum cosine similarity (0.0 to 1.0) required to swap a face. If similarity drops below this (due to extreme profile angle or motion blur), the swap is cleanly skipped rather than mapping onto an incorrect person. 0.0 disables." min={0.0} max={1.0} step={0.01} {...bind('identity_confidence_threshold', 0.0)} />
+              <Select label="Interacting-face demarcation" info="ROOP_FACE_DEMARCATE — When two swapped faces touch, decides which pixels belong to whom along the contact boundary instead of letting the two swaps bleed into each other. Off = the older behaviour, where a face near the join could take on its neighbour's swap." {...bind('face_demarcate', 'auto')} options={m.tristate || ['auto', 'on', 'off']} />
+              <Select label="Track stitching" info="ROOP_TRACK_STITCH — Chains fragments of one person's track back together after a cut or a brief occlusion. Without it a broken track loses its source assignment and the swap switches off for whole stretches — that symptom is usually a broken track, not a failed match." {...bind('track_stitch', 'auto')} options={m.tristate || ['auto', 'on', 'off']} />
+              <Select label="Swap outcome guard" info="ROOP_VERIFY_SWAP — Re-detects the swapped result and undoes the swap when the face is no longer where the original was. It exists for one specific failure: past roughly 90 degrees of yaw a head shows cheek and ear and no face, the detector still reports one confidently, and a whole frontal face gets painted onto the side of a head pointing away. Costs one extra detection per swapped face, and only on faces that are rolled or well off-axis." {...bind('verify_swap', 'auto')} options={m.tristate || ['auto', 'on', 'off']} />
+              <Select label="Upright re-measure (rolled faces)" info="ROOP_UPRIGHT_REMEASURE — Re-reads a heavily rolled or upside-down face on an uprighted frame before anything uses its keypoints or embedding. On an inverted face the detector does not fail, it succeeds badly: it returns confident keypoints for an upright face that is not there, which alone makes the same person score as a stranger and stops the swap entirely." {...bind('upright_remeasure', 'auto')} options={m.tristate || ['auto', 'on', 'off']} />
+              <Select label="Pre-pass landmark filter" info="ROOP_PREPASS_FILTER -- the filter the tracking pre-pass runs over each face's keypoints and landmarks before the swap aligns to them. 'adaptive' (default): the causal velocity-ramped smoother; measured on three real clips it runs 1-5% of the eye distance behind a fast-moving head. 'zero_phase': the same smoother run forward and backward - the calmest on a still face, but it still smears fast turns (up to 8% of the eye distance off the raw track on the fastest clip). 'one_euro': an adaptive-cutoff 1-euro filter run forward and backward over the whole track at once (on the GPU for very long tracks) - no lag, still-frame jitter at or below 'adaptive', and fast motion held within 1-3% of the eye distance of the raw track. Takes effect on the next render." {...bind('prepass_landmark_filter', 'adaptive')} options={['adaptive', 'zero_phase', 'one_euro']} />
+              <Select label="Process priority" info="ROOP_PRIORITY — Windows scheduling priority class while rendering. 'high' is the default and finishes soonest; drop to 'normal' to keep the rest of the machine more responsive. EcoQoS power throttling is always opted out of regardless of this — being backgrounded by Windows used to cost real throughput, and that is not a setting." {...bind('process_priority', 'auto')} options={m.priorities || ['auto', 'high', 'above_normal', 'normal']} />
+            </FilterSection>
+            <FilterSection title="Surgical mouth &amp; occlusion (Stage 7)" icon={Icon.faces ?? Icon.meter} query={query} onlyModified={onlyModified} onResetKeys={resetKeys}>
+              <Toggle label="Restore dynamic original mouth" info="When speech or mouth opening (MAR) is detected, composite the original target mouth aperture with adaptive dental and tongue isolation." {...bindToggle('restore_original_mouth')} />
+              <Slider label="Mouth open MAR threshold" info="Mouth Aspect Ratio (MAR) threshold (default 0.18) calculated from inner lip landmarks. When exceeded, activates mouth restoration sub-pass." min={0.05} max={0.5} step={0.01} {...bind('mouth_open_threshold', 0.18)} />
+              <Toggle label="DFL XSeg occlusion governance" info="Run GPU XSeg occlusion inference to detect foreign objects (hands, microphones, glassware) and composite them cleanly in foreground." {...bindToggle('enable_xseg_occlusion')} />
+              <Slider label="Occlusion erosion kernel size" info="Morphological erosion kernel size (1 - 5) for clean occlusion boundary trimming without border bleeding." min={1} max={5} step={1} {...bind('occlusion_erosion', 3)} />
+            </FilterSection>
+            <Section title="Identity API: embedding backend" icon={Icon.faces} className="break-inside-avoid mb-4">
+              <RecognitionPanel notify={notify} onApplied={(sel) => setSettings((s) => mergeSelection(s, sel))} />
+            </Section>
+            <FilterSection title="Lighting &amp; Harmonization" icon={Icon.theme} query={query} onlyModified={onlyModified} onResetKeys={resetKeys}>
+              <Toggle label="Light Harmonizer" info="Neural environment re-lighting and normal harmonization: decomposes 3D surface normals, diffuse albedo, and specular environment maps from the scene to re-shade the swapped face, restore corneal catchlights, and cast dynamic shadows." {...bindToggle('light_harmonizer')} />
+              <Slider label="Key light intensity" min={0} max={2} step={0.05} {...bind('light_harmonizer_key_intensity', 1.0)} />
+              <Slider label="Ambient light bias" min={-0.5} max={0.5} step={0.05} {...bind('light_harmonizer_ambient_bias', 0.0)} />
+              <Slider label="Eye specular catchlight restoration" min={0} max={1} step={0.05} {...bind('light_harmonizer_eye_specular', 0.8)} />
+              <Slider label="Dynamic shadow casting" min={0} max={1} step={0.05} {...bind('light_harmonizer_shadow_occlusion', 0.6)} />
+            </FilterSection>
+          </div>
+        )}
       </div>
 
-      <Section title="Auto-tune (provider, swap batch, NVENC)" icon={Icon.meter} className="mb-4">
-        <AutoTunePanel
-          notify={notify}
-          onSettingsApplied={async () => {
-            try {
-              const fresh = await getJSON('/api/settings');
-              if (fresh && typeof fresh === 'object') setSettings((s) => ({ ...s, ...fresh }));
-            } catch (err) {
-              reportFailure('Reloading settings', err);
-              // ignore
-            }
-          }}
-        />
-      </Section>
-
-      {/* Hardware Benchmark & Optimization Suite */}
-      <BenchmarkPanel
-        notify={notify}
-        onSettingsApplied={async () => {
-          try {
-            const fresh = await getJSON('/api/settings');
-            if (fresh && typeof fresh === 'object') {
-              setSettings((s) => ({ ...s, ...fresh }));
-            }
-          } catch (err) {
-            reportFailure('Reloading settings', err);
-            // ignore
-          }
-        }}
-      />
-
-      {/* Standing environment evidence and the update compatibility verdict.
-          Both were previously unreachable while idle: the runtime report only
-          rendered inside the Processing tab, and the updater's classification
-          only existed once you had already run the updater. */}
-      <EnvironmentHealth notify={notify} meta={meta} />
-
-      <StorageManager notify={notify} />
 
       {/* Floating Sticky Action Dock — the ONLY place these two actions live.
           The dock follows the page, so a second static copy at the bottom (and

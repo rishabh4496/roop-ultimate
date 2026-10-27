@@ -24,22 +24,58 @@ when the pointer or keyboard focus reaches a tab (`warmTab`) and once more at id
 
 | Hash | Tab | What it is |
 | --- | --- | --- |
-| `#/home` | Home | What happened and what is running now: recent runs, outputs, the queue and GPU telemetry in one page. |
-| `#/faceswap` | Face Swap | The workspace. Source and target media, the people found in the target, the live preview (scrub, compare, mask brush, pop-out), the slider tracker, swap / enhancer / mask / stabilisation settings, timeline and segments, the queue, and the **run bar**: the one Start control, which becomes Cancel while a job runs and says in words why it is unavailable. |
+| `#/home` | Home | A launch pad and a ledger. The live run while there is one; **Quick launch** (drop a source face and a target, and both load and Face Swap opens); **Resume where you stopped** (the newest checkpoints the backend says can be resumed); then runs, outputs and the queue once there are any. A section with nothing to show is absent, not an empty box. |
+| `#/faceswap` | Face Swap | The workspace. Source and target media, the people found in the target, the live preview (scrub, compare, mask brush, pop-out), the slider tracker, the **inspector** (below), timeline and segments, the queue, and the **run bar**: the one Start control, which becomes Cancel while a job runs and says in words why it is unavailable. |
 | `#/batch` | Batch Matrix | Builds many jobs at once. Four strategies: one faceset to many targets (`one_to_many`), `grouped`, per-file `matrix`, and `recipes`. |
-| `#/processing` | Processing | A run's own tab. Exists while a run does (and after it ends until you navigate away): live progress, preview peek, diagnostics, terminal, pause / resume / stop. |
+| `#/processing` | Processing | A run's own tab. In the rail while a run exists, jobs are queued, or you are on it (with a live count): live progress, preview peek, diagnostics, terminal, pause / resume / stop. |
 | `#/facemgr` | Face Manager | Builds `.fsz` facesets from images or video frames, with per-face quality scores and pruning. |
-| `#/extras` | Editor | Resize / rotate / crop / re-FPS for images and videos, and the frame post-processors (AI upscale, colorize, stylize). |
+| `#/extras` | Editor | Resize / rotate / crop / re-FPS for images and videos, the frame post-processors (AI upscale, colorize, stylize), a **Video to faceset (.fsz)** extractor (load a clip, scrub, cut faces, build; the same workspace as the Face Manager) and, collapsed, the swap enhancement stack. |
 | `#/gallery` | Outputs | Browse, compare, reveal and delete finished renders. |
 | `#/history` | History | Every completed run with the exact settings it used, its duration and throughput; export presets. |
-| `#/settings` | Settings | The `config.yaml` editor with search and an "only changed" filter, plus themes, environment health, benchmark, auto-tune, TensorRT cache, storage and the recognition backbone. |
+| `#/settings` | Settings | The `config.yaml` editor with search and an "only changed" filter, in five tabs (below). |
 
-**Header.** Home, Face Swap, Batch Matrix, Outputs and Settings stay in the tab strip; Processing (when it
-exists), Face Manager, Editor and History are under **More**, which becomes the current tab's icon and name
-while you are on one of them. Below 1280px the tabs are icon-only (named by `aria-label`, with a tooltip);
-below 1760px the utility cluster (quality profile, hardware HUD, session snapshots, command palette
-`Ctrl K`, UI zoom) is icon-only too. The test is `innerWidth / zoom`, because UI zoom is CSS `zoom` on
-`<html>`. Source: `src/components/HeaderNav.jsx`.
+**Shell.** Navigation is a vertical **rail** (`shell/WorkstationRail.jsx`, `<nav aria-label="Main">`): icon + label
+per route, collapsible to icons (button, or `Ctrl B`). It starts icon-only below 1400px of layout width (Face Swap is three
+columns, and a 200px rail left its stage 282px wide, so the stage's own HUD buttons wrapped across the picture) and
+expanded above; the choice is remembered once you make it. Below 768px it is icon-only regardless. Above every route is a slim
+**header** (`shell/WorkstationHeader.jsx`): the route name, the run chip while a job runs, the **layout switcher**
+(Standard / Max Canvas / Inspection Suite: names over the Face Swap dock's own mode table, kept in
+`store/workspaceStore.js`, so the two are one state and it survives leaving the tab), the **telemetry pill** and the
+workspace tools (quality profile, snapshots, palette, UI zoom).
+
+The **telemetry pill** (`shell/TelemetryPill.jsx`) is the only place GPU / VRAM / CPU is shown: a one-line readout with
+a sparkline of the last three minutes and a popover with the detail (GPU, VRAM, CPU, RAM, app memory, threads, provider,
+workers, the Video I/O line where a hardware fallback is announced, and the render's current fps). It reads the shared
+`/api/system/telemetry` poll. `gpu_util` / `gpu_temp` / `gpu_power` come from nvidia-smi and are simply absent without
+it; the pill then shows VRAM and the popover omits those rows rather than inventing a figure. The pill re-renders
+nothing (its text and sparkline are written outside React): an idle tab is held to 6 React commits a second
+(`e2e/frame-budget.spec.js`) and Settings idled at exactly 6, so no always-mounted shell piece may add one. For the same
+reason `EnhancerSettings` no longer carries its own VRAM / CPU / RAM cards.
+
+The **command palette** (`Ctrl K`, also from inside a text field) navigates, starts/stops/queues, applies presets and
+profiles, switches theme, opens any setting by name (on the right Settings tab), picks a layout, toggles the rail and
+the mask overlay, switches the execution provider (applies after a restart; it says so) and opens runtime diagnostics.
+
+**Inspector** (Face Swap, left column; `data-testid="inspector"`). Quick recipes (Fast Preview, Natural Studio, Max
+Fidelity TRT, High-Motion Occlusion; `faceswap/recipes.js`, real settings only, nothing global) with save/manage;
+the 3-stage pipeline card; then accordions that remember their state: **Detection** (face selection, detector engine,
+confidence, with *Advanced Detector Tuning* and *Identity matching* folded away), **Masking** (engines, a unified mask
+padding slider with a link/unlink button, the Face Parser region pills, edge controls), **Restoration & Color** (the
+four-stage `EnhancerPipelineStack`: Swapper Core, Face Restorer, Texture & Grain Closer, LAB Color & Skin-Tone Match,
+each with a switch, a model where it has one, one primary slider and an *Options* drawer), **Temporal** (a four-way
+stability mode read back from the settings, with the individual switches in a drawer), **Eyes, mouth & expression** and
+**Pose, angle & system**. A group that is closed unmounts its controls.
+
+**Sliders** (`Slider` in `ui.jsx`, every numeric control): double-click the track (or Backspace) to reset to the default,
+Shift+drag or Shift+Arrow for a fine 0.01 step, click the number to type an exact value (Enter on the focused slider opens
+the same box). The number is mouse-only and `tabindex="-1"`: the range input already announces its value, and a second
+tab stop per slider would add about sixty to Face Swap.
+
+**Settings tabs** (`settingsTabs.js` maps every setting to one): *Execution Providers & TensorRT Engines*; *CPU P/E-Core &
+Thread Pools* (P/E placement is a launcher env var, `ROOP_CPU_DISTRIBUTION`, not a setting, so that tab says so instead of
+offering a control); *Paths & Storage*; *Runtime Diagnostics & Benchmark Runner* (all fourteen sections of the backend's
+runtime report, `RuntimeSections.jsx`, then the benchmark and environment health); and *Appearance & Pipeline Defaults*
+(everything else). A search or the changed-only filter looks across all tabs.
 
 **Not in the React UI.** The Gradio *per-frame Frame Editor* (frame drawing, tracked re-swap, MP4/GIF
 compile) has no counterpart in `src/`; the React preview stage has a paint/erase mask brush instead of
@@ -50,13 +86,14 @@ Gradio's canvas masking modal.
 ```
 src/
   main.jsx            entry: ErrorBoundary (variant="app") > TermsGate > App
-  App.jsx             shell: header, tab routing (hash), polling + telemetry socket, modals
+  App.jsx             shell: rail + header, tab routing (hash), polling + telemetry socket, modals
   api.js              getJSON / postJSON / postFiles / fileUrl
   icons.jsx motion.jsx themes.js themeVars.js index.css   design system: icon roles, springs, 37 themes, type scale
-  store/              jobStore, telemetryStore (zustand; the live run readouts bypass React renders)
+  store/              jobStore, telemetryStore (zustand; the live run readouts bypass React renders), workspaceStore (layout mode, rail, Settings tab)
   transport/          /ws/frames protocol + socket hooks
   components/
-    <Tab>.jsx         one file per tab (lazy chunks), plus ui.jsx primitives, HeaderNav, ErrorBoundary, lazyPanel
+    <Tab>.jsx         one file per tab (lazy chunks), plus ui.jsx primitives, ErrorBoundary, lazyPanel
+    shell/            WorkstationRail, WorkstationHeader, LayoutSwitcher, TelemetryPill
     faceswap/         the Face Swap workspace: preview, timeline, slider tracker, queue, hooks
     player/           WebGL / worker-backed playback
 ```
@@ -317,11 +354,12 @@ Faceset library and builder, identity blending, recognition backbone.
 
 | Method | Path | Called from |
 | --- | --- | --- |
-| POST | `/api/facemgr/add` | FaceManager |
-| POST | `/api/facemgr/build` | FaceManager |
+| POST | `/api/facemgr/add` | FaceManager, VideoFramesetExtractor |
+| POST | `/api/facemgr/build` | FaceManager, VideoFramesetExtractor |
 | POST | `/api/facemgr/clear` | FaceManager |
-| POST | `/api/facemgr/cut` | FaceManager |
+| POST | `/api/facemgr/cut` | FaceManager, VideoFramesetExtractor |
 | POST | `/api/facemgr/faceset` | FaceManager |
+| GET | `/api/facemgr/frame` | FaceManager, VideoFramesetExtractor |
 | POST | `/api/facemgr/prune` | FaceManager |
 | POST | `/api/facemgr/remove` | FaceManager |
 | GET | `/api/faceset/library` | FacesetLibrary |
@@ -422,6 +460,7 @@ Benchmark, auto-tune, TensorRT cache and hardware/telemetry.
 | POST | `/api/benchmark/start` | BenchmarkPanel |
 | POST | `/api/enhancer/ultramax/compile` | EnhancerSettings |
 | GET, POST | `/api/enhancer/ultramax/settings` | EnhancerSettings |
+| GET | `/api/enhancer/ultramax/status` | EnhancerSettings |
 | GET | `/api/enhancer/ultramax/telemetry` | EnhancerSettings |
 | GET | `/api/runtime/state` | EnvironmentHealth |
 | POST | `/api/settings/benchmark_cancel` | ProviderBenchmark |
@@ -429,7 +468,7 @@ Benchmark, auto-tune, TensorRT cache and hardware/telemetry.
 | POST | `/api/settings/benchmark_threads` | ProviderBenchmark |
 | GET | `/api/system/hardware` | EnvironmentHealth |
 | GET | `/api/system/profile` | DiagnosticsPanel |
-| GET | `/api/system/telemetry` | EnvironmentHealth, Home, useTelemetry |
+| GET | `/api/system/telemetry` | EnvironmentHealth, useTelemetry (the header pill) |
 | GET | `/api/trt_cache` | TrtCachePanel |
 | POST | `/api/trt_cache/clear` | TrtCachePanel |
 

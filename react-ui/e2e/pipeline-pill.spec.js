@@ -122,7 +122,7 @@ test('processing: stage changes add no REST request (the pill is socket-only)', 
     page.on('request', (r) => { if (/\/api\//.test(r.url())) seen.add(`${r.method()} ${new URL(r.url()).pathname}`); });
     await scriptTelemetry(page, frames, 700);
     await page.goto('/#/processing');
-    await page.locator('header nav button[aria-current="page"]').waitFor();
+    await page.locator('nav[aria-label="Main"] button[aria-current="page"]').waitFor();
     if (pillExpected) await expect(page.locator('li[data-step="render"]')).toHaveAttribute('data-state', 'done', { timeout: 15_000 });
     else await page.waitForTimeout(4500);
     await page.waitForTimeout(1500);
@@ -139,7 +139,7 @@ test('processing: stage changes add no REST request (the pill is socket-only)', 
 test('face swap: the run bar carries the pill while a job runs, and axe is clean with it', async ({ page }) => {
   await scriptTelemetry(page, [frame({ event: 'hello', stage: S3, stages: STAGE3, summary: {} })], 700);
   await page.goto('/#/faceswap');
-  await page.locator('header nav button[aria-current="page"]').waitFor();
+  await page.locator('nav[aria-label="Main"] button[aria-current="page"]').waitFor();
   const pill = page.getByTestId('pipeline-pill');
   await expect(pill, 'visible in the Face Swap run bar while processing').toBeVisible({ timeout: 15_000 });
   await expect(pill.locator('li[data-step="render"]')).toHaveAttribute('aria-current', 'step');
@@ -151,7 +151,7 @@ test('face swap: the run bar carries the pill while a job runs, and axe is clean
 test('face swap: no pill while idle', async ({ page }) => {
   await scriptTelemetry(page, [frame({ event: 'hello', processing: false, progress: 0, desc: '', stage: null, stages: {}, summary: {} })], 700);
   await page.goto('/#/faceswap');
-  await page.locator('header nav button[aria-current="page"]').waitFor();
+  await page.locator('nav[aria-label="Main"] button[aria-current="page"]').waitFor();
   await page.waitForTimeout(1500);
   await expect(page.getByTestId('pipeline-pill')).toHaveCount(0);
 });

@@ -53,7 +53,14 @@ import { setLastPreview } from './faceswap/lastPreview';
 import { num, fmtTime } from './faceswap/utils';
 import useProfiles from './faceswap/useProfiles';
 import { useSystemTelemetryPoller } from './faceswap/useTelemetry';
-import SystemTelemetryHud from './faceswap/SystemTelemetryHud';
+import { FACESWAP_DEFAULTS } from './faceswap/defaults';
+import InspectorGroup, { Disclosure } from './faceswap/InspectorGroup';
+import RecipePresetBar from './faceswap/RecipePresetBar';
+import LinkedPaddingControl from './faceswap/LinkedPaddingControl';
+import EnhancerPipelineStack from './faceswap/EnhancerPipelineStack';
+import TemporalModeControl from './faceswap/TemporalModeControl';
+import { QUICK_RECIPES, activeRecipeId } from './faceswap/recipes';
+import { temporalModeOf } from './faceswap/temporalModes';
 import HeadPoseHud from './faceswap/HeadPoseHud';
 import useThrottledFrameRequest from './faceswap/useThrottledFrameRequest';
 import FrameUnavailable from './faceswap/FrameUnavailable';
@@ -1059,15 +1066,6 @@ export default function FaceSwap({
   // same stale snapshot, so the second silently drops the first — which for
   // the region panel would mean toggling a region also reverted its grow.
   const setMany = (patch) => setSettings((s) => ({ ...s, ...patch }));
-  const [linkedPaddingSides, setLinkedPaddingSides] = useState(false);
-
-  const updatePaddingSide = (side, val) => {
-    if (linkedPaddingSides) {
-      setMany({ mask_top: val, mask_bottom: val, mask_left: val, mask_right: val });
-    } else {
-      set(`mask_${side}`, val);
-    }
-  };
 
   // Manual mask painted in the preview box. ProcessMgr already understands this
   // format ({"<faceset>": {exclude, canonical, ref_kps}}) — it was simply never
@@ -1273,21 +1271,32 @@ export default function FaceSwap({
   // older one is logged as superseded.
   const previewSeqRef = useRef(0);
 
-  // One-click speed/quality profiles. Each bundles the core levers (detection
-  // resolution, pixel-boost upscale, enhancer, swap steps); other settings (mask
-  // engine, target selection, etc.) are left as-is. Pure UI — no runtime cost.
-  const PRESETS = {
-    Fast:     { default_det_size: false, face_detector_size: '320', face_detector_threshold: 0.50, subsample_upscale: '128px', selected_enhancer: 'None',     num_swap_steps: 1 },
-    Balanced: { default_det_size: true,  face_detector_size: '640', face_detector_threshold: 0.50, subsample_upscale: '256px', selected_enhancer: 'GPEN',     num_swap_steps: 1 },
-    Quality:  { default_det_size: true,  face_detector_size: '640', face_detector_threshold: 0.50, subsample_upscale: '512px', selected_enhancer: 'UltraMax', swap_model: 'realswap', mask_engine: 'RealityUX', num_swap_steps: 1 },
+  // The four quick recipes (faceswap/recipes.js). Each is a block of real settings
+  // written straight into the live params; a recipe the settings already match
+  // is highlighted. Pure UI: no runtime cost, and nothing global (provider,
+  // threads) is touched.
+  const activeRecipe = activeRecipeId(p);
+  const applyRecipe = (recipe) => {
+    setSettings((s) => ({ ...s, ...recipe.patch }));
+    notify(`Applied ${recipe.label}`, 'info');
   };
-  const activePreset = Object.keys(PRESETS).find((name) =>
-    Object.entries(PRESETS[name]).every(([k, v]) =>
-      k === 'default_det_size' ? (p[k] !== false) === (v !== false) : p[k] === v));
-  const applyPreset = (name) => {
-    setSettings((s) => ({ ...s, ...PRESETS[name] }));
-    notify(`Applied ${name} preset`, 'info');
+
+  // The restoration tier buttons in the Face Restorer stage: a restorer plus the
+  // `restoration_mode` label the Tile Diffusion path reads. The lit tier comes from
+  // the restorer that is actually selected (a mode label alone is not what runs).
+  const RESTORATION_TIERS = [
+    { id: 'fast', label: 'Fast', note: '25–60 FPS', hint: 'GPEN-512 / GFPGAN: realtime scrubbing.', patch: { restoration_mode: 'fast', selected_enhancer: 'GPEN' } },
+    { id: 'balanced', label: 'Balanced', note: 'CodeFormer w 0.6', hint: 'CodeFormer at the optimal fidelity weight.', patch: { restoration_mode: 'balanced', selected_enhancer: 'Codeformer', codeformer_fidelity: 0.6 } },
+    { id: 'vfx', label: 'VFX Master', note: '2–6 FPS', hint: 'Tile Diffusion: offline rendering only.', patch: { restoration_mode: 'vfx', selected_enhancer: 'Tile Diffusion Synthesizer' } },
+  ];
+  const restorationTierOf = (cur) => {
+    const e = String(cur.selected_enhancer || '');
+    if (e === 'GPEN' || e === 'GFPGAN') return 'fast';
+    if (e.toLowerCase().startsWith('codeformer')) return 'balanced';
+    if (e === 'Tile Diffusion Synthesizer' || e === 'Tile Diffusion') return 'vfx';
+    return null;
   };
+  const TEMPORAL_BADGE = { off: 'Off', smart_skip: 'Smart-Skip', balanced: 'Balanced', cinema: 'Cinema', custom: 'Custom' };
 
   // The user's own "Save as default" snapshot, and the resets that read it.
   // See faceswap/useUserDefaults.
@@ -2885,6 +2894,7 @@ export default function FaceSwap({
     split: () => setSplitView((v) => !v),
     preview: () => refreshPreview({ force: true }),   // explicit user action — same as Refresh
     shortcuts: () => setShowShortcutHUD(true),
+    maskOverlay: () => set('show_mask_offsets', !p.show_mask_offsets),
     // Applying a named preset is the one command that takes an argument, hence
     // the detail object being forwarded to the handler below.
     preset: (d) => { if (d?.name) loadProfile(d.name); },
@@ -2952,52 +2962,525 @@ export default function FaceSwap({
     // unreachable by mouse. See also the scroll-padding effect near the dock hook.
     <div className="flex flex-col lg:flex-row gap-4 items-start w-full pb-28">
 
-      {/* COLUMN 1: Settings & Controls — sticky sidebar on large viewports so it
-          follows the scroll (and never leaves the lower-left area empty) while
-          scrolling a taller workspace. Scrolls internally when taller than the
-          viewport.
+      {/* COLUMN 1: the inspector — sticky sidebar on large viewports so it follows
+          the scroll while scrolling a taller workspace.
 
-          This used to disappear for the duration of a run, along with the asset
-          rail, the timeline and the preview controls — the whole tab became a
-          progress panel. Watching a render and setting up the next job are now
-          two different tabs, so this one keeps its layout at all times and the
-          run has the Processing tab to itself. */}
-      <div className={`w-full lg:w-[350px] 3xl:w-[400px] 4xl:w-[460px] shrink-0 space-y-3.5 select-none ${!showLeftPanel ? 'hidden' : ''}`}>
-        <Section title="Presets">
-          <div className="flex flex-wrap gap-2">
-            {Object.keys(PRESETS).map((name) => (
-              <Button key={name} size="sm"
-                variant={activePreset === name ? 'primary' : 'secondary'}
-                onClick={() => applyPreset(name)}>
-                {name}
-              </Button>
-            ))}
-            <Button size="sm" variant="secondary" onClick={saveAsDefault}
-              title="Save the current Face Swap tab settings as your default. 'Reset defaults' will restore to this.">
-              Save as default
-            </Button>
-            <Button size="sm" variant="secondary" onClick={resetToDefaults}
-              title={userDefaults
-                ? 'Restore every Face Swap tab setting to your saved default'
-                : 'Restore every Face Swap tab setting to the factory defaults'}>
-              ↩️ {userDefaults ? 'Reset to my default' : 'Reset defaults'}
-            </Button>
-            {userDefaults && (
-              <Button size="sm" variant="secondary" onClick={clearUserDefault}
-                title="Forget your saved default and go back to the factory defaults">
-                Clear my default
-              </Button>
+          Five named groups instead of one 100-control column: Detection, Masking,
+          Restoration & Color (the four-stage enhancer chain), Temporal, and the
+          rest. The groups are InspectorGroup accordions that remember their open
+          state; every control in them is the one that used to sit in the long
+          column, moved, not rewritten.
+
+          This keeps its layout during a run: watching a render and setting up the
+          next job are two different tabs, so the run has the Processing tab to
+          itself. */}
+      <div
+        data-testid="inspector"
+        className={`w-full lg:w-[350px] 3xl:w-[400px] 4xl:w-[460px] shrink-0 space-y-3 select-none ${!showLeftPanel ? 'hidden' : ''}`}
+      >
+        <RecipePresetBar
+          recipes={QUICK_RECIPES}
+          activeId={activeRecipe}
+          onApply={applyRecipe}
+          profiles={profiles}
+          newProfileName={newProfileName}
+          onNameChange={setNewProfileName}
+          onSaveProfile={saveProfile}
+          onLoadProfile={loadProfile}
+          onDeleteProfile={deleteProfile}
+          userDefaults={userDefaults}
+          onSaveDefault={saveAsDefault}
+          onResetDefaults={resetToDefaults}
+          onClearDefault={clearUserDefault}
+          onExportProfiles={exportProfiles}
+          onImportProfiles={importProfiles}
+          onShareRecipe={exportRecipe}
+          onLoadRecipe={importRecipe}
+        />
+
+        {/* The 3-stage pipeline's four levers, shared with #/settings: swapper, restorer mode, pre-pass stride K,
+            Temporal Smart-Skip. The swapper select that sat here, and the auto-bypass toggle further down, are
+            part of it now. There is no run button in it: the run bar stays the one control that starts a render. */}
+        <div className="rounded-xl border border-white/[0.08] bg-white/[0.02] p-3 space-y-3" role="group" aria-labelledby="pipeline-controls-heading">
+          <div id="pipeline-controls-heading" className="text-nano font-bold uppercase tracking-[0.16em] text-white/60">3-stage pipeline</div>
+          <PipelineControls values={p} models={meta.swap_models} onChange={set} onChangeMany={setMany} />
+        </div>
+
+        <InspectorGroup id="detection" title="Detection" icon={Icon.face} defaultOpen>
+          <Select label="Face selection" value={p.face_detection_mode} onChange={(v) => set('face_detection_mode', v)} options={meta.face_detection_modes} />
+          <Select
+            label="Detector engine"
+            info="RetinaFace R50 is the safest pick: it was the only engine that held full recall as a face grew to fill the frame, where SCRFD (the stock default) and RetinaFace 10g both dropped to zero. Prefer it unless you need the speed. YOLOFace is often better on steep profiles and partially occluded faces. YuNet is the lightest. SCRFD is fast and accurate on frontal faces but the weakest on close-ups. All engines reuse the same identity/landmark models; alternates download a small model on first use."
+            value={p.detector_engine || 'scrfd'}
+            onChange={(v) => set('detector_engine', v)}
+            options={meta.detector_engines || ['scrfd', 'yoloface', 'retinaface', 'retinaface_r50', 'retinaface_r50_gpu', 'yunet']}
+          />
+          <Slider
+            label="Face detection threshold"
+            info="Lower values (e.g. 0.40) detect angled, profile, or hard-to-see faces. Higher values avoid false detections. Default 0.50"
+            min={0.10}
+            max={0.90}
+            step={0.05}
+            value={num(p.face_detector_threshold, 0.50)}
+            onChange={(v) => set('face_detector_threshold', v)} defaultValue={FACESWAP_DEFAULTS.face_detector_threshold}
+          />
+          <Disclosure id="inspector.detector-tuning" title="Advanced Detector Tuning">
+            <Select
+              label="Face detection resolution"
+              info="Higher resolution improves detection of small/distant faces, but runs slower. Measured on an RTX 4070 with retinaface_r50 over 240 frames of angled footage, production module set: 640px = 14.27ms per frame, 512px = 10.95ms — 1.30x faster AND slightly MORE accurate (99.4% recall against 98.5%), with landmarks shifting only 0.24-0.72px. 512 is the better default on 720p/1080p sources; the extra 640px pixels are mostly the black padding a 16:9 frame leaves in a square canvas. 320 starts losing hard poses. NOTE: only retinaface honours this — yoloface and scrfd are fixed 640x640 exports and ignore it."
+              value={p.face_detector_size || '640'}
+              onChange={(v) => {
+                set('face_detector_size', v);
+                set('default_det_size', v === '512' || v === '640' || v === '960' || v === '1280');
+              }} 
+              options={['320', '512', '640', '960', '1280']} 
+            />
+            <Slider
+              label="Overlap NMS threshold"
+              info="Lower values (e.g. 0.30) suppress close duplicates. Higher values (e.g. 0.60) allow detecting overlapping faces close to each other. Default 0.40"
+              min={0.10}
+              max={0.90}
+              step={0.05}
+              value={num(p.face_detector_nms, 0.40)}
+              onChange={(v) => set('face_detector_nms', v)} defaultValue={FACESWAP_DEFAULTS.face_detector_nms}
+            />
+            <Toggle label="Refine alignment (68-pt)" info="Derives the alignment keypoints from the 68-point landmark model instead of the detector's raw 5 points — more stable alignment on angled faces, less residual swap wobble. Small per-face cost." checked={!!p.refine_landmarks} onChange={(v) => set('refine_landmarks', v)} />
+            <Toggle label="Rescue small faces" info="When a frame has no detected face, retries on a 2x upscale to catch tiny/distant faces — without raising the global detection resolution for every frame." checked={!!p.rescue_small_faces} onChange={(v) => set('rescue_small_faces', v)} />
+            <Select label="On no face detected" value={p.no_face_action} onChange={(v) => set('no_face_action', v)} options={meta.no_face_actions} />
+          </Disclosure>
+          <Disclosure id="inspector.identity-matching" title="Identity matching">
+            <Slider label="Max face distance" info="How far from your captured target face a detected face may sit and still be swapped. This is a DISTANCE, not a similarity — 0 means identical and HIGHER IS MORE PERMISSIVE, so raising it makes look-alikes and bystanders start getting swapped. Scale is scipy cosine distance (0–2). Measured on a hard clip: the SAME person stays under ~0.66 even on bad frames, while DIFFERENT people sit at ~0.93–1.07. The 0.75 default sits mid-gap. Lower it toward 0.66 if the swap jumps to the wrong person mid-shot; raise it toward 0.85 if the swap blinks off on profiles and motion blur. Run with ROOP_DEBUG_MATCH=1 to print the real per-frame distances." min={0.01} max={1} step={0.01} value={num(p.max_face_distance, 0.75)} onChange={(v) => set('max_face_distance', v)} defaultValue={FACESWAP_DEFAULTS.max_face_distance} />
+            <Toggle label="Lock face identities (video)" info="For 'Selected face' mode on video: tracks each person across the clip and keeps them on one source, so identities don't flip frame-to-frame when faces cross or turn. Adds a short tracking pre-pass; the swap stays multi-threaded." checked={!!p.track_identities} onChange={(v) => set('track_identities', v)} />
+            <Slider label="Identity confidence threshold" info="Minimum cosine similarity required to swap a face. If similarity drops below this (due to extreme profile angle or motion blur), the swap is cleanly skipped rather than mapping onto an incorrect person. 0.0 = disabled." min={0.0} max={1.0} step={0.05} value={num(p.identity_confidence_threshold, 0.0)} onChange={(v) => set('identity_confidence_threshold', v)} defaultValue={FACESWAP_DEFAULTS.identity_confidence_threshold} />
+          </Disclosure>
+        </InspectorGroup>
+
+        <InspectorGroup id="masking" title="Masking" icon={Icon.layout}>
+          <Select label="Masking engine" info="Choose this one on quality, not speed — the models are all cheap and within a few ms of each other. Measured on an RTX 4070, TensorRT FP16, isolated: Face Parser 2.4ms, DFL XSeg 2.9ms, XSeg-3 4.7ms, Face Occluder 5.0ms, MobileSAM 5.8ms+decoder, FastSAM 5.8ms. The whole spread is ~3ms against a masking stage that costs ~42ms per face, because almost all of that stage is the CPU work around the model — the landmark hull, the mouth mask, the blurs and the non-frontal unwarp — not the model itself. So switching engines to go faster will not work; switch when one of them handles YOUR occlusions better. SAM2 (tracked) is not comparable here: it runs a whole-clip pre-pass instead of per-crop inference." value={p.mask_engine} onChange={(v) => set('mask_engine', v)} options={meta.mask_engines} />
+          <Select label="Second masking engine (occlusion)" info="A second, independent occlusion engine, run after the first. They compose as a union of &quot;not face&quot;, so this can only ever restore MORE of the original footage — it cannot eat into the swap, and turning it off is exactly the previous behaviour. Why you would: when something comes in front of a face and the swap gets painted over it anyway, the usual reason is not that masking is off, it is that the one engine you picked was not trained on that particular object. The engines miss different things — XSeg and XSeg-3 come from DeepFaceLab&apos;s hand/object data, Face Occluder from a different set again, Face Parser segments facial regions rather than occluders, and the SAM variants segment anything at all. Running two costs one more model call per face, which is 2–6ms against a masking stage of ~42ms. Start with DFL XSeg + Face Occluder. &quot;None&quot; = one engine, as before." value={p.mask_engine_2 || 'None'} onChange={(v) => set('mask_engine_2', v)} options={meta.mask_engines} />
+          {String(p.mask_engine || '').startsWith('Face Parser') && (
+            <ParserRegions
+              regions={p.parser_regions}
+              grow={p.parser_region_grow}
+              onChange={({ regions, grow }) => setMany({ parser_regions: regions, parser_region_grow: grow })}
+            />
+          )}
+          {!String(p.mask_engine || '').startsWith('Face Parser') && (
+            <p className="text-mini leading-snug text-muted">The face-region pills appear when the masking engine is Face Parser (BiSeNet).</p>
+          )}
+          {p.mask_engine === 'Clip2Seg' && (
+            <TextInput label="Objects to mask & restore" value={p.mask_clip_text} onChange={(v) => set('mask_clip_text', v)} placeholder="cup,hands,hair" />
+          )}
+          {p.mask_engine === 'Segment Anything 2 (tracked)' && (
+            <Select label="SAM2 checkpoint (speed ↔ quality)" value={p.sam2_model_size || 'tiny'} onChange={(v) => set('sam2_model_size', v)} options={meta.sam2_model_sizes || ['tiny', 'small', 'base_plus', 'large']} />
+          )}
+          {p.mask_engine === 'RealityUX' && (
+            <div className="flex flex-col gap-2 p-3 my-2 rounded-xl bg-slate-900/60 border border-white/10">
+              <div className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
+                <span>🛡️</span> RealityUX Surgical Governance
+              </div>
+              <Toggle
+                label="Restore original mouth aperture (MAR gated)"
+                info="Dynamically restores inner mouth aperture, teeth, and tongue when MAR exceeds threshold during speech, smiles, or yawning."
+                checked={!!p.restore_original_mouth}
+                onChange={(v) => set('restore_original_mouth', v)}
+              />
+              {p.restore_original_mouth && (
+                <Slider
+                  label="Mouth open threshold (MAR)"
+                  info="Mouth Aspect Ratio trigger threshold (default 0.18)"
+                  min={0.05}
+                  max={0.5}
+                  step={0.01}
+                  value={num(p.mouth_open_threshold, 0.18)}
+                  onChange={(v) => set('mouth_open_threshold', v)} defaultValue={FACESWAP_DEFAULTS.mouth_open_threshold}
+                />
+              )}
+              <Toggle
+                label="DFL XSeg foreign object occlusion"
+                info="Isolates hands, microphones, fingers, and foreign objects with morphological erosion and feathering."
+                checked={!!p.enable_xseg_occlusion}
+                onChange={(v) => set('enable_xseg_occlusion', v)}
+              />
+              {p.enable_xseg_occlusion && (
+                <Slider
+                  label="Occlusion erosion radius"
+                  info="Morphological erosion kernel size (1 - 5 px) to eliminate boundary halos."
+                  min={1}
+                  max={5}
+                  step={1}
+                  value={num(p.occlusion_erosion, 3)}
+                  onChange={(v) => set('occlusion_erosion', v)} defaultValue={FACESWAP_DEFAULTS.occlusion_erosion}
+                />
+              )}
+            </div>
+          )}
+          <Toggle label="Protect eyeglass frames" info="Keeps the rim, bridge and temple arms of a pair of glasses from being painted over by the swap, while leaving the lens directly over each eye swappable so the eyes stay the faceset&apos;s own rather than the original person&apos;s. Needs a parser-backed masking engine (RealityUX or Face Parser) — the classes come from BiSeNet. Measured over ~800k parsed glasses pixels on three subjects: ~71% of the frame was being painted over, and the RealityUX fusion was contributing exactly nothing there, because XSeg reads ~0.003 on glasses and the accessory gate scales with XSeg. Costs no extra model call — it reuses the parse already being run." checked={p.glasses_frame_protect !== false} onChange={(v) => set('glasses_frame_protect', v)} />
+          <Toggle label="Show mask overlay in preview" checked={!!p.show_mask_offsets} onChange={(v) => set('show_mask_offsets', v)} />
+          <LinkedPaddingControl settings={p} onChangeMany={setMany} defaults={FACESWAP_DEFAULTS} />
+          <Slider label="Face mask edge blend" min={0} max={200} step={1} value={num(p.face_mask_blend, 20)} onChange={(v) => set('face_mask_blend', v)} defaultValue={FACESWAP_DEFAULTS.face_mask_blend} />
+          <Select label="Mask edge falloff" info="Shape of the ramp between swapped and original pixels. 'Gaussian' is the shipped behaviour and what 'Face mask edge blend' was calibrated against. 'Distance (soft)' derives the ramp from a distance transform, so it is the SAME WIDTH everywhere along the boundary — a Gaussian narrows wherever the mask is locally convex or thin, which is why one setting can look soft along the cheek and hard at the temple in the same frame." value={p.mask_edge_mode || 'gaussian'} onChange={(v) => set('mask_edge_mode', v)} options={[{ value: 'gaussian', label: 'Gaussian (default)' }, { value: 'distance', label: 'Distance (soft, constant width)' }]} />
+          <Slider label="Boundary illumination match" info="Grades only the LOW frequencies of the pasted face toward the original plate, and only at the rim — exactly zero where the mask is fully opaque, so the identity region is untouched and no target texture is copied in. Use when a seam is still visible after the edge is soft: that residual line is a brightness step, not a geometry problem. 0 disables it entirely." min={0} max={1} step={0.05} value={num(p.boundary_illumination_strength, 0)} onChange={(v) => set('boundary_illumination_strength', v)} defaultValue={FACESWAP_DEFAULTS.boundary_illumination_strength} />
+          <Slider label="Mask erode / dilate radius" info="Signed frame-pixel adjustment to the facial landmark convex hull before Gaussian feathering. Negative values erode the swap to keep hair, hands, microphones, and accessories out. Positive values dilate it to recover clipped skin. 0 preserves the detected contour." min={-32} max={32} step={1} value={num(p.mask_erode_dilate_radius, 0)} onChange={(v) => set('mask_erode_dilate_radius', v)} defaultValue={FACESWAP_DEFAULTS.mask_erode_dilate_radius} />
+          <Slider label="🧩 Swap model's own face mask" info="Only hififace and hyperswap emit this — every other swapper ignores the setting, so it is safe to leave on. Those two nets output a face mask alongside the swapped image, saying where they actually synthesised a face, and the pipeline used to throw it away. That matters because the paste mask cannot know: it is an ellipse intersected with the convex hull of the 106 landmarks, whose forehead extension runs 60% above the eyebrows and therefore into the HAIR. Measured against hififace's own verdict, 15–27% of the paste mask is territory the model says is not face on a FRONTAL head, and 31% on a profile — and looking at where that excess lands, it is the band above the hairline frontally, and a wedge of hair plus background behind the head on a profile. That is very likely why eyes/nose/mouth read as distorted at angles: not the features themselves, but the invalid territory around them being composited. Not pose-gated, unlike the two angle controls above, because the net derives this from the actual image and its verdict is right at every angle. 100 = trust the model fully, 0 = off (previous behaviour), which is the default — this is new and has not been judged on real footage yet. It is the first thing to raise if a hififace or hyperswap paste reaches up into hair." min={0} max={100} step={5} value={num(p.swap_model_mask_strength, 0)} onChange={(v) => set('swap_model_mask_strength', v)} defaultValue={FACESWAP_DEFAULTS.swap_model_mask_strength} />
+          <Toggle label="XSeg edge refinement (guided filter)" info="DFL XSeg only. Re-fits XSeg's 256px mask boundary to the edges of the face crop with a guided filter. Measured on 10 clips against an independent face parser it did NOT move the boundary closer (placement unchanged, agreement worse on every clip); it only softens the edge. Off by default; kept for comparison. About 1 ms of CPU per face." checked={!!p.mask_guided_filter} onChange={(v) => set('mask_guided_filter', v)} />
+          <Disclosure id="inspector.mouth-mask" title="Mouth mask">
+            <Slider label="Mouth mask top" min={0} max={2} step={0.01} value={num(p.mouth_top_scale, 1)} onChange={(v) => set('mouth_top_scale', v)} defaultValue={FACESWAP_DEFAULTS.mouth_top_scale} />
+            <Slider label="Mouth mask bottom" min={0} max={2} step={0.01} value={num(p.mouth_bottom_scale, 1)} onChange={(v) => set('mouth_bottom_scale', v)} defaultValue={FACESWAP_DEFAULTS.mouth_bottom_scale} />
+            <Slider label="Mouth mask left" min={0} max={2} step={0.01} value={num(p.mouth_left_scale, 1)} onChange={(v) => set('mouth_left_scale', v)} defaultValue={FACESWAP_DEFAULTS.mouth_left_scale} />
+            <Slider label="Mouth mask right" min={0} max={2} step={0.01} value={num(p.mouth_right_scale, 1)} onChange={(v) => set('mouth_right_scale', v)} defaultValue={FACESWAP_DEFAULTS.mouth_right_scale} />
+            <Slider label="Mouth mask edge blend" min={0} max={200} step={1} value={num(p.mouth_mask_blend, 10)} onChange={(v) => set('mouth_mask_blend', v)} defaultValue={FACESWAP_DEFAULTS.mouth_mask_blend} />
+          </Disclosure>
+        </InspectorGroup>
+
+        <InspectorGroup id="restoration" title="Restoration & Color" icon={Icon.wand} defaultOpen>
+          <Select label="Subsample upscale" value={p.subsample_upscale} onChange={(v) => set('subsample_upscale', v)} options={meta.upscale} />
+          <EnhancerPipelineStack
+            settings={p}
+            onChange={set}
+            meta={meta}
+            slots={{
+              restorer: (
+                <>
+                  <div role="group" aria-label="Restoration tier" className="space-y-1.5">
+                    <div className="text-xs font-medium text-white/70">Restoration tier</div>
+                    <div className="grid grid-cols-3 gap-1.5">
+                      {RESTORATION_TIERS.map((tier) => (
+                        <button
+                          key={tier.id}
+                          type="button"
+                          aria-pressed={restorationTierOf(p) === tier.id}
+                          onClick={() => setMany(tier.patch)}
+                          title={tier.hint}
+                          className={`rounded-lg border px-1.5 py-1.5 text-left transition-colors ${
+                            restorationTierOf(p) === tier.id
+                              ? 'border-[var(--accent)]/50 bg-[var(--accent)]/15 text-white'
+                              : 'border-white/10 bg-white/[0.04] text-white/70 hover:border-white/25 hover:text-white'
+                          }`}
+                        >
+                          <div className="text-mini font-semibold leading-tight">{tier.label}</div>
+                          <div className="text-mini leading-tight text-muted">{tier.note}</div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+            {p.selected_enhancer === 'Restore Ultra' && (
+              <>
+                <Toggle label="Restore Ultra: keep the swap's tone and shape" info="Takes lighting, skin tone and the face's large-scale shape from the SWAP and only the fine detail (pores, lash and lip edges) from the restorer, instead of the restorer's whole output. Measured on 72 real faces: identity to the source 0.573 -> 0.613 (better on 67/72), skin texture 1.58x -> 1.09x that of the real footage. Off = the restorer's full output, as before." checked={p.restore_ultra_frequency_blend !== false} onChange={(v) => set('restore_ultra_frequency_blend', v)} />
+                {p.restore_ultra_frequency_blend !== false && (
+                  <>
+                    <Slider label="Restore Ultra detail fidelity" info="How much of the restorer's fine detail goes on top of the swap. 0 = the swap's own detail, 1 = all of the restorer's. Measured: 0.5 keeps the most identity but reads softer than real footage; 1.0 is as textured as the plain restorer." min={0} max={1} step={0.05} value={num(p.restore_ultra_detail_weight, 0.75)} onChange={(v) => set('restore_ultra_detail_weight', v)} defaultValue={FACESWAP_DEFAULTS.restore_ultra_detail_weight} />
+                    <Toggle label="Restore only eyes, brows, nose and lips" info="Applies the restorer only to the facial features, feathered into the swap's own skin. Keeps the most identity (0.612) but the skin is the swap's, which is softer than real footage (0.84x)." checked={!!p.restore_ultra_inner_only} onChange={(v) => set('restore_ultra_inner_only', v)} />
+                  </>
+                )}
+              </>
             )}
-          </div>
-          <div className="text-xs text-[var(--text-muted)] mt-2">
-            Sets detection resolution, upscale, enhancer & swap steps. Other settings unchanged.
-            {userDefaults
-              ? ' “Reset” restores all Face Swap tab settings to the default you saved.'
-              : ' “Save as default” stores the current Face Swap tab settings so “Reset” restores to them.'}
-          </div>
-        </Section>
+            {p.selected_enhancer === 'UltraMax' && (
+              <>
+                <Toggle label="UltraMax: keep the swap's tone and shape" info="Takes lighting, skin tone and the face's large-scale shape from the SWAP and only the fine detail from the restorer, instead of the restorer's whole output. UltraMax's restorer re-draws the face's shading and shape on every frame, which showed as shimmer: measured on a 420-frame dance clip this removes about half of the frame-to-frame flicker. Turn it off for the old full-restorer look." checked={p.ultramax_swap_lowband !== false} onChange={(v) => set('ultramax_swap_lowband', v)} />
+                {p.ultramax_swap_lowband !== false && (
+                  <Slider label="UltraMax detail" info="How much of the restorer's fine detail goes on top of the swap. 0 = the swap's own detail, 1 = all of the restorer's. Measured flicker (lower is steadier): 0.5 = 1.4, 0.75 = 2.1 (default), 1.0 = 3.0, old full-restorer paste = 4.6; with no enhancer = 1.5. Higher is crisper and grainier, lower is smoother." min={0} max={1} step={0.05} value={num(p.ultramax_detail_weight, 0.75)} onChange={(v) => set('ultramax_detail_weight', v)} defaultValue={FACESWAP_DEFAULTS.ultramax_detail_weight} />
+                )}
+              </>
+            )}
+            {p.selected_enhancer === 'Adaptive' && (
+              <Select
+                label="Adaptive enhancer profile"
+                info="Selects one existing restorer per face/frame; it never chains restorers. FAST, BALANCED, REALISTIC, and MAX QUALITY change the candidate preference, while quality, blur, pose, illumination, occlusion, confidence, temporal stability, and prior output quality remain the gates. Extreme angles, severe occlusion, unstable tracking, and VERY DARK frames stay unenhanced. Manual enhancer selections remain available."
+                value={p.adaptive_enhancer_profile || 'BALANCED'}
+                onChange={(v) => set('adaptive_enhancer_profile', v)}
+                options={['FAST', 'BALANCED', 'REALISTIC', 'MAX QUALITY']}
+              />
+            )}
+            {/* startsWith, not ===: the fp16 tier is the same model at half
+                precision and takes the same fidelity input, so gating on an
+                exact name would have hidden the slider for it. */}
+            {p.selected_enhancer && p.selected_enhancer.toLowerCase().startsWith('codeformer') && (
+              <Slider
+                label="CodeFormer fidelity weight"
+                info="Balances restoration quality vs original identity. 0.1 = maximum sharpness (may shift face geometry), 0.9 = maximum similarity to source (but less restoration detail). Verified live against this export — many CodeFormer ONNX conversions bake the weight in as a constant and the slider silently does nothing; measured here, w=0 and w=1 differ by a mean of 0.20 in the model's -1..1 output range."
+                min={0.1}
+                max={0.9}
+                step={0.05}
+                value={num(p.codeformer_fidelity, 0.5)}
+                onChange={(v) => set('codeformer_fidelity', v)} defaultValue={FACESWAP_DEFAULTS.codeformer_fidelity}
+              />
+            )}
+            {(p.selected_enhancer === 'Tile Diffusion Synthesizer' || p.selected_enhancer === 'Tile Diffusion') && (
+              <div className="space-y-3 p-3 rounded-xl bg-purple-950/20 border border-purple-500/20 mt-2 mb-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-purple-300 flex items-center gap-1.5">
+                    <span>✨</span> Tile Diffusion Synthesizer (VFX / Master Quality)
+                  </span>
+                  <span className="text-micro px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-200 border border-purple-500/30 font-mono">
+                    VRAM &lt; 8 GB · 512² Tiled (64px margin)
+                  </span>
+                </div>
+                <Slider
+                  label="Diffusion detail injection strength"
+                  info="Constrains diffusion strictly to the high-frequency residual domain: keeps low-frequency color and global geometry fixed from the swapper, while synthesizing micro-textures (skin pores, hair follicles, lip crevices, sclera vessels)."
+                  min={0.0}
+                  max={1.0}
+                  step={0.05}
+                  value={num(p.tile_diffusion_strength, 0.65)}
+                  onChange={(v) => set('tile_diffusion_strength', v)} defaultValue={FACESWAP_DEFAULTS.tile_diffusion_strength}
+                />
+                <Slider
+                  label="Few-step diffusion steps"
+                  info="Number of reverse diffusion denoising trajectory steps (1–4). Step 1 = ultra-fast single-step turbo mode; steps 2–4 = balanced high-fidelity micro-texture generation."
+                  min={1}
+                  max={4}
+                  step={1}
+                  value={num(p.tile_diffusion_steps, 2)}
+                  onChange={(v) => set('tile_diffusion_steps', v)} defaultValue={FACESWAP_DEFAULTS.tile_diffusion_steps}
+                />
+                <div className="text-mini text-white/50 leading-relaxed bg-black/20 p-2 rounded border border-white/5">
+                  <strong className="text-white/70">Dynamic Tiling Engine:</strong> Automatically partitions 4K crops into 512×512 overlapping tiles with 64px Gaussian feathered margins for seamless boundary reconstruction and zero seam artifacts.
+                </div>
+              </div>
+            )}
+            {p.selected_enhancer && p.selected_enhancer !== 'None' && (
+              <>
+                <Toggle
+                  label="Align crop for the enhancer"
+                  info="Re-crops the face into the alignment the RESTORER was trained on before enhancing, then puts it back. CodeFormer, GFPGAN, RestoreFormer++ and GPEN all learned their priors from FFHQ-aligned 512 faces — but the crop they are handed is whatever the SWAPPER's template produced, because the enhancer reuses the swap crop. Measured against ffhq_512 at 512px: the inswapper family is 0.856 scale and 22.1px mean landmark error (the face arrives ~17% larger than the prior expects and the eyes sit 31px too high), ghost/simswap 0.828 / 16.3px, blendswap's source template 0.744 / 30.7px, hififace 0.875 / 13.2px. Only uniface and blendswap already match exactly, and for those this does nothing. It matters most for CodeFormer, whose codebook lookup is a discrete nearest neighbour into a learned dictionary — an off-distribution input retrieves the wrong entries. Costs two extra 512 warps per face (~2ms), and those are two extra resampling passes, so A/B it: better prior match against slightly softer resampling. OFF keeps every render bit-identical to before."
+                  checked={!!p.enhancer_align}
+                  onChange={(v) => set('enhancer_align', v)}
+                />
+                <Toggle
+                  label="Re-match colour after enhancing"
+                  info="Runs the colour/lighting match a second time, on the enhancer's output. The first pass runs on the SWAP, before the restorer — and the restorers regrade what they are given, because they were trained to produce a plausible face rather than to preserve the plate's exposure. So some of the tone match is spent by the time the crop is pasted back. This does not replace the first pass: that one also feeds the enhancer a better-exposed input, which is worth keeping. Uses whichever colour mode is selected above. Cheap (one more transfer on a crop already in memory), but how much it changes depends entirely on how far your restorer moves the grade, so judge it on your own footage."
+                  checked={!!p.color_match_after_enhance}
+                  onChange={(v) => set('color_match_after_enhance', v)}
+                />
+              </>
+            )}
+                </>
+              ),
+              texture: (
+                <>
+            <Slider label="Skin detail transfer" info="Adds the ORIGINAL footage's real high-frequency texture (pores, stubble, grain) onto the swapped face. The generator smooths skin and the enhancer fakes flickery pores; this uses genuine detail from the scene instead. 0 = off. Start ~0.3–0.5; too high reintroduces the target's skin identity." min={0} max={1} step={0.05} value={num(p.detail_transfer_strength, 0)} onChange={(v) => set('detail_transfer_strength', v)} defaultValue={FACESWAP_DEFAULTS.detail_transfer_strength} />
+            <Slider label="Sharpen / soften" info="Signed unsharp mask on the finished face. Positive sharpens; NEGATIVE softens, which is the denoise direction and useful when the enhancer has left crunchy over-detailed skin. 0 = off. Radius scales with crop size, so the effect looks the same at 256/512/1024. The cheapest control here at ~0.6 ms per face." min={-1} max={1} step={0.05} value={num(p.merger_sharpen, 0)} onChange={(v) => set('merger_sharpen', v)} defaultValue={FACESWAP_DEFAULTS.merger_sharpen} />
+            <Toggle label="Match sharpness to the footage" info="Scales Sharpen and the clarity lift by how detailed the footage is compared with the face (times the headroom below), never above 1. On soft, compressed or motion-blurred shots a fixed sharpen makes the face crisper than everything around it and amplifies the swap's frame-to-frame detail into shimmer. Measured on a soft 1500-frame clip: 30% less shimmer, face detail 2.9x to 2.1x the footage's. It only ever turns sharpening DOWN; footage clearly more detailed than the face leaves it at your setting." checked={p.merger_match_sharpness !== false} onChange={(v) => set('merger_match_sharpness', v)} />
+            {p.merger_match_sharpness !== false && (
+              <Slider label="Sharpness headroom" info="Multiplies the limit. At 1.0, sharpening is cut only when the footage is softer than the face; at 0.7 (default) it is also trimmed to 70% when they match, which measured steadiest without looking soft; at 1.5 the limit almost never applies. Lower = smoother, less shimmer." min={0.25} max={2} step={0.05} value={num(p.merger_sharpness_headroom, 0.7)} onChange={(v) => set('merger_sharpness_headroom', v)} defaultValue={FACESWAP_DEFAULTS.merger_sharpness_headroom} />
+            )}
+                  <Slider label="Clarity" info="LAB micro-clarity on luminance plus a soft-knee bound on chrominance: crispens iris rims, lid creases and lip margins without ringing, and holds skin tone back from the neon-orange drift a restorer can add. Works with any enhancer. 1.0 is the shipped value." min={0} max={1} step={0.05} value={num(p.merger_clarity, 1)} defaultValue={FACESWAP_DEFAULTS.merger_clarity} onChange={(v) => set('merger_clarity', v)} />
+            <Slider label="Degrade" info="Bicubic down-and-up on the finished face, to match a soft or heavily compressed plate. A crisp 512px swap dropped into 480p-grade or bitrate-starved footage is sharper than anything around it. 0 = off; at 1 the crop makes a round trip through 40% scale. Measured ~0.8 ms per face." min={0} max={1} step={0.05} value={num(p.merger_degrade, 0)} onChange={(v) => set('merger_degrade', v)} defaultValue={FACESWAP_DEFAULTS.merger_degrade} />
+                </>
+              ),
+              color: (
+                <>
+            <Slider label="Skin tone warmth" info="Fine LAB chroma correction applied only inside a conservative skin-region estimate. Negative values cool toward blue/green, positive values warm toward red/yellow. 0 is neutral." min={-100} max={100} step={1} value={num(p.skin_tone_warmth, 0)} onChange={(v) => set('skin_tone_warmth', v)} defaultValue={FACESWAP_DEFAULTS.skin_tone_warmth} />
+            <Slider label="Saturation match" info="Matches swapped skin saturation to the original target skin region using robust HSV statistics. 0 is off, 1 is a full match. Hair, eyes, lips, glasses, and background are excluded from the estimate." min={0} max={1} step={0.05} value={num(p.saturation_match, 0)} onChange={(v) => set('saturation_match', v)} defaultValue={FACESWAP_DEFAULTS.saturation_match} />
+                </>
+              ),
+            }}
+          />
+          <Disclosure id="inspector.lighting" title="Target lighting">
+            <Toggle label="Target-conditioned lighting" info="SOURCE supplies identity while TARGET controls exposure, white balance, scene color cast, spatial shadows, highlights and local contrast. It uses a low-frequency target field, never a wholesale texture paste. DARK/VERY DARK scenes reduce restoration and sharpening; VERY DARK avoids aggressive exposure correction. Temporal EMA prevents warm/neutral/blue flicker. Off preserves the legacy color-transfer path." checked={!!p.target_conditioned_appearance} onChange={(v) => set('target_conditioned_appearance', v)} />
+            {p.target_conditioned_appearance && <>
+              <Slider label="Appearance conditioning strength" min={0} max={1} step={0.05} value={num(p.target_conditioned_appearance_strength, 0.75)} onChange={(v) => set('target_conditioned_appearance_strength', v)} defaultValue={FACESWAP_DEFAULTS.target_conditioned_appearance_strength} />
+              <Slider label="Appearance temporal stability" min={0.05} max={1} step={0.05} value={num(p.target_conditioned_appearance_temporal_alpha, 0.30)} onChange={(v) => set('target_conditioned_appearance_temporal_alpha', v)} defaultValue={FACESWAP_DEFAULTS.target_conditioned_appearance_temporal_alpha} />
+            </>}
+            <Toggle
+              label="Light Harmonizer"
+              info="Neural environment re-lighting and normal harmonization: extracts 3D surface normals, diffuse albedo, and specular environment maps from the scene, re-shading the swapped face to match scene key/fill lighting, restoring corneal catchlights, and casting dynamic shadows."
+              checked={!!p.light_harmonizer}
+              onChange={(v) => set('light_harmonizer', v)}
+            />
+            {p.light_harmonizer && (
+              <>
+                <Slider
+                  label="Key light intensity"
+                  info="Intensity of the directional key light projected onto the swapped face normals. 1.0 matches scene lighting."
+                  min={0}
+                  max={2}
+                  step={0.05}
+                  value={num(p.light_harmonizer_key_intensity, 1.0)}
+                  onChange={(v) => set('light_harmonizer_key_intensity', v)} defaultValue={FACESWAP_DEFAULTS.light_harmonizer_key_intensity}
+                />
+                <Slider
+                  label="Ambient light bias"
+                  info="Offset to the ambient omnidirectional fill illumination. Positive values brighten shadows, negative values deepen contrast."
+                  min={-0.5}
+                  max={0.5}
+                  step={0.05}
+                  value={num(p.light_harmonizer_ambient_bias, 0.0)}
+                  onChange={(v) => set('light_harmonizer_ambient_bias', v)} defaultValue={FACESWAP_DEFAULTS.light_harmonizer_ambient_bias}
+                />
+                <Slider
+                  label="Eye specular catchlight restoration"
+                  info="Restores sharp, directional corneal catchlights and glints from the target eyes onto the swapped face, preserving lifelike gaze direction and ocular vitality."
+                  min={0}
+                  max={1}
+                  step={0.05}
+                  value={num(p.light_harmonizer_eye_specular, 0.8)}
+                  onChange={(v) => set('light_harmonizer_eye_specular', v)} defaultValue={FACESWAP_DEFAULTS.light_harmonizer_eye_specular}
+                />
+                <Slider
+                  label="Dynamic shadow casting"
+                  info="Casts dynamic directional soft shadows across the face when foreground occluders (microphones, hair strands, hats, hands) intercept the key light path."
+                  min={0}
+                  max={1}
+                  step={0.05}
+                  value={num(p.light_harmonizer_shadow_occlusion, 0.6)}
+                  onChange={(v) => set('light_harmonizer_shadow_occlusion', v)} defaultValue={FACESWAP_DEFAULTS.light_harmonizer_shadow_occlusion}
+                />
+              </>
+            )}
+          </Disclosure>
+          <Disclosure id="inspector.after-swap" title="Upscale & frame rate (after swap)">
+            <Toggle label="AI upscale (after swap)" info="Runs an AI upscaler as the final step of the swap pass — each frame is swapped & enhanced first, then upscaled, producing a single output file (no second pass). Full-frame upscaling is heavy: ×4 on video is slow and VRAM-hungry." checked={!!p.upscale_after_swap} onChange={(v) => set('upscale_after_swap', v)} />
+            {p.upscale_after_swap && (
+              <Select label="AI upscale model" value={p.upscale_model_after} onChange={(v) => set('upscale_model_after', v)} options={AI_UPSCALE_MODELS} />
+            )}
+            <Select label="Frame interpolation (after swap)" info="Raises the output frame rate with motion-interpolated in-between frames as the final pass (after any upscale). RIFE = AI motion interpolation (recommended, fast); minterpolate = classical ffmpeg motion estimation (no model, much slower). Duration is unchanged — frame count and fps are multiplied together, audio untouched." value={p.interp_after_swap || 'off'} onChange={(v) => set('interp_after_swap', v)}
+              options={[{ value: 'off', label: 'Off' }, { value: 'rife_2x', label: 'RIFE ×2 fps' }, { value: 'rife_4x', label: 'RIFE ×4 fps' }, { value: 'minterpolate_2x', label: 'ffmpeg minterpolate ×2' }]} />
+          </Disclosure>
+          <Disclosure id="inspector.merger-geometry" title="Face size & motion blur">
+            <Slider label="Face size" info="Grows or shrinks the swapped face about its own centre. Every identity swapper keeps the TARGET's head size and bone structure, so when the source person's face is visibly narrower or broader there is otherwise no lever for it — the swap comes out the right identity at the wrong size. 0 = off. This is free: it changes the paste matrix rather than adding a pass, so it costs 0 ms. Note that 'Restore original mouth' re-composites using the target's untouched geometry, so large values here will not register with it." min={-0.2} max={0.2} step={0.01} value={num(p.output_face_scale, 0)} onChange={(v) => set('output_face_scale', v)} defaultValue={FACESWAP_DEFAULTS.output_face_scale} />
+            <Slider label="Motion blur" info="Blurs the face along the direction the camera actually smeared it. On fast movement a pin-sharp face on a motion-blurred head is a loud tell. You set the amount; the DIRECTION is measured off the original crop rather than asked for — motion blur destroys detail along the axis of travel, so the plate's own gradient structure points the kernel. 0 = off. Measured ~7.5 ms per 512² face — the dearest of these five." min={0} max={1} step={0.05} value={num(p.merger_motion_blur, 0)} onChange={(v) => set('merger_motion_blur', v)} defaultValue={FACESWAP_DEFAULTS.merger_motion_blur} />
+          </Disclosure>
+        </InspectorGroup>
 
-        <Section title="Clip advisor">
+        <InspectorGroup id="temporal" title="Temporal" icon={Icon.film} badge={TEMPORAL_BADGE[temporalModeOf(p)]}>
+          <TemporalModeControl settings={p} onApply={setMany}>
+            <Toggle label="Temporal detection (anti-flicker)" info="Video (In-Memory method): one tracked detection pre-pass over the clip. Short detection misses (≤10 frames) are gap-filled by interpolating the face's position, so the swap can't blink out; with 'Stabilize face' also on, keypoints AND mask/mouth landmarks are smoothed per person. The swap pass then skips per-frame detection and stays multi-threaded. Includes identity locking when that toggle is on." checked={!!p.temporal_detection} onChange={(v) => set('temporal_detection', v)} />
+            <Toggle label="Stabilize face (video)" info="Temporal keypoint smoothing — reduces swap wobble. Runs at Max Threads (2-pass) unless Enhancer Flicker is on." checked={!!p.stabilize_face} onChange={(v) => set('stabilize_face', v)} />
+            {p.stabilize_face && (
+              <>
+                <Select label="Smoothing method" info="One Euro = adaptive (default). Kalman = removes more high-frequency jitter on a still head (about 80% against 51%) with no lag on steady motion; measured no better on footage where the head moves and talks. EMA = simpler fixed smoothing." value={p.stabilize_method || 'one_euro'} onChange={(v) => set('stabilize_method', v)} options={['one_euro', 'kalman', 'ema']} />
+                {(p.stabilize_method || 'one_euro') === 'one_euro' && (
+                  <>
+                    <Slider label="Smoothing (min cutoff)" info="lower = smoother, more lag" min={0.01} max={0.3} step={0.01} value={num(p.stabilize_min_cutoff, 0.05)} onChange={(v) => set('stabilize_min_cutoff', v)} defaultValue={FACESWAP_DEFAULTS.stabilize_min_cutoff} />
+                    <Slider label="Reactivity (beta)" info="higher = less lag on fast motion" min={0} max={0.2} step={0.01} value={num(p.stabilize_beta, 0.02)} onChange={(v) => set('stabilize_beta', v)} defaultValue={FACESWAP_DEFAULTS.stabilize_beta} />
+                  </>
+                )}
+              </>
+            )}
+            <Toggle label="Smooth face landmarks (boundary crawl)" info="Requires 'Stabilize face'. That filter smooths the 5 alignment keypoints only, leaving the 106-point landmarks raw — and those are what the paste mask's OUTLINE is drawn from, so the face sat still while its own edge crawled a pixel or two every frame along the jaw and hairline. This smooths both under one velocity-adaptive factor, so the crop and its outline cannot drift apart during motion: heavy smoothing when the head is nearly still, near-instant response on a fast turn." checked={p.stabilize_landmarks !== false} onChange={(v) => set('stabilize_landmarks', v)} />
+            <Toggle label="Reduce enhancer flicker" info="Temporally blends the enhanced face. Runs multi-threaded (work-stealing) when the launcher's ROOP_STAB_PARALLEL is on (the Pinokio default) — otherwise it forces single-thread. Either way it costs some extra compute (blending + per-block warm-up), so it's somewhat slower, not free." checked={!!p.stabilize_enhancer} onChange={(v) => set('stabilize_enhancer', v)} />
+            {p.stabilize_enhancer && (
+              <Slider label="Flicker reduction strength" info="higher = smoother" min={0} max={1} step={0.05} value={num(p.stabilize_enhancer_strength, 0.5)} onChange={(v) => set('stabilize_enhancer_strength', v)} defaultValue={FACESWAP_DEFAULTS.stabilize_enhancer_strength} />
+            )}
+            <Toggle label="Reduce mask flicker" info="Temporally blends the mask edge (the boundary between swapped and original pixels). XSeg/Face Parser/RealityUX all recompute this edge from scratch every frame with no memory of the last one, so on a close-up with hair moving across an eye it can jitter — most visible as the swapped face's own features flickering in and out right at the edge. Runs on the same multi-threaded chunked pipeline as the other stabilizers; unlike enhancer flicker reduction it does not back off during head motion, since the mask lives in the already motion-compensated aligned crop." checked={!!p.stabilize_mask} onChange={(v) => set('stabilize_mask', v)} />
+            {p.stabilize_mask && (
+              <Slider label="Mask flicker reduction strength" info="higher = smoother" min={0} max={1} step={0.05} value={num(p.stabilize_mask_strength, 0.5)} onChange={(v) => set('stabilize_mask_strength', v)} defaultValue={FACESWAP_DEFAULTS.stabilize_mask_strength} />
+            )}
+            {p.stabilize_mask && (
+              <Toggle label="Motion-compensated mask smoothing" info="Before blending last frame's mask into this one, moves it along the optical flow between the two face crops, so an edge that moves relative to the face (hair, a hand, an expression) is followed instead of leaving a fading trail. Measured on 10 clips against an independent face parser: less residual jitter than plain smoothing (0.040 vs 0.047) and closer to the parser boundary. Costs about 0.75 ms of CPU per face." checked={!!p.mask_flow_warp} onChange={(v) => set('mask_flow_warp', v)} />
+            )}
+            <Toggle label="Flow-warped texture carry (pore boiling)" info="Requires an enhancer. GPEN/CodeFormer/UltraMax invent pores and lashes from scratch on every frame, so nearly-still skin gets a different micro-texture 25 times a second. This warps the PREVIOUS frame's high-frequency layer along dense optical flow and carries a fraction of it forward, so only the invented noise is averaged — brightness, colour and expression still come wholly from the current frame and cannot ghost. Costs extra CPU per face." checked={!!p.stabilize_hf_texture} onChange={(v) => set('stabilize_hf_texture', v)} />
+            {p.stabilize_hf_texture && (
+              <Slider label="Texture carry amount" info="Fraction of the previous frame's detail retained. 0.15 gives the pore field about a 6-frame memory while leaving 85% of the current frame, so genuinely new texture — a turn revealing a new cheek — is not held back." min={0} max={0.9} step={0.05} value={num(p.stabilize_hf_texture_weight, 0.15)} onChange={(v) => set('stabilize_hf_texture_weight', v)} defaultValue={FACESWAP_DEFAULTS.stabilize_hf_texture_weight} />
+            )}
+          </TemporalModeControl>
+        </InspectorGroup>
+
+        <InspectorGroup id="face-details" title="Eyes, mouth & expression" icon={Icon.preview}>
+          {!p.lipsync_enabled && (
+            <Toggle label="Restore original mouth area" checked={!!p.restore_original_mouth} onChange={(v) => set('restore_original_mouth', v)} />
+          )}
+          <Toggle
+            label="Lip-sync & Viseme Refinement"
+            info="Regenerates the mouth region to match a driving audio track, after everything else — same slot as 'Restore original mouth area', so the two are mutually exclusive (this one wins when both would apply). 'Original audio' re-syncs the mouth to this clip's own soundtrack, repairing drift the swap itself introduces; 'Uploaded track' dubs against a separate audio file instead."
+            checked={!!p.lipsync_enabled}
+            onChange={(v) => set('lipsync_enabled', v)}
+          />
+          {p.lipsync_enabled && (
+            <>
+              <Select
+                label="Lip-sync Engine / Model"
+                value={p.lipsync_model || 'wav2lip'}
+                onChange={(v) => set('lipsync_model', v)}
+                options={[
+                  { value: 'wav2lip', label: 'Wav2Lip-HQ (Ultra-low Latency ONNX FP16)' },
+                  { value: 'musetalk', label: 'MuseTalk (Diffusion UNet)' }
+                ]}
+              />
+              <Select
+                label="Audio/Visual Co-articulation Mode"
+                value={p.lipsync_coarticulation_mode || 'keep_target_lips'}
+                onChange={(v) => set('lipsync_coarticulation_mode', v)}
+                options={[
+                  { value: 'keep_target_lips', label: 'Keep Target Lips (Matches original actor mouth motion)' },
+                  { value: 'redub_sync', label: 'Re-dub Sync (Alters mouth & jawline geometry to new voiceover)' }
+                ]}
+              />
+              <Toggle
+                label="Mouth Cavity & Teeth Restoration (BiSeNet)"
+                info="Reconstructs crisp enamel edges, interdental crevices, and natural tongue depth. Completely prevents clamped-lip and blurry teeth artifacts when swapping closed-mouth sources onto open-mouthed targets."
+                checked={p.oral_cavity_restore !== false}
+                onChange={(v) => set('oral_cavity_restore', v)}
+              />
+              {p.lipsync_coarticulation_mode === 'redub_sync' && (
+                <Slider
+                  label="Jaw Co-articulation Strength"
+                  info="Deforms mandibular contours and jawline synchronized with acoustic energy and phoneme aperture."
+                  min={0}
+                  max={1}
+                  step={0.05}
+                  value={num(p.jaw_coarticulation_strength, 0.6)}
+                  onChange={(v) => set('jaw_coarticulation_strength', v)} defaultValue={FACESWAP_DEFAULTS.jaw_coarticulation_strength}
+                />
+              )}
+              <Select
+                label="Lip-sync audio source"
+                value={p.lipsync_audio_source || 'original'}
+                onChange={(v) => set('lipsync_audio_source', v)}
+                options={[{ value: 'original', label: 'Original audio' }, { value: 'upload', label: 'Uploaded track' }]}
+              />
+              {p.lipsync_audio_source === 'upload' && (
+                <FileDrop
+                  accept="audio/*"
+                  label={p.lipsync_audio_path ? `Dub track: ${p.lipsync_audio_path.split(/[\\/]/).pop()}` : 'Add dub audio track'}
+                  onFiles={onAddLipsyncAudio}
+                  busy={uploadingLipsyncAudio}
+                  hint="drop an audio file here"
+                />
+              )}
+            </>
+          )}
+          <Toggle
+            label="Restore original eyes"
+            info="Brings the TARGET's own eyes back over the swap. Every identity swapper here works from a 112–128px aligned crop, so the eyes — the smallest high-frequency detail in a face, and the first thing a viewer looks at — come back soft, with the gaze nudged toward wherever the source person was looking. This keeps the plate's gaze direction, catchlights and eyelash detail while everything else stays swapped. Built from the two eye keypoints, not the 106-point landmarks the mouth restore uses, so it works on every detector engine. It fades out past 25° of yaw or pitch and switches off at a true profile, because there the far eye is edge-on and the near one sits over the nose bridge — pasting the plate there doubles the socket. Costs one ellipse and a blur, so it is effectively free. Note that it undoes the swapper's eye SHAPE too, which is part of the identity: if the two people's eyes differ a lot, back the amount off rather than running it at 1."
+            checked={!!p.restore_original_eyes}
+            onChange={(v) => set('restore_original_eyes', v)}
+          />
+          {p.restore_original_eyes && (
+            <>
+              <Slider label="Eyes blend amount" info="How much of the original eyes comes back. 1 = fully the plate's eyes, 0.5 = half-way, which keeps some of the swapped eye shape while recovering the sharpness." min={0} max={1} step={0.05} value={num(p.eyes_blend_amount, 1)} onChange={(v) => set('eyes_blend_amount', v)} defaultValue={FACESWAP_DEFAULTS.eyes_blend_amount} />
+              <Slider label="Eyes feather" info="Edge softness, as a percentage of the eye radius rather than a pixel count — a 15px feather is most of a distant face's eye and a hairline on a close-up, so a pixel value would need retuning every shot. Raise it if you can see where the restore stops." min={0} max={100} step={1} value={num(p.eyes_feather_blend, 25)} onChange={(v) => set('eyes_feather_blend', v)} defaultValue={FACESWAP_DEFAULTS.eyes_feather_blend} />
+              <Slider label="Eyes region size" info="Scales both ellipses together. The default covers the eye and lashes; raise it to take in the lid and socket, lower it to restore the iris alone." min={0.3} max={2} step={0.05} value={num(p.eyes_size_factor, 1)} onChange={(v) => set('eyes_size_factor', v)} defaultValue={FACESWAP_DEFAULTS.eyes_size_factor} />
+              <Slider label="Eyes width" info="Stretches the region horizontally only — useful for wide or almond eyes where the default ellipse clips the outer corner." min={0.3} max={2} step={0.05} value={num(p.eyes_radius_x, 1)} onChange={(v) => set('eyes_radius_x', v)} defaultValue={FACESWAP_DEFAULTS.eyes_radius_x} />
+              <Slider label="Eyes height" info="Stretches the region vertically only. Raise it to include the brow line and lower lid; keep it low to avoid pulling the target's eyebrows back in." min={0.3} max={2} step={0.05} value={num(p.eyes_radius_y, 1)} onChange={(v) => set('eyes_radius_y', v)} defaultValue={FACESWAP_DEFAULTS.eyes_radius_y} />
+            </>
+          )}
+          <Slider label="Expression transfer strength" info="Puts the TARGET's own expression (mouth, brows, jaw) back onto the swapped face using LivePortrait. Swappers pull faces toward the average expression of their training data, so laughing, crying and grimacing come out flattened — this reads the expression off the original frame and re-applies it. 0 = off (bit-exact no-op); 1 adopts the target's expression; above 1 exaggerates past it. Head pose cannot drift by construction. The eyes are NOT moved by this slider — see Eye-gaze follow and Blink sync. Cost, measured 2026-09-25 on hyperswap + Restore Ultra over 1014 frames: identity to the source 0.596 → 0.512 at 1.0, because LivePortrait re-renders the whole face; ~34 ms per face on TensorRT. Downloads ~537MB on first use; needs TensorRT (the CPU fallback is ~1.9s per face)." min={0} max={2} step={0.05} value={num(p.expression_restore_strength, 0)} onChange={(v) => set('expression_restore_strength', v)} defaultValue={FACESWAP_DEFAULTS.expression_restore_strength} />
+          {num(p.expression_restore_strength, 0) > 0 && (
+            <Select label="Expression region" info="Which part of the face the expression strength applies to: 'all' (mouth, brows, jaw), 'lips' only, or 'eyes' (nothing — the eyes have their own controls below)." value={p.expression_restore_region || 'all'} onChange={(v) => set('expression_restore_region', v)} options={['all', 'lips', 'eyes']} />
+          )}
+          <Toggle label="Blink sync" info="Makes the swapped face blink when the target does, with LivePortrait's own eyelid-retargeting network: the lid opening is measured on the target and on the swapped face (LivePortrait's 203-point landmarker) and the lids are driven to the target's. Measured 2026-09-25 over 1014 frames with 66 closed-eye frames: the plain swap kept the eyes OPEN on 67% of the target's blinks; blink sync closes them on 97%, cuts lid error 0.044 → 0.019, closes eyes that should be open on 0.1% of frames, and costs identity 0.596 → 0.590. The best eye setting measured — use it without Eye-gaze follow. Works at Expression strength 0. Downloads ~115MB on first use." checked={!!p.expression_blink_sync} onChange={(v) => set('expression_blink_sync', v)} />
+          <Slider label="Eye-gaze follow" info="Weight on LivePortrait's eye keypoints, which carry both where the eye looks and how open the lids are. 0 = the swap's own eyes. MEASURED 2026-09-25, 1014 frames: at 1.0 the eye-direction error got WORSE, not better (0.043 → 0.055, dark-iris position on wide-open eyes) — the swap already keeps the target's eye direction and re-rendering the eyes adds error. It does catch blinks (100%) but less precisely than Blink sync, and together with Blink sync the lids are worse than Blink sync alone (lid error 0.040 vs 0.019). Kept for footage where the swap's eye direction is visibly wrong; check the result." min={0} max={1} step={0.05} value={num(p.expression_gaze_follow, 0)} onChange={(v) => set('expression_gaze_follow', v)} defaultValue={FACESWAP_DEFAULTS.expression_gaze_follow} />
+        </InspectorGroup>
+
+        <InspectorGroup id="pose" title="Pose, angle & system" icon={Icon.tune}>
+          <Toggle label="3D source pose matching" info="Only affects image-source swappers (BlendSwap / UniFace) — feeds them a pose-matched source crop. Has NO effect on inswapper/ghost/hyperswap/simswap (their identity vector is pose-invariant, so warping the source would only degrade it)." checked={!!p.use_3d_recon} onChange={(v) => set('use_3d_recon', v)} />
+          <Toggle label="Multi-angle source bank" info="auto-pick best source per frame" checked={!!p.use_source_bank} onChange={(v) => set('use_source_bank', v)} />
+          <Toggle label="↔️ Frontalize angled faces" info="Un-rotates steep profile/side (lateral) faces before swapping, then restores the original angle. WARNING, measured 2026-09-25 (hyperswap, angle clips, 218 frames). Until that date it swapped the face upside down and lost the swap entirely; that is fixed, but a flat 2D warp cannot really turn a head, so it still costs identity at every angle: identity to the source 0.53 → 0.37 at 45-60°, 0.52 → 0.22 at 60-75°, 0.35 → 0.18 at 75-90°, with a visible seam on the far cheek. It does place the eyes, nose and mouth more accurately past 75°. Keep off unless you have checked the result on your footage." checked={!!p.use_frontalization} onChange={(v) => set('use_frontalization', v)} />
+          {p.use_frontalization && (
+            <Slider label="Frontalize above angle (°)" info="Frontalization kicks in when the face yaw/pitch exceeds this. Lower = frontalize more; higher = only the steepest." min={10} max={60} step={5} value={num(p.frontalization_threshold, 30)} onChange={(v) => set('frontalization_threshold', v)} defaultValue={FACESWAP_DEFAULTS.frontalization_threshold} />
+          )}
+          <Toggle label="Reshape jaw/chin to source" info="Identity swappers (inswapper/hyperswap/reswapper…) keep the TARGET's jaw & chin bone structure. This warps the swapped face's lower-silhouette toward your SOURCE person's jaw/chin shape after the swap (a smooth liquify — no re-swap, so swap quality is untouched). Best for moderate shape differences; very large changes can distort the neck/background near the jaw. Landmark jitter is smoothed when Temporal detection is on." checked={!!p.jaw_reshape} onChange={(v) => set('jaw_reshape', v)} />
+          {p.jaw_reshape && (
+            <Slider label="Jaw reshape strength" info="0 = off (target's jaw), 1 = full source jaw/chin shape. Start around 0.4–0.6 and back off if the chin looks distorted." min={0} max={1} step={0.05} value={num(p.jaw_reshape_strength, 0.5)} onChange={(v) => set('jaw_reshape_strength', v)} defaultValue={FACESWAP_DEFAULTS.jaw_reshape_strength} />
+          )}
+          <Toggle label="VR mode" checked={!!p.vr_mode} onChange={(v) => set('vr_mode', v)} />
+          <Toggle label="Auto rotate horizontal faces" checked={!!p.autorotate_faces} onChange={(v) => set('autorotate_faces', v)} />
+        </InspectorGroup>
+
+        <Section title="Clip advisor" collapsible defaultOpen={false}>
           <button type="button" disabled={advisorBusy || !targets.length || progress.processing} onClick={runAdvisor}
             title="Samples the selected target (face sizes, count, detection coverage, motion, lighting) and recommends settings tuned to it. Nothing changes until you apply."
             className="w-full py-2 rounded-lg text-note font-bold bg-[var(--accent)]/10 border border-[var(--accent)]/30 text-accent hover:bg-[var(--accent)]/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2">
@@ -3111,429 +3594,14 @@ export default function FaceSwap({
           )}
         </Section>
 
-        <div className="space-y-5">
-          <Section title="Swap settings">
-          {/* The 3-stage pipeline's four levers, shared with #/settings: swapper, restorer mode, pre-pass stride K,
-              Temporal Smart-Skip. The swapper select that sat here, and the auto-bypass toggle further down, are
-              part of it now. There is no run button in it: the run bar stays the one control that starts a render. */}
-          <div className="rounded-xl border border-white/[0.08] bg-white/[0.02] p-3 space-y-3" role="group" aria-labelledby="pipeline-controls-heading">
-            <div id="pipeline-controls-heading" className="text-nano font-bold uppercase tracking-[0.16em] text-white/60">3-stage pipeline</div>
-            <PipelineControls values={p} models={meta.swap_models} onChange={set} onChangeMany={setMany} />
-          </div>
-          <Select label="Face selection" value={p.face_detection_mode} onChange={(v) => set('face_detection_mode', v)} options={meta.face_detection_modes} />
-          <Select
-            label="Detector engine"
-            info="RetinaFace R50 is the safest pick: it was the only engine that held full recall as a face grew to fill the frame, where SCRFD (the stock default) and RetinaFace 10g both dropped to zero. Prefer it unless you need the speed. YOLOFace is often better on steep profiles and partially occluded faces. YuNet is the lightest. SCRFD is fast and accurate on frontal faces but the weakest on close-ups. All engines reuse the same identity/landmark models; alternates download a small model on first use."
-            value={p.detector_engine || 'scrfd'}
-            onChange={(v) => set('detector_engine', v)}
-            options={meta.detector_engines || ['scrfd', 'yoloface', 'retinaface', 'retinaface_r50', 'retinaface_r50_gpu', 'yunet']}
-          />
-          <Select
-            label="Face detection resolution"
-            info="Higher resolution improves detection of small/distant faces, but runs slower. Measured on an RTX 4070 with retinaface_r50 over 240 frames of angled footage, production module set: 640px = 14.27ms per frame, 512px = 10.95ms — 1.30x faster AND slightly MORE accurate (99.4% recall against 98.5%), with landmarks shifting only 0.24-0.72px. 512 is the better default on 720p/1080p sources; the extra 640px pixels are mostly the black padding a 16:9 frame leaves in a square canvas. 320 starts losing hard poses. NOTE: only retinaface honours this — yoloface and scrfd are fixed 640x640 exports and ignore it."
-            value={p.face_detector_size || '640'}
-            onChange={(v) => {
-              set('face_detector_size', v);
-              set('default_det_size', v === '512' || v === '640' || v === '960' || v === '1280');
-            }} 
-            options={['320', '512', '640', '960', '1280']} 
-          />
-          <Slider
-            label="Face detection threshold"
-            info="Lower values (e.g. 0.40) detect angled, profile, or hard-to-see faces. Higher values avoid false detections. Default 0.50"
-            min={0.10}
-            max={0.90}
-            step={0.05}
-            value={num(p.face_detector_threshold, 0.50)}
-            onChange={(v) => set('face_detector_threshold', v)}
-          />
-          <Slider
-            label="Overlap NMS threshold"
-            info="Lower values (e.g. 0.30) suppress close duplicates. Higher values (e.g. 0.60) allow detecting overlapping faces close to each other. Default 0.40"
-            min={0.10}
-            max={0.90}
-            step={0.05}
-            value={num(p.face_detector_nms, 0.40)}
-            onChange={(v) => set('face_detector_nms', v)}
-          />
-          <Toggle label="Refine alignment (68-pt)" info="Derives the alignment keypoints from the 68-point landmark model instead of the detector's raw 5 points — more stable alignment on angled faces, less residual swap wobble. Small per-face cost." checked={!!p.refine_landmarks} onChange={(v) => set('refine_landmarks', v)} />
-          <Slider label="🧩 Swap model's own face mask" info="Only hififace and hyperswap emit this — every other swapper ignores the setting, so it is safe to leave on. Those two nets output a face mask alongside the swapped image, saying where they actually synthesised a face, and the pipeline used to throw it away. That matters because the paste mask cannot know: it is an ellipse intersected with the convex hull of the 106 landmarks, whose forehead extension runs 60% above the eyebrows and therefore into the HAIR. Measured against hififace's own verdict, 15–27% of the paste mask is territory the model says is not face on a FRONTAL head, and 31% on a profile — and looking at where that excess lands, it is the band above the hairline frontally, and a wedge of hair plus background behind the head on a profile. That is very likely why eyes/nose/mouth read as distorted at angles: not the features themselves, but the invalid territory around them being composited. Not pose-gated, unlike the two angle controls above, because the net derives this from the actual image and its verdict is right at every angle. 100 = trust the model fully, 0 = off (previous behaviour), which is the default — this is new and has not been judged on real footage yet. It is the first thing to raise if a hififace or hyperswap paste reaches up into hair." min={0} max={100} step={5} value={num(p.swap_model_mask_strength, 0)} onChange={(v) => set('swap_model_mask_strength', v)} />
-          <Toggle label="Rescue small faces" info="When a frame has no detected face, retries on a 2x upscale to catch tiny/distant faces — without raising the global detection resolution for every frame." checked={!!p.rescue_small_faces} onChange={(v) => set('rescue_small_faces', v)} />
-          <Slider label="Swapping steps" info="more = more likeness" min={1} max={5} step={1} value={num(p.num_swap_steps, 1)} onChange={(v) => set('num_swap_steps', v)} />
-          {p.selected_enhancer === 'Restore Ultra' && (
-            <>
-              <Toggle label="Restore Ultra: keep the swap's tone and shape" info="Takes lighting, skin tone and the face's large-scale shape from the SWAP and only the fine detail (pores, lash and lip edges) from the restorer, instead of the restorer's whole output. Measured on 72 real faces: identity to the source 0.573 -> 0.613 (better on 67/72), skin texture 1.58x -> 1.09x that of the real footage. Off = the restorer's full output, as before." checked={p.restore_ultra_frequency_blend !== false} onChange={(v) => set('restore_ultra_frequency_blend', v)} />
-              {p.restore_ultra_frequency_blend !== false && (
-                <>
-                  <Slider label="Restore Ultra detail fidelity" info="How much of the restorer's fine detail goes on top of the swap. 0 = the swap's own detail, 1 = all of the restorer's. Measured: 0.5 keeps the most identity but reads softer than real footage; 1.0 is as textured as the plain restorer." min={0} max={1} step={0.05} value={num(p.restore_ultra_detail_weight, 0.75)} onChange={(v) => set('restore_ultra_detail_weight', v)} />
-                  <Toggle label="Restore only eyes, brows, nose and lips" info="Applies the restorer only to the facial features, feathered into the swap's own skin. Keeps the most identity (0.612) but the skin is the swap's, which is softer than real footage (0.84x)." checked={!!p.restore_ultra_inner_only} onChange={(v) => set('restore_ultra_inner_only', v)} />
-                </>
-              )}
-            </>
-          )}
-          {p.selected_enhancer === 'UltraMax' && (
-            <>
-              <Toggle label="UltraMax: keep the swap's tone and shape" info="Takes lighting, skin tone and the face's large-scale shape from the SWAP and only the fine detail from the restorer, instead of the restorer's whole output. UltraMax's restorer re-draws the face's shading and shape on every frame, which showed as shimmer: measured on a 420-frame dance clip this removes about half of the frame-to-frame flicker. Turn it off for the old full-restorer look." checked={p.ultramax_swap_lowband !== false} onChange={(v) => set('ultramax_swap_lowband', v)} />
-              {p.ultramax_swap_lowband !== false && (
-                <Slider label="UltraMax detail" info="How much of the restorer's fine detail goes on top of the swap. 0 = the swap's own detail, 1 = all of the restorer's. Measured flicker (lower is steadier): 0.5 = 1.4, 0.75 = 2.1 (default), 1.0 = 3.0, old full-restorer paste = 4.6; with no enhancer = 1.5. Higher is crisper and grainier, lower is smoother." min={0} max={1} step={0.05} value={num(p.ultramax_detail_weight, 0.75)} onChange={(v) => set('ultramax_detail_weight', v)} />
-              )}
-            </>
-          )}
-          {p.selected_enhancer === 'Adaptive' && (
-            <Select
-              label="Adaptive enhancer profile"
-              info="Selects one existing restorer per face/frame; it never chains restorers. FAST, BALANCED, REALISTIC, and MAX QUALITY change the candidate preference, while quality, blur, pose, illumination, occlusion, confidence, temporal stability, and prior output quality remain the gates. Extreme angles, severe occlusion, unstable tracking, and VERY DARK frames stay unenhanced. Manual enhancer selections remain available."
-              value={p.adaptive_enhancer_profile || 'BALANCED'}
-              onChange={(v) => set('adaptive_enhancer_profile', v)}
-              options={['FAST', 'BALANCED', 'REALISTIC', 'MAX QUALITY']}
-            />
-          )}
-          {/* Multi-Model Restoration Switcher */}
-          <div className="mb-3.5 p-3 rounded-xl bg-surface-card border border-white/10 shadow-sm">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-semibold uppercase tracking-wider text-white/70">
-                Restoration Switcher
-              </span>
-              <span className="text-mini text-muted">
-                Multi-Model Performance & Quality Selector
-              </span>
-            </div>
-            <div className="grid grid-cols-3 gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  set('restoration_mode', 'fast');
-                  set('selected_enhancer', 'GPEN');
-                }}
-                className={`flex flex-col p-2.5 rounded-lg border text-left transition-all ${
-                  (p.restoration_mode === 'fast' || p.selected_enhancer === 'GPEN' || p.selected_enhancer === 'GFPGAN')
-                    ? 'border-emerald-500/60 bg-emerald-500/15 text-white shadow-sm ring-1 ring-emerald-500/30'
-                    : 'border-white/10 bg-white/5 text-white/75 hover:bg-white/10'
-                }`}
-              >
-                <div className="flex flex-wrap items-center justify-between gap-x-1 gap-y-1 mb-1">
-                  <span className="text-xs font-bold text-emerald-400">⚡ Fast</span>
-                  <span className="text-note whitespace-nowrap px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-mono font-medium">25–60 FPS</span>
-                </div>
-                <div className="text-mini text-white/90 font-medium leading-tight">
-                  GPEN-512 / GFPGAN
-                </div>
-                <div className="text-note text-muted mt-0.5">
-                  Realtime scrubbing
-                </div>
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  set('restoration_mode', 'balanced');
-                  set('selected_enhancer', 'Codeformer');
-                  set('codeformer_fidelity', 0.6);
-                }}
-                className={`flex flex-col p-2.5 rounded-lg border text-left transition-all ${
-                  (p.restoration_mode === 'balanced' || (p.selected_enhancer && p.selected_enhancer.toLowerCase().startsWith('codeformer')))
-                    ? 'border-blue-500/60 bg-blue-500/15 text-white shadow-sm ring-1 ring-blue-500/30'
-                    : 'border-white/10 bg-white/5 text-white/75 hover:bg-white/10'
-                }`}
-              >
-                <div className="flex flex-wrap items-center justify-between gap-x-1 gap-y-1 mb-1">
-                  <span className="text-xs font-bold text-blue-400">⚖️ Balanced</span>
-                  <span className="text-note whitespace-nowrap px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 font-mono font-medium">w = 0.6</span>
-                </div>
-                <div className="text-mini text-white/90 font-medium leading-tight">
-                  CodeFormer
-                </div>
-                <div className="text-note text-muted mt-0.5">
-                  Optimal fidelity weight
-                </div>
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  set('restoration_mode', 'vfx');
-                  set('selected_enhancer', 'Tile Diffusion Synthesizer');
-                }}
-                className={`flex flex-col p-2.5 rounded-lg border text-left transition-all ${
-                  (p.restoration_mode === 'vfx' || p.selected_enhancer === 'Tile Diffusion Synthesizer' || p.selected_enhancer === 'Tile Diffusion')
-                    ? 'border-purple-500/60 bg-purple-500/15 text-white shadow-sm ring-1 ring-purple-500/30'
-                    : 'border-white/10 bg-white/5 text-white/75 hover:bg-white/10'
-                }`}
-              >
-                <div className="flex flex-wrap items-center justify-between gap-x-1 gap-y-1 mb-1">
-                  <span className="text-xs font-bold text-purple-400">🎬 VFX Master</span>
-                  <span className="text-note whitespace-nowrap px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300 font-mono font-medium">2–6 FPS</span>
-                </div>
-                <div className="text-mini text-white/90 font-medium leading-tight">
-                  Tile Diffusion
-                </div>
-                <div className="text-note text-muted mt-0.5">
-                  Offline rendering only
-                </div>
-              </button>
-            </div>
-          </div>
-          <Select label="Post-processing enhancer" info="The single most expensive stage in a render — about 36% of total time — so this choice costs more than any other on this panel. Measured on an RTX 4070, TensorRT FP16, one 512² face, isolated, engines warm: GPEN-256 3.0ms, GPEN-512 19.5ms, RestoreFormer++ 22.7ms, CodeFormer 23.9ms. GFPGAN v1.4 was listed here at 11.8ms; that figure was taken on a TensorRT FP16 engine that COLLAPSED — it returned a flat grey face (pixel std 16 against FP32's 65) and was fast because it was not doing the work. It now runs forced-FP32 at 41.7ms, the most expensive restorer here, not the cheapest. CodeFormer and RestoreFormer++ look tied but are not: interleaved A/B over 8 rounds put RestoreFormer++ ahead 8/8 by 5.4%, with under 1% spread within each. Because the swap phase runs the GPU at ~98%, those ratios carry straight through to wall clock against an enhance stage that is ~36% of a render: GPEN-512 is worth ~5% off the whole render and CodeFormer COSTS you ~2%. The old GFPGAN-is-half-the-cost-of-RestoreFormer++ claim is withdrawn — see above. That is a quality trade, not a free win — GFPGAN is the older restorer and tends to look smoother and less detailed, while RestoreFormer++ and CodeFormer hold more texture. Cost is measured; which one looks better on your footage is yours to judge. GPEN 1024/2048 are heavier still and not in this comparison. GPEN 256 goes the other way — a quarter of 512's pixels through the network, so it is the cheapest restorer here; it is meant for distant or small faces, comparison grids and preview scrubbing, where 512's extra detail is thrown away by the paste-back downscale anyway. Its output is resized back to the crop size, so it is a drop-in for any of the others." value={p.selected_enhancer} onChange={(v) => set('selected_enhancer', v)} options={meta.enhancers} />
-          <Slider label="Max face distance" info="How far from your captured target face a detected face may sit and still be swapped. This is a DISTANCE, not a similarity — 0 means identical and HIGHER IS MORE PERMISSIVE, so raising it makes look-alikes and bystanders start getting swapped. Scale is scipy cosine distance (0–2). Measured on a hard clip: the SAME person stays under ~0.66 even on bad frames, while DIFFERENT people sit at ~0.93–1.07. The 0.75 default sits mid-gap. Lower it toward 0.66 if the swap jumps to the wrong person mid-shot; raise it toward 0.85 if the swap blinks off on profiles and motion blur. Run with ROOP_DEBUG_MATCH=1 to print the real per-frame distances." min={0.01} max={1} step={0.01} value={num(p.max_face_distance, 0.75)} onChange={(v) => set('max_face_distance', v)} />
-          <Select label="Subsample upscale" value={p.subsample_upscale} onChange={(v) => set('subsample_upscale', v)} options={meta.upscale} />
-          <Toggle label="AI upscale (after swap)" info="Runs an AI upscaler as the final step of the swap pass — each frame is swapped & enhanced first, then upscaled, producing a single output file (no second pass). Full-frame upscaling is heavy: ×4 on video is slow and VRAM-hungry." checked={!!p.upscale_after_swap} onChange={(v) => set('upscale_after_swap', v)} />
-          {p.upscale_after_swap && (
-            <Select label="AI upscale model" value={p.upscale_model_after} onChange={(v) => set('upscale_model_after', v)} options={AI_UPSCALE_MODELS} />
-          )}
-          <Select label="Frame interpolation (after swap)" info="Raises the output frame rate with motion-interpolated in-between frames as the final pass (after any upscale). RIFE = AI motion interpolation (recommended, fast); minterpolate = classical ffmpeg motion estimation (no model, much slower). Duration is unchanged — frame count and fps are multiplied together, audio untouched." value={p.interp_after_swap || 'off'} onChange={(v) => set('interp_after_swap', v)}
-            options={[{ value: 'off', label: 'Off' }, { value: 'rife_2x', label: 'RIFE ×2 fps' }, { value: 'rife_4x', label: 'RIFE ×4 fps' }, { value: 'minterpolate_2x', label: 'ffmpeg minterpolate ×2' }]} />
-          <Select label="Color/lighting match" info="Matches the swapped face's skin tone & lighting to the original scene. RCT = per-channel (fast, default). LCT = corrects hue casts. MKL = fullest match. IDT = matches the full non-Gaussian colour distribution, which the other three cannot: under mixed lighting (warm key, cool fill) skin is bimodal and no single linear map lands it. IDT is the quality ceiling here and also much the dearest: measured ~65 ms per 512² face against ~11 ms for RCT and ~17 ms for LCT/MKL, because it makes several passes over every pixel instead of one matrix multiply. Reach for it on hard lighting or stills, not by default. None = off." value={p.color_transfer_mode || 'rct'} onChange={(v) => set('color_transfer_mode', v)} options={meta.color_transfer_modes || ['none', 'rct', 'lct', 'mkl', 'idt']} />
-          <Slider label="Skin tone warmth" info="Fine LAB chroma correction applied only inside a conservative skin-region estimate. Negative values cool toward blue/green, positive values warm toward red/yellow. 0 is neutral." min={-100} max={100} step={1} value={num(p.skin_tone_warmth, 0)} onChange={(v) => set('skin_tone_warmth', v)} />
-          <Slider label="Saturation match" info="Matches swapped skin saturation to the original target skin region using robust HSV statistics. 0 is off, 1 is a full match. Hair, eyes, lips, glasses, and background are excluded from the estimate." min={0} max={1} step={0.05} value={num(p.saturation_match, 0)} onChange={(v) => set('saturation_match', v)} />
-          <Toggle label="Target-conditioned lighting" info="SOURCE supplies identity while TARGET controls exposure, white balance, scene color cast, spatial shadows, highlights and local contrast. It uses a low-frequency target field, never a wholesale texture paste. DARK/VERY DARK scenes reduce restoration and sharpening; VERY DARK avoids aggressive exposure correction. Temporal EMA prevents warm/neutral/blue flicker. Off preserves the legacy color-transfer path." checked={!!p.target_conditioned_appearance} onChange={(v) => set('target_conditioned_appearance', v)} />
-          {p.target_conditioned_appearance && <>
-            <Slider label="Appearance conditioning strength" min={0} max={1} step={0.05} value={num(p.target_conditioned_appearance_strength, 0.75)} onChange={(v) => set('target_conditioned_appearance_strength', v)} />
-            <Slider label="Appearance temporal stability" min={0.05} max={1} step={0.05} value={num(p.target_conditioned_appearance_temporal_alpha, 0.30)} onChange={(v) => set('target_conditioned_appearance_temporal_alpha', v)} />
-          </>}
-          <Toggle
-            label="Light Harmonizer"
-            info="Neural environment re-lighting and normal harmonization: extracts 3D surface normals, diffuse albedo, and specular environment maps from the scene, re-shading the swapped face to match scene key/fill lighting, restoring corneal catchlights, and casting dynamic shadows."
-            checked={!!p.light_harmonizer}
-            onChange={(v) => set('light_harmonizer', v)}
-          />
-          {p.light_harmonizer && (
-            <>
-              <Slider
-                label="Key light intensity"
-                info="Intensity of the directional key light projected onto the swapped face normals. 1.0 matches scene lighting."
-                min={0}
-                max={2}
-                step={0.05}
-                value={num(p.light_harmonizer_key_intensity, 1.0)}
-                onChange={(v) => set('light_harmonizer_key_intensity', v)}
-              />
-              <Slider
-                label="Ambient light bias"
-                info="Offset to the ambient omnidirectional fill illumination. Positive values brighten shadows, negative values deepen contrast."
-                min={-0.5}
-                max={0.5}
-                step={0.05}
-                value={num(p.light_harmonizer_ambient_bias, 0.0)}
-                onChange={(v) => set('light_harmonizer_ambient_bias', v)}
-              />
-              <Slider
-                label="Eye specular catchlight restoration"
-                info="Restores sharp, directional corneal catchlights and glints from the target eyes onto the swapped face, preserving lifelike gaze direction and ocular vitality."
-                min={0}
-                max={1}
-                step={0.05}
-                value={num(p.light_harmonizer_eye_specular, 0.8)}
-                onChange={(v) => set('light_harmonizer_eye_specular', v)}
-              />
-              <Slider
-                label="Dynamic shadow casting"
-                info="Casts dynamic directional soft shadows across the face when foreground occluders (microphones, hair strands, hats, hands) intercept the key light path."
-                min={0}
-                max={1}
-                step={0.05}
-                value={num(p.light_harmonizer_shadow_occlusion, 0.6)}
-                onChange={(v) => set('light_harmonizer_shadow_occlusion', v)}
-              />
-            </>
-          )}
-          <Slider label="Original/Enhanced blend" min={0} max={1} step={0.01} value={num(p.blend_ratio, 0.8)} onChange={(v) => set('blend_ratio', v)} />
-          <Slider label="Skin detail transfer" info="Adds the ORIGINAL footage's real high-frequency texture (pores, stubble, grain) onto the swapped face. The generator smooths skin and the enhancer fakes flickery pores; this uses genuine detail from the scene instead. 0 = off. Start ~0.3–0.5; too high reintroduces the target's skin identity." min={0} max={1} step={0.05} value={num(p.detail_transfer_strength, 0)} onChange={(v) => set('detail_transfer_strength', v)} />
-          <Slider label="Expression transfer strength" info="Puts the TARGET's own expression (mouth, brows, jaw) back onto the swapped face using LivePortrait. Swappers pull faces toward the average expression of their training data, so laughing, crying and grimacing come out flattened — this reads the expression off the original frame and re-applies it. 0 = off (bit-exact no-op); 1 adopts the target's expression; above 1 exaggerates past it. Head pose cannot drift by construction. The eyes are NOT moved by this slider — see Eye-gaze follow and Blink sync. Cost, measured 2026-09-25 on hyperswap + Restore Ultra over 1014 frames: identity to the source 0.596 → 0.512 at 1.0, because LivePortrait re-renders the whole face; ~34 ms per face on TensorRT. Downloads ~537MB on first use; needs TensorRT (the CPU fallback is ~1.9s per face)." min={0} max={2} step={0.05} value={num(p.expression_restore_strength, 0)} onChange={(v) => set('expression_restore_strength', v)} />
-          {num(p.expression_restore_strength, 0) > 0 && (
-            <Select label="Expression region" info="Which part of the face the expression strength applies to: 'all' (mouth, brows, jaw), 'lips' only, or 'eyes' (nothing — the eyes have their own controls below)." value={p.expression_restore_region || 'all'} onChange={(v) => set('expression_restore_region', v)} options={['all', 'lips', 'eyes']} />
-          )}
-          <Toggle label="Blink sync" info="Makes the swapped face blink when the target does, with LivePortrait's own eyelid-retargeting network: the lid opening is measured on the target and on the swapped face (LivePortrait's 203-point landmarker) and the lids are driven to the target's. Measured 2026-09-25 over 1014 frames with 66 closed-eye frames: the plain swap kept the eyes OPEN on 67% of the target's blinks; blink sync closes them on 97%, cuts lid error 0.044 → 0.019, closes eyes that should be open on 0.1% of frames, and costs identity 0.596 → 0.590. The best eye setting measured — use it without Eye-gaze follow. Works at Expression strength 0. Downloads ~115MB on first use." checked={!!p.expression_blink_sync} onChange={(v) => set('expression_blink_sync', v)} />
-          <Slider label="Eye-gaze follow" info="Weight on LivePortrait's eye keypoints, which carry both where the eye looks and how open the lids are. 0 = the swap's own eyes. MEASURED 2026-09-25, 1014 frames: at 1.0 the eye-direction error got WORSE, not better (0.043 → 0.055, dark-iris position on wide-open eyes) — the swap already keeps the target's eye direction and re-rendering the eyes adds error. It does catch blinks (100%) but less precisely than Blink sync, and together with Blink sync the lids are worse than Blink sync alone (lid error 0.040 vs 0.019). Kept for footage where the swap's eye direction is visibly wrong; check the result." min={0} max={1} step={0.05} value={num(p.expression_gaze_follow, 0)} onChange={(v) => set('expression_gaze_follow', v)} />
-        </Section>
-
-        {/* DeepFaceLab's merger knobs. Grouped and collapsed by default: they
-            are all neutral at 0 and most renders never need them, but when a
-            swap looks "pasted" rather than wrong, the fix is usually in here
-            rather than in a bigger model. All five run on the CPU over a crop
-            already in memory, so they do not compete with the GPU stages. */}
-        <Section title="Merger post-processing" collapsible defaultOpen={false}>
-          <Slider label="Face size" info="Grows or shrinks the swapped face about its own centre. Every identity swapper keeps the TARGET's head size and bone structure, so when the source person's face is visibly narrower or broader there is otherwise no lever for it — the swap comes out the right identity at the wrong size. 0 = off. This is free: it changes the paste matrix rather than adding a pass, so it costs 0 ms. Note that 'Restore original mouth' re-composites using the target's untouched geometry, so large values here will not register with it." min={-0.2} max={0.2} step={0.01} value={num(p.output_face_scale, 0)} onChange={(v) => set('output_face_scale', v)} />
-          <Slider label="Grain match" info="Adds noise matched to the original footage's own measured noise floor. This fixes the most common 'it looks pasted' failure and it is the opposite of what people expect: the face is too CLEAN. The generator emits smooth skin, so on grainy, high-ISO or heavily compressed footage the swap reads as fake precisely because nothing else in the frame is that clean. The level is measured from the plate (median absolute high-pass, so pores and hair do not inflate it), not guessed. 0 = off; try 0.5–1.0 on noisy source. Measured ~6.8 ms per 512² face on CPU." min={0} max={1} step={0.05} value={num(p.merger_grain_match, 0)} onChange={(v) => set('merger_grain_match', v)} />
-          <Slider label="Sharpen / soften" info="Signed unsharp mask on the finished face. Positive sharpens; NEGATIVE softens, which is the denoise direction and useful when the enhancer has left crunchy over-detailed skin. 0 = off. Radius scales with crop size, so the effect looks the same at 256/512/1024. The cheapest control here at ~0.6 ms per face." min={-1} max={1} step={0.05} value={num(p.merger_sharpen, 0)} onChange={(v) => set('merger_sharpen', v)} />
-          <Toggle label="Match sharpness to the footage" info="Scales Sharpen and the clarity lift by how detailed the footage is compared with the face (times the headroom below), never above 1. On soft, compressed or motion-blurred shots a fixed sharpen makes the face crisper than everything around it and amplifies the swap's frame-to-frame detail into shimmer. Measured on a soft 1500-frame clip: 30% less shimmer, face detail 2.9x to 2.1x the footage's. It only ever turns sharpening DOWN; footage clearly more detailed than the face leaves it at your setting." checked={p.merger_match_sharpness !== false} onChange={(v) => set('merger_match_sharpness', v)} />
-          {p.merger_match_sharpness !== false && (
-            <Slider label="Sharpness headroom" info="Multiplies the limit. At 1.0, sharpening is cut only when the footage is softer than the face; at 0.7 (default) it is also trimmed to 70% when they match, which measured steadiest without looking soft; at 1.5 the limit almost never applies. Lower = smoother, less shimmer." min={0.25} max={2} step={0.05} value={num(p.merger_sharpness_headroom, 0.7)} onChange={(v) => set('merger_sharpness_headroom', v)} />
-          )}
-          <Slider label="Motion blur" info="Blurs the face along the direction the camera actually smeared it. On fast movement a pin-sharp face on a motion-blurred head is a loud tell. You set the amount; the DIRECTION is measured off the original crop rather than asked for — motion blur destroys detail along the axis of travel, so the plate's own gradient structure points the kernel. 0 = off. Measured ~7.5 ms per 512² face — the dearest of these five." min={0} max={1} step={0.05} value={num(p.merger_motion_blur, 0)} onChange={(v) => set('merger_motion_blur', v)} />
-          <Slider label="Histogram match" info="Matches the face's per-channel histogram to the original crop. A fourth colour family alongside the Color/lighting match above: RCT/LCT/MKL match statistical moments (mean, covariance), this matches the shape of the whole distribution — which is what catches a face that is subtly flatter or more contrasted than the plate rather than differently tinted. Works alongside the setting above, not instead of it. 0 = off. Measured ~5.0 ms per 512² face." min={0} max={1} step={0.05} value={num(p.merger_hist_match, 0)} onChange={(v) => set('merger_hist_match', v)} />
-          <Slider label="Degrade" info="Bicubic down-and-up on the finished face, to match a soft or heavily compressed plate. A crisp 512px swap dropped into 480p-grade or bitrate-starved footage is sharper than anything around it. 0 = off; at 1 the crop makes a round trip through 40% scale. Measured ~0.8 ms per face." min={0} max={1} step={0.05} value={num(p.merger_degrade, 0)} onChange={(v) => set('merger_degrade', v)} />
-        </Section>
-
-        <Section title="Masking parameters" collapsible defaultOpen={false}>
-          <Select label="Masking engine" info="Choose this one on quality, not speed — the models are all cheap and within a few ms of each other. Measured on an RTX 4070, TensorRT FP16, isolated: Face Parser 2.4ms, DFL XSeg 2.9ms, XSeg-3 4.7ms, Face Occluder 5.0ms, MobileSAM 5.8ms+decoder, FastSAM 5.8ms. The whole spread is ~3ms against a masking stage that costs ~42ms per face, because almost all of that stage is the CPU work around the model — the landmark hull, the mouth mask, the blurs and the non-frontal unwarp — not the model itself. So switching engines to go faster will not work; switch when one of them handles YOUR occlusions better. SAM2 (tracked) is not comparable here: it runs a whole-clip pre-pass instead of per-crop inference." value={p.mask_engine} onChange={(v) => set('mask_engine', v)} options={meta.mask_engines} />
-          <Select label="Second masking engine (occlusion)" info="A second, independent occlusion engine, run after the first. They compose as a union of &quot;not face&quot;, so this can only ever restore MORE of the original footage — it cannot eat into the swap, and turning it off is exactly the previous behaviour. Why you would: when something comes in front of a face and the swap gets painted over it anyway, the usual reason is not that masking is off, it is that the one engine you picked was not trained on that particular object. The engines miss different things — XSeg and XSeg-3 come from DeepFaceLab&apos;s hand/object data, Face Occluder from a different set again, Face Parser segments facial regions rather than occluders, and the SAM variants segment anything at all. Running two costs one more model call per face, which is 2–6ms against a masking stage of ~42ms. Start with DFL XSeg + Face Occluder. &quot;None&quot; = one engine, as before." value={p.mask_engine_2 || 'None'} onChange={(v) => set('mask_engine_2', v)} options={meta.mask_engines} />
-          {String(p.mask_engine || '').startsWith('Face Parser') && (
-            <ParserRegions
-              regions={p.parser_regions}
-              grow={p.parser_region_grow}
-              onChange={({ regions, grow }) => setMany({ parser_regions: regions, parser_region_grow: grow })}
-            />
-          )}
-          {p.mask_engine === 'Clip2Seg' && (
-            <TextInput label="Objects to mask & restore" value={p.mask_clip_text} onChange={(v) => set('mask_clip_text', v)} placeholder="cup,hands,hair" />
-          )}
-          {p.mask_engine === 'Segment Anything 2 (tracked)' && (
-            <Select label="SAM2 checkpoint (speed ↔ quality)" value={p.sam2_model_size || 'tiny'} onChange={(v) => set('sam2_model_size', v)} options={meta.sam2_model_sizes || ['tiny', 'small', 'base_plus', 'large']} />
-          )}
-          {p.mask_engine === 'RealityUX' && (
-            <div className="flex flex-col gap-2 p-3 my-2 rounded-xl bg-slate-900/60 border border-white/10">
-              <div className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
-                <span>🛡️</span> RealityUX Surgical Governance
-              </div>
-              <Toggle
-                label="Restore original mouth aperture (MAR gated)"
-                info="Dynamically restores inner mouth aperture, teeth, and tongue when MAR exceeds threshold during speech, smiles, or yawning."
-                checked={!!p.restore_original_mouth}
-                onChange={(v) => set('restore_original_mouth', v)}
-              />
-              {p.restore_original_mouth && (
-                <Slider
-                  label="Mouth open threshold (MAR)"
-                  info="Mouth Aspect Ratio trigger threshold (default 0.18)"
-                  min={0.05}
-                  max={0.5}
-                  step={0.01}
-                  value={num(p.mouth_open_threshold, 0.18)}
-                  onChange={(v) => set('mouth_open_threshold', v)}
-                />
-              )}
-              <Toggle
-                label="DFL XSeg foreign object occlusion"
-                info="Isolates hands, microphones, fingers, and foreign objects with morphological erosion and feathering."
-                checked={!!p.enable_xseg_occlusion}
-                onChange={(v) => set('enable_xseg_occlusion', v)}
-              />
-              {p.enable_xseg_occlusion && (
-                <Slider
-                  label="Occlusion erosion radius"
-                  info="Morphological erosion kernel size (1 - 5 px) to eliminate boundary halos."
-                  min={1}
-                  max={5}
-                  step={1}
-                  value={num(p.occlusion_erosion, 3)}
-                  onChange={(v) => set('occlusion_erosion', v)}
-                />
-              )}
-            </div>
-          )}
-          <Toggle label="Protect eyeglass frames" info="Keeps the rim, bridge and temple arms of a pair of glasses from being painted over by the swap, while leaving the lens directly over each eye swappable so the eyes stay the faceset&apos;s own rather than the original person&apos;s. Needs a parser-backed masking engine (RealityUX or Face Parser) — the classes come from BiSeNet. Measured over ~800k parsed glasses pixels on three subjects: ~71% of the frame was being painted over, and the RealityUX fusion was contributing exactly nothing there, because XSeg reads ~0.003 on glasses and the accessory gate scales with XSeg. Costs no extra model call — it reuses the parse already being run." checked={p.glasses_frame_protect !== false} onChange={(v) => set('glasses_frame_protect', v)} />
-          <Toggle label="Show mask overlay in preview" checked={!!p.show_mask_offsets} onChange={(v) => set('show_mask_offsets', v)} />
-          <Toggle
-            label="Link all padding sides"
-            info="When enabled, adjusting any face mask offset applies the same padding value to top, bottom, left, and right symmetrically."
-            checked={linkedPaddingSides}
-            onChange={setLinkedPaddingSides}
-          />
-          <Slider label="Offset face top" min={0} max={2} step={0.01} value={num(p.mask_top, 0)} onChange={(v) => updatePaddingSide('top', v)} />
-          <Slider label="Offset face bottom" min={0} max={2} step={0.01} value={num(p.mask_bottom, 0)} onChange={(v) => updatePaddingSide('bottom', v)} />
-          <Slider label="Offset face left" min={0} max={2} step={0.01} value={num(p.mask_left, 0)} onChange={(v) => updatePaddingSide('left', v)} />
-          <Slider label="Offset face right" min={0} max={2} step={0.01} value={num(p.mask_right, 0)} onChange={(v) => updatePaddingSide('right', v)} />
-          <Slider label="Face mask edge blend" min={0} max={200} step={1} value={num(p.face_mask_blend, 20)} onChange={(v) => set('face_mask_blend', v)} />
-          <Select label="Mask edge falloff" info="Shape of the ramp between swapped and original pixels. 'Gaussian' is the shipped behaviour and what 'Face mask edge blend' was calibrated against. 'Distance (soft)' derives the ramp from a distance transform, so it is the SAME WIDTH everywhere along the boundary — a Gaussian narrows wherever the mask is locally convex or thin, which is why one setting can look soft along the cheek and hard at the temple in the same frame." value={p.mask_edge_mode || 'gaussian'} onChange={(v) => set('mask_edge_mode', v)} options={[['gaussian', 'Gaussian (default)'], ['distance', 'Distance (soft, constant width)']]} />
-          <Slider label="Boundary illumination match" info="Grades only the LOW frequencies of the pasted face toward the original plate, and only at the rim — exactly zero where the mask is fully opaque, so the identity region is untouched and no target texture is copied in. Use when a seam is still visible after the edge is soft: that residual line is a brightness step, not a geometry problem. 0 disables it entirely." min={0} max={1} step={0.05} value={num(p.boundary_illumination_strength, 0)} onChange={(v) => set('boundary_illumination_strength', v)} />
-          <Slider label="Mask erode / dilate radius" info="Signed frame-pixel adjustment to the facial landmark convex hull before Gaussian feathering. Negative values erode the swap to keep hair, hands, microphones, and accessories out. Positive values dilate it to recover clipped skin. 0 preserves the detected contour." min={-32} max={32} step={1} value={num(p.mask_erode_dilate_radius, 0)} onChange={(v) => set('mask_erode_dilate_radius', v)} />
-        </Section>
-
-        <Section title="Mouth & Angle math" collapsible defaultOpen={false}>
-          <Slider label="Mouth mask top" min={0} max={2} step={0.01} value={num(p.mouth_top_scale, 1)} onChange={(v) => set('mouth_top_scale', v)} />
-          <Slider label="Mouth mask bottom" min={0} max={2} step={0.01} value={num(p.mouth_bottom_scale, 1)} onChange={(v) => set('mouth_bottom_scale', v)} />
-          <Slider label="Mouth mask left" min={0} max={2} step={0.01} value={num(p.mouth_left_scale, 1)} onChange={(v) => set('mouth_left_scale', v)} />
-          <Slider label="Mouth mask right" min={0} max={2} step={0.01} value={num(p.mouth_right_scale, 1)} onChange={(v) => set('mouth_right_scale', v)} />
-          <Slider label="Mouth mask edge blend" min={0} max={200} step={1} value={num(p.mouth_mask_blend, 10)} onChange={(v) => set('mouth_mask_blend', v)} />
-          <Toggle label="3D source pose matching" info="Only affects image-source swappers (BlendSwap / UniFace) — feeds them a pose-matched source crop. Has NO effect on inswapper/ghost/hyperswap/simswap (their identity vector is pose-invariant, so warping the source would only degrade it)." checked={!!p.use_3d_recon} onChange={(v) => set('use_3d_recon', v)} />
-          <Toggle label="Multi-angle source bank" info="auto-pick best source per frame" checked={!!p.use_source_bank} onChange={(v) => set('use_source_bank', v)} />
-          <Toggle label="↔️ Frontalize angled faces" info="Un-rotates steep profile/side (lateral) faces before swapping, then restores the original angle. WARNING, measured 2026-09-25 (hyperswap, angle clips, 218 frames). Until that date it swapped the face upside down and lost the swap entirely; that is fixed, but a flat 2D warp cannot really turn a head, so it still costs identity at every angle: identity to the source 0.53 → 0.37 at 45-60°, 0.52 → 0.22 at 60-75°, 0.35 → 0.18 at 75-90°, with a visible seam on the far cheek. It does place the eyes, nose and mouth more accurately past 75°. Keep off unless you have checked the result on your footage." checked={!!p.use_frontalization} onChange={(v) => set('use_frontalization', v)} />
-          {p.use_frontalization && (
-            <Slider label="Frontalize above angle (°)" info="Frontalization kicks in when the face yaw/pitch exceeds this. Lower = frontalize more; higher = only the steepest." min={10} max={60} step={5} value={num(p.frontalization_threshold, 30)} onChange={(v) => set('frontalization_threshold', v)} />
-          )}
-          <Toggle label="Reshape jaw/chin to source" info="Identity swappers (inswapper/hyperswap/reswapper…) keep the TARGET's jaw & chin bone structure. This warps the swapped face's lower-silhouette toward your SOURCE person's jaw/chin shape after the swap (a smooth liquify — no re-swap, so swap quality is untouched). Best for moderate shape differences; very large changes can distort the neck/background near the jaw. Landmark jitter is smoothed when Temporal detection is on." checked={!!p.jaw_reshape} onChange={(v) => set('jaw_reshape', v)} />
-          {p.jaw_reshape && (
-            <Slider label="Jaw reshape strength" info="0 = off (target's jaw), 1 = full source jaw/chin shape. Start around 0.4–0.6 and back off if the chin looks distorted." min={0} max={1} step={0.05} value={num(p.jaw_reshape_strength, 0.5)} onChange={(v) => set('jaw_reshape_strength', v)} />
-          )}
-        </Section>
-
-        <Section title="Video parameters">
-          <Select label="On no face detected" value={p.no_face_action} onChange={(v) => set('no_face_action', v)} options={meta.no_face_actions} />
-          <Toggle label="Temporal detection (anti-flicker)" info="Video (In-Memory method): one tracked detection pre-pass over the clip. Short detection misses (≤10 frames) are gap-filled by interpolating the face's position, so the swap can't blink out; with 'Stabilize face' also on, keypoints AND mask/mouth landmarks are smoothed per person. The swap pass then skips per-frame detection and stays multi-threaded. Includes identity locking when that toggle is on." checked={!!p.temporal_detection} onChange={(v) => set('temporal_detection', v)} />
-          <Toggle label="VR mode" checked={!!p.vr_mode} onChange={(v) => set('vr_mode', v)} />
-          <Toggle label="Reduce enhancer flicker" info="Temporally blends the enhanced face. Runs multi-threaded (work-stealing) when the launcher's ROOP_STAB_PARALLEL is on (the Pinokio default) — otherwise it forces single-thread. Either way it costs some extra compute (blending + per-block warm-up), so it's somewhat slower, not free." checked={!!p.stabilize_enhancer} onChange={(v) => set('stabilize_enhancer', v)} />
-          {p.stabilize_enhancer && (
-            <Slider label="Flicker reduction strength" info="higher = smoother" min={0} max={1} step={0.05} value={num(p.stabilize_enhancer_strength, 0.5)} onChange={(v) => set('stabilize_enhancer_strength', v)} />
-          )}
-          <Toggle label="XSeg edge refinement (guided filter)" info="DFL XSeg only. Re-fits XSeg's 256px mask boundary to the edges of the face crop with a guided filter. Measured on 10 clips against an independent face parser it did NOT move the boundary closer (placement unchanged, agreement worse on every clip); it only softens the edge. Off by default; kept for comparison. About 1 ms of CPU per face." checked={!!p.mask_guided_filter} onChange={(v) => set('mask_guided_filter', v)} />
-          <Toggle label="Reduce mask flicker" info="Temporally blends the mask edge (the boundary between swapped and original pixels). XSeg/Face Parser/RealityUX all recompute this edge from scratch every frame with no memory of the last one, so on a close-up with hair moving across an eye it can jitter — most visible as the swapped face's own features flickering in and out right at the edge. Runs on the same multi-threaded chunked pipeline as the other stabilizers; unlike enhancer flicker reduction it does not back off during head motion, since the mask lives in the already motion-compensated aligned crop." checked={!!p.stabilize_mask} onChange={(v) => set('stabilize_mask', v)} />
-          {p.stabilize_mask && (
-            <Slider label="Mask flicker reduction strength" info="higher = smoother" min={0} max={1} step={0.05} value={num(p.stabilize_mask_strength, 0.5)} onChange={(v) => set('stabilize_mask_strength', v)} />
-          )}
-          {p.stabilize_mask && (
-            <Toggle label="Motion-compensated mask smoothing" info="Before blending last frame's mask into this one, moves it along the optical flow between the two face crops, so an edge that moves relative to the face (hair, a hand, an expression) is followed instead of leaving a fading trail. Measured on 10 clips against an independent face parser: less residual jitter than plain smoothing (0.040 vs 0.047) and closer to the parser boundary. Costs about 0.75 ms of CPU per face." checked={!!p.mask_flow_warp} onChange={(v) => set('mask_flow_warp', v)} />
-          )}
-          <Toggle label="Smooth face landmarks (boundary crawl)" info="Requires 'Stabilize face'. That filter smooths the 5 alignment keypoints only, leaving the 106-point landmarks raw — and those are what the paste mask's OUTLINE is drawn from, so the face sat still while its own edge crawled a pixel or two every frame along the jaw and hairline. This smooths both under one velocity-adaptive factor, so the crop and its outline cannot drift apart during motion: heavy smoothing when the head is nearly still, near-instant response on a fast turn." checked={p.stabilize_landmarks !== false} onChange={(v) => set('stabilize_landmarks', v)} />
-          <Toggle label="Flow-warped texture carry (pore boiling)" info="Requires an enhancer. GPEN/CodeFormer/UltraMax invent pores and lashes from scratch on every frame, so nearly-still skin gets a different micro-texture 25 times a second. This warps the PREVIOUS frame's high-frequency layer along dense optical flow and carries a fraction of it forward, so only the invented noise is averaged — brightness, colour and expression still come wholly from the current frame and cannot ghost. Costs extra CPU per face." checked={!!p.stabilize_hf_texture} onChange={(v) => set('stabilize_hf_texture', v)} />
-          {p.stabilize_hf_texture && (
-            <Slider label="Texture carry amount" info="Fraction of the previous frame's detail retained. 0.15 gives the pore field about a 6-frame memory while leaving 85% of the current frame, so genuinely new texture — a turn revealing a new cheek — is not held back." min={0} max={0.9} step={0.05} value={num(p.stabilize_hf_texture_weight, 0.15)} onChange={(v) => set('stabilize_hf_texture_weight', v)} />
-          )}
-        </Section>
-
-        <div>
-          <Section title="System options" collapsible defaultOpen={false}>
-            <Toggle label="Auto rotate horizontal faces" checked={!!p.autorotate_faces} onChange={(v) => set('autorotate_faces', v)} />
-          </Section>
-        </div>
-
-        <div>
-          <Section title="Saved Profiles" collapsible defaultOpen={false}>
-            <div className="flex flex-wrap gap-2 items-end">
-              <div className="flex-1 min-w-[120px]">
-                <TextInput label="Save active settings as:" value={newProfileName} onChange={setNewProfileName} placeholder="My Preset Name" />
-              </div>
-              <Button size="sm" onClick={saveProfile}>Save</Button>
-            </div>
-            {profiles.length > 0 && (
-              <div className="space-y-2 mt-3">
-                <span className="text-xs font-semibold text-white/50">Apply custom preset:</span>
-                <div className="flex flex-wrap gap-2">
-                  {profiles.map((pr) => (
-                    <div key={pr.name} className="flex items-center gap-1 bg-white/5 hover:bg-white/10 border border-white/5 rounded-lg px-2.5 py-1 text-xs transition-colors">
-                      <button onClick={() => loadProfile(pr.name)} className="text-white hover:text-accent font-semibold">{pr.name}</button>
-                      <button onClick={() => deleteProfile(pr.name)} className="text-muted hover:text-red-400 ml-1.5" title="Delete preset" aria-label={`Delete preset ${pr.name}`}><Icon.close size={12} /></button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-            <div className="flex flex-wrap gap-2 mt-4 pt-3 border-t border-white/5">
-              <Button size="xs" variant="secondary" onClick={exportProfiles}>Export Presets</Button>
-              <label className="inline-flex items-center justify-center px-2.5 py-1.5 rounded-lg text-xs font-bold bg-white/5 border border-white/10 text-white/80 hover:bg-white/10 hover:text-white cursor-pointer transition-all active:scale-95 focus-within:outline focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-[var(--accent)]">
-                Import Presets
-                <input type="file" accept=".json" onChange={importProfiles} className="sr-only" />
-              </label>
-            </div>
-            <div className="flex flex-wrap gap-2 mt-2">
-              <Button size="xs" variant="secondary" onClick={exportRecipe} className="!text-accent">Share Recipe</Button>
-              <label className="inline-flex items-center justify-center px-2.5 py-1.5 rounded-lg text-xs font-bold bg-white/5 border border-white/10 text-white/80 hover:bg-white/10 hover:text-white cursor-pointer transition-all active:scale-95 focus-within:outline focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-[var(--accent)]">
-                Load Recipe
-                <input type="file" accept=".json" onChange={importRecipe} className="sr-only" />
-              </label>
-            </div>
-            <p className="text-micro text-muted mt-1.5 leading-relaxed">A recipe captures every setting <span className="text-muted">and</span> the person→source mapping, so anyone can reproduce this exact look.</p>
-          </Section>
-        </div>
-
-        <div>
-          <Section title="Live Telemetry & Diagnostics" collapsible defaultOpen={false}>
-            <SystemTelemetryHud />
-            <div className="mt-3"><HeadPoseHud /></div>
+        <Section title="Live Telemetry & Diagnostics" collapsible defaultOpen={false}>
+            <div><HeadPoseHud /></div>
             <div className="mt-3 flex justify-between items-center">
               <Button size="sm" variant="secondary" onClick={() => setShowShortcutHUD(true)}>Keyboard Shortcuts Info</Button>
             </div>
-          </Section>
-        </div>
+        </Section>
       </div>
-    </div>
+
 
       {/* COLUMN 2 & 3 WRAPPER: Preview canvas leads (hero) with the media
           asset managers as a right rail (2xl:flex-row-reverse), so the live
@@ -3579,164 +3647,6 @@ export default function FaceSwap({
               notify={notify}
               clearPreviewCache={clearPreviewCache}
             />
-          </Section>
-
-          <Section title="Enhancements">
-            <Toggle label="Lock face identities (video)" info="For 'Selected face' mode on video: tracks each person across the clip and keeps them on one source, so identities don't flip frame-to-frame when faces cross or turn. Adds a short tracking pre-pass; the swap stays multi-threaded." checked={!!p.track_identities} onChange={(v) => set('track_identities', v)} />
-            <Slider label="Identity confidence threshold" info="Minimum cosine similarity required to swap a face. If similarity drops below this (due to extreme profile angle or motion blur), the swap is cleanly skipped rather than mapping onto an incorrect person. 0.0 = disabled." min={0.0} max={1.0} step={0.05} value={num(p.identity_confidence_threshold, 0.0)} onChange={(v) => set('identity_confidence_threshold', v)} />
-            <Toggle label="Stabilize face (video)" info="Temporal keypoint smoothing — reduces swap wobble. Runs at Max Threads (2-pass) unless Enhancer Flicker is on." checked={!!p.stabilize_face} onChange={(v) => set('stabilize_face', v)} />
-            {p.stabilize_face && (
-              <>
-                <Select label="Smoothing method" info="One Euro = adaptive (default). Kalman = removes more high-frequency jitter on a still head (about 80% against 51%) with no lag on steady motion; measured no better on footage where the head moves and talks. EMA = simpler fixed smoothing." value={p.stabilize_method || 'one_euro'} onChange={(v) => set('stabilize_method', v)} options={['one_euro', 'kalman', 'ema']} />
-                {(p.stabilize_method || 'one_euro') === 'one_euro' && (
-                  <>
-                    <Slider label="Smoothing (min cutoff)" info="lower = smoother, more lag" min={0.01} max={0.3} step={0.01} value={num(p.stabilize_min_cutoff, 0.05)} onChange={(v) => set('stabilize_min_cutoff', v)} />
-                    <Slider label="Reactivity (beta)" info="higher = less lag on fast motion" min={0} max={0.2} step={0.01} value={num(p.stabilize_beta, 0.02)} onChange={(v) => set('stabilize_beta', v)} />
-                  </>
-                )}
-              </>
-            )}
-            {!p.lipsync_enabled && (
-              <Toggle label="Restore original mouth area" checked={!!p.restore_original_mouth} onChange={(v) => set('restore_original_mouth', v)} />
-            )}
-            <Toggle
-              label="Lip-sync & Viseme Refinement"
-              info="Regenerates the mouth region to match a driving audio track, after everything else — same slot as 'Restore original mouth area', so the two are mutually exclusive (this one wins when both would apply). 'Original audio' re-syncs the mouth to this clip's own soundtrack, repairing drift the swap itself introduces; 'Uploaded track' dubs against a separate audio file instead."
-              checked={!!p.lipsync_enabled}
-              onChange={(v) => set('lipsync_enabled', v)}
-            />
-            {p.lipsync_enabled && (
-              <>
-                <Select
-                  label="Lip-sync Engine / Model"
-                  value={p.lipsync_model || 'wav2lip'}
-                  onChange={(v) => set('lipsync_model', v)}
-                  options={[
-                    { value: 'wav2lip', label: 'Wav2Lip-HQ (Ultra-low Latency ONNX FP16)' },
-                    { value: 'musetalk', label: 'MuseTalk (Diffusion UNet)' }
-                  ]}
-                />
-                <Select
-                  label="Audio/Visual Co-articulation Mode"
-                  value={p.lipsync_coarticulation_mode || 'keep_target_lips'}
-                  onChange={(v) => set('lipsync_coarticulation_mode', v)}
-                  options={[
-                    { value: 'keep_target_lips', label: 'Keep Target Lips (Matches original actor mouth motion)' },
-                    { value: 'redub_sync', label: 'Re-dub Sync (Alters mouth & jawline geometry to new voiceover)' }
-                  ]}
-                />
-                <Toggle
-                  label="Mouth Cavity & Teeth Restoration (BiSeNet)"
-                  info="Reconstructs crisp enamel edges, interdental crevices, and natural tongue depth. Completely prevents clamped-lip and blurry teeth artifacts when swapping closed-mouth sources onto open-mouthed targets."
-                  checked={p.oral_cavity_restore !== false}
-                  onChange={(v) => set('oral_cavity_restore', v)}
-                />
-                {p.lipsync_coarticulation_mode === 'redub_sync' && (
-                  <Slider
-                    label="Jaw Co-articulation Strength"
-                    info="Deforms mandibular contours and jawline synchronized with acoustic energy and phoneme aperture."
-                    min={0}
-                    max={1}
-                    step={0.05}
-                    value={num(p.jaw_coarticulation_strength, 0.6)}
-                    onChange={(v) => set('jaw_coarticulation_strength', v)}
-                  />
-                )}
-                <Select
-                  label="Lip-sync audio source"
-                  value={p.lipsync_audio_source || 'original'}
-                  onChange={(v) => set('lipsync_audio_source', v)}
-                  options={[{ value: 'original', label: 'Original audio' }, { value: 'upload', label: 'Uploaded track' }]}
-                />
-                {p.lipsync_audio_source === 'upload' && (
-                  <FileDrop
-                    accept="audio/*"
-                    label={p.lipsync_audio_path ? `Dub track: ${p.lipsync_audio_path.split(/[\\/]/).pop()}` : 'Add dub audio track'}
-                    onFiles={onAddLipsyncAudio}
-                    busy={uploadingLipsyncAudio}
-                    hint="drop an audio file here"
-                  />
-                )}
-              </>
-            )}
-            <Toggle
-              label="Restore original eyes"
-              info="Brings the TARGET's own eyes back over the swap. Every identity swapper here works from a 112–128px aligned crop, so the eyes — the smallest high-frequency detail in a face, and the first thing a viewer looks at — come back soft, with the gaze nudged toward wherever the source person was looking. This keeps the plate's gaze direction, catchlights and eyelash detail while everything else stays swapped. Built from the two eye keypoints, not the 106-point landmarks the mouth restore uses, so it works on every detector engine. It fades out past 25° of yaw or pitch and switches off at a true profile, because there the far eye is edge-on and the near one sits over the nose bridge — pasting the plate there doubles the socket. Costs one ellipse and a blur, so it is effectively free. Note that it undoes the swapper's eye SHAPE too, which is part of the identity: if the two people's eyes differ a lot, back the amount off rather than running it at 1."
-              checked={!!p.restore_original_eyes}
-              onChange={(v) => set('restore_original_eyes', v)}
-            />
-            {p.restore_original_eyes && (
-              <>
-                <Slider label="Eyes blend amount" info="How much of the original eyes comes back. 1 = fully the plate's eyes, 0.5 = half-way, which keeps some of the swapped eye shape while recovering the sharpness." min={0} max={1} step={0.05} value={num(p.eyes_blend_amount, 1)} onChange={(v) => set('eyes_blend_amount', v)} />
-                <Slider label="Eyes feather" info="Edge softness, as a percentage of the eye radius rather than a pixel count — a 15px feather is most of a distant face's eye and a hairline on a close-up, so a pixel value would need retuning every shot. Raise it if you can see where the restore stops." min={0} max={100} step={1} value={num(p.eyes_feather_blend, 25)} onChange={(v) => set('eyes_feather_blend', v)} />
-                <Slider label="Eyes region size" info="Scales both ellipses together. The default covers the eye and lashes; raise it to take in the lid and socket, lower it to restore the iris alone." min={0.3} max={2} step={0.05} value={num(p.eyes_size_factor, 1)} onChange={(v) => set('eyes_size_factor', v)} />
-                <Slider label="Eyes width" info="Stretches the region horizontally only — useful for wide or almond eyes where the default ellipse clips the outer corner." min={0.3} max={2} step={0.05} value={num(p.eyes_radius_x, 1)} onChange={(v) => set('eyes_radius_x', v)} />
-                <Slider label="Eyes height" info="Stretches the region vertically only. Raise it to include the brow line and lower lid; keep it low to avoid pulling the target's eyebrows back in." min={0.3} max={2} step={0.05} value={num(p.eyes_radius_y, 1)} onChange={(v) => set('eyes_radius_y', v)} />
-              </>
-            )}
-            {/* startsWith, not ===: the fp16 tier is the same model at half
-                precision and takes the same fidelity input, so gating on an
-                exact name would have hidden the slider for it. */}
-            {p.selected_enhancer && p.selected_enhancer.toLowerCase().startsWith('codeformer') && (
-              <Slider
-                label="CodeFormer fidelity weight"
-                info="Balances restoration quality vs original identity. 0.1 = maximum sharpness (may shift face geometry), 0.9 = maximum similarity to source (but less restoration detail). Verified live against this export — many CodeFormer ONNX conversions bake the weight in as a constant and the slider silently does nothing; measured here, w=0 and w=1 differ by a mean of 0.20 in the model's -1..1 output range."
-                min={0.1}
-                max={0.9}
-                step={0.05}
-                value={num(p.codeformer_fidelity, 0.5)}
-                onChange={(v) => set('codeformer_fidelity', v)}
-              />
-            )}
-            {(p.selected_enhancer === 'Tile Diffusion Synthesizer' || p.selected_enhancer === 'Tile Diffusion') && (
-              <div className="space-y-3 p-3 rounded-xl bg-purple-950/20 border border-purple-500/20 mt-2 mb-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold text-purple-300 flex items-center gap-1.5">
-                    <span>✨</span> Tile Diffusion Synthesizer (VFX / Master Quality)
-                  </span>
-                  <span className="text-micro px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-200 border border-purple-500/30 font-mono">
-                    VRAM &lt; 8 GB · 512² Tiled (64px margin)
-                  </span>
-                </div>
-                <Slider
-                  label="Diffusion detail injection strength"
-                  info="Constrains diffusion strictly to the high-frequency residual domain: keeps low-frequency color and global geometry fixed from the swapper, while synthesizing micro-textures (skin pores, hair follicles, lip crevices, sclera vessels)."
-                  min={0.0}
-                  max={1.0}
-                  step={0.05}
-                  value={num(p.tile_diffusion_strength, 0.65)}
-                  onChange={(v) => set('tile_diffusion_strength', v)}
-                />
-                <Slider
-                  label="Few-step diffusion steps"
-                  info="Number of reverse diffusion denoising trajectory steps (1–4). Step 1 = ultra-fast single-step turbo mode; steps 2–4 = balanced high-fidelity micro-texture generation."
-                  min={1}
-                  max={4}
-                  step={1}
-                  value={num(p.tile_diffusion_steps, 2)}
-                  onChange={(v) => set('tile_diffusion_steps', v)}
-                />
-                <div className="text-mini text-white/50 leading-relaxed bg-black/20 p-2 rounded border border-white/5">
-                  <strong className="text-white/70">Dynamic Tiling Engine:</strong> Automatically partitions 4K crops into 512×512 overlapping tiles with 64px Gaussian feathered margins for seamless boundary reconstruction and zero seam artifacts.
-                </div>
-              </div>
-            )}
-            {p.selected_enhancer && p.selected_enhancer !== 'None' && (
-              <>
-                <Toggle
-                  label="Align crop for the enhancer"
-                  info="Re-crops the face into the alignment the RESTORER was trained on before enhancing, then puts it back. CodeFormer, GFPGAN, RestoreFormer++ and GPEN all learned their priors from FFHQ-aligned 512 faces — but the crop they are handed is whatever the SWAPPER's template produced, because the enhancer reuses the swap crop. Measured against ffhq_512 at 512px: the inswapper family is 0.856 scale and 22.1px mean landmark error (the face arrives ~17% larger than the prior expects and the eyes sit 31px too high), ghost/simswap 0.828 / 16.3px, blendswap's source template 0.744 / 30.7px, hififace 0.875 / 13.2px. Only uniface and blendswap already match exactly, and for those this does nothing. It matters most for CodeFormer, whose codebook lookup is a discrete nearest neighbour into a learned dictionary — an off-distribution input retrieves the wrong entries. Costs two extra 512 warps per face (~2ms), and those are two extra resampling passes, so A/B it: better prior match against slightly softer resampling. OFF keeps every render bit-identical to before."
-                  checked={!!p.enhancer_align}
-                  onChange={(v) => set('enhancer_align', v)}
-                />
-                <Toggle
-                  label="Re-match colour after enhancing"
-                  info="Runs the colour/lighting match a second time, on the enhancer's output. The first pass runs on the SWAP, before the restorer — and the restorers regrade what they are given, because they were trained to produce a plausible face rather than to preserve the plate's exposure. So some of the tone match is spent by the time the crop is pasted back. This does not replace the first pass: that one also feeds the enhancer a better-exposed input, which is worth keeping. Uses whichever colour mode is selected above. Cheap (one more transfer on a crop already in memory), but how much it changes depends entirely on how far your restorer moves the grade, so judge it on your own footage."
-                  checked={!!p.color_match_after_enhance}
-                  onChange={(v) => set('color_match_after_enhance', v)}
-                />
-              </>
-            )}
           </Section>
 
           <Section title="Target file(s)">

@@ -1116,8 +1116,29 @@ async function startServer() {
     res.json({ ok: true, active_profile: activeHardwareProfile });
   });
 
+  // The REAL shape (app/routes_diagnostics.py get_telemetry): a flat object, not the runtime `sections` block this
+  // route used to return. `gpu_util` / `gpu_temp` / `gpu_power` only exist when nvidia-smi answers. The numbers
+  // drift on a slow sine so a sparkline has something to draw.
   app.get('/api/system/telemetry', (req, res) => {
-    res.json(getHardwareTelemetry());
+    const isDesktop = activeHardwareProfile === 'desktop';
+    const t = Date.now() / 1000;
+    const wave = (period: number, lo: number, hi: number) => lo + (hi - lo) * (0.5 + 0.5 * Math.sin(t / period));
+    const vramTotal = isDesktop ? 12 : 6;
+    const ramTotal = isDesktop ? 31.7 : 15.8;
+    res.json({
+      gpu: isDesktop ? 'NVIDIA GeForce RTX 4070' : 'NVIDIA GeForce RTX 3060 Laptop GPU',
+      vram_total: vramTotal,
+      vram_used: Number((vramTotal * wave(23, 0.42, 0.61)).toFixed(2)),
+      gpu_util: Number(wave(7, 8, 46).toFixed(1)),
+      gpu_temp: Number(wave(41, 49, 58).toFixed(1)),
+      gpu_power: Number(wave(13, 38, 96).toFixed(1)),
+      cpu_percent: Number(wave(5, 6, 31).toFixed(1)),
+      ram_total: ramTotal,
+      ram_used: Number((ramTotal * wave(61, 0.44, 0.52)).toFixed(2)),
+      ram_available: Number((ramTotal * 0.5).toFixed(2)),
+      process_rss: 2.31,
+      threads: isDesktop ? 42 : 27,
+    });
   });
 
   // Head-pose HUD (roop/trajectory_cache.py): one head that turns deterministically with the frame number, and a
@@ -1156,12 +1177,46 @@ async function startServer() {
   app.post('/api/faceset/library/rebuild_thumbs', (req, res) => res.json({ ok: true }));
   app.post('/api/faceset/library/open', (req, res) => res.json({ ok: true }));
 
-  app.post('/api/facemgr/add', upload.array('files'), (req, res) => res.json({ ok: true, added: 1 }));
-  app.post('/api/facemgr/build', (req, res) => res.json({ ok: true, built: true }));
-  app.post('/api/facemgr/clear', (req, res) => res.json({ ok: true }));
-  app.post('/api/facemgr/cut', (req, res) => res.json({ ok: true }));
-  app.post('/api/facemgr/prune', (req, res) => res.json({ ok: true }));
-  app.post('/api/facemgr/remove', (req, res) => res.json({ ok: true }));
+  // Face Manager workspace, in the REAL response shape (app/routes: add / cut / build return
+  // {faces, scores, meta} and `add` of a video adds {video, frames}); it used to answer a bare {ok: true}, which
+  // is why nothing client-side could be tested against it.
+  const facemgr = { faces: [] as string[], scores: [] as number[], meta: [] as any[], video: null as string | null };
+  const facemgrPayload = (extra: Record<string, unknown> = {}) => ({
+    faces: facemgr.faces, scores: facemgr.scores, meta: facemgr.meta, ...extra,
+  });
+  const facemgrAddFace = () => {
+    facemgr.faces.push(createSampleFaceSvg('Face ' + (facemgr.faces.length + 1), 'faceset', '#2a3042', '#1b1d26', facemgr.faces.length + 1));
+    facemgr.scores.push(0.72);
+    facemgr.meta.push({});
+  };
+
+  app.post('/api/facemgr/add', upload.array('files'), (req, res) => {
+    const files = (req.files as any[]) || [];
+    const video = files.find((f) => /^video\//.test(f.mimetype || '') || /\.(mp4|mov|mkv|webm|avi)$/i.test(f.originalname || ''));
+    if (video) {
+      facemgr.video = video.originalname;
+      return res.json(facemgrPayload({ video: video.originalname, frames: 240 }));
+    }
+    files.forEach(() => facemgrAddFace());
+    return res.json(facemgrPayload());
+  });
+  app.get('/api/facemgr/frame', (req, res) => {
+    const n = Number(req.query.frame) || 1;
+    res.setHeader('Content-Type', 'image/svg+xml');
+    res.send(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360" width="640" height="360"><rect width="640" height="360" fill="#1b1d26"/><text x="320" y="190" fill="#8b90a3" font-size="28" text-anchor="middle">frame ${n}</text></svg>`);
+  });
+  app.post('/api/facemgr/cut', (req, res) => { facemgrAddFace(); res.json(facemgrPayload()); });
+  app.post('/api/facemgr/build', (req, res) => res.json({ ok: true, name: 'faceset.fsz', path: 'output/faceset.fsz' }));
+  app.post('/api/facemgr/clear', (req, res) => {
+    facemgr.faces = []; facemgr.scores = []; facemgr.meta = []; facemgr.video = null;
+    res.json(facemgrPayload());
+  });
+  app.post('/api/facemgr/prune', (req, res) => res.json(facemgrPayload({ removed: 0 })));
+  app.post('/api/facemgr/remove', (req, res) => {
+    const i = Number(req.body?.index);
+    if (i >= 0 && i < facemgr.faces.length) { facemgr.faces.splice(i, 1); facemgr.scores.splice(i, 1); facemgr.meta.splice(i, 1); }
+    res.json(facemgrPayload());
+  });
 
   // ── Extras & Quality ────────────────────────────────────────────────
   app.get('/api/extras/frame_ops', (req, res) => {

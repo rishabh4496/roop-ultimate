@@ -29,6 +29,7 @@ import {
   Pencil, Film, PanelLeft, PanelRight, PanelBottom, LayoutGrid, FolderOpen as Folder,
   Eye, ExternalLink, ChevronRight, Ellipsis, Camera,
   House, RotateCcw, Sun, Moon, Monitor,
+  Link2, Link2Off, Save, SlidersHorizontal, HardDrive, MemoryStick, Terminal, ScanFace, ChevronDown,
 } from 'lucide-react';
 
 // Small sizes need a heavier stroke to stay legible; large ones need less or
@@ -141,6 +142,17 @@ export const Icon = {
   panelRight: make(PanelRight, 'panelRight'),
   panelBottom: make(PanelBottom, 'panelBottom'),
   layout: make(LayoutGrid, 'layout'),
+
+  // Studio inspector controls.
+  link: make(Link2, 'link'),
+  unlink: make(Link2Off, 'unlink'),
+  save: make(Save, 'save'),
+  tune: make(SlidersHorizontal, 'tune'),
+  drive: make(HardDrive, 'drive'),
+  memory: make(MemoryStick, 'memory'),
+  terminal: make(Terminal, 'terminal'),
+  face: make(ScanFace, 'face'),
+  down: make(ChevronDown, 'down'),
 };
 
 // oxlint's react(only-export-components) flags this file, as it already flags

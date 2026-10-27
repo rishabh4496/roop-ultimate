@@ -8,14 +8,20 @@ import { TERMINAL_STATES, jobState } from './faceswap/useQueue';
 import { Icon } from '../icons';
 import { LiveText, LiveValue } from './LiveTelemetry';
 import { selectProg } from '../store/telemetryStore';
-import useTelemetry from './faceswap/useTelemetry';
+import QuickLaunch from './home/QuickLaunch';
+import ResumableCheckpoints from './home/ResumableCheckpoints';
 
 // ── Home ──────────────────────────────────────────────────────────────────
-// Everything on this page already existed somewhere — the run history, the
-// output listing, the queue snapshot, the GPU telemetry the processing HUD
-// polls. What did not exist was a view that put them together, so there was no
-// answer to "what happened last night, and what is this machine doing now"
-// short of visiting three tabs and reading a terminal.
+// A launch pad and a ledger. Top to bottom: the live run when there is one,
+// the quick-launch dropzone (a source and a target, then straight into Face
+// Swap), the checkpoints a stopped render can be resumed from, and what has
+// happened so far (runs, outputs, the queue).
+//
+// Everything on it is data. A section that has nothing to show renders nothing
+// rather than a paragraph explaining that it will one day have something: the
+// stat row, "Recent runs" and "Latest outputs" appear with the first run, and
+// the hardware readout is not here at all (the header's telemetry pill is the
+// one place the app shows GPU / VRAM / CPU).
 //
 // It is deliberately NOT the landing tab. This is a tool people open to do one
 // job, and putting a dashboard in front of that job would cost a click on every
@@ -62,7 +68,7 @@ const Stat = ({ icon: Ico, label, value, sub, tone, onClick, title }) => {
       <div className={`text-title font-bold tabular-nums leading-none ${tone === 'accent' ? 'text-accent' : 'text-white/90'}`}>
         {value}
       </div>
-      {sub && <div className="text-nano text-muted mt-1 truncate">{sub}</div>}
+      {sub && <div className="text-mini text-muted mt-1 truncate">{sub}</div>}
     </Tag>
   );
 };
@@ -72,14 +78,13 @@ export default function Home({ progress, setTab, setSettings, notify }) {
   const [history, setHistory] = useState(null);   // null = still loading
   const [outputs, setOutputs] = useState(null);
   const [queue, setQueue] = useState(null);
-  const telemetry = useTelemetry();
 
   useEffect(() => {
     let live = true;
     // Each panel is independent and every one of them is optional: a fresh
-    // install has no history, no outputs and no queue, and a CPU-only box has
-    // no GPU telemetry. So these settle individually rather than as one
-    // Promise.all that a single 404 would take down.
+    // install has no history, no outputs and no queue. So these settle
+    // individually rather than as one Promise.all that a single 404 would take
+    // down.
     const pull = (path, set, pick) => getJSON(path, { timeout: 8000 })
       .then((r) => { if (live) set(pick(r)); })
       .catch(() => { if (live) set(pick({})); });
@@ -107,6 +112,7 @@ export default function Home({ progress, setTab, setSettings, notify }) {
   }, [history, outputs, queue]);
 
   const loading = history === null && outputs === null;
+  const hasHistory = stats.runs > 0 || stats.files > 0 || stats.pending > 0;
 
   const rerun = (entry) => {
     if (!entry?.settings) return;
@@ -115,34 +121,21 @@ export default function Home({ progress, setTab, setSettings, notify }) {
     setTab('faceswap');
   };
 
-  const vramPct = telemetry?.vram_total
-    ? Math.round((telemetry.vram_used / telemetry.vram_total) * 100)
-    : null;
-
   return (
     <Stagger className="space-y-4">
-      {/* ── Hero ──────────────────────────────────────────────────────────
-          Either an invitation to start, or — when something is already
-          running — the state of that, so this page is never stale while the
-          most interesting thing in the app is happening. */}
-      <Reveal>
-        <Card elevation="hero" className="p-4 sm:p-5 md:p-6 flex flex-col md:flex-row md:items-center gap-4 justify-between">
-          <div className="min-w-0">
-            <h2 className="text-title font-bold text-white/95 tracking-tight">
-              {progress?.processing
-                ? (progress.paused ? 'Paused mid-render' : 'Rendering now')
-                : stats.runs > 0 ? 'Ready when you are' : 'Nothing rendered yet'}
-            </h2>
-            <p className="text-compact text-muted mt-1.5 max-w-prose">
-              {progress?.processing
-                ? <LiveText select={(s) => s.run.desc || progress.desc || 'Working…'} />
-                : stats.runs > 0
-                  ? `${stats.runs} run${stats.runs === 1 ? '' : 's'} so far, ${stats.frames.toLocaleString()} frames rendered in ${fmtDur(stats.renderTime) || 'no time at all'}.`
-                  : 'Load a source face and a target, and the first run will show up here.'}
-            </p>
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
-            {progress?.processing ? (
+      {/* ── The live run — only while there is one ─────────────────────── */}
+      {progress?.processing && (
+        <Reveal>
+          <Card elevation="hero" className="p-4 sm:p-5 flex flex-col md:flex-row md:items-center gap-4 justify-between">
+            <div className="min-w-0">
+              <h2 className="text-title font-bold text-white/95 tracking-tight">
+                {progress.paused ? 'Paused mid-render' : 'Rendering now'}
+              </h2>
+              <p className="text-compact text-muted mt-1.5 max-w-prose">
+                <LiveText select={(s) => s.run.desc || progress.desc || 'Working…'} />
+              </p>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
               <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-[var(--accent)]/10 border border-[var(--accent)]/25">
                 <span className="text-display font-bold text-accent tabular-nums leading-none">
                   <LiveValue select={(s) => Math.round(selectProg(s) * 100)}>
@@ -150,29 +143,34 @@ export default function Home({ progress, setTab, setSettings, notify }) {
                   </LiveValue>
                 </span>
               </div>
-            ) : null}
-            <motion.button
-              type="button"
-              onClick={() => setTab('faceswap')}
-              whileHover={{ y: -2, scale: 1.03 }}
-              whileTap={{ scale: 0.96 }}
-              transition={spring.snappy}
-              className="px-5 py-3 rounded-xl bg-[var(--accent)] text-white font-bold text-compact shadow-[0_2px_10px_var(--accent-glow)] hover:shadow-[0_4px_18px_var(--accent-glow)] border border-white/10 flex items-center gap-2"
-            >
-              <Icon.faceswap size={15} />
-              {progress?.processing ? 'Go to the run' : 'New swap'}
-            </motion.button>
-          </div>
-        </Card>
-      </Reveal>
+              <motion.button
+                type="button"
+                onClick={() => setTab('processing')}
+                whileHover={{ y: -2, scale: 1.03 }}
+                whileTap={{ scale: 0.96 }}
+                transition={spring.snappy}
+                className="px-5 py-3 rounded-xl bg-[var(--accent)] text-white font-bold text-compact shadow-[0_2px_10px_var(--accent-glow)] hover:shadow-[0_4px_18px_var(--accent-glow)] border border-white/10 flex items-center gap-2"
+              >
+                <Icon.meter size={15} />
+                Go to the run
+              </motion.button>
+            </div>
+          </Card>
+        </Reveal>
+      )}
+
+      <Reveal><QuickLaunch setTab={setTab} notify={notify} /></Reveal>
+      <Reveal><ResumableCheckpoints notify={notify} /></Reveal>
 
       {/* ── Stat row ───────────────────────────────────────────────────── */}
-      <Reveal>
-        {loading ? (
+      {loading ? (
+        <Reveal>
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
             {[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-[92px]" />)}
           </div>
-        ) : (
+        </Reveal>
+      ) : hasHistory && (
+        <Reveal>
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
             <Stat
               icon={Icon.history} label="Runs" value={stats.runs}
@@ -200,37 +198,32 @@ export default function Home({ progress, setTab, setSettings, notify }) {
               />
             ) : (
               <Stat
-                icon={Icon.meter} label="GPU"
-                value={vramPct === null ? '—' : `${vramPct}%`}
-                sub={telemetry?.gpu
-                  ? `${telemetry.gpu}${telemetry.vram_total ? ` · ${telemetry.vram_used.toFixed(1)}/${telemetry.vram_total.toFixed(1)} GB` : ''}`
-                  : 'no telemetry'}
-                tone={vramPct !== null && vramPct > 85 ? 'accent' : undefined}
+                icon={Icon.film} label="Frames rendered"
+                value={stats.frames.toLocaleString()}
+                sub={fmtDur(stats.renderTime) ? `in ${fmtDur(stats.renderTime)}` : undefined}
               />
             )}
           </div>
-        )}
-      </Reveal>
+        </Reveal>
+      )}
 
+      {(history === null || history.length > 0 || outputs === null || outputs.files.length > 0) && (
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* ── Recent runs ─────────────────────────────────────────────── */}
+        {(history === null || history.length > 0) && (
         <Reveal>
           <Section
             title="Recent runs"
             icon={Icon.history}
             action={history?.length ? (
               <button type="button" onClick={() => setTab('history')}
-                      className="text-nano font-semibold text-muted hover:text-white apple-transition flex items-center gap-1">
+                      className="text-mini font-semibold text-muted hover:text-white apple-transition flex items-center gap-1">
                 All <Icon.expand size={10} />
               </button>
             ) : null}
           >
             {history === null ? (
               <div className="space-y-2">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-14" />)}</div>
-            ) : history.length === 0 ? (
-              <p className="text-compact text-muted py-6 text-center">
-                Finished runs are recorded here with the settings they used.
-              </p>
             ) : (
               <div className="space-y-2">
                 {history.slice(0, 4).map((e) => (
@@ -241,7 +234,7 @@ export default function Home({ progress, setTab, setSettings, notify }) {
                         {e.outputs?.[0] || 'Untitled run'}
                       </div>
                       <div className="flex flex-wrap items-center gap-1 mt-1">
-                        <span className="text-nano text-muted">{fmtAgo(e.time)}</span>
+                        <span className="text-mini text-muted">{fmtAgo(e.time)}</span>
                         {/* The few settings that most define what a run looked
                             like — the same set the history tab chips. */}
                         {CHIP_KEYS.map((k) => {
@@ -249,7 +242,7 @@ export default function Home({ progress, setTab, setSettings, notify }) {
                           if (v === undefined || v === null || v === '' || v === false) return null;
                           return (
                             <span key={k} title={LABELS[k] || k}
-                                  className="text-nano px-1.5 py-0.5 rounded bg-white/[0.06] text-muted truncate max-w-[9rem]">
+                                  className="text-mini px-1.5 py-0.5 rounded bg-white/[0.06] text-muted truncate max-w-[9rem]">
                               {fmtVal(v)}
                             </span>
                           );
@@ -260,7 +253,7 @@ export default function Home({ progress, setTab, setSettings, notify }) {
                       type="button"
                       onClick={() => rerun(e)}
                       title="Load these settings into the Face Swap tab"
-                      className="shrink-0 px-2.5 py-1.5 rounded-lg text-nano font-bold text-white/50 hover:text-accent bg-white/[0.04] hover:bg-[var(--accent)]/12 border border-white/10 hover:border-[var(--accent)]/30 apple-transition opacity-0 group-hover/run:opacity-100 focus-visible:opacity-100"
+                      className="shrink-0 px-2.5 py-1.5 rounded-lg text-mini font-bold text-white/50 hover:text-accent bg-white/[0.04] hover:bg-[var(--accent)]/12 border border-white/10 hover:border-[var(--accent)]/30 apple-transition opacity-0 group-hover/run:opacity-100 focus-visible:opacity-100"
                     >
                       Reuse
                     </button>
@@ -270,25 +263,23 @@ export default function Home({ progress, setTab, setSettings, notify }) {
             )}
           </Section>
         </Reveal>
+        )}
 
         {/* ── Recent outputs ──────────────────────────────────────────── */}
+        {(outputs === null || outputs.files.length > 0) && (
         <Reveal>
           <Section
             title="Latest outputs"
             icon={Icon.outputs}
             action={outputs?.files?.length ? (
               <button type="button" onClick={() => setTab('gallery')}
-                      className="text-nano font-semibold text-muted hover:text-white apple-transition flex items-center gap-1">
+                      className="text-mini font-semibold text-muted hover:text-white apple-transition flex items-center gap-1">
                 All <Icon.expand size={10} />
               </button>
             ) : null}
           >
             {outputs === null ? (
               <div className="grid grid-cols-3 gap-2">{[0, 1, 2].map((i) => <Skeleton key={i} className="aspect-video" />)}</div>
-            ) : outputs.files.length === 0 ? (
-              <p className="text-compact text-muted py-6 text-center">
-                Rendered files land in the Outputs tab.
-              </p>
             ) : (
               <div className="grid grid-cols-3 gap-2">
                 {outputs.files.slice(0, 6).map((f) => {
@@ -327,11 +318,11 @@ export default function Home({ progress, setTab, setSettings, notify }) {
                           }}
                         />
                       )}
-                      <div className="hidden absolute inset-0 bg-white/5 flex-col items-center justify-center text-muted text-nano pointer-events-none p-2 text-center">
+                      <div className="hidden absolute inset-0 bg-white/5 flex-col items-center justify-center text-muted text-mini pointer-events-none p-2 text-center">
                         <Icon.still size={18} className="mb-1 opacity-50" />
                         <span className="truncate w-full">{f.name}</span>
                       </div>
-                      <span className="absolute inset-x-0 bottom-0 px-1.5 py-1 bg-black/70 backdrop-blur-sm text-nano text-white/70 truncate text-left z-10">
+                      <span className="absolute inset-x-0 bottom-0 px-1.5 py-1 bg-black/70 backdrop-blur-sm text-mini text-white/70 truncate text-left z-10">
                         {f.name}
                       </span>
                     </motion.button>
@@ -341,7 +332,9 @@ export default function Home({ progress, setTab, setSettings, notify }) {
             )}
           </Section>
         </Reveal>
+        )}
       </div>
+      )}
     </Stagger>
   );
 }

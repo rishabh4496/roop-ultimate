@@ -5,6 +5,8 @@ import { useApi } from '../useApi';
 import { Section, Select, Slider, Button } from './ui';
 import { Icon } from '../icons';
 import { logFailure } from '../failureLog';
+import EnhancerPipelineStack from './faceswap/EnhancerPipelineStack';
+import VideoFramesetExtractor from './extras/VideoFramesetExtractor';
 
 const RESOLUTIONS = ['Original', '3840x', '2560x', '1920x', '1280x', '1024x', '640x'];
 const ROTATIONS = ['None', '90° Clockwise', '90° Counter-Clockwise', '180°'];
@@ -17,12 +19,17 @@ const OP_LABELS = {
 };
 const OP_TITLES = { upscale: 'AI Upscale', colorize: 'Colorize (B&W → color)', filter: 'Stylize Filter' };
 
-export default function Extras({ notify, registerFileListener }) {
+// One definition of "untouched": the initial state, the Reset button and each
+// slider's double-click reset all read it, so they cannot disagree.
+const DEFAULT_OPTS = { resolution: 'Original', rotation: 'None', fps: 30, crop_left: 0, crop_right: 0, crop_top: 0, crop_bottom: 0 };
+const CROP_SIDES = [['crop_left', 'Left'], ['crop_right', 'Right'], ['crop_top', 'Top'], ['crop_bottom', 'Bottom']];
+
+export default function Extras({ notify, registerFileListener, meta, settings, setSettings, setTab }) {
   const { getJSON, postFile } = useApi();
   const [file, setFile] = useState(null);
   const [fileName, setFileName] = useState('');
   const [fileUrlSrc, setFileUrlSrc] = useState('');
-  const [opts, setOpts] = useState({ resolution: 'Original', rotation: 'None', fps: 30, crop_left: 0, crop_right: 0, crop_top: 0, crop_bottom: 0 });
+  const [opts, setOpts] = useState(DEFAULT_OPTS);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(null);
   const set = (k, v) => setOpts((o) => ({ ...o, [k]: v }));
@@ -140,19 +147,20 @@ export default function Extras({ notify, registerFileListener }) {
 
           <Select label="Resize width" value={opts.resolution} onChange={(v) => set('resolution', v)} options={RESOLUTIONS} />
           <Select label="Rotation" value={opts.rotation} onChange={(v) => set('rotation', v)} options={ROTATIONS} />
-          <Slider label="Output FPS (video)" min={1} max={120} step={1} value={opts.fps} onChange={(v) => set('fps', v)} />
+          <Slider label="Output FPS (video)" min={1} max={120} step={1} value={opts.fps} defaultValue={DEFAULT_OPTS.fps} onChange={(v) => set('fps', v)} />
         </Section>
 
         <Section title="Crop (%)" icon={Icon.split}>
-          <Slider label="Left" min={0} max={49} step={1} value={opts.crop_left} onChange={(v) => set('crop_left', v)} />
-          <Slider label="Right" min={0} max={49} step={1} value={opts.crop_right} onChange={(v) => set('crop_right', v)} />
-          <Slider label="Top" min={0} max={49} step={1} value={opts.crop_top} onChange={(v) => set('crop_top', v)} />
-          <Slider label="Bottom" min={0} max={49} step={1} value={opts.crop_bottom} onChange={(v) => set('crop_bottom', v)} />
+          {CROP_SIDES.map(([key, label]) => (
+            <Slider key={key} label={label} min={0} max={49} step={1} value={opts[key]} defaultValue={DEFAULT_OPTS[key]} onChange={(v) => set(key, v)} />
+          ))}
           <div className="flex items-center gap-2">
             <Button variant="primary" onClick={apply} disabled={busy}>{busy ? 'Processing…' : 'Apply'}</Button>
-            <Button variant="secondary" onClick={() => setOpts({ resolution: 'Original', rotation: 'None', fps: 30, crop_left: 0, crop_right: 0, crop_top: 0, crop_bottom: 0 })}>Reset</Button>
+            <Button variant="secondary" onClick={() => setOpts(DEFAULT_OPTS)}>Reset</Button>
           </div>
         </Section>
+
+        <VideoFramesetExtractor notify={notify} setTab={setTab} />
 
         <Section title="AI frame post-processing" icon={Icon.wand}>
           <p className="text-xs text-muted -mt-2">Runs on the file picked above. Works on images and videos (video is processed frame-by-frame — can be slow).</p>
@@ -180,6 +188,19 @@ export default function Extras({ notify, registerFileListener }) {
           {operation === 'upscale' && <p className="text-micro text-muted">First run downloads the model (~65 MB). ×4 on video is heavy.</p>}
         </Section>
       </div>
+
+      {settings && setSettings && (
+        <Section title="Swap enhancement pipeline" icon={Icon.tune} collapsible defaultOpen={false}>
+          <p className="-mt-1 text-mini text-muted">
+            The same chain the Face Swap tab runs after every swap, on the same live settings: changing it here changes it there.
+          </p>
+          <EnhancerPipelineStack
+            settings={settings}
+            meta={meta}
+            onChange={(key, value) => setSettings((s) => ({ ...s, [key]: value }))}
+          />
+        </Section>
+      )}
 
       {enhResult?.path && (
         <Section title="AI post-processing output">

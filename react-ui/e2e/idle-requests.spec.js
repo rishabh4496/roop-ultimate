@@ -39,7 +39,7 @@ async function watchPreviewRequests(page, fulfill, { settle }) {
     return fulfill(route);
   });
   await page.goto('/#/faceswap');
-  await page.locator('header nav button[aria-current="page"]').waitFor();
+  await page.locator('nav[aria-label="Main"] button[aria-current="page"]').waitFor();
   const from = Date.now() + settle;
   await page.waitForTimeout(settle + WINDOW_MS);
   return {
