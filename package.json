@@ -7,6 +7,7 @@
   "scripts": {
     "dev:mock": "tsx react-ui/mock-server/server.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
+    "check:api-parity": "python scripts/verification/check_api_mock_parity.py",
     "lint": "npm --prefix react-ui run lint"
   },
   "dependencies": {

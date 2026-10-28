@@ -526,6 +526,8 @@ async function startServer() {
         ws.send(JSON.stringify({
           fps: progressState.processing ? progressState.fps : 0,
           fps_basis: 'retired',
+          // The real frame carries the current rate beside the run average (null while idle); pillModel's fpsText reads it.
+          fps_now: progressState.processing ? progressState.fps : null,
           current_frame: progressState.current_frame,
           total_frames: progressState.total_frames,
           progress: progressState.progress,

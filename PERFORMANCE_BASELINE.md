@@ -249,13 +249,13 @@ jank budget, not a GPU frame-rate claim): every one of the 9 tabs idle holds 59.
 floods of 600 events: lens 2.1 commits/s (was 58/s before the rAF-driven glass; main-thread task time -17%, script -48%, layout -93%);
 brush 10-12% frames over 20 ms and timeline drag ~94 commits/s are measured and left open. `npm run check`: oxlint 0, 0 unreachable
 modules, API-timeout lint OK, build OK, Playwright 96 passed / 38 skipped (opt-in theme runs) with axe clean on all tabs, render
-checks pass; `verify_pipeline.py` passes (h264 / yuv420p, HTTP 206).
+checks pass; `scripts/verification/verify_pipeline.py` passes (h264 / yuv420p, HTTP 206).
 
 **Not run, and why** - none of these has a verified number here:
-- `benchmark_pipeline.py`: its default clip `k1.mp4` is not in any clip root on this machine, so the run is PENDING (it now reports that
+- `scripts/benchmarks/benchmark_pipeline.py`: its default clip `k1.mp4` is not in any clip root on this machine, so the run is PENDING (it now reports that
   and exits 2; it used to hardcode `D:\k1.mp4`, fixed 2026-10-19). It also runs a one-frame preview loop over swapper x mask combinations
   (not the render path) and has no enhancer arms; its `sam2_tracked` arm needs the SAM 2 checkpoint, which was never downloaded.
 - Per-model rows for Pixel-Boost, SAM 2 end to end, GPEN Realistic and RestoreFormer++ (FP32): no end-to-end render was run with them
   this session; the RF++ FP32 cost on record (21.63 -> 39.31 ms/face) is from `PRECISION_POLICY.md`, not re-measured.
-- `verify_integration.py`: does not exist in the repository.
+- `verify_integration.py`: does not exist in the repository. *(As of 2026-10-19. It was created 2026-10-20 and, in Stage 16, moved to `scripts/verification/verify_integration.py`.)*
 - RTX 3060: PENDING, as in every row above.

@@ -560,7 +560,7 @@ if __name__ == '__main__':
     print("\n" + flamegraph_str)
 
     # Save structured json output
-    out_json = os.path.join(REPO_ROOT, "trace_frame_analysis.json")
+    out_json = os.path.join(REPO_ROOT, "benchmarks", "baselines", "trace_frame_analysis.json")
     with open(out_json, "w", encoding="utf-8") as f:
         json.dump(trace_results, f, indent=2)
     print(f"\n[Trace] Structured telemetry saved to: {out_json}")

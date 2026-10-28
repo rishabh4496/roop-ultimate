@@ -369,7 +369,7 @@ def main():
               f"Lag: {res['rapid_motion_lag_px']} px | Profile: {res['profile_success_pct']}% | "
               f"Health: {res['matrix_health_pct']}%")
 
-    out_file = os.path.join(ROOT, "benchmark_stage4_alignment.json")
+    out_file = os.path.join(ROOT, "benchmarks", "baselines", "benchmark_stage4_alignment.json")
     with open(out_file, "w") as f:
         json.dump({"timestamp": time.strftime("%Y-%m-%d %H:%M:%S"), "synthetic_inputs": SYNTHETIC, "results": results}, f, indent=2)
     print(f"\nSaved structured telemetry to: {out_file}\n")

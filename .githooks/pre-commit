@@ -32,5 +32,17 @@ if [ -z "$py" ]; then
   echo "pre-commit: no python found to run tools/gen_update_manifest.py" >&2
   exit 1
 fi
+
+# API / mock-server / pill contract (< 1 s, stdlib only): the React e2e suite runs against the mock, so a backend route or
+# /ws/telemetry key that drifts from it passes every browser test and breaks the real app. Only when a side is staged.
+if git diff --cached --name-only | grep -qE '^(app/(api|routes_[^/]+|roop/api/[^/]+|roop/(stage_telemetry|pipeline_status|video_io_hw|terminal_dashboard))\.py|react-ui/mock-server/|react-ui/src/components/faceswap/pillModel\.js|scripts/verification/check_api_mock_parity\.py)'; then
+  "$py" -I "$root/scripts/verification/check_api_mock_parity.py" || {
+    echo "pre-commit: backend / mock-server / pillModel contract drift (see [parity] lines above)." >&2
+    echo "  Fix the side that is wrong, or - if the drift is deliberate - record it with a reason in KNOWN_DRIFT" >&2
+    echo "  in scripts/verification/check_api_mock_parity.py." >&2
+    exit 1
+  }
+fi
+
 "$py" "$root/tools/gen_update_manifest.py"
 git add "$root/update_manifest.json"

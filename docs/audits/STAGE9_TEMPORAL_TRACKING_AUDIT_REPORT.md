@@ -133,7 +133,7 @@ Interpolation is **strictly refused** (falling back to discrete frame boundaries
 
 ## 5. Quantitative Benchmark Results
 
-All metrics measured using `tools/benchmark_temporal_tracking.py` and saved to `benchmark_stage9_temporal_tracking.json`:
+All metrics measured using `tools/benchmark_temporal_tracking.py` and saved to `benchmarks/baselines/benchmark_stage9_temporal_tracking.json`:
 
 | Metric Category | Baseline (Naive/Raw) | Stage 9 Robust Engine | Improvement / Outcome |
 |:---|:---:|:---:|:---:|

@@ -42,7 +42,7 @@ The video face-swap pipeline has two live production entry points, both convergi
 | `app/roop/pipeline_monitor.py` | **Production (Telemetry)** | `PipelineMonitor` instantiated in `procmgr_batch.py:844`, sampled per frame via `frame_done()`. |
 | `app/roop/vectorized_pipeline.py` | **Dormant / Experimental** | Zero calls in production runtime. Only imported in `app/tests/test_env_flags.py:140` and documented in docstrings. |
 | `face_engine/` | **Hybrid / Sibling Standalone** | Autonomous engine with its own server (`face_engine/run.py`) and UI (`web_ui/`). Selective imports only into `app/roop/retinaface_gpu_engine.py:111` (when `detector_engine == 'retinaface_r50_gpu'`), `BaseProcessorAdapter.py`, and `routes_model_catalog.py`. Standalone `face_engine` pipeline (`CUDAStreamPipeline`) is not used by `ProcessMgr`. |
-| `benchmark_pipeline.py` (root) | **Experimental Benchmark** | Standalone benchmark using `face_engine.core.zero_copy_engine`. Zero callers in `app/` or `run.py`. |
+| `scripts/benchmarks/benchmark_pipeline.py` (was root) | **Experimental Benchmark** | Standalone benchmark using `face_engine.core.zero_copy_engine`. Zero callers in `app/` or `run.py`. |
 | `tools/benchmark_*.py` | **Evaluation Tools** | Isolated test scripts (`benchmark_compositing.py`, `benchmark_temporal_tracking.py`, etc.). Zero callers from production runtime. |
 | `tests/*bench*` / `app/tests/test_bench.py` | **Test Harness** | Test suite files and regression benchmark helpers. Not executed in production rendering. |
 

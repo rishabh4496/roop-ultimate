@@ -61,7 +61,7 @@ VARIANTS: List[Tuple[str, str]] = [
 ]
 # realswap is hyperswap_1a plus a HiFiFace eyelid/eyelash band: it needs these as well.
 EXTRA_FILES = {"realswap": ["hififace_unofficial_256.onnx", "crossface_hififace.onnx"]}
-OUT_JSON = os.path.join(ROOT, "benchmark_stage5_hyperswap.json")
+OUT_JSON = os.path.join(ROOT, "benchmarks", "baselines", "benchmark_stage5_hyperswap.json")
 
 
 def availability(download_missing: bool) -> Tuple[List[Tuple[str, str]], List[Dict[str, str]]]:

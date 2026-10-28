@@ -312,7 +312,7 @@ def main():
                         hard_coded_fields=["'Workstation: NVIDIA GeForce RTX 4070 (12GB) / Dual-Profile Validated' is a printed literal, not detected"])
     parser = argparse.ArgumentParser(description="Stage 3 SCRFD Detector Optimization Benchmark")
     parser.add_argument("--frames", type=int, default=80, help="Number of benchmark frames to evaluate")
-    parser.add_argument("--out", type=str, default="benchmark_stage3_detector.json", help="Output JSON path")
+    parser.add_argument("--out", type=str, default=os.path.join(ROOT, "benchmarks", "baselines", "benchmark_stage3_detector.json"), help="Output JSON path")
     args = parser.parse_args()
 
     print(f"\n=========================================================================")

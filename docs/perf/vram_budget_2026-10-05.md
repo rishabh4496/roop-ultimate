@@ -15,7 +15,7 @@ threads), d4.mp4 frames 0..600, `ROOP_STAB_CHUNK_MB=990.8` pinned, code `e2b69f5
 
 ## What the Stage 0 logs say
 
-`STAGE0_BENCHMARK_REPORT.md` / `benchmark_stage0_results.json` (2026-09-30, provider cuda, 20 threads, 13 scenarios in ONE process):
+`docs/audits/STAGE0_BENCHMARK_REPORT.md` / `benchmarks/baselines/benchmark_stage0_results.json` (2026-09-30, provider cuda, 20 threads, 13 scenarios in ONE process):
 peak VRAM per scenario 5,027 → 6,259 → 7,742 → 9,093 → 10,558 → 11,937 → 12,110 … **12,136 MiB (98.8%)**, and from scenario 7 on
 the same stage ran at 0.3-0.9 fps (scenario 1: 11.6 fps) with GPU utilisation 88-95% - the paging signature (a card pinned near
 100% VRAM reads as a hang; see `session_pool._advisory_pool_size`). That is **growth of ~1.3 GB per scenario inside one process**;

@@ -146,7 +146,7 @@ def main():
     print_model_lifecycle_table()
 
     # 8. Export Structured JSON
-    json_path = PROJECT_ROOT / "benchmark_stage2_lifecycle.json"
+    json_path = PROJECT_ROOT / "benchmarks" / "baselines" / "benchmark_stage2_lifecycle.json"
     export_model_lifecycle_json(json_path)
     print(f"\n[Report] Exported structured diagnostics to: {json_path}")
 

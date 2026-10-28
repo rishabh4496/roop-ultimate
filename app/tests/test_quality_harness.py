@@ -471,12 +471,12 @@ class BenchmarkLabellingTests(unittest.TestCase):
                      "STAGE5_HYPERSWAP_AUDIT_REPORT.md", "STAGE6_RESTORE_ULTRA_AUDIT_REPORT.md",
                      "STAGE7_XSEG3_AUDIT_REPORT.md", "STAGE8_COMPOSITING_AUDIT_REPORT.md",
                      "STAGE9_TEMPORAL_TRACKING_AUDIT_REPORT.md"):
-            with open(os.path.join(ROOT, name), encoding="utf-8") as fh:
+            with open(os.path.join(ROOT, "docs", "audits", name), encoding="utf-8") as fh:
                 self.assertIn("<!-- synthetic-input-banner -->", fh.read(), name)
 
     def test_stage5_json_is_marked_invalid_unless_a_real_run_replaced_it(self):
         import json
-        with open(os.path.join(ROOT, "benchmark_stage5_hyperswap.json"), encoding="utf-8") as fh:
+        with open(os.path.join(ROOT, "benchmarks", "baselines", "benchmark_stage5_hyperswap.json"), encoding="utf-8") as fh:
             j = json.load(fh)
         self.assertTrue("INVALID" in j or j.get("schema_version") == 2)
 

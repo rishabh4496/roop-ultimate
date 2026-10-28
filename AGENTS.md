@@ -10,6 +10,43 @@ evidence behind a rule below, or when a number you are about to quote came from 
 the date on it. Dated behaviour changes: `docs/CHANGELOG.md`. Tests and CI:
 `docs/development/CONTRIBUTING.md`.
 
+## Companion policy documents (binding, read before touching the code they govern)
+
+These sit in the repo root beside this file. `AGENTS.md` is the only rule file; these four
+are the policies and records it points at. Each pointer file (`CLAUDE.md`, `GEMINI.md`,
+`QWEN.md`, `.clinerules`, `.cursorrules`, `.windsurfrules`) tells the agent to read the
+first three **before modifying any file**.
+
+| Document | Governs | Read it before |
+|---|---|---|
+| [`PRECISION_POLICY.md`](PRECISION_POLICY.md) | Per-model FP32 / FP16 / mixed TensorRT precision, the canary and fidelity gates | changing a model's precision, an engine build option, or a quality gate |
+| [`CUDA_EXECUTION_POLICY.md`](CUDA_EXECUTION_POLICY.md) | Streams, graphs, zero-copy, GPU warps, session factories, provider fallback | touching ORT/TensorRT sessions, CUDA streams, buffers, or the frame loop's device work |
+| [`OPTIMIZATION_PLAN.md`](OPTIMIZATION_PLAN.md) | The phase plan, its gates (the RTX 3060 gate is still open) and what is deliberately not built | starting any performance or architecture brief |
+| [`PERFORMANCE_BASELINE.md`](PERFORMANCE_BASELINE.md) | Measured baselines, the rows that were NOT run, and the numbers a change must not regress | quoting a speed number, or claiming a change is faster or neutral |
+
+Where a policy and a number in `docs/SESSION_LOGS.md` disagree, the policy document wins and
+the log is the evidence trail. A change that contradicts a policy must update the policy in
+the same commit, with the measurement that justifies it.
+
+## Where things live (repository layout, since Stage 16)
+
+| Path | Holds |
+|---|---|
+| `docs/audits/` | The per-stage audit reports, `STAGE0_…` to `STAGE9_…` (engine) and `STAGE10_TO_15_WORKSTATION_AUDIT_REPORT.md` (workstation) |
+| `docs/archive/` | Historical planning scratchpads (`facegemini.md`, `roopv2.md`). Read-only history, not rules |
+| `benchmarks/baselines/` | Committed benchmark result files (`benchmark_*.json/.csv`, `trace_frame_analysis.json`). The `tools/benchmark_*.py` harnesses write here |
+| `scripts/benchmarks/` | `benchmark_pipeline.py`, `run_stage0_benchmark.py` |
+| `scripts/verification/` | `verify_integration.py`, `verify_pipeline.py`, `check_api_mock_parity.py` (backend / mock-server / pill contract check; also wired into `.githooks/pre-commit` and `pytest`) |
+
+The repo root holds launcher files, the policy documents above and config only. Do not put
+benchmark output, scratch logs or reports there (`.githooks/pre-commit` refuses `scratch_*`
+and `*.log`).
+The legacy Gradio UI (`app/ui/`, launched by `start_legacy.js`) is **deprecated**:
+`start_legacy.js` prints a banner and runs `app/legacy_ui_check.py` first, which fails the
+launch if the UI reads a `Settings` attribute that no longer exists. `start_react.js` is the
+supported launcher. `web_ui/` is a different thing - the control surface of the separate
+`face_engine/` product (see `web_ui/README.md`) - and is not deprecated by this.
+
 ---
 
 # Part 1 — Working on the app

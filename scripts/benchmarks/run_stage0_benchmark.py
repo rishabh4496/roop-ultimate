@@ -2,16 +2,16 @@
 
 Usage:
     # Run full Stage 0 baseline across all 13 scenarios:
-    app\\env\\Scripts\\python.exe run_stage0_benchmark.py --scenarios all --frames 60
+    app\\env\\Scripts\\python.exe scripts\\benchmarks\\run_stage0_benchmark.py --scenarios all --frames 60
 
     # Quick smoke test:
-    app\\env\\Scripts\\python.exe run_stage0_benchmark.py --quick
+    app\\env\\Scripts\\python.exe scripts\\benchmarks\\run_stage0_benchmark.py --quick
 
     # Benchmark real video clip:
-    app\\env\\Scripts\\python.exe run_stage0_benchmark.py --real-video D:\\k1.mp4 --frames 120
+    app\\env\\Scripts\\python.exe scripts\\benchmarks\\run_stage0_benchmark.py --real-video D:\\k1.mp4 --frames 120
 
     # Specific scenarios:
-    app\\env\\Scripts\\python.exe run_stage0_benchmark.py --scenarios 1,2,5,11,12,13 --threads 20
+    app\\env\\Scripts\\python.exe scripts\\benchmarks\\run_stage0_benchmark.py --scenarios 1,2,5,11,12,13 --threads 20
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ import sys
 from pathlib import Path
 
 # Add app and root to sys.path
-ROOT_DIR = Path(__file__).resolve().parent
+ROOT_DIR = Path(__file__).resolve().parents[2]            # scripts/benchmarks/ -> repo root
 APP_DIR = ROOT_DIR / "app"
 for p in (str(ROOT_DIR), str(APP_DIR)):
     if p not in sys.path:
@@ -179,19 +179,19 @@ def main() -> None:
     parser.add_argument(
         "--json",
         type=Path,
-        default=ROOT_DIR / "benchmark_stage0_results.json",
+        default=ROOT_DIR / "benchmarks" / "baselines" / "benchmark_stage0_results.json",
         help="Output JSON path.",
     )
     parser.add_argument(
         "--csv",
         type=Path,
-        default=ROOT_DIR / "benchmark_stage0_summary.csv",
+        default=ROOT_DIR / "benchmarks" / "baselines" / "benchmark_stage0_summary.csv",
         help="Output summary CSV path.",
     )
     parser.add_argument(
         "--report",
         type=Path,
-        default=ROOT_DIR / "STAGE0_BENCHMARK_REPORT.md",
+        default=ROOT_DIR / "docs" / "audits" / "STAGE0_BENCHMARK_REPORT.md",
         help="Output Markdown report path.",
     )
     parser.add_argument(

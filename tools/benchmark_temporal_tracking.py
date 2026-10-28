@@ -559,7 +559,7 @@ def run_full_stage9_benchmark() -> Dict[str, Any]:
         "performance_profile": perf_res,
     }
 
-    out_path = APP_ROOT / "benchmark_stage9_temporal_tracking.json"
+    out_path = APP_ROOT / "benchmarks" / "baselines" / "benchmark_stage9_temporal_tracking.json"
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(full_report, f, indent=2)
     print(f"\n[OK] Benchmark results written to {out_path}")

@@ -13,7 +13,7 @@ path, which needs a decision (below); no change made. (2) already routed; proven
 
 ## 1. XSeg and RestoreFormer++ on TensorRT
 
-**They are on it.** Stage 0 (`STAGE0_BENCHMARK_REPORT.md`) ran `provider: cuda`, so its logs show the CUDA EP for everything; a TRT render
+**They are on it.** Stage 0 (`docs/audits/STAGE0_BENCHMARK_REPORT.md`) ran `provider: cuda`, so its logs show the CUDA EP for everything; a TRT render
 (`[Session]` lines of any 2026-10-04/05 baseline) binds `TensorrtExecutionProvider trt_fp16=on` for both. That line is only the session's
 first provider, so it was checked at node level with ORT profiling under the production provider chain (same `providers_for`, same session
 options as the processors): **one node per run, provider `TensorrtExecutionProvider`, no CUDA or CPU node**, for both models; the options

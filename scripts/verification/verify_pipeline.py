@@ -17,7 +17,7 @@ import subprocess
 os.environ.setdefault("NO_ALBUMENTATIONS_UPDATE", "1")
 
 # Ensure app is on import path
-ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))   # scripts/verification/ -> repo root
 APP_DIR = os.path.join(ROOT_DIR, "app")
 sys.path.insert(0, APP_DIR)
 

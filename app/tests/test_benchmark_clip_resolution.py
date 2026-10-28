@@ -26,7 +26,8 @@ from unittest import mock
 HERE = os.path.dirname(os.path.abspath(__file__))
 APP = os.path.dirname(HERE)
 ROOT = os.path.dirname(APP)
-for _p in (APP, HERE, ROOT):
+BENCH_DIR = os.path.join(ROOT, "scripts", "benchmarks")      # benchmark_pipeline.py / run_stage0_benchmark.py live here
+for _p in (APP, HERE, ROOT, BENCH_DIR):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
@@ -128,8 +129,9 @@ class BenchmarkPipelineWiringTest(unittest.TestCase):
 class NoDriveLettersInBenchmarkHarnessesTest(unittest.TestCase):
     """`test_fixture_paths.py` covers app/tests; these are the harnesses that live elsewhere and slipped past it."""
 
-    SCRIPTS = ("benchmark_pipeline.py", os.path.join("tests", "benchmark_pipeline.py"), "run_stage0_benchmark.py",
-               "pinokio_batch_runner.py", "verify_pipeline.py")
+    SCRIPTS = (os.path.join("scripts", "benchmarks", "benchmark_pipeline.py"), os.path.join("tests", "benchmark_pipeline.py"),
+               os.path.join("scripts", "benchmarks", "run_stage0_benchmark.py"), "pinokio_batch_runner.py",
+               os.path.join("scripts", "verification", "verify_pipeline.py"))
     DRIVE = re.compile(r"(?<![A-Za-z0-9])[A-Za-z]:[\\/]")
 
     def _code_literals(self, path):

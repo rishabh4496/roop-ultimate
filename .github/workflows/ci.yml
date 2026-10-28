@@ -79,6 +79,8 @@ jobs:
       - run: python -m pip install -r app/requirements-ci.txt
       - name: generated settings files are current (settings.schema.json, settingsCatalog.js)
         run: python tools/gen_settings.py --check
+      - name: backend routes, /ws/telemetry keys, mock server and pillModel agree (scripts/verification/check_api_mock_parity.py)
+        run: python scripts/verification/check_api_mock_parity.py
       - name: update_manifest.json is committed and matches HEAD's dependency contract
         # The updater (app/update_manager.py) refuses a candidate without a
         # valid manifest, so a stale or missing one strands every existing

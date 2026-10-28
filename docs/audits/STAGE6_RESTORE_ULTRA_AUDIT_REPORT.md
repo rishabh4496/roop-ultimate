@@ -171,4 +171,4 @@ Fixed restoration strength causes severe degradation on small faces (hallucinati
 - **Settings Schema & Catalog (`app/tests/test_settings_schema.py`):** **10/10 passed** in 9.81s.
 - **All Cumulative Stages (0, 2, 3, 4, 5, 6):** **114/114 passed** in 18.12s.
 - **Physical Engine Verification (`tools/verify_ultimate_profiles.py`):** Exit code 0, all inference checks passed on live RTX 4070.
-- **Benchmark Artifact:** Saved to `benchmark_stage6_restore_ultra.json`.
+- **Benchmark Artifact:** Saved to `benchmarks/baselines/benchmark_stage6_restore_ultra.json`.

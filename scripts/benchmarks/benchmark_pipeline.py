@@ -17,7 +17,7 @@ For each permutation:
   - Tracks peak NVIDIA GPU VRAM consumption via pynvml / torch.cuda.max_memory_allocated().
   - Computes inter-frame temporal boundary variance (SSIM variance of consecutive mask boundaries).
   - Handles CUDA OOM errors gracefully without interrupting subsequent passes.
-  - Exports benchmark_results.json and prints a cleanly formatted Markdown summary table.
+  - Exports benchmarks/baselines/benchmark_results.json and prints a cleanly formatted Markdown summary table.
 """
 from __future__ import annotations
 
@@ -36,7 +36,8 @@ import torch
 import torch.nn.functional as F
 
 # Ensure repo root and app on path
-ROOT_DIR = Path(__file__).resolve().parent
+ROOT_DIR = Path(__file__).resolve().parents[2]            # scripts/benchmarks/ -> repo root
+BASELINES_DIR = ROOT_DIR / "benchmarks" / "baselines"
 APP_DIR = ROOT_DIR / "app"
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
@@ -381,7 +382,7 @@ class BenchmarkSuite:
         self,
         swappers: Sequence[str] | None = None,
         maskers: Sequence[str] | None = None,
-        output_json: str = "benchmark_results.json",
+        output_json: str = str(BASELINES_DIR / "benchmark_results.json"),
     ) -> list[dict[str, Any]]:
         swappers = swappers or [
             "inswapper_128",
@@ -480,7 +481,7 @@ def main() -> None:
                              "(default: %s, found via $ROOP_CLIP_ROOT / <PINOKIO_HOME>/roop-keep)" % DEFAULT_CLIP)
     parser.add_argument("--frames", type=int, default=300, help="Continuous slice frame count")
     parser.add_argument("--warmup", type=int, default=10, help="Number of warmup frames to exclude")
-    parser.add_argument("--output", default="benchmark_results.json", help="JSON output path")
+    parser.add_argument("--output", default=str(BASELINES_DIR / "benchmark_results.json"), help="JSON output path")
     args = parser.parse_args()
 
     try:

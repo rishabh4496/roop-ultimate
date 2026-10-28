@@ -467,7 +467,7 @@ def run_full_benchmark() -> Dict[str, Any]:
         "latency_and_throughput": latency_metrics,
     }
 
-    output_path = APP_ROOT / "benchmark_stage8_compositing.json"
+    output_path = APP_ROOT / "benchmarks" / "baselines" / "benchmark_stage8_compositing.json"
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(full_report, f, indent=2)
 

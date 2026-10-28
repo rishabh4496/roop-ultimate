@@ -6,7 +6,7 @@
 model (0.88 / 0.84 / 0.81 / 0.865 / 0.86 plus Gaussian noise), "eye / mouth alignment error" computed as a keypoint set
 compared with itself plus noise, profile / occlusion / temporal scores that were constants (94.5 / 88.0, 92.0 / 85.5,
 96.2 / 95.8), and ran `hyperswap_1a_256.onnx` under the names hyperswap_1b, hyperswap_1c and realswap (neither 1b nor 1c
-exists on disk). `STAGE5_HYPERSWAP_AUDIT_REPORT.md` quoted it: identical `0.448 px`, `187.7`, `94.5%`, `92.0%` in every
+exists on disk). `docs/audits/STAGE5_HYPERSWAP_AUDIT_REPORT.md` quoted it: identical `0.448 px`, `187.7`, `94.5%`, `92.0%` in every
 row. The harness is the replacement instrument; the audit tool is now a front end to it.
 
 ## What is measured, and against what
@@ -79,7 +79,7 @@ indistinguishable) and the labelling of the other benchmark tools.
 Reference: hyperswap, `trt_precision=fp32`, `ROOP_SWAP_FP32=1`, 300 frames per clip, lossless x264 encode, one pinned
 stabilizer geometry. Candidates: the shipped `mixed` TRT precision with each swapper. Source: harjot. Recognizer:
 AdaFace (independent of the pipeline's w600k). Every figure below is generated from
-`app/output/quality_full/quality_report.json` (also embedded in `benchmark_stage5_hyperswap.json`).
+`app/output/quality_full/quality_report.json` (also embedded in `benchmarks/baselines/benchmark_stage5_hyperswap.json`).
 
 Guard: **passed** (0 violations, strict_all_metrics=False).
 

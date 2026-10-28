@@ -16,7 +16,7 @@ thresholds that the pipeline does not meet are printed as `MISS` and are tracked
 xfails in the test file, so they cannot silently start or stop passing.
 
 Needs a CUDA/TensorRT device and the model files; roughly 8 minutes.
-Usage (repo root):  app/env/Scripts/python.exe verify_integration.py [--workdir DIR]
+Usage (repo root):  app/env/Scripts/python.exe scripts/verification/verify_integration.py [--workdir DIR]
 """
 import argparse
 import os
@@ -24,7 +24,7 @@ import sys
 import tempfile
 
 os.environ.setdefault('NO_ALBUMENTATIONS_UPDATE', '1')
-ROOT = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))   # scripts/verification/ -> repo root
 for p in (os.path.join(ROOT, 'app'), os.path.join(ROOT, 'app', 'tests')):
     sys.path.insert(0, p)
 

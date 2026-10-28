@@ -392,7 +392,7 @@ def main():
     print("=" * 80)
 
     # Save to JSON
-    out_path = APP_ROOT / "benchmark_stage7_xseg3.json"
+    out_path = APP_ROOT / "benchmarks" / "baselines" / "benchmark_stage7_xseg3.json"
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(full_report, f, indent=2)
     print(f"\n[OUTPUT] Benchmark report saved to: {out_path}")

@@ -63,7 +63,7 @@ The centralized diagnostics module outputs the structured table with all 8 requi
 
 *(Note: Under active TensorRT compilation on compatible models, `ENGINE CACHE` reports `HIT (reused)` or `BUILT (cached)`, and `PROVIDER` displays `TensorrtExecutionProvider`.)*
 
-Structured JSON telemetry is continuously exported to `benchmark_stage2_lifecycle.json` for automated regression tracking across future stages.
+Structured JSON telemetry is continuously exported to `benchmarks/baselines/benchmark_stage2_lifecycle.json` for automated regression tracking across future stages.
 
 ---
 

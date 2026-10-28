@@ -394,7 +394,7 @@ def run_benchmark(iterations: int = 40, warmup: int = 10) -> Dict[str, Any]:
     print(f"  Mixed/FP16: {precision_data['mixed_fp16']['inference_ms']:.2f} ms | Non-finite: 0 (literal) | Speedup: ~1.54x ASSUMED (fp32 x 0.65), NOT MEASURED")
 
     # Save to JSON
-    out_json = os.path.join(_ROOT, "benchmark_stage6_restore_ultra.json")
+    out_json = os.path.join(_ROOT, "benchmarks", "baselines", "benchmark_stage6_restore_ultra.json")
     with open(out_json, "w", encoding="utf-8") as f:
         json.dump(results, f, indent=2)
     print(f"\nBenchmark results saved to: {out_json}")
