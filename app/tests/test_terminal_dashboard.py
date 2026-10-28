@@ -893,7 +893,10 @@ class Wiring(unittest.TestCase):
             self.assertIn(needle, core, needle)
         self.assertIn("claims_bar", self.src("roop/procmgr_runtime.py"))
         self.assertIn("_dashboard_job", self.src("routes_queue.py"))
-        self.assertIn("'dashboard': _terminal_dashboard.telemetry_frame()", self.src("api.py"))
+        # Built once per frame (`_dashboard_frame`) so the Viseme Mouth Custody `lipsync_ms` reads the same snapshot.
+        api_src = self.src("api.py")
+        self.assertIn("_dashboard_frame = _terminal_dashboard.telemetry_frame()", api_src)
+        self.assertIn("'dashboard': _dashboard_frame", api_src)
 
 
 if __name__ == "__main__":

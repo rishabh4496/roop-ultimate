@@ -259,6 +259,14 @@ class Lipsync_MuseTalk:
         self.pe = _PositionalEncoding(d_model=_AUDIO_FEATURE_DIM).to(self.device, dtype=self.dtype)
 
         self._ready = True
+        try:
+            from roop.model_lifecycle import register_model_lifecycle
+            register_model_lifecycle(
+                model="lipsync:musetalk", device=str(self.device), provider="torch", precision="fp16",
+                input_shape="latent 32x32 + whisper (50, 384)", engine_cache="N/A (torch, no TensorRT)",
+                vram_cost="shared", init_time="initialized", session_id=id(self.unet))
+        except Exception as _degrade_error:
+            _swallowed("roop/processors/Lipsync_MuseTalk.py:lifecycle", _degrade_error, "lifecycle record skipped")
 
     def Release(self):
         self.vae = self.unet = self.pe = self.whisper = self.feature_extractor = None

@@ -33,6 +33,7 @@ from roop.face_util import estimate_norm, solve_pose_5pt, solve_pose_jaw_5pt
 from roop.face_util import offaxis_deg, swap_template_points
 from roop.face_analyser import FaceTracker, canonicalize_face_alignment
 from roop.lipsync_audio import frame_time
+from roop import mouth_custody
 import roop.util_ffmpeg as util_ffmpeg
 from roop.utilities import compute_cosine_distance, get_device, str_to_class
 import roop.vr_util as vr
@@ -7291,6 +7292,12 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         # mouth back to restore_original_mouth instead of disabling both.
         lipsync_wins = (getattr(roop.globals, 'lipsync_enabled', False)
                         and getattr(self, '_lipsync_audio', None) is not None)
+        # Stage 17 silent-video fallback: AUDIO_DRIVEN_SYNC with nothing to listen to runs the SOURCE_MOUTH_RESTORE path
+        # (mouth_custody.fallback_for), not the swap's own mouth. Explicit rather than forcing restore_original_mouth on
+        # for audio mode: Mask_RealityUX / the anatomical engine read that flag directly.
+        _mouth_fallback = mouth_custody.fallback_for(
+            mouth_custody.AUDIO_DRIVEN_SYNC if getattr(roop.globals, 'lipsync_enabled', False) else mouth_custody.OFF,
+            getattr(self, '_lipsync_audio', None) is not None) is not None
         _expression_plan = None
         _expression_engine = self._temporal_engine('temporal_expression')
         _expression_enabled = bool(getattr(_expression_engine, 'enabled', False))
@@ -7303,7 +7310,8 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 _swallowed("roop/ProcessMgr.py:6567", _degrade_error, "fallback continued")
                 _expression_plan = None
 
-        _restore_mouth = bool(getattr(self.options, 'restore_original_mouth', False) or getattr(roop.globals, 'restore_original_mouth', False))
+        _restore_mouth = bool(getattr(self.options, 'restore_original_mouth', False) or getattr(roop.globals, 'restore_original_mouth', False)
+                              or _mouth_fallback)
         if _restore_mouth and not lipsync_wins:
             _thresh = float(getattr(roop.globals, 'mouth_open_threshold', 0.18))
             _lm = getattr(target_face, 'landmark_3d_68', None)
@@ -7362,7 +7370,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     yaw=_hy, pitch=_hp, region=region,
                     eye_strengths=_eye_strengths)
             _mouth_strength = float(_expression_plan.get('mouth_strength', 0.0) or 0.0)
-            if (not self.options.restore_original_mouth and not lipsync_wins
+            if (not self.options.restore_original_mouth and not lipsync_wins and not _mouth_fallback
                     and _mouth_strength > 0.0):
                 mouth_cutout, mouth_bb, mouth_polygon = self.create_mouth_mask(
                     target_face, plate, mask_offsets)
@@ -7397,29 +7405,37 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         # mouth-restore block, which is where that contest is settled.
         if lipsync_wins:
             try:
-                frame_idx = getattr(self._tls, 'frame_idx', None)
-                audio_cache = getattr(self, '_lipsync_audio', None)
-                if frame_idx is not None and audio_cache is not None:
-                    t_s = frame_time(self._lipsync_frame_start, frame_idx, self._lipsync_fps)
-                    audio_feat = audio_cache.features_for_time(t_s)
-                    mouth_cutout, mouth_bb, mouth_polygon = self.create_mouth_mask(target_face, plate, mask_offsets)
-                    if audio_feat is not None and mouth_cutout is not None:
-                        coart_mode = str(getattr(roop.globals, 'lipsync_coarticulation_mode', 'keep_target_lips') or 'keep_target_lips').lower()
-                        if coart_mode == 'keep_target_lips':
-                            lipsync_cutout = mouth_cutout
-                        else:
-                            restorer = self._lipsync_restorer()
-                            prepared = restorer.prepare(result, target_face, audio_feat)
-                            with _gpu_guard(pooled=getattr(restorer, 'pool', None) is not None, owner='expression'):
-                                raw = restorer.infer(prepared)
-                            # Slice mouth-region sub-crop so apply_mouth_area fits the mouth box.
-                            crop_box = prepared.get('crop_box') if prepared else None
-                            lipsync_cutout = restorer.finish(raw, crop_box, mouth_bb)
-                        _hy, _hp = _head_angles()
-                        result = self.apply_mouth_area(result, lipsync_cutout, mouth_bb, mouth_polygon,
-                                                       mask_offsets[5], yaw=_hy, pitch=_hp,
-                                                       region=region)
-                        result = self._finish_lipsync_coart(result, plate, target_face, audio_cache, t_s, coart_mode, region)
+                with _prof('lipsync'):
+                    frame_idx = getattr(self._tls, 'frame_idx', None)
+                    audio_cache = getattr(self, '_lipsync_audio', None)
+                    if frame_idx is not None and audio_cache is not None:
+                        # Stage 17: t_s is the slipped time (mouth_custody.audio_time_s), chunk start included.
+                        t_s = mouth_custody.audio_time_s(
+                            frame_time(self._lipsync_frame_start, frame_idx, self._lipsync_fps),
+                            getattr(roop.globals, 'audio_offset_ms', 0.0))
+                        audio_feat = audio_cache.features_for_time(t_s)
+                        # Wav2Lip's viseme fallback needs the clip-normalised openness AT t_s, not just the mel chunk.
+                        _acoustic = audio_cache.acoustic_for_time(t_s) if getattr(audio_feat, 'ndim', 0) == 2 else None
+                        if _acoustic is not None:
+                            audio_feat = {'mel_chunk': audio_feat, 'phoneme_energy': _acoustic[0], 'viseme_openness': _acoustic[1]}
+                        mouth_cutout, mouth_bb, mouth_polygon = self.create_mouth_mask(target_face, plate, mask_offsets)
+                        if audio_feat is not None and mouth_cutout is not None:
+                            coart_mode = str(getattr(roop.globals, 'lipsync_coarticulation_mode', 'keep_target_lips') or 'keep_target_lips').lower()
+                            if coart_mode == 'keep_target_lips':
+                                lipsync_cutout = mouth_cutout
+                            else:
+                                restorer = self._lipsync_restorer()
+                                prepared = restorer.prepare(result, target_face, audio_feat)
+                                with _gpu_guard(pooled=getattr(restorer, 'pool', None) is not None, owner='expression'):
+                                    raw = restorer.infer(prepared)
+                                # Slice mouth-region sub-crop so apply_mouth_area fits the mouth box.
+                                crop_box = prepared.get('crop_box') if prepared else None
+                                lipsync_cutout = restorer.finish(raw, crop_box, mouth_bb)
+                            _hy, _hp = _head_angles()
+                            result = self.apply_mouth_area(result, lipsync_cutout, mouth_bb, mouth_polygon,
+                                                           mask_offsets[5], yaw=_hy, pitch=_hp,
+                                                           region=region)
+                            result = self._finish_lipsync_coart(result, plate, target_face, audio_cache, t_s, coart_mode, region)
 
             except Exception as e:
                 bar_write(f"[ProcessMgr] lip-sync failed: {e}")
@@ -7436,7 +7452,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         _expression_mouth_active = bool(
             _expression_plan is not None
             and float(_expression_plan.get('mouth_strength', 0.0) or 0.0) > 0.0)
-        if (not self.options.restore_original_mouth and not lipsync_wins
+        if (not self.options.restore_original_mouth and not lipsync_wins and not _mouth_fallback
                 and not _expression_mouth_active):
             _oral = bool(getattr(roop.globals, 'oral_cavity_restore', True))
             _force_mouth = bool(getattr(roop.globals, 'inner_mouth_preserve', False))

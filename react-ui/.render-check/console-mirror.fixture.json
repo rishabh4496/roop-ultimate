@@ -107,6 +107,7 @@
     "detect": 6.0,
     "swap": 8.0,
     "mask": 4.0,
+    "lipsync": null,
     "restore": 32.0,
     "blend": 2.0,
     "encode": 3.0,
@@ -244,6 +245,7 @@
     "detect": 6.0,
     "swap": 8.0,
     "mask": 4.0,
+    "lipsync": null,
     "restore": 32.0,
     "blend": 2.0,
     "encode": 3.0,
@@ -274,12 +276,49 @@
    "S4 Finalize pending"
   ],
   "telemetry_lines": [
-   "ms/frame: Decode 4.0 | Detect 6.0 | Swap 8.0 | Mask/Parse 4.0 | Restore 32.0 | Color/Blend 2.0 | Encode 3.0 ms",
+   "ms/frame: Decode 4.0 | Detect 6.0 | Swap 8.0 | Mask/Parse 4.0 | Lip-Sync -- | Restore 32.0 | Color/Blend 2.0 | Encode 3.0 ms",
    "[BOTTLENECK: Restore 54%]  Smart-Skip ROI reused 10.0% \u00b7 Stage-2 face-free skipped 25.0% \u00b7 VRAM 7.25 / peak 8.50 GB"
   ]
  },
  "idle": {
   "schema": 1,
   "active": false
+ },
+ "lipsync_run": {
+  "telemetry": {
+   "window_s": 10.0,
+   "frames": 100,
+   "basis": "thread-seconds per delivered frame; share = column / all recorded operation time (not a speedup budget)",
+   "latency_ms": {
+    "decode": 4.0,
+    "detect": 6.0,
+    "swap": 8.0,
+    "mask": 4.0,
+    "lipsync": 5.0,
+    "restore": 32.0,
+    "blend": 2.0,
+    "encode": 3.0,
+    "other": 0.0
+   },
+   "bottleneck": {
+    "stage": "restore",
+    "label": "Restore",
+    "share_pct": 50.0,
+    "severity": "yellow"
+   },
+   "hit_rates": {
+    "smart_skip_roi_reused_pct": null,
+    "smart_skip_enabled": false,
+    "stage2_face_free_skipped_pct": null,
+    "vram_allocated_gb": null,
+    "vram_peak_gb": null,
+    "vram_total_gb": null
+   },
+   "queues": null
+  },
+  "console": [
+   "ms/frame: Decode 4.0 | Detect 6.0 | Swap 8.0 | Mask/Parse 4.0 | Lip-Sync 5.0 | Restore 32.0 | Color/Blend 2.0 | Encode 3.0 ms",
+   "[BOTTLENECK: Restore 50%]  Smart-Skip ROI reused off \u00b7 Stage-2 face-free skipped --% \u00b7 VRAM -- / peak -- GB"
+  ]
  }
 }

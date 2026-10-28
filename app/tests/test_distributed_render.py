@@ -99,7 +99,7 @@ def test_chunk_project_is_local_and_audio_disabled(tmp_path):
 # are process-private), pinned to exactly one physical GPU and addressing it as device
 # 0, and no GPU ever runs two chunks at once.
 def _stub_render_distributed(monkeypatch, tmp_path, gpus, n_chunks, render_seconds=0.05,
-                             verify_chunks=lambda paths: []):
+                             verify_chunks=lambda paths: [], document_settings=None, remux=None):
     import sys
     import threading
     import time
@@ -107,7 +107,7 @@ def _stub_render_distributed(monkeypatch, tmp_path, gpus, n_chunks, render_secon
 
     source = tmp_path / "target.mp4"
     source.write_bytes(b"x")
-    document = {"media": {"target": {}, "sources": []}, "timeline": {}, "settings": {}}
+    document = {"media": {"target": {}, "sources": []}, "timeline": {}, "settings": dict(document_settings or {})}
     chunks = [dist.Chunk(i, i * 10, (i + 1) * 10, Fraction(i), Fraction(i + 1))
               for i in range(n_chunks)]
     monkeypatch.setattr(dist.project_io, "load_project", lambda p: document)
@@ -135,7 +135,7 @@ def _stub_render_distributed(monkeypatch, tmp_path, gpus, n_chunks, render_secon
     checkpoint.project_path = lambda cid: str(tmp_path / f"{cid}.ckpt")
     monkeypatch.setitem(sys.modules, "project_checkpoint", checkpoint)
     util = types.ModuleType("roop.util_ffmpeg")
-    util.restore_audio = lambda joined, audio, a, b, out: Path(out).write_bytes(b"o") or True
+    util.restore_audio = remux or (lambda joined, audio, a, b, out: Path(out).write_bytes(b"o") or True)
     monkeypatch.setitem(sys.modules, "roop.util_ffmpeg", util)
 
     class Cfg:
@@ -183,6 +183,48 @@ def test_each_worker_is_a_separate_process_pinned_to_one_gpu(monkeypatch, tmp_pa
         assert "," not in call["env"]["CUDA_VISIBLE_DEVICES"]    # exactly one GPU
     assert {c["env"]["CUDA_VISIBLE_DEVICES"] for c in calls} == {"GPU-a", "GPU-b"}
     assert overlaps == []                                    # no GPU ran two chunks at once
+
+
+def _recording_remux(seen):
+    def remux(joined, audio, a, b, out, **kwargs):
+        seen.append({"audio": audio, "first": a, "last": b, **kwargs})
+        Path(out).write_bytes(b"o")
+        return True
+    return remux
+
+
+def test_the_join_remuxes_an_override_track_with_the_slip_taken_from_the_source_video(monkeypatch, tmp_path):
+    seen = []
+    track = str(tmp_path / "dub.wav")
+    _stub_render_distributed(monkeypatch, tmp_path, ["GPU-a"], 3, remux=_recording_remux(seen),
+                             document_settings={"override_audio_path": track, "audio_offset_ms": 250})
+    assert len(seen) == 1, "the audio is attached ONCE, to the joined video"
+    assert seen[0]["audio"] == track
+    assert seen[0]["timing_source"] == str(tmp_path / "target.mp4")      # the trim comes from the video, not the audio file
+    assert seen[0]["audio_offset_ms"] == 250.0
+    assert (seen[0]["first"], seen[0]["last"]) == (0, 30)
+
+
+def test_a_slip_alone_keeps_the_source_audio_but_still_takes_the_slip(monkeypatch, tmp_path):
+    seen = []
+    _stub_render_distributed(monkeypatch, tmp_path, ["GPU-a"], 2, remux=_recording_remux(seen),
+                             document_settings={"audio_offset_ms": -120})
+    assert seen[0]["audio"] == str(tmp_path / "target.mp4")
+    assert seen[0]["audio_offset_ms"] == -120.0
+
+
+def test_a_legacy_lipsync_upload_is_still_the_remuxed_track(monkeypatch, tmp_path):
+    seen = []
+    track = str(tmp_path / "old_dub.wav")
+    _stub_render_distributed(monkeypatch, tmp_path, ["GPU-a"], 2, remux=_recording_remux(seen),
+                             document_settings={"lipsync_enabled": True, "lipsync_audio_source": "upload", "lipsync_audio_path": track})
+    assert seen[0]["audio"] == track and seen[0]["timing_source"] == str(tmp_path / "target.mp4")
+
+
+def test_with_no_override_and_no_slip_the_historical_call_is_unchanged(monkeypatch, tmp_path):
+    seen = []
+    _stub_render_distributed(monkeypatch, tmp_path, ["GPU-a"], 2, remux=_recording_remux(seen))
+    assert set(seen[0]) == {"audio", "first", "last"}, "no new keyword arguments reach restore_audio"
 
 
 def test_workers_never_outnumber_chunks_and_never_share_a_gpu(monkeypatch, tmp_path):

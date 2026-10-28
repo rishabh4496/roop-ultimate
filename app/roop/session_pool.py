@@ -275,6 +275,14 @@ def _resource_spec(model_key, input_shape=None):
     elif 'expr' in key or 'liveportrait' in key:
         values = (360.0, 384.0, 220.0, 128.0)
         family = 'expression'
+    elif 'musetalk' in key:
+        # VAE + UNet + Whisper encoder in torch fp16: a generative model, sized with the expression family.
+        values = (360.0, 384.0, 220.0, 128.0)
+        family = 'lipsync-generative'
+    elif 'lipsync' in key or 'wav2lip' in key:
+        # Wav2Lip: one small 96x96 conv net per mouth crop.
+        values = (150.0, 256.0, 110.0, 48.0)
+        family = 'lipsync'
     else:
         # Unknown models are allowed, but one conservative context is the safe
         # automatic choice until a real benchmark supplies a measured cost.

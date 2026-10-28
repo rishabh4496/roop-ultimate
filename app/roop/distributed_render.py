@@ -240,6 +240,14 @@ def _project_for_chunk(document: dict, project_path: str, source: str,
     item["settings"] = copy.deepcopy(item.get("settings") or {})
     item["settings"].update({"skip_audio": True, "keep_frames": False,
                              "wait_after_extraction": False})
+    # Stage 17. The slice is stream-copied `-an` and starts at its own frame 0, so a worker that lip-syncs would find no
+    # audio (source 'original') or read the track from t = 0 for EVERY chunk (an override track). Hand it the driving
+    # audio of the WHOLE source and its chunk's absolute start: ProcessMgr adds that to its frame index.
+    mode = item["settings"].get("mouth_custody_mode") or (
+        "audio_driven_sync" if item["settings"].get("lipsync_enabled") else "off")
+    if mode == "audio_driven_sync":
+        driving = item["settings"].get("override_audio_path") or item["settings"].get("lipsync_audio_path") or source
+        item["settings"].update({"override_audio_path": driving, "lipsync_frame_offset": int(chunk.start_frame)})
     # A project file is private to the worker; don't reuse an old checkpoint.
     project_io.save_project(destination, item, journal=False)
 
@@ -384,13 +392,22 @@ def render_distributed(project_path: str, output: str, *, target_seconds: float 
     Path(output).parent.mkdir(parents=True, exist_ok=True)
     audio_source = source
     settings = document.get("settings") or {}
-    if settings.get("lipsync_enabled") and settings.get("lipsync_audio_source") == "upload":
-        audio_source = settings.get("lipsync_audio_path") or source
+    # Stage 17: the override track (or the legacy lip-sync upload) and the slip are applied ONCE, here, to the joined video;
+    # the workers render with skip_audio and only read the track to drive their mouths (_project_for_chunk).
+    override = settings.get("override_audio_path") or (
+        settings.get("lipsync_audio_path")
+        if settings.get("lipsync_enabled") and settings.get("lipsync_audio_source") == "upload" else None)
+    if override:
+        audio_source = override
+    from roop import mouth_custody
+    offset_ms = mouth_custody.clamp_offset_ms(settings.get("audio_offset_ms"))
     if settings.get("skip_audio"):
         shutil.copyfile(joined, output)
-    elif not restore_audio(joined, audio_source, chunks[0].start_frame,
-                           chunks[-1].end_frame, output):
-        raise RuntimeError("audio remux failed; intermediates retained")
+    else:
+        # The historical five-argument call unless there is an override track or a slip to apply.
+        extra = {"timing_source": source, "audio_offset_ms": offset_ms} if (audio_source != source or offset_ms) else {}
+        if not restore_audio(joined, audio_source, chunks[0].start_frame, chunks[-1].end_frame, output, **extra):
+            raise RuntimeError("audio remux failed; intermediates retained")
     if _count(output) != expected:
         raise RuntimeError("final frame count mismatch; intermediates retained")
     if abs(_duration(output) - expected_seconds) > max(0.002, float(1 / rate)):

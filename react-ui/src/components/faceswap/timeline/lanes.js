@@ -6,10 +6,10 @@
 import {
   FRAME_CELL_DETAIL_PX, FRAME_CELL_MIN_PX, clamp, fmtFrameLabel, labelFor, normalizeView, rulerTicks, viewSpan, xAtFrame,
 } from './viewMath';
-import { visibleIntervals } from './laneModel';
+import { audioSourceTime, visibleIntervals } from './laneModel';
 import { describeOverride } from './overrides';
 
-export const LANE_H = { ruler: 26, cache: 4, film: 78, over: 26 };
+export const LANE_H = { ruler: 26, cache: 4, film: 78, over: 26, audio: 34 };
 export const SCENE_ROW_H = 13;
 export const SCENE_CUT_H = 16;
 export const MAX_PRESENCE_ROWS = 6;
@@ -292,6 +292,47 @@ export function drawFilmstrip(ctx, { w, h, theme }, { view, maxFrames, fps, slot
       ctx.fillText(text, Math.round(x), h - 3);
     }
   }
+}
+
+// ── audio track ────────────────────────────────────────────
+
+/**
+ * The delivered audio as its own row: the bound external track, or the target's own audio, drawn where it will PLAY.
+ * `waves` are datasets {t0, t1, peaks} (finest first); `slipSeconds` moves them right (+) or left (-) of the video, and
+ * the stretch of video the audio does not cover after the slip is left empty with a hatch, so a slip that exposes silence
+ * is visible before a render rather than after it.
+ */
+export function drawAudioTrack(ctx, { w, h, theme }, { view, maxFrames, fps, waves, slipSeconds = 0, active = true }) {
+  const v = normalizeView(view, maxFrames);
+  ctx.fillStyle = theme.bg;
+  ctx.fillRect(0, 0, w, h);
+  const sets = (waves || []).filter(Boolean);
+  const rate = fps || 25;
+  const span = viewSpan(v);
+  const mid = h / 2;
+  const total = sets.reduce((m, ds) => Math.max(m, ds.t1 || 0), 0);
+  ctx.fillStyle = active ? 'rgba(167, 139, 250, 0.78)' : 'rgba(167, 139, 250, 0.35)';
+  const hatch = [];
+  for (let x = 0; x < w; x++) {
+    const fa = v.start + (x / w) * span - 0.5;
+    const fb = v.start + ((x + 1) / w) * span - 0.5;
+    const ta = Math.max(0, (fa - 1) / rate);
+    const tb = Math.max(ta, (fb - 1) / rate);
+    const sa = audioSourceTime(ta, slipSeconds);
+    const sb = audioSourceTime(tb, slipSeconds);
+    if (sb < 0 || (total > 0 && sa > total)) { hatch.push(x); continue; }
+    let p = -1;
+    for (const ds of sets) { p = peakOver(ds, Math.max(0, sa), Math.max(0, sb)); if (p >= 0) break; }
+    if (p < 0) continue;
+    const half = Math.max(0.5, p * (h / 2 - 3));
+    ctx.fillRect(x, mid - half, 1, half * 2);
+  }
+  if (hatch.length) {
+    ctx.fillStyle = 'rgba(255,255,255,0.10)';
+    for (const x of hatch) if (x % 4 === 0) ctx.fillRect(x, 3, 1, h - 6);
+  }
+  ctx.fillStyle = 'rgba(255,255,255,0.12)';
+  ctx.fillRect(0, Math.round(mid), w, 1);
 }
 
 // ── scene cuts + presence ───────────────────────────────────────────────────

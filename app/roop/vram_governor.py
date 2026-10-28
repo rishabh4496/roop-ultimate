@@ -108,6 +108,8 @@ _ENHANCER_INPUT = {
 }
 _GPEN_SIZED = {'GPEN 1024': 1024, 'GPEN 2048': 2048}
 _SWAP_INPUT = {'inswapper': 128, 'reswapper_128': 128}
+# Lip-sync model -> its network input side (Wav2Lip's mouth crop, MuseTalk's VAE latent grid at 256 px).
+_LIPSYNC_INPUT = {'wav2lip': 96, 'musetalk': 256}
 
 
 def clamp_margin_gb(value: Any) -> float:
@@ -178,6 +180,8 @@ class JobSpec:
     enhancer_contexts: int = 1
     nvdec: bool = True
     detector_size: int = 640
+    # Stage 17: the lip-sync model that will be resident ('wav2lip' | 'musetalk'), '' when AUDIO_DRIVEN_SYNC is not in use.
+    lipsync: str = ''
 
     def signature(self, gpen_size: Optional[int] = None) -> str:
         """What the learned ratio is keyed by. Batch and GPEN size are left out
@@ -185,10 +189,13 @@ class JobSpec:
         batch must apply to the others or it could never be used."""
         enh = self.enhancer if gpen_size_for(self.enhancer) is None else 'GPEN-sized'
         masks = '+'.join(sorted(m for m in self.mask_engines if m))
-        return '|'.join(str(v) for v in (
-            self.swap_model, enh, masks or '-', self.swap_contexts,
-            self.detmask_contexts, self.enhancer_contexts,
-            _resolution_class(self.width, self.height)))
+        parts = (self.swap_model, enh, masks or '-', self.swap_contexts,
+                 self.detmask_contexts, self.enhancer_contexts,
+                 _resolution_class(self.width, self.height))
+        # Stage 17: appended ONLY when lip-sync is resident, so every key learned before it existed still matches.
+        if self.lipsync:
+            parts += ('lipsync:' + str(self.lipsync),)
+        return '|'.join(str(v) for v in parts)
 
 
 def tier_label(total_mb: float) -> str:
@@ -248,6 +255,9 @@ def estimate_budget_mb(job: JobSpec, batch_cap: int, gpen_size: Optional[int]) -
     elif str(job.enhancer) in _ENHANCER_INPUT:
         key, side = _ENHANCER_INPUT[str(job.enhancer)]
         parts['enhancer'] = _slot_mb(key, side) * max(1, int(job.enhancer_contexts))
+    if str(job.lipsync or '') in _LIPSYNC_INPUT:
+        # One resident lip-sync model, driven from a single mouth crop per frame; not multiplied by the pool widths.
+        parts['lipsync'] = _slot_mb('lipsync:' + str(job.lipsync), _LIPSYNC_INPUT[str(job.lipsync)])
     parts = {k: v * _PRIOR_SCALE for k, v in parts.items()}
     parts['process'] = _PROCESS_OVERHEAD_MB
     if job.nvdec:
@@ -776,4 +786,6 @@ def job_from_render(files, masking_engine, swap_model, facesets, total_vram_gb: 
         swap_contexts=swap_ctx, detmask_contexts=detmask_ctx,
         enhancer_contexts=1 if small else 2,
         nvdec=os.environ.get('ROOP_NVDEC', '1') != '0',
-        detector_size=det)
+        detector_size=det,
+        lipsync=(str(getattr(g, 'lipsync_model', 'wav2lip') or 'wav2lip').lower()
+                 if getattr(g, 'lipsync_enabled', False) else ''))

@@ -70,6 +70,19 @@ class AudioFeatureCache:
         idx = audio_index_for_frame(t_s, self.audio_fps, len(self.features))
         return self.features[idx]
 
+    def acoustic_for_time(self, t_s: float):
+        """``(phoneme_energy, viseme_openness)`` at video time ``t_s``, or None when this cache has no mel curves (MuseTalk's).
+
+        Both curves are normalised over the WHOLE clip (``compute_phoneme_features``), so a quiet word beside a loud one reads
+        quiet; a per-frame chunk cannot recover that, which is why the per-frame feature alone (a bare mel chunk) leaves the
+        viseme fallback with openness 0 and a mouth that never opens.
+        """
+        if self.phoneme_energy is None or self.viseme_openness is None or len(self.viseme_openness) == 0:
+            return None
+        last = len(self.viseme_openness) - 1
+        step = max(0, min(last, int(round(max(0.0, float(t_s)) * self.mel_fps))))
+        return float(self.phoneme_energy[min(step, len(self.phoneme_energy) - 1)]), float(self.viseme_openness[step])
+
     def mel_chunk_for_time(self, t_s: float, window_size: int = 16) -> np.ndarray:
         """Extract an 80-channel log-mel spectrogram window centered at timestamp t_s.
         Shape returned: (80, window_size).

@@ -246,6 +246,7 @@ def finalize_render(temp_video: str, destination: str, *,
                     audio_source: Optional[str], trim_start: Optional[int], trim_end: Optional[int],
                     expected_frames: Optional[int] = None, skip_audio: bool = False,
                     stopped: bool = False, video_source: Optional[str] = None,
+                    audio_offset_ms: float = 0.0,
                     mux: Optional[Callable[..., bool]] = None,
                     source_has_audio: Optional[Callable[[str], bool]] = None) -> Dict[str, Any]:
     """Mux (or move), verify, then delete. Returns the JSON-safe result described in the module docstring.
@@ -307,7 +308,13 @@ def finalize_render(temp_video: str, destination: str, *,
             moved = True
         else:
             moved = False
-            mux_ok = bool(mux(temp_video, audio_source, trim_start, trim_end, destination))
+            # Stage 17: an override track (audio_source is not the video) or a slip needs the trim taken from the VIDEO's
+            # timing, not from the audio file's; the historical call is unchanged when neither applies.
+            if (video_source and audio_source != video_source) or abs(float(audio_offset_ms or 0.0)) > 1e-9:
+                mux_ok = bool(mux(temp_video, audio_source, trim_start, trim_end, destination,
+                                  timing_source=video_source or audio_source, audio_offset_ms=audio_offset_ms))
+            else:
+                mux_ok = bool(mux(temp_video, audio_source, trim_start, trim_end, destination))
     except OSError as exc:
         mux_ok = False
         result["problems"].append(f"could not write the output: {exc}")

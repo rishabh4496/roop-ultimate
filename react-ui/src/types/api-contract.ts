@@ -542,3 +542,38 @@ export interface SegmentCustodyReceipt {
   bytes?: number;
   lossless?: boolean;
 }
+
+// ── Viseme Mouth Custody (Stage 17) ─────────────────────────────────────────────
+// app/roop/mouth_custody.py is the rule set; react-ui/src/components/faceswap/mouthCustody.js the UI's model.
+
+export type MouthCustodyMode = 'off' | 'source_mouth_restore' | 'audio_driven_sync';
+
+/** The three request fields POST /api/swap, /api/preview and a project's settings accept (422 on a bad one). */
+export interface MouthCustodyRequest {
+  mouth_custody_mode?: MouthCustodyMode;
+  /** The one place the remux reads its audio from; an existing audio file (or a video with audio). */
+  override_audio_path?: string | null;
+  /** -500..+500 ms; positive = the audio is heard later than the video. */
+  audio_offset_ms?: number;
+}
+
+/** The flat fields of every /ws/telemetry frame, constant while idle. `lipsync_ms` is the dashboard's Lip-Sync latency column. */
+export interface MouthCustodyTelemetry {
+  lipsync_ms: number | null;
+  mouth_mode: MouthCustodyMode | '';
+  /** Why AUDIO_DRIVEN_SYNC ran as SOURCE_MOUTH_RESTORE for this clip (silent video, extraction failed), else ''. */
+  mouth_fallback: string;
+  audio_offset_ms: number;
+}
+
+/** GET /api/target/waveform and GET /api/audio/waveform. */
+export interface AudioWaveformResponse {
+  ready: boolean;
+  state: 'ready' | 'building' | 'none' | 'error';
+  duration: number;
+  t0?: number;
+  t1?: number;
+  bins?: number;
+  /** base64 of one uint8 peak (0-255, square-root scale) per bin. */
+  peaks: string;
+}

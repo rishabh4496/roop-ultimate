@@ -315,7 +315,10 @@ class TestDefaultOffIsANoOp(unittest.TestCase):
     def test_lipsync_stage_never_costs_a_frame(self):
         # The whole block must be inside a try/except that falls back silently
         # — same contract every other opt-in post-composite stage here follows.
-        block = self.src.split('# ── Lip-sync (post-composite)', 1)[1][:2600]
+        # Up to the block's own failure message, not a fixed character window: Stage 17 added lines to the block (the audio
+        # slip, the acoustics) and the contract is "the whole block is inside the try", wherever its end falls.
+        block = self.src.split('# ── Lip-sync (post-composite)', 1)[1]
+        block = block[:block.index('lip-sync failed')]
         self.assertIn('try:', block)
         self.assertIn('except Exception as e:', block)
         self.assertIn('bar_write', block)

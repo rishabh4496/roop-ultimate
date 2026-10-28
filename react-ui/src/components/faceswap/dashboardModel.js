@@ -91,7 +91,7 @@ export function stageRows(dash) {
 
 export const LATENCY_COLUMNS = [
   ['decode', 'Decode'], ['detect', 'Detect'], ['swap', 'Swap'], ['mask', 'Mask/Parse'],
-  ['restore', 'Restore'], ['blend', 'Color/Blend'], ['encode', 'Encode'],
+  ['lipsync', 'Lip-Sync'], ['restore', 'Restore'], ['blend', 'Color/Blend'], ['encode', 'Encode'],
 ];
 
 /** The per-frame latency split (ms per delivered frame), the bottleneck column flagged. */

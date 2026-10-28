@@ -46,8 +46,10 @@ test('processing: the console mirror shows the terminal\'s stages, split and hit
   await expect(s3).toContainText('ETA: 00m 30s');
   await expect(mirror.locator('[data-stage="S4"]')).toContainText('pending');
 
-  // the seven latency cells, the bottleneck column flagged (and only it)
-  await expect(mirror.locator('[data-col]')).toHaveCount(7);
+  // the eight latency cells (Lip-Sync is not measured on this run: an em dash, never 0), the bottleneck column flagged (and only it)
+  await expect(mirror.locator('[data-col]')).toHaveCount(8);
+  await expect(mirror.locator('[data-col="lipsync"]')).toContainText('Lip-Sync');
+  await expect(mirror.locator('[data-col="lipsync"]')).not.toContainText('Lip-Sync 0');
   await expect(mirror.locator('[data-bottleneck="true"]')).toHaveCount(1);
   await expect(mirror.locator('[data-col="restore"]')).toHaveAttribute('data-bottleneck', 'true');
   await expect(mirror.locator('[data-col="restore"]')).toContainText('Restore 32.0');

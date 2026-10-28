@@ -2,7 +2,7 @@ import { useShallow } from 'zustand/react/shallow';
 import React from 'react';
 import { useTelemetryStore } from '../../store/telemetryStore';
 import { LiveText } from '../LiveTelemetry';
-import { pillModel, culledText, fpsText } from './pillModel';
+import { pillModel, culledText, fpsText, lipsyncText, mouthFallbackText } from './pillModel';
 
 // The unified run status: 1 Pre-Scan -> 2 Range Lock -> 3 Render & Mux, driven only by /ws/telemetry.
 //
@@ -40,6 +40,13 @@ function Step({ step, last }) {
   );
 }
 
+/** The silent-video fallback, said out loud. Not aria-hidden: a state change a screen-reader user needs, announced once. */
+function MouthFallbackNote() {
+  const text = useTelemetryStore((s) => mouthFallbackText(s.run));
+  if (!text) return null;
+  return <span role="status" data-testid="pill-mouth-fallback" className="rounded-full border border-amber-400/40 bg-amber-400/10 px-2.5 py-1 text-micro text-amber-100">{text}</span>;
+}
+
 /** The pill for a model (pure view; the store-bound `PipelinePill` below is what the app mounts). */
 export function PipelinePillView({ model, processing = true, className = '' }) {
   if (!model) return null;
@@ -58,7 +65,10 @@ export function PipelinePillView({ model, processing = true, className = '' }) {
           select={(s) => culledText(s.pipeline)} />
         <LiveText data-testid="pill-fps" className="empty:hidden"
           select={(s) => fpsText(s.run, pillModel(s.pipeline, { processing }))} />
+        <LiveText data-testid="pill-lipsync" className="empty:hidden"
+          select={(s) => lipsyncText(s.run)} />
       </span>
+      <MouthFallbackNote />
       <span role="status" aria-live="polite" className="sr-only" data-testid="pill-announce">{model.announce}</span>
     </div>
   );

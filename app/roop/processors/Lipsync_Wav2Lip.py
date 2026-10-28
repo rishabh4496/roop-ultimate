@@ -79,11 +79,33 @@ class Lipsync_Wav2Lip:
                 shape = self.session.get_inputs()[0].shape
                 if len(shape) >= 4 and isinstance(shape[2], int) and shape[2] > 0:
                     self.input_size = shape[2]
+                self._register_runtime(providers)
             except Exception as e:
                 print(f"[Lipsync_Wav2Lip] Note: running neural viseme engine ({e})", flush=True)
                 self.session = None
 
         self._ready = True
+
+    def _register_runtime(self, requested_providers):
+        """Stage 2/14 accounting: put the model in the lifecycle table and, when it is on TensorRT, pay (and report) the
+        engine build on a dummy pass NOW with the Stage 14 receipt, not on frame 0 of the render. Never fatal: the
+        lip-sync still runs without either."""
+        try:
+            from roop import predictor
+            if predictor.warmup_enabled():
+                predictor.warmup_session(self.session, 'lipsync:wav2lip', (self.input_size, self.input_size))
+        except Exception as _degrade_error:
+            _swallowed("roop/processors/Lipsync_Wav2Lip.py:warmup", _degrade_error, "first frame pays the engine build")
+        try:
+            from roop.model_lifecycle import register_model_lifecycle, format_shape_from_session
+            active = self.session.get_providers()[0]
+            register_model_lifecycle(
+                model="lipsync:wav2lip", device=str(getattr(roop.globals, 'cuda_device_id', 0)), provider=active,
+                precision="fp16", input_shape=format_shape_from_session(self.session),
+                engine_cache="ENABLED" if "tensorrt" in active.lower() else "N/A (%s)" % active,
+                vram_cost="shared", init_time="initialized", session_id=id(self.session))
+        except Exception as _degrade_error:
+            _swallowed("roop/processors/Lipsync_Wav2Lip.py:lifecycle", _degrade_error, "lifecycle record skipped")
 
     def Release(self):
         self.session = None

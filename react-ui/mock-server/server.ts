@@ -6,6 +6,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { createServer as createViteServer } from 'vite';
 import multer from 'multer';
 import { installMockQueue } from './mockQueue';
+import { mouthTelemetry, normalizeMouthCustody, type MouthJob } from './mouthCustody';
 import { buildStages, precisionSection, IdentityBlendResponse, TrtCacheSnapshot, AutotuneSnapshot, RecognitionCurrent, SegmentStatus, KeyframeOverride } from './pipelineTypes';
 
 // This is a MOCK of app/api.py: simulated swaps, invented telemetry, SVG
@@ -329,6 +330,13 @@ function getHardwareTelemetry(isProcessing = false) {
   };
 }
 
+// Viseme Mouth Custody of the job in flight (null while idle): what /ws/telemetry reports under mouth_mode / mouth_fallback.
+let mouthJob: MouthJob | null = null;
+const targetHasAudio = (index: number): boolean => {
+  const t = targetEntries[index] as { frames?: number; has_audio?: boolean } | undefined;
+  return !!t && (t.frames ?? 0) > 1 && t.has_audio !== false;
+};
+
 let progressState: ProgressState = {
   processing: false,
   paused: false,
@@ -528,6 +536,8 @@ async function startServer() {
           fps_basis: 'retired',
           // The real frame carries the current rate beside the run average (null while idle); pillModel's fpsText reads it.
           fps_now: progressState.processing ? progressState.fps : null,
+          // Viseme Mouth Custody (api._mouth_custody_flat): constant while idle; typed against the contract.
+          ...mouthTelemetry(mouthJob, progressState.processing),
           current_frame: progressState.current_frame,
           total_frames: progressState.total_frames,
           progress: progressState.progress,
@@ -1055,7 +1065,7 @@ async function startServer() {
   app.get('/api/target/waveform', (req, res) => {
     const idx = Number(req.query.index ?? selectedTargetIndex);
     const target = targetEntries[idx];
-    if (!target || !(target.frames > 1)) { res.json({ ready: true, state: 'none', duration: 0, peaks: '' }); return; }
+    if (!target || !(target.frames > 1) || (target as { has_audio?: boolean }).has_audio === false) { res.json({ ready: true, state: 'none', duration: 0, peaks: '' }); return; }
     const duration = target.frames / (target.fps || 30);
     const t0 = Math.max(0, Number(req.query.t0 ?? 0));
     const t1 = Number(req.query.t1 ?? -1) < 0 ? duration : Math.min(duration, Number(req.query.t1));
@@ -1067,6 +1077,30 @@ async function startServer() {
       peaks[i] = t < 1 ? 6 : Math.round(Math.min(255, 40 + 190 * speech * speech));
     }
     res.json({ ready: true, state: 'ready', duration, t0, t1, bins, peaks: peaks.toString('base64') });
+  });
+  // Stage 17: the waveform of an UPLOADED dub track (the real route answers only files in its upload directory; the mock's
+  // /api/lipsync/audio/add returns `temp/<name>`, so that is the prefix it accepts). 14.5 s, like the upload answer says.
+  app.get('/api/audio/waveform', (req, res) => {
+    const p = String(req.query.path ?? '');
+    if (!p.startsWith('temp/')) { res.status(404).json({ message: 'no such uploaded audio track' }); return; }
+    const duration = 14.5;
+    const t0 = Math.max(0, Number(req.query.t0 ?? 0));
+    const t1 = Number(req.query.t1 ?? -1) < 0 ? duration : Math.min(duration, Number(req.query.t1));
+    const bins = Math.max(1, Math.min(8192, Number(req.query.bins ?? 2048)));
+    const peaks = Buffer.alloc(bins);
+    for (let i = 0; i < bins; i++) {
+      const t = t0 + ((i + 0.5) / bins) * (t1 - t0);
+      peaks[i] = t < 0.6 ? 4 : Math.round(Math.min(255, 30 + 200 * Math.abs(Math.sin(t * 5.1) * Math.sin(t * 0.9))));
+    }
+    res.json({ ready: true, state: 'ready', duration, t0, t1, bins, peaks: peaks.toString('base64') });
+  });
+  // Test hook, mock only: make a target silent (or give it audio back) so a spec can drive the silent-video fallback.
+  app.post('/__mock/target_audio', (req, res) => {
+    const idx = Number(req.body?.index ?? 0);
+    const target = targetEntries[idx] as { has_audio?: boolean } | undefined;
+    if (!target) { res.status(404).json({ message: 'no target' }); return; }
+    target.has_audio = req.body?.has_audio !== false;
+    res.json({ ok: true, index: idx, has_audio: target.has_audio });
   });
   // Test hook, mock only: resize a target so a spec can drive a 50,000-frame clip through the real UI.
   app.post('/api/mock/target_frames', (req, res) => {
@@ -1093,6 +1127,8 @@ async function startServer() {
   });
 
   app.post('/api/preview', (req, res) => {
+    const mouth = normalizeMouthCustody(req.body ?? {}, { targetHasAudio: targetHasAudio(Number(req.body?.index ?? selectedTargetIndex)) });
+    if ('error' in mouth) { res.status(422).json({ message: mouth.error }); return; }
     const idx = Number(req.body.index ?? selectedTargetIndex);
     const frame = Number(req.body.frame ?? currentFrame);
     const target = targetEntries[idx] || targetEntries[0];
@@ -1134,6 +1170,9 @@ async function startServer() {
     if (progressState.processing) {
       return res.status(409).json({ message: 'Already processing' });
     }
+    const mouth = normalizeMouthCustody(req.body ?? {}, { targetHasAudio: targetHasAudio(selectedTargetIndex) });
+    if ('error' in mouth) return res.status(422).json({ message: mouth.error });
+    mouthJob = mouth.job;
     simulateSwapProcess();
     res.json({ status: 'started', message: 'Swap process initiated successfully' });
   });
@@ -2211,6 +2250,9 @@ async function startServer() {
 
   // ── Extras & Frame Post-Processing ──────────────────────────────────
   app.post('/api/extras/apply', upload.single('file'), (req, res) => {
+    // The audio half of mouth custody (the media editor has no mouth): an out-of-range slip or a non-audio track is a 422.
+    const audio = normalizeMouthCustody({ audio_offset_ms: req.body?.audio_offset_ms, override_audio_path: req.body?.override_audio_path || undefined });
+    if ('error' in audio) { res.status(422).json({ message: audio.error }); return; }
     res.json({
       path: '/outputs/edited_sample.png',
       url: '/outputs/edited_sample.png',

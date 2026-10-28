@@ -9,6 +9,9 @@ import { Icon } from '../icons';
 import PersonGroups from './PersonGroups';
 import QualityReport from './QualityReport';
 import FileDrop from './faceswap/FileDrop';
+import MouthCustodyPanel from './faceswap/MouthCustodyPanel';
+import useTargetAudio from './faceswap/useTargetAudio';
+import { modeOf, overridePatch, requestFields, clampOffset, MODE_LABELS } from './faceswap/mouthCustody';
 import PipelineControls from './faceswap/PipelineControls';
 import {
   buildFaceMappingArray,
@@ -1083,6 +1086,9 @@ export default function FaceSwap({
 
   // p = the swap parameters, seeded from CFG (settings) and patched locally.
   const p = settings || {};
+  // Stage 17: does the selected video have audio? Answers the panel's silent-video advisory and whether the timeline shows an
+  // audio row at all. The envelope it asks for is the one the timeline's waveform already builds, so this costs nothing extra.
+  const targetHasAudio = useTargetAudio(getJSON, selTarget, !!targets[selTarget] && targets[selTarget].frames > 1);
   const set = (k, v) => setSettings((s) => ({ ...s, [k]: v }));
   // Several keys in ONE update. Two sequential set() calls each build off the
   // same stale snapshot, so the second silently drops the first — which for
@@ -1192,6 +1198,7 @@ export default function FaceSwap({
       detail_transfer_strength: num(activeParams.detail_transfer_strength, 0),
       enhancer_align: activeParams.enhancer_align,
       color_match_after_enhance: activeParams.color_match_after_enhance,
+      ...requestFields(activeParams),
       lipsync_enabled: activeParams.lipsync_enabled,
       lipsync_model: activeParams.lipsync_model,
       lipsync_coarticulation_mode: activeParams.lipsync_coarticulation_mode,
@@ -1946,7 +1953,7 @@ export default function FaceSwap({
     setUploadingLipsyncAudio(true);
     try {
       const res = await postFile('/api/lipsync/audio/add', files[0], undefined, { timeout: 0 });
-      set('lipsync_audio_path', res.path);
+      setMany(overridePatch(res.path));
     } catch (err) { notify(err.message, 'error'); }
     finally { setUploadingLipsyncAudio(false); }
   };
@@ -3526,70 +3533,19 @@ export default function FaceSwap({
           </TemporalModeControl>
         </InspectorGroup>
 
-        <InspectorGroup id="face-details" title="Eyes, mouth & expression" icon={Icon.preview}>
-          {!p.lipsync_enabled && (
-            <Toggle label="Restore original mouth area" checked={!!p.restore_original_mouth} onChange={(v) => set('restore_original_mouth', v)} />
-          )}
-          <Toggle
-            label="Lip-sync & Viseme Refinement"
-            info="Regenerates the mouth region to match a driving audio track, after everything else — same slot as 'Restore original mouth area', so the two are mutually exclusive (this one wins when both would apply). 'Original audio' re-syncs the mouth to this clip's own soundtrack, repairing drift the swap itself introduces; 'Uploaded track' dubs against a separate audio file instead."
-            checked={!!p.lipsync_enabled}
-            onChange={(v) => set('lipsync_enabled', v)}
+        <InspectorGroup id="mouth-custody" title="Audio & Mouth Custody" icon={Icon.preview} badge={modeOf(p) === 'off' ? undefined : MODE_LABELS[modeOf(p)]}>
+          <MouthCustodyPanel
+            params={p}
+            onPatch={setMany}
+            onAddAudio={onAddLipsyncAudio}
+            uploading={uploadingLipsyncAudio}
+            hasTargetAudio={targetHasAudio}
+            isImage={!!targets[selTarget] && !(targets[selTarget].frames > 1)}
+            defaults={FACESWAP_DEFAULTS}
           />
-          {p.lipsync_enabled && (
-            <>
-              <Select
-                label="Lip-sync Engine / Model"
-                value={p.lipsync_model || 'wav2lip'}
-                onChange={(v) => set('lipsync_model', v)}
-                options={[
-                  { value: 'wav2lip', label: 'Wav2Lip-HQ (Ultra-low Latency ONNX FP16)' },
-                  { value: 'musetalk', label: 'MuseTalk (Diffusion UNet)' }
-                ]}
-              />
-              <Select
-                label="Audio/Visual Co-articulation Mode"
-                value={p.lipsync_coarticulation_mode || 'keep_target_lips'}
-                onChange={(v) => set('lipsync_coarticulation_mode', v)}
-                options={[
-                  { value: 'keep_target_lips', label: 'Keep Target Lips (Matches original actor mouth motion)' },
-                  { value: 'redub_sync', label: 'Re-dub Sync (Alters mouth & jawline geometry to new voiceover)' }
-                ]}
-              />
-              <Toggle
-                label="Mouth Cavity & Teeth Restoration (BiSeNet)"
-                info="Reconstructs crisp enamel edges, interdental crevices, and natural tongue depth. Completely prevents clamped-lip and blurry teeth artifacts when swapping closed-mouth sources onto open-mouthed targets."
-                checked={p.oral_cavity_restore !== false}
-                onChange={(v) => set('oral_cavity_restore', v)}
-              />
-              {p.lipsync_coarticulation_mode === 'redub_sync' && (
-                <Slider
-                  label="Jaw Co-articulation Strength"
-                  info="Deforms mandibular contours and jawline synchronized with acoustic energy and phoneme aperture."
-                  min={0}
-                  max={1}
-                  step={0.05}
-                  value={num(p.jaw_coarticulation_strength, 0.6)}
-                  onChange={(v) => set('jaw_coarticulation_strength', v)} defaultValue={FACESWAP_DEFAULTS.jaw_coarticulation_strength}
-                />
-              )}
-              <Select
-                label="Lip-sync audio source"
-                value={p.lipsync_audio_source || 'original'}
-                onChange={(v) => set('lipsync_audio_source', v)}
-                options={[{ value: 'original', label: 'Original audio' }, { value: 'upload', label: 'Uploaded track' }]}
-              />
-              {p.lipsync_audio_source === 'upload' && (
-                <FileDrop
-                  accept="audio/*"
-                  label={p.lipsync_audio_path ? `Dub track: ${p.lipsync_audio_path.split(/[\\/]/).pop()}` : 'Add dub audio track'}
-                  onFiles={onAddLipsyncAudio}
-                  busy={uploadingLipsyncAudio}
-                  hint="drop an audio file here"
-                />
-              )}
-            </>
-          )}
+        </InspectorGroup>
+
+        <InspectorGroup id="face-details" title="Eyes, mouth & expression" icon={Icon.preview}>
           <Toggle
             label="Restore original eyes"
             info="Brings the TARGET's own eyes back over the swap. Every identity swapper here works from a 112–128px aligned crop, so the eyes — the smallest high-frequency detail in a face, and the first thing a viewer looks at — come back soft, with the gaze nudged toward wherever the source person was looking. This keeps the plate's gaze direction, catchlights and eyelash detail while everything else stays swapped. Built from the two eye keypoints, not the 106-point landmarks the mouth restore uses, so it works on every detector engine. It fades out past 25° of yaw or pitch and switches off at a true profile, because there the far eye is edge-on and the near one sits over the nose bridge — pasting the plate there doubles the socket. Costs one ellipse and a blur, so it is effectively free. Note that it undoes the swapper's eye SHAPE too, which is part of the identity: if the two people's eyes differ a lot, back the amount off rather than running it at 1."
@@ -4277,6 +4233,12 @@ export default function FaceSwap({
             {maxFrames > 1 && showTimelineDeck && (
               <div className="pt-4 border-t border-[var(--border-color)]">
                 <Timeline
+                  audioTrack={{
+                    offsetMs: clampOffset(p.audio_offset_ms),
+                    onOffsetChange: (ms) => set('audio_offset_ms', clampOffset(ms)),
+                    trackPath: requestFields(p).override_audio_path,
+                    hasTargetAudio: targetHasAudio,
+                  }}
                   fps={targets[selTarget]?.fps || 25}
                   maxFrames={maxFrames}
                   frame={frame}

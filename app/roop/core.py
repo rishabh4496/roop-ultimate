@@ -1928,11 +1928,10 @@ def batch_process(output_method, files:list[ProcessEntry], use_new_method) -> No
                         # Dubbing against an uploaded track: mux THAT file's audio
                         # instead of the original clip's. restore_audio only reads
                         # stream 1's audio (-map 1:a:0?), so any file works here.
-                        audio_source = v.filename
-                        if (getattr(roop.globals, 'lipsync_enabled', False)
-                                and getattr(roop.globals, 'lipsync_audio_source', 'original') == 'upload'
-                                and getattr(roop.globals, 'lipsync_audio_path', None)):
-                            audio_source = roop.globals.lipsync_audio_path
+                        # Stage 17: `override_audio_path` is the ONE place the remux reads its audio from; the legacy
+                        # lipsync_enabled + 'upload' + lipsync_audio_path trio is folded into it by
+                        # mouth_custody.normalize_payload, and a dub with lip-sync OFF now remuxes too.
+                        audio_source = getattr(roop.globals, 'override_audio_path', None) or v.filename
                         # Stage 4: mux (or move), VERIFY the file with an ffprobe header read, and delete the
                         # intermediate only if it passed. This used to be `restore_audio(...)` with its result
                         # ignored and `if os.path.isfile(destination): remove(intermediate)`, so a mux that died
@@ -1942,6 +1941,7 @@ def batch_process(output_method, files:list[ProcessEntry], use_new_method) -> No
                             video_file_name, destination,
                             audio_source=None if skip_audio else audio_source,
                             video_source=v.filename,
+                            audio_offset_ms=float(getattr(roop.globals, 'audio_offset_ms', 0.0) or 0.0),
                             trim_start=v.startframe, trim_end=v.endframe,
                             expected_frames=int(v.endframe - v.startframe),
                             skip_audio=skip_audio, stopped=stopped)

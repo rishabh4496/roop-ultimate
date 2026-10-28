@@ -54,6 +54,21 @@ export function visibleIntervals(list, lo, hi) {
 /** Number of frames covered, counting overlaps once. */
 export const coveredFrames = (list) => mergeIntervals(list).reduce((n, [s, e]) => n + e - s + 1, 0);
 
+// ── audio track ──────────────────────────────────────────
+
+/**
+ * Where in the AUDIO FILE the sound heard at video time `t` lives, given the slip. A positive slip plays the audio later,
+ * so the pixel at video time t shows what the file holds at t - slip (never before the file's start). This is the same
+ * mapping the render applies to the mouth and to the remuxed track (app/roop/mouth_custody.py `audio_time_s`).
+ */
+export const audioSourceTime = (videoSeconds, slipSeconds = 0) => videoSeconds - slipSeconds;
+
+/** True when video time `t` falls inside audio of length `audioSeconds` after the slip - outside it the track is silent. */
+export const audioCovers = (videoSeconds, slipSeconds, audioSeconds) => {
+  const src = audioSourceTime(videoSeconds, slipSeconds);
+  return src >= 0 && src <= audioSeconds;
+};
+
 // ── render / smart-skip strip ───────────────────────────────────────────────
 
 // Highest priority first. A frame is painted by the first layer that covers it.

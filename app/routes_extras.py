@@ -46,9 +46,23 @@ def extras_apply(file: UploadFile = File(...),
                        rotation: str = Form("None"),
                        fps: float = Form(30.0),
                        crop_left: int = Form(0), crop_right: int = Form(0),
-                       crop_top: int = Form(0), crop_bottom: int = Form(0)):
+                       crop_top: int = Form(0), crop_bottom: int = Form(0),
+                       override_audio_path: str = Form(""), audio_offset_ms: float = Form(0.0)):
     from ui.main import prepare_environment
     prepare_environment()
+    # Stage 17: the audio half of mouth custody. A track from /api/lipsync/audio/add replaces the clip's audio and
+    # `audio_offset_ms` (+-500, + = heard later) slips it; both default to the historical behaviour. There is no mouth
+    # here - this editor runs no swap - so no mode is taken.
+    from roop import mouth_custody
+    try:
+        slip_ms = mouth_custody.validate_offset_ms(audio_offset_ms)
+        track = None
+        if override_audio_path:
+            probe = {"override_audio_path": override_audio_path}
+            mouth_custody.normalize_payload(probe)
+            track = probe["override_audio_path"]
+    except mouth_custody.MouthCustodyError as error:
+        return JSONResponse(status_code=422, content={"message": str(error)})
     path = _save_upload(file)
     is_video = util.is_video(path) or path.lower().endswith("gif")
 
@@ -103,9 +117,19 @@ def extras_apply(file: UploadFile = File(...),
     finally:
         writer.release()
     from roop.util_ffmpeg import finalize_web_video
-    if not finalize_web_video(raw_tmp, outpath, audio_source=path, delete_raw=True):
+    if not finalize_web_video(raw_tmp, outpath, audio_source=track or path, delete_raw=True):
         if os.path.isfile(raw_tmp):
             os.replace(raw_tmp, outpath)
+    if (track or slip_ms) and os.path.isfile(outpath):
+        # Cut/slip the audio from the clip's start (no trim): the video is a stream copy, the audio is re-encoded to AAC.
+        from roop.util_ffmpeg import mux_with_audio_track
+        slipped = outpath + ".slip.mp4"
+        if mux_with_audio_track(outpath, track or path, path, None, None, slipped, slip_ms) and os.path.isfile(slipped):
+            os.replace(slipped, outpath)
+        else:
+            if os.path.isfile(slipped):
+                os.remove(slipped)
+            return JSONResponse(status_code=500, content={"message": "could not mux the audio track onto the edited video"})
     _label_output(outpath)
     url = f"/outputs/{os.path.basename(outpath)}"; return {"path": url, "url": url, "name": os.path.basename(outpath), "absolute_path": outpath, "kind": "video"}
 

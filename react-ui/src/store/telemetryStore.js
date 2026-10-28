@@ -58,6 +58,13 @@ const EMPTY_RUN = {
   // and the latest reason. Optional rungs that are absent on most machines (Intel QSV) are not counted.
   io_fallbacks: 0,
   io_fallback: '',
+  // Viseme Mouth Custody (api._mouth_custody_flat): the Lip-Sync column of the latency split in ms per delivered frame
+  // (null until the section has been timed), the mode this job runs, why AUDIO_DRIVEN_SYNC ran as SOURCE_MOUTH_RESTORE
+  // ('' when it did not), and the audio slip in ms. Constant while idle, so the change-only sampler stays quiet.
+  lipsync_ms: null,
+  mouth_mode: '',
+  mouth_fallback: '',
+  audio_offset_ms: 0,
 };
 
 /** The fields a telemetry frame carries that change every tick. */

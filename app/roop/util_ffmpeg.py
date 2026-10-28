@@ -762,8 +762,58 @@ def _stream_duration(path: str, selector: str):
         return None
 
 
-def restore_audio(intermediate_video: str, original_video: str, trim_frame_start, trim_frame_end, final_video: str) -> bool:
+def mux_with_audio_track(intermediate_video: str, audio_file: str, timing_source: str, trim_frame_start,
+                         trim_frame_end, final_video: str, audio_offset_ms: float = 0.0) -> bool:
+    """Mux *audio_file* (an override track, or the source's own audio with a slip) onto *intermediate_video*.
+
+    Stage 17. The stream-copy path in ``_restore_audio_impl`` is wrong for these two cases: it takes the trim point's
+    frame rate from the file it is handed (``detect_fps`` of a ``.wav`` is the 24.0 fallback, so a 30 fps render
+    trimmed at frame 150 cut its dub at 6.25 s, not 5.0 s - measured), and a slip needs a cut finer than a packet. This
+    path takes the trim from *timing_source* (the real target video, VFR-aware like the other path) and re-encodes the
+    AUDIO only to AAC; the video stays a stream copy.
+
+    ``audio_offset_ms`` > 0 plays the audio LATER than the video (head silence), < 0 earlier (a later cut):
+    ``mouth_custody.mux_trim_s``. The cut is sample-exact (decoded, not packet-aligned).
+    """
+    from core.cpu_topology import e_core_scope
+    from roop import mouth_custody
+    with e_core_scope():
+        fps = util.constant_frame_rate(util.detect_fps(timing_source))
+        vfr_window = None
+        try:
+            from roop import vfr_timing
+            vfr_window = vfr_timing.audio_window(timing_source, trim_frame_start, trim_frame_end)
+        except Exception as _vfr_exc:
+            _swallowed('roop/util_ffmpeg.py:vfr_window', _vfr_exc, 'audio window falls back to frame / constant fps')
+        start_s = (trim_frame_start / fps) if (trim_frame_start and fps) else 0.0
+        if vfr_window is not None and trim_frame_start:
+            start_s = vfr_window.start_s
+        cut_from, lead = mouth_custody.mux_trim_s(start_s, audio_offset_ms)
+        video_s = _stream_duration(intermediate_video, 'v:0')
+        cmd = ['-i', intermediate_video,
+               '-ss', format(cut_from, '.6f'), '-i', audio_file,
+               '-i', timing_source,
+               '-map', '0:v:0', '-map', '1:a:0?',
+               # Global metadata of the ORIGINAL video (input 2), as the stream-copy path carries from its input 1.
+               '-map_metadata', '2',
+               '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k']
+        if lead > 0:
+            cmd += ['-af', 'adelay=%d:all=1' % int(round(lead * 1000.0))]
+        # Bounded by the VIDEO's own length, never -shortest (see _restore_audio_impl: -shortest dropped frames).
+        if video_s:
+            cmd += ['-t', format(video_s, '.6f')]
+        if final_video.lower().endswith(('.mp4', '.mov', '.m4v')):
+            cmd += ['-movflags', '+faststart']
+        return run_ffmpeg(cmd + [final_video])
+
+
+def restore_audio(intermediate_video: str, original_video: str, trim_frame_start, trim_frame_end, final_video: str,
+                  *, timing_source: str = None, audio_offset_ms: float = 0.0) -> bool:
     """Mux audio from *original_video* into *intermediate_video*, writing *final_video*.
+
+    Stage 17: with ``timing_source`` (the target video, when *original_video* is an override audio track) or a non-zero
+    ``audio_offset_ms`` the audio is cut and slipped by ``mux_with_audio_track`` instead; both default to the
+    historical stream-copy behaviour below, byte for byte.
 
     Uses -map 0:v:0 (video from the processed clip) and -map 1:a:0? (audio from
     the original source, optional so it silently succeeds on source-less files).
@@ -773,6 +823,9 @@ def restore_audio(intermediate_video: str, original_video: str, trim_frame_start
     stream-level rotation side data is deliberately left alone, see below.
     Returns True on success, False on failure.
     """
+    if timing_source is not None or abs(float(audio_offset_ms or 0.0)) > 1e-9:
+        return mux_with_audio_track(intermediate_video, original_video, timing_source or original_video,
+                                    trim_frame_start, trim_frame_end, final_video, audio_offset_ms)
     from core.cpu_topology import e_core_scope
     with e_core_scope():
         return _restore_audio_impl(intermediate_video, original_video, trim_frame_start, trim_frame_end, final_video)

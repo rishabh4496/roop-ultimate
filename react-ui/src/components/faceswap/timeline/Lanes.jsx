@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef } from 'react';
 import { useLaneCanvas } from './useLaneCanvas';
 import {
-  LANE_H, MAX_PRESENCE_ROWS, drawCacheStrip, drawFilmstrip, drawIdentityConfidence, drawOverrides, drawRuler,
+  LANE_H, MAX_PRESENCE_ROWS, drawAudioTrack, drawCacheStrip, drawFilmstrip, drawIdentityConfidence, drawOverrides, drawRuler,
   drawScenes, identityLaneHeight, sceneLaneHeight, MAX_IDENTITY_ROWS, IDENTITY_ROW_H,
 } from './lanes';
 import { laneCells } from '../identityLock';
@@ -57,6 +57,23 @@ export function CacheLane({ view, maxFrames, spans }) {
       aria-label="Render and smart-skip cache strip"
       className="block w-full rounded-full"
       style={{ height: LANE_H.cache }}
+    />
+  );
+}
+
+export function AudioLane({ view, maxFrames, fps, waves, slipSeconds, active, label }) {
+  const ref = useLaneCanvas(
+    (ctx, g) => { drawAudioTrack(ctx, g, { view, maxFrames, fps, waves, slipSeconds, active }); },
+    [view.start, view.end, maxFrames, fps, waves, slipSeconds, active],
+  );
+  return (
+    <canvas
+      ref={ref}
+      data-testid="lane-audio"
+      role="img"
+      aria-label={label}
+      className="block w-full rounded-md"
+      style={{ height: LANE_H.audio }}
     />
   );
 }

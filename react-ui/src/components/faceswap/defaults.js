@@ -184,6 +184,11 @@ export const FACESWAP_DEFAULTS = {
   parser_region_grow: {},
   enhancer_align: false,
   color_match_after_enhance: true,
+  // Stage 17 (faceswap/mouthCustody.js): the bound external track and the audio slip in ms. `mouth_custody_mode` is
+  // deliberately NOT defaulted: defaults are merged under every saved recipe, and an explicit 'off' here would override
+  // an old recipe's lipsync_enabled / restore_original_mouth. Absent, `modeOf` derives the mode from those keys.
+  override_audio_path: null,
+  audio_offset_ms: 0,
   lipsync_enabled: false,
   lipsync_audio_source: 'original',
   lipsync_audio_path: null,

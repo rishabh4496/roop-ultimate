@@ -9,7 +9,7 @@
  *
  *   frame -> setDashboardTelemetry -> useTelemetryStore -> ConsoleMirror -> text
  *
- *   * every number the console printed (percent, counts, rate, ETA countdown, the seven latency cells, the bottleneck
+ *   * every number the console printed (percent, counts, rate, ETA countdown, the eight latency cells, the bottleneck
  *     tag, the hit rates, VRAM) appears, as the same text, on the screen;
  *   * the bottleneck column - and only that one - is flagged;
  *   * a figure the backend did not measure is an em dash, never 0;
@@ -77,10 +77,25 @@ ok('S4 is pending before the finalize', rows.S4.state === 'PENDING' && rows.S4.c
 
 // ── latency split, bottleneck, hit rates ─────────────────────────────────────
 const cells = M.latencyCells(run);
-ok('seven latency cells in the brief\'s order',
-  cells.map((c) => c.label).join('|') === 'Decode|Detect|Swap|Mask/Parse|Restore|Color/Blend|Encode', cells.map((c) => c.label).join('|'));
+ok('eight latency cells, Lip-Sync between Mask/Parse and Restore',
+  cells.map((c) => c.label).join('|') === 'Decode|Detect|Swap|Mask/Parse|Lip-Sync|Restore|Color/Blend|Encode', cells.map((c) => c.label).join('|'));
+// The backend prints an unmeasured figure as '--'; the screen shows an em dash. Same fact, never a 0.
+const consoleMs = (c) => (c.ms === '—' ? '--' : c.ms);
 ok('each cell shows the console\'s milliseconds',
-  cells.every((c) => consoleTel.includes(`${c.label} ${c.ms}`)), cells.map((c) => `${c.label} ${c.ms}`).join(' | '));
+  cells.every((c) => consoleTel.includes(`${c.label} ${consoleMs(c)}`)), cells.map((c) => `${c.label} ${consoleMs(c)}`).join(' | '));
+ok('a run with lip-sync off shows Lip-Sync as not measured, not 0',
+  cells.find((c) => c.key === 'lipsync').ms === '—' && /Lip-Sync --/.test(consoleTel));
+{
+  // A run that DID lip-sync, recorded through the real registry (gen-console-mirror-fixture.py).
+  const ls = fx.lipsync_run;
+  const lsCells = M.latencyCells(ls);
+  const lsText = ls.console.join('\n');
+  const cell = lsCells.find((c) => c.key === 'lipsync');
+  ok('a measured Lip-Sync column shows the backend\'s milliseconds', cell.ms === '5.0' && lsText.includes('Lip-Sync 5.0'), `${cell.ms}`);
+  ok('every cell of that run matches its console text', lsCells.every((c) => lsText.includes(`${c.label} ${consoleMs(c)}`)));
+  ok('lip-sync is in the bottleneck denominator (Restore 32 of 64 ms = 50%)',
+    M.bottleneckText(ls) === '[BOTTLENECK: Restore 50%]' && lsText.includes('[BOTTLENECK: Restore 50%]'), M.bottleneckText(ls));
+}
 ok('exactly the bottleneck column is flagged', cells.filter((c) => c.bottleneck).map((c) => c.key).join() === 'restore'
   && cells.find((c) => c.key === 'restore').severity === 'yellow');
 ok('the bottleneck tag is the console\'s', M.bottleneckText(run) === '[BOTTLENECK: Restore 54%]' && consoleTel.includes(M.bottleneckText(run)), M.bottleneckText(run));

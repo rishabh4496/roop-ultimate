@@ -2,7 +2,10 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import useThrottledFrameRequest from './useThrottledFrameRequest';
 import Minimap from './timeline/Minimap';
 import OverrideInspector from './timeline/OverrideInspector';
-import { CacheLane, FilmCanvas, IdentityLane, OverrideLane, RulerLane, SceneLane } from './timeline/Lanes.jsx';
+import { AudioLane, CacheLane, FilmCanvas, IdentityLane, OverrideLane, RulerLane, SceneLane } from './timeline/Lanes.jsx';
+import useAudioTrackWave from './timeline/useAudioTrackWave';
+import { clampOffset, offsetText, offsetMeaning, trackShiftSeconds } from './mouthCustody';
+import { useApi } from '../../useApi';
 import { allAmber, nextAmber } from './identityLock';
 import { LANE_H, STATE_COLORS, STATE_LABELS } from './timeline/lanes.js';
 import { useSceneOverrides } from './timeline/useSceneOverrides';
@@ -174,6 +177,11 @@ export default function Timeline({
    * this is how the playhead and its timecode badge keep up with the pointer between commits.
    */
   playheadApiRef = null,
+  /**
+   * Stage 17: the delivered audio as its own row, with the slip controls.
+   * {offsetMs, onOffsetChange(ms), trackPath, trackName, hasTargetAudio}. Absent = no audio row (the Batch page, tests).
+   */
+  audioTrack = null,
 }) {
   // ── View window ───────────────────────────────────────────────────────────
   // The lanes show [view.start, view.end] rather than the whole clip. Fall back to the whole clip
@@ -328,6 +336,17 @@ export default function Timeline({
   const scenes = useMemo(() => scenesFromCuts(cuts, maxFrames), [cuts, maxFrames]);
 
   const wave = useWaveform({ targetIndex, targetKey, fps, maxFrames, view: v, trackW, enabled: maxFrames > 1 });
+  // Stage 17: the audio row shows what will PLAY - the bound external track if there is one, else the target's own audio.
+  const { getJSON: getAudioJSON } = useApi();
+  const trackPath = audioTrack?.trackPath || null;
+  const trackWave = useAudioTrackWave(getAudioJSON, trackPath);
+  const audioWaves = useMemo(
+    () => (trackPath ? [trackWave.coarse] : [wave.fine, wave.coarse]),
+    [trackPath, trackWave.coarse, wave.fine, wave.coarse],
+  );
+  const audioOffsetMs = clampOffset(audioTrack?.offsetMs);
+  const showAudioRow = !!audioTrack && maxFrames > 1 && (!!trackPath || audioTrack.hasTargetAudio !== false);
+  const nudgeAudio = (d) => audioTrack?.onOffsetChange?.(clampOffset(audioOffsetMs + d));
 
   const slotH = LANE_H.film;
   const slots = useMemo(
@@ -768,6 +787,35 @@ export default function Timeline({
             </div>
           </div>
         </div>
+
+        {/* Audio: what will play, drawn where it will play (the slip moves it against the video) */}
+        {showAudioRow && (
+          <>
+            <LaneHeader title="Audio">
+              <span className="min-w-0 truncate text-note text-[var(--text-muted)]" data-testid="audio-lane-source"
+                    title={trackPath ? String(trackPath) : "The target video's own audio"}>
+                {trackPath ? `External: ${audioTrack.trackName || String(trackPath).split(/[\\/]/).pop()}` : 'Target audio'}
+                {trackPath && trackWave.status === 'loading' ? ' (reading…)' : ''}
+                {trackPath && trackWave.status === 'error' ? ' (waveform unavailable)' : ''}
+              </span>
+              <span className="font-mono text-note tabular-nums text-[var(--text-main)]" data-testid="audio-lane-offset"
+                    title={offsetMeaning(audioOffsetMs)}>{offsetText(audioOffsetMs)}</span>
+              {[-10, -1, 1, 10].map((d) => (
+                <button key={d} type="button" className={smallBtn} onClick={() => nudgeAudio(d)}
+                        disabled={!audioTrack.onOffsetChange || clampOffset(audioOffsetMs + d) === audioOffsetMs}
+                        aria-label={`Slip audio ${d > 0 ? 'later' : 'earlier'} by ${Math.abs(d)} ms`}
+                        title={`Slip the audio ${d > 0 ? 'later' : 'earlier'} by ${Math.abs(d)} ms`}>
+                  {d > 0 ? `+${d}` : `−${Math.abs(d)}`}
+                </button>
+              ))}
+              <button type="button" className={smallBtn} onClick={() => audioTrack.onOffsetChange?.(0)}
+                      disabled={!audioTrack.onOffsetChange || audioOffsetMs === 0} title="Put the audio back in step with the video">Reset</button>
+            </LaneHeader>
+            <AudioLane view={v} maxFrames={maxFrames} fps={fps} waves={audioWaves}
+                       slipSeconds={trackShiftSeconds({ audio_offset_ms: audioOffsetMs })} active={!trackPath || trackWave.status === 'ready'}
+                       label={`Audio waveform, ${offsetText(audioOffsetMs)} against the video`} />
+          </>
+        )}
 
         {/* Scene cuts + who is on screen */}
         <LaneHeader title="Scene cuts & faces">

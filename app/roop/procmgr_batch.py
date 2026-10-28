@@ -111,7 +111,9 @@ class BatchProcessingMixin:
         self._lipsync_fps = fps
         # The pre-pass's 1-euro filter states its cutoffs in Hz, so it needs the clip's frame rate too.
         self._video_fps = fps
-        self._lipsync_frame_start = frame_start
+        # Stage 17: a distributed GOP chunk renders as its own local clip (frames 0..n) but its driving audio is the WHOLE
+        # source track, so the chunk's absolute start frame is added here. 0 everywhere else.
+        self._lipsync_frame_start = frame_start + int(getattr(roop.globals, 'lipsync_frame_offset', 0) or 0)
         # Stage 11: roto zones and identity pins are keyed by the UI's 1-based absolute frame number.
         roop.globals.roto_frame_base = int(frame_start or 0) + 1
         roop.globals.roto_preview_frame = None
@@ -148,6 +150,17 @@ class BatchProcessingMixin:
             except Exception as e:
                 bar_write(f"[ProcessMgr] lip-sync audio setup failed: {e}")
                 self._lipsync_audio = None
+        # Stage 17 silent-video fallback, said out loud: AUDIO_DRIVEN_SYNC with nothing to listen to runs as
+        # SOURCE_MOUTH_RESTORE for this clip (ProcessMgr._mouth_fallback) and the telemetry frame carries the reason.
+        from roop import mouth_custody
+        roop.globals.mouth_custody_fallback = ''
+        if getattr(roop.globals, 'lipsync_enabled', False) and self._lipsync_audio is None:
+            roop.globals.mouth_custody_fallback = (
+                "no usable driving audio (%s)" % ("override track" if getattr(roop.globals, 'override_audio_path', None)
+                                                  else "target has no audio stream"))
+            bar_write("[MouthCustody] audio_driven_sync -> %s: %s"
+                      % (mouth_custody.fallback_for(mouth_custody.AUDIO_DRIVEN_SYNC, False),
+                         roop.globals.mouth_custody_fallback))
         _detail_profile = str(os.environ.get('ROOP_PROFILE_DETAIL', '0')).strip().lower() in (
             '1', 'true', 'yes', 'on')
         if _detail_profile:

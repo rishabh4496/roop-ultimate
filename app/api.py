@@ -1075,10 +1075,13 @@ def _start_existing_project(project_id, payload):
     if _benchmark_state["running"]:
         return JSONResponse(status_code=409, content={
             "message": "The hardware benchmark is running — cancel it first, or wait for it to finish."})
+    resumed = dict(payload or {})
+    _mouth_error = _normalize_mouth_custody(resumed)         # before any state is touched: a bad request starts nothing
+    if _mouth_error is not None:
+        return _mouth_error
     _procmgr_runtime.pause_controller.start()
     _progress.update({"processing": True, "paused": False, "pause_requested": False,
                       "progress": 0.0, "desc": "Starting…", "error": ""})
-    resumed = dict(payload or {})
     resumed["_project_id"] = str(project_id)
     threading.Thread(target=_run_swap, args=(resumed,), daemon=True).start()
     return {"status": "started", "project_id": str(project_id)}
@@ -3111,6 +3114,27 @@ def target_waveform(index: int = None, media_id: str = None, t0: float = 0.0, t1
             "peaks": _timeline_tracks.peaks_b64(peaks)}
 
 
+@app.get("/api/audio/waveform")
+def audio_waveform(path: str, t0: float = 0.0, t1: float = -1.0, bins: int = 2048):
+    """Stage 17: audio amplitude peaks of an UPLOADED dub / override track, for the timeline's audio track.
+
+    Same envelope and answer shape as ``/api/target/waveform`` (``ready`` / ``state`` / ``duration`` / ``peaks``), keyed by
+    the path ``/api/lipsync/audio/add`` returned. Only files in the upload directory are answered: this is a derived-data
+    read of a path the client names, so it is confined like the other upload-backed routes.
+    """
+    confined = _safe_paths.confine_file(path, [API_TEMP])
+    if not confined:
+        return JSONResponse(status_code=404, content={"message": "no such uploaded audio track"})
+    state_name, env = _timeline_tracks.envelope_state(confined)
+    if state_name != "ready" or env is None:
+        return {"ready": state_name == "none", "state": state_name, "duration": 0.0, "peaks": ""}
+    duration = len(env) / float(_timeline_tracks.ENVELOPE_HZ)
+    hi = duration if t1 < 0 else min(float(t1), duration)
+    peaks = _timeline_tracks.slice_peaks(env, max(0.0, float(t0)), hi, int(bins))
+    return {"ready": True, "state": "ready", "duration": duration, "t0": max(0.0, float(t0)), "t1": hi,
+            "bins": int(len(peaks)), "peaks": _timeline_tracks.peaks_b64(peaks)}
+
+
 @app.get("/api/target/preview_seq")
 def target_preview_seq(index: int = 0, start: int = 1, count: int = 16,
                        width: int = 0, quality: int = 82):
@@ -4879,10 +4903,35 @@ def _apply_temporal_quality_settings(payload):
         setattr(roop_globals, key, max(2 if key.endswith("history") else 1, value))
 
 
+def _normalize_mouth_custody(payload):
+    """Stage 17: make ``mouth_custody_mode`` / ``override_audio_path`` / ``audio_offset_ms`` and the legacy
+    ``lipsync_enabled`` / ``restore_original_mouth`` / ``lipsync_audio_*`` keys agree, in place, before anything reads
+    either (roop/mouth_custody.py). Idempotent. Returns a 422 response for a request the fields cannot satisfy
+    (unknown mode, slip outside +-500 ms, an override track that is not an existing audio file), else None.
+    """
+    from roop import mouth_custody
+    try:
+        mouth_custody.normalize_payload(
+            payload, lambda key, default: getattr(roop_globals.CFG, key, default))
+    except mouth_custody.MouthCustodyError as error:
+        return JSONResponse(status_code=422, content={"message": str(error)})
+    return None
+
+
 def _apply_lipsync_settings(payload):
     """Lip-sync (Wav2Lip / MuseTalk) toggle, model, co-articulation mode,
     oral cavity restoration, onto roop.globals.
+
+    Stage 17 adds the mouth-custody mode, the override track the remux reads, the audio slip and the distributed
+    chunk's start frame. ``_normalize_mouth_custody`` has already made the legacy keys below agree with them.
     """
+    roop_globals.mouth_custody_mode = str(payload.get("mouth_custody_mode") or "off")
+    roop_globals.override_audio_path = payload.get("override_audio_path") or None
+    try:
+        roop_globals.audio_offset_ms = float(payload.get("audio_offset_ms") or 0.0)
+        roop_globals.lipsync_frame_offset = int(payload.get("lipsync_frame_offset") or 0)
+    except (TypeError, ValueError):
+        roop_globals.audio_offset_ms, roop_globals.lipsync_frame_offset = 0.0, 0
     for key, default in (("lipsync_enabled", False),
                          ("lipsync_audio_source", "original"),
                          ("lipsync_model", "wav2lip"),
@@ -4935,6 +4984,9 @@ def preview(payload: dict = Body(...)):
     # API client do not.
     if _render_active():
         return _render_active_response()
+    _mouth_error = _normalize_mouth_custody(payload)
+    if _mouth_error is not None:
+        return _mouth_error
     _preview_request_lock.acquire()
     target_context_lock_held = False
     try:
@@ -5291,6 +5343,9 @@ def trigger_swap(payload: dict = Body(...)):
     if len(roop_globals.INPUT_FACESETS) < 1:
         return JSONResponse(status_code=400, content={"message": "no source faces"})
     payload = dict(payload)
+    _mouth_error = _normalize_mouth_custody(payload)
+    if _mouth_error is not None:
+        return _mouth_error
     target_media_index, target_media_id, target_error = _activate_target_from_payload(
         payload, index=payload.get("target_index", state.selected_target_index), refresh=False)
     if target_error:
@@ -5379,6 +5434,10 @@ def _run_swap(payload):
         pause_state = _procmgr_runtime.pause_controller.snapshot()
         roop_globals.pause = bool(pause_state["requested"])
         _stop_requested["flag"] = False
+        # Queue and autotune start a render here directly, past the request handlers above: idempotent there, the only
+        # normalisation for them. A bad field is raised as this render's error, inside the processing-flag guard.
+        from roop import mouth_custody as _mouth_custody
+        _mouth_custody.normalize_payload(payload, lambda key, default: getattr(roop_globals.CFG, key, default))
 
         # Resolve the queued media only after the run's preamble is inside the
         # protected try/finally.  A missing target is still rejected before any
@@ -6671,6 +6730,7 @@ def _telemetry_snapshot():
     # before it writes other text, and the fallback counters above are the previous stage's.
     if processing and desc.startswith('Processing frame'):
         _stage_telemetry.set_main_progress(done, total, eta)
+    _dashboard_frame = _terminal_dashboard.telemetry_frame()
     return {
         'processing': processing,
         'paused': bool(_progress.get('paused')),
@@ -6696,12 +6756,26 @@ def _telemetry_snapshot():
         # The terminal dashboard's snapshot (roop/terminal_dashboard.py): the four-stage view, the per-frame latency
         # split, the bottleneck and the optimizer hit rates, exactly as the console printed them. Idle it is the constant
         # {"schema": 1, "active": False}, so the change-only sampler stays quiet; the profile is on the REST route.
-        'dashboard': _terminal_dashboard.telemetry_frame(),
+        'dashboard': _dashboard_frame,
+        **_mouth_custody_flat(_dashboard_frame, processing),
         **_video_io_flat(),
         # "Compiling TensorRT Engine..." / canary state (roop/pipeline_status.py), flat and non-ticking
         # so the change-only sampler stays quiet between stages. Present while idle too (engine_state
         # IDLE): a client that missed the closing frame is corrected by the next one.
         **_pipeline_status.telemetry_fields(),
+    }
+
+
+def _mouth_custody_flat(dashboard: dict, processing: bool) -> dict:
+    """Stage 17: the Viseme Mouth Custody fields of the telemetry frame. Flat and constant while idle (the change-only
+    sampler stays quiet); ``lipsync_ms`` is the Lip-Sync column of the dashboard's latency split, so the terminal block,
+    the React console mirror and this key are one number. None until the lip-sync section has been timed."""
+    ms = ((dashboard or {}).get('telemetry') or {}).get('latency_ms', {}).get('lipsync') if processing else None
+    return {
+        'lipsync_ms': round(float(ms), 2) if isinstance(ms, (int, float)) else None,
+        'mouth_mode': str(getattr(roop_globals, 'mouth_custody_mode', 'off') or 'off') if processing else '',
+        'mouth_fallback': str(getattr(roop_globals, 'mouth_custody_fallback', '') or '') if processing else '',
+        'audio_offset_ms': float(getattr(roop_globals, 'audio_offset_ms', 0.0) or 0.0) if processing else 0.0,
     }
 
 

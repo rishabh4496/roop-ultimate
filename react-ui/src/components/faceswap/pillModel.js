@@ -105,6 +105,23 @@ export function pillModel(pipeline, { processing = true } = {}) {
   return model;
 }
 
+/**
+ * "Lip-sync 4.2 ms" beside step 3 while audio-driven sync is the job's mode and has been timed, else ''. The figure is the
+ * Lip-Sync column of the dashboard's latency split (ms per delivered frame), so the pill, the console mirror and the
+ * terminal block show one number.
+ */
+export function lipsyncText(run) {
+  if (!run || run.mouth_mode !== 'audio_driven_sync' || run.mouth_fallback) return '';
+  const v = run.lipsync_ms;
+  return isNum(v) && v >= 0 ? `Lip-sync ${v.toFixed(1)} ms` : '';
+}
+
+/** The reason the mouth is not being driven by audio even though it was asked to, or ''. Stated, never implied. */
+export function mouthFallbackText(run) {
+  if (!run || run.mouth_mode !== 'audio_driven_sync' || !run.mouth_fallback) return '';
+  return `Lip-sync off: ${run.mouth_fallback}. Using Source mouth restore.`;
+}
+
 /** Frames per second to show beside step 3: the current rate, else the run average; '' outside step 3. */
 export function fpsText(run, model) {
   if (!model || model.activeN !== 3) return '';

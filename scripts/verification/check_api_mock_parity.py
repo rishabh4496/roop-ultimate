@@ -36,7 +36,8 @@ from typing import Iterable
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 APP = os.path.join(ROOT, "app")
 MOCK_SERVER = os.path.join(ROOT, "react-ui", "mock-server", "server.ts")
-MOCK_TYPES = os.path.join(ROOT, "react-ui", "mock-server", "pipelineTypes.ts")
+MOCK_DIR = os.path.join(ROOT, "react-ui", "mock-server")
+MOCK_TYPES = os.path.join(MOCK_DIR, "pipelineTypes.ts")
 PILL_MODEL = os.path.join(ROOT, "react-ui", "src", "components", "faceswap", "pillModel.js")
 
 HTTP_METHODS = ("get", "post", "put", "delete", "patch")
@@ -294,9 +295,34 @@ def _top_level_keys(block: str) -> set[str]:
     return keys
 
 
+def _mock_function_keys(name: str) -> set[str]:
+    """Top-level keys of every ``return {...}`` object literal in ``export function <name>`` in the mock-server sources.
+
+    Only the function's own body is read (up to the next ``export`` or section divider), so a helper's later returns are
+    not mixed in. Nothing found = the function builds its object some way this reader cannot see: an error, not zero keys.
+    """
+    for path in sorted(os.path.join(MOCK_DIR, n) for n in os.listdir(MOCK_DIR) if n.endswith(".ts")):
+        source = _read(path)
+        start = source.find("export function %s(" % name)
+        if start < 0:
+            continue
+        stop = len(source)
+        for marker in ("\nexport ", "\n// ──"):
+            hit = source.find(marker, start + 1)
+            if hit >= 0:
+                stop = min(stop, hit)
+        body = source[start:stop]
+        keys: set[str] = set()
+        for match in re.finditer(r"\breturn\s*\{", body):
+            keys |= _top_level_keys(_brace_block(body, match.end() - 1))
+        if keys:
+            return keys
+    raise SystemExit("[parity] cannot read the keys %s() puts in the mock frame: update this checker" % name)
+
+
 @functools.lru_cache(maxsize=None)
 def mock_frame_keys() -> set[str]:
-    """Top-level keys of the mock's frame: the ``ws.send(JSON.stringify({...}))`` literal + ``...buildStages(...)``."""
+    """Top-level keys of the mock's frame: the ``ws.send(JSON.stringify({...}))`` literal + every ``...fn(...)`` it spreads."""
     source = _read(MOCK_SERVER)
     anchor = source.find("wss.on('connection'")
     send = source.find("JSON.stringify({", anchor)
@@ -304,11 +330,8 @@ def mock_frame_keys() -> set[str]:
         raise SystemExit("[parity] mock-server no longer builds a /ws/telemetry frame in wss.on('connection'): update this checker")
     block = _brace_block(source, send + len("JSON.stringify("))
     keys = _top_level_keys(block)
-    if "...buildStages(" in block:
-        types = _read(MOCK_TYPES)
-        fn = types.find("export function buildStages")
-        ret = types.find("return { stage:", fn)
-        keys |= _top_level_keys(_brace_block(types, types.find("{", ret)))
+    for spread in re.findall(r"\.\.\.([A-Za-z_]\w*)\(", block):
+        keys |= _mock_function_keys(spread)
     if len(keys) < 8:
         raise SystemExit("[parity] read only %d keys from the mock frame: its shape changed, update this checker" % len(keys))
     return keys

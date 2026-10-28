@@ -80,6 +80,19 @@ class ExtractorsSeeTheRealThingsTest(unittest.TestCase):
         for key in ("fps", "fps_now", "current_frame", "stages", "summary", "stage"):
             self.assertIn(key, keys)
 
+    def test_a_spread_function_in_the_mock_frame_is_resolved_not_skipped(self):
+        # `...mouthTelemetry(job, processing)` puts these four in the frame; a reader that only saw literal keys would miss them.
+        keys = parity.mock_frame_keys()
+        for key in ("lipsync_ms", "mouth_mode", "mouth_fallback", "audio_offset_ms"):
+            self.assertIn(key, keys)
+            self.assertIn(key, parity.real_frame_keys())
+
+    def test_pill_reads_of_the_mouth_custody_keys_are_found_where_the_pill_reads_them(self):
+        # pillModel reads `run.mouth_mode` / `run.lipsync_ms` / `run.mouth_fallback` off the run slice, like fps_now.
+        reads = parity.pill_top_level_reads()
+        for key in ("mouth_mode", "lipsync_ms", "mouth_fallback"):
+            self.assertIn(key, reads)
+
     def test_pill_model_reads_are_found(self):
         self.assertTrue({"stages", "summary", "fps_now", "fps"} <= parity.pill_top_level_reads())
         self.assertTrue({"state", "stage_progress_pct", "skipped_frames_pct"} <= parity.pill_stage_reads())
@@ -129,6 +142,16 @@ class TheCheckCanFailTest(unittest.TestCase):
         with mock.patch.object(parity, "real_frame_keys", return_value=without):
             new, _ = parity.evaluate()
         self.assertIn(("pill", "backend:fps_now"), new)
+
+    def test_the_backend_dropping_a_mouth_custody_key_the_pill_reads_is_caught(self):
+        without = parity.real_frame_keys() - {"mouth_fallback"}
+        with mock.patch.object(parity, "real_frame_keys", return_value=without):
+            new, _ = parity.evaluate()
+        self.assertIn(("pill", "backend:mouth_fallback"), new)
+
+    def test_an_unreadable_mock_spread_is_an_error_not_zero_keys(self):
+        with self.assertRaises(SystemExit):
+            parity._mock_function_keys("noSuchMockFunction")
 
     def test_an_allow_list_entry_that_no_longer_drifts_is_stale(self):
         bogus = dict(parity.KNOWN_DRIFT)

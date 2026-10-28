@@ -7,6 +7,8 @@ import { Icon } from '../icons';
 import { logFailure } from '../failureLog';
 import EnhancerPipelineStack from './faceswap/EnhancerPipelineStack';
 import VideoFramesetExtractor from './extras/VideoFramesetExtractor';
+import MouthCustodyPanel from './faceswap/MouthCustodyPanel';
+import { overridePatch } from './faceswap/mouthCustody';
 
 const RESOLUTIONS = ['Original', '3840x', '2560x', '1920x', '1280x', '1024x', '640x'];
 const ROTATIONS = ['None', '90° Clockwise', '90° Counter-Clockwise', '180°'];
@@ -21,7 +23,8 @@ const OP_TITLES = { upscale: 'AI Upscale', colorize: 'Colorize (B&W → color)',
 
 // One definition of "untouched": the initial state, the Reset button and each
 // slider's double-click reset all read it, so they cannot disagree.
-const DEFAULT_OPTS = { resolution: 'Original', rotation: 'None', fps: 30, crop_left: 0, crop_right: 0, crop_top: 0, crop_bottom: 0 };
+// `override_audio_path` is '' (not null) for "none": it travels as multipart form text, and FormData.append(k, null) sends "null".
+const DEFAULT_OPTS = { resolution: 'Original', rotation: 'None', fps: 30, crop_left: 0, crop_right: 0, crop_top: 0, crop_bottom: 0, override_audio_path: '', audio_offset_ms: 0 };
 const CROP_SIDES = [['crop_left', 'Left'], ['crop_right', 'Right'], ['crop_top', 'Top'], ['crop_bottom', 'Bottom']];
 
 export default function Extras({ notify, registerFileListener, meta, settings, setSettings, setTab }) {
@@ -34,6 +37,8 @@ export default function Extras({ notify, registerFileListener, meta, settings, s
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(null);
   const set = (k, v) => setOpts((o) => ({ ...o, [k]: v }));
+  const patchOpts = (patch) => setOpts((o) => ({ ...o, ...patch }));
+  const [uploadingAudio, setUploadingAudio] = useState(false);
 
   // Frame post-processor (AI upscale / colorize / stylize) state
   const [frameOps, setFrameOps] = useState(null);
@@ -64,6 +69,15 @@ export default function Extras({ notify, registerFileListener, meta, settings, s
       setEnhResult(res);
       notify('Done');
     } catch (e) { notify(e.message, 'error'); } finally { setEnhBusy(false); }
+  };
+
+  const onAddAudio = async (files) => {
+    if (!files || !files.length) return;
+    setUploadingAudio(true);
+    try {
+      const res = await postFile('/api/lipsync/audio/add', files[0], undefined, { timeout: 0 });
+      patchOpts(overridePatch(res.path, { legacy: false, empty: '' }));
+    } catch (e) { notify(e.message, 'error'); } finally { setUploadingAudio(false); }
   };
 
   const onPick = (e) => {
@@ -157,6 +171,21 @@ export default function Extras({ notify, registerFileListener, meta, settings, s
           <Select label="Rotation" value={opts.rotation} onChange={(v) => set('rotation', v)} options={ROTATIONS} />
           <Slider label="Output FPS (video)" min={1} max={120} step={1} value={opts.fps} defaultValue={DEFAULT_OPTS.fps} onChange={(v) => set('fps', v)} />
         </Section>
+
+        {file && (file.type?.startsWith('video') || /\.(mp4|mkv|mov|avi|webm|gif)$/i.test(fileName)) && (
+          <Section title="Audio" icon={Icon.editor}>
+            <p className="text-xs text-muted -mt-2">Replace the clip's audio with an external track and slip it against the video (applied with Apply). The video is not re-encoded.</p>
+            <MouthCustodyPanel
+              params={opts}
+              onPatch={patchOpts}
+              onAddAudio={onAddAudio}
+              uploading={uploadingAudio}
+              showMode={false}
+              legacy={false}
+              emptyTrack=""
+            />
+          </Section>
+        )}
 
         <Section title="Crop (%)" icon={Icon.split}>
           {CROP_SIDES.map(([key, label]) => (

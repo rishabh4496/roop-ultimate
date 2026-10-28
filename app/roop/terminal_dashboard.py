@@ -86,6 +86,7 @@ LATENCY_COLUMNS: Tuple[Tuple[str, str, str, Tuple[str, ...]], ...] = (
     ("detect", "Detect", "Det", ("detect", "detection")),
     ("swap", "Swap", "Swp", ("swap",)),
     ("mask", "Mask/Parse", "Msk", ("mask", "mask_refine", "mask_stabilize", "occlusion_analysis")),
+    ("lipsync", "Lip-Sync", "Lip", ("lipsync",)),
     ("restore", "Restore", "Rst", ("enhance", "enhance_recombine", "detail_transfer", "identity_detail")),
     ("blend", "Color/Blend", "Bld", ("blend", "lighting")),
     ("encode", "Encode", "Enc", ("encode",)),

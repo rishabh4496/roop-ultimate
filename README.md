@@ -467,6 +467,43 @@ audio is muxed with `-c:a copy` and the original audio bitstream when possible.
 `python scripts/verify_roop_keep.py` records CFR, copied-audio codec/sample
 rate, and output A/V duration drift for every rendered clip.
 
+### Audio & Mouth Custody (lip-sync, dubbing, audio slip)
+
+`POST /api/swap`, `POST /api/preview` and a project's `settings` accept three fields (a bad one is a `422` with the reason,
+and nothing starts):
+
+| Field | Meaning |
+|---|---|
+| `mouth_custody_mode` | `off` (the swap's own mouth, standard expression transfer), `source_mouth_restore` (the target's mouth is kept), `audio_driven_sync` (lip-sync from audio: Wav2Lip or MuseTalk, `lipsync_model`) |
+| `override_audio_path` | An uploaded audio file (`POST /api/lipsync/audio/add` returns it) or a video with audio. It is the delivered audio in every mode, and what drives the mouth in `audio_driven_sync`. Without it the target video's own audio is used |
+| `audio_offset_ms` | `-500` to `+500`; positive = the audio is heard later than the video. The mouth and the delivered track move together |
+
+A request without `mouth_custody_mode` keeps its old meaning (`lipsync_enabled` / `restore_original_mouth`). A video with no
+audio stream and no override track cannot drive a mouth: `audio_driven_sync` runs as `source_mouth_restore` for that clip
+(`mouth_fallback` on `/ws/telemetry` says so). `lipsync_ms`, `mouth_mode`, `mouth_fallback` and `audio_offset_ms` are on every
+telemetry frame; `lipsync_ms` is the Lip-Sync column of the terminal dashboard. In a multi-GPU project render the track is attached
+once, to the joined video; each GPU worker reads it from its own chunk's start. The media editor (`#/extras`) takes
+`override_audio_path` and `audio_offset_ms` too (no mouth mode: it runs no swap).
+
+```javascript
+const { path } = await upload('/api/lipsync/audio/add', dubFile)       // multipart, field "file"
+await fetch(`${baseUrl}/api/swap`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ ...recipe, mouth_custody_mode: 'audio_driven_sync', override_audio_path: path, audio_offset_ms: -120 }) })
+```
+
+```python
+import requests
+path = requests.post(f"{base_url}/api/lipsync/audio/add", files={"file": open("dub.wav", "rb")}).json()["path"]
+r = requests.post(f"{base_url}/api/swap", json={**recipe, "mouth_custody_mode": "audio_driven_sync",
+                                                "override_audio_path": path, "audio_offset_ms": -120})
+assert r.status_code != 422, r.json()["message"]
+```
+
+```bash
+curl -F "file=@dub.wav" "$BASE_URL/api/lipsync/audio/add"
+curl -X POST "$BASE_URL/api/swap" -H "Content-Type: application/json" -d '{"mouth_custody_mode":"source_mouth_restore"}'
+```
+
 ### Batch: one fresh process per video
 
 Use the root-level runner for a retained media folder (`<MEDIA_DIR>`, holding

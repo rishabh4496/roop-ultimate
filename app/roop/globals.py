@@ -249,6 +249,15 @@ lipsync_enabled = False
 lipsync_audio_source = 'original'
 lipsync_audio_path = None
 lipsync_model = 'wav2lip'
+# Stage 17 (roop/mouth_custody.py): the one mode that owns the mouth ('off' | 'source_mouth_restore' | 'audio_driven_sync'),
+# the track the remux (and, in audio_driven_sync, the lip-sync) reads instead of the target's own audio, the audio slip in
+# ms (+ = heard later, +-500), and a distributed GOP chunk's start frame in the driving audio. All inert at their defaults.
+mouth_custody_mode = 'off'
+override_audio_path = None
+audio_offset_ms = 0.0
+lipsync_frame_offset = 0
+# '' or the reason AUDIO_DRIVEN_SYNC ran as SOURCE_MOUTH_RESTORE for the current clip (silent video, extraction failed).
+mouth_custody_fallback = ''
 lipsync_coarticulation_mode = 'keep_target_lips'
 oral_cavity_restore = True
 jaw_coarticulation_strength = 0.6

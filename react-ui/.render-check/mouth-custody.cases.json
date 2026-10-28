@@ -1,0 +1,23 @@
+{
+  "derive": [
+    { "params": {}, "mode": "off" },
+    { "params": { "lipsync_enabled": true }, "mode": "audio_driven_sync" },
+    { "params": { "restore_original_mouth": true }, "mode": "source_mouth_restore" },
+    { "params": { "lipsync_enabled": true, "restore_original_mouth": true }, "mode": "audio_driven_sync" },
+    { "params": { "mouth_custody_mode": "off", "lipsync_enabled": true }, "mode": "off" },
+    { "params": { "mouth_custody_mode": "source_mouth_restore", "lipsync_enabled": true }, "mode": "source_mouth_restore" },
+    { "params": { "mouth_custody_mode": "audio_driven_sync" }, "mode": "audio_driven_sync" }
+  ],
+  "clamp": [
+    { "in": 0, "out": 0 },
+    { "in": 120, "out": 120 },
+    { "in": -120, "out": -120 },
+    { "in": 900, "out": 500 },
+    { "in": -900, "out": -500 },
+    { "in": 500, "out": 500 },
+    { "in": -500, "out": -500 },
+    { "in": null, "out": 0 },
+    { "in": "", "out": 0 },
+    { "in": "junk", "out": 0 }
+  ]
+}

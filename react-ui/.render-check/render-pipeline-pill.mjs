@@ -120,6 +120,26 @@ store.setPipelineTelemetry({ stage: S3, stages: pipe(stage('DONE'), stage('DONE'
 store.setPipelineTelemetry({ progress: 0.5, desc: 'x' });
 ok('a later frame without stage data cannot clear it', P.pillModel(store.useTelemetryStore.getState().pipeline) !== null);
 
+console.log('── viseme mouth custody on the pill ────────────────────────');
+{
+  const run = (o) => ({ mouth_mode: 'audio_driven_sync', mouth_fallback: '', lipsync_ms: null, ...o });
+  ok('lip-sync ms shows while audio-driven sync is timed', P.lipsyncText(run({ lipsync_ms: 4.2 })) === 'Lip-sync 4.2 ms', P.lipsyncText(run({ lipsync_ms: 4.2 })));
+  ok('nothing before it has been timed', P.lipsyncText(run({ lipsync_ms: null })) === '');
+  ok('nothing in other modes, even with a stale number', P.lipsyncText(run({ mouth_mode: 'source_mouth_restore', lipsync_ms: 4 })) === '' && P.lipsyncText(run({ mouth_mode: 'off', lipsync_ms: 4 })) === '');
+  ok('no figure is shown while the mouth fell back', P.lipsyncText(run({ lipsync_ms: 4, mouth_fallback: 'x' })) === '');
+  ok('zero is a real timing, not "missing"', P.lipsyncText(run({ lipsync_ms: 0 })) === 'Lip-sync 0.0 ms');
+  ok('the fallback is stated with its reason', /Lip-sync off: no usable driving audio \(target has no audio stream\)\. Using Source mouth restore\./.test(
+    P.mouthFallbackText(run({ mouth_fallback: 'no usable driving audio (target has no audio stream)' }))));
+  ok('no fallback text without a fallback, or outside audio mode', P.mouthFallbackText(run({})) === '' && P.mouthFallbackText(run({ mouth_mode: 'off', mouth_fallback: 'x' })) === '');
+  ok('missing run is safe', P.lipsyncText(undefined) === '' && P.mouthFallbackText(null) === '');
+  const empty = store.useTelemetryStore.getState().run;
+  ok('the store keeps the four new fields (FAST_FIELDS is a whitelist)', ['lipsync_ms', 'mouth_mode', 'mouth_fallback', 'audio_offset_ms'].every((k) => k in empty && store.FAST_FIELDS.includes(k)));
+  store.setRunTelemetry({ lipsync_ms: 3.5, mouth_mode: 'audio_driven_sync', mouth_fallback: '', audio_offset_ms: -120 });
+  const live = store.useTelemetryStore.getState().run;
+  ok('a frame carrying them reaches the run slice', live.lipsync_ms === 3.5 && live.mouth_mode === 'audio_driven_sync' && live.audio_offset_ms === -120);
+  ok('...and the pill text follows', P.lipsyncText(live) === 'Lip-sync 3.5 ms');
+}
+
 console.log('── it makes no request ────────────────────────────────────');
 for (const rel of ['components/faceswap/PipelinePill.jsx', 'components/faceswap/pillModel.js']) {
   const code = src(rel).replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
