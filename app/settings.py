@@ -105,6 +105,12 @@ UI_SETTINGS = (
     ('synthetic_label', 'Label output as synthetic media (metadata tag)', 'Output'),
     ('synthetic_watermark', 'Visible watermark on output', 'Output'),
     ('synthetic_watermark_text', 'Watermark text', 'Output'),
+    ('vfx_multi_pass', 'VFX multi-pass output', 'Output'),
+    ('vfx_export_matte', 'VFX export combined matte pass', 'Output'),
+    ('vfx_export_crops', 'VFX export aligned face crops & JSON', 'Output'),
+    ('enable_provenance_signer', 'Local cryptographic provenance signer', 'Output'),
+    ('embed_provenance_watermark', 'Imperceptible frequency-domain watermark', 'Output'),
+    ('provenance_disclosure', 'Synthetic media disclosure text', 'Output'),
     # Lighting & Harmonization
     ('light_harmonizer', 'Light Harmonizer', 'Lighting & Harmonization'),
     ('light_harmonizer_key_intensity', 'Key light intensity', 'Lighting & Harmonization'),
@@ -1227,6 +1233,12 @@ class Settings:
         self.subdermal_warmth_match = float(self.default_get(data, 'subdermal_warmth_match', 0.0))
         # Stage 18: WebGL2 3D .cube LUT Grading
         self.stereo_mode = str(self.default_get(data, 'stereo_mode', 'MONO_2D'))
+        self.vfx_multi_pass = bool(self.default_get(data, 'vfx_multi_pass', False))
+        self.vfx_export_matte = bool(self.default_get(data, 'vfx_export_matte', True))
+        self.vfx_export_crops = bool(self.default_get(data, 'vfx_export_crops', True))
+        self.enable_provenance_signer = bool(self.default_get(data, 'enable_provenance_signer', True))
+        self.embed_provenance_watermark = bool(self.default_get(data, 'embed_provenance_watermark', False))
+        self.provenance_disclosure = str(self.default_get(data, 'provenance_disclosure', 'AI-generated synthetic media produced with Roop Ultimate.'))
         self.lut_path = str(self.default_get(data, 'lut_path', ''))
         self.lut_bake = bool(self.default_get(data, 'lut_bake', False))
         self.lut_opacity = float(self.default_get(data, 'lut_opacity', 1.0))
@@ -1630,6 +1642,12 @@ class Settings:
             'ambient_shadow_match': self.ambient_shadow_match,
             'subdermal_warmth_match': self.subdermal_warmth_match,
             'stereo_mode': self.stereo_mode,
+            'vfx_multi_pass': self.vfx_multi_pass,
+            'vfx_export_matte': self.vfx_export_matte,
+            'vfx_export_crops': self.vfx_export_crops,
+            'enable_provenance_signer': self.enable_provenance_signer,
+            'embed_provenance_watermark': self.embed_provenance_watermark,
+            'provenance_disclosure': self.provenance_disclosure,
             'lut_path': self.lut_path,
             'lut_bake': self.lut_bake,
             'lut_opacity': self.lut_opacity,

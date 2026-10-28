@@ -89,6 +89,12 @@ export const SETTINGS_CATALOG = [
   { key: 'synthetic_label', label: 'Label output as synthetic media (metadata tag)', section: 'Output' },
   { key: 'synthetic_watermark', label: 'Visible watermark on output', section: 'Output' },
   { key: 'synthetic_watermark_text', label: 'Watermark text', section: 'Output' },
+  { key: 'vfx_multi_pass', label: 'VFX multi-pass output', section: 'Output' },
+  { key: 'vfx_export_matte', label: 'VFX export combined matte pass', section: 'Output' },
+  { key: 'vfx_export_crops', label: 'VFX export aligned face crops & JSON', section: 'Output' },
+  { key: 'enable_provenance_signer', label: 'Local cryptographic provenance signer', section: 'Output' },
+  { key: 'embed_provenance_watermark', label: 'Imperceptible frequency-domain watermark', section: 'Output' },
+  { key: 'provenance_disclosure', label: 'Synthetic media disclosure text', section: 'Output' },
 
   // Lighting & Harmonization
   { key: 'light_harmonizer', label: 'Light Harmonizer', section: 'Lighting & Harmonization' },

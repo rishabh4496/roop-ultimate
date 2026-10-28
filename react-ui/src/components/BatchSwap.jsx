@@ -18,6 +18,8 @@ import {
   stageOneToMany,
   stageSegments,
   stageSequential,
+  parseTimelineCutsText,
+  stageTimelineCuts,
 } from './faceswap/batchMatrix';
 
 // Helper to convert index to target preview URL
@@ -498,6 +500,55 @@ export default function BatchSwap({ settings = {}, notify, onUpdateSetting }) {
       const updatedMaps = currentMaps.map((m, i) => (i === mapIdx ? { ...m, ...patch } : m));
       return { ...prev, [tIdx]: { ...cfg, mappings: updatedMaps } };
     });
+  };
+
+  const handleImportTimelineFile = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const fileText = ev.target?.result;
+        if (!fileText) return;
+        const cuts = parseTimelineCutsText(fileText, file.name);
+        if (!cuts || cuts.length === 0) {
+          notify?.('No valid cuts found in timeline file', 'error');
+          return;
+        }
+        const res = stageTimelineCuts({
+          targets,
+          targetIndex: splitTargetIdx || 0,
+          cuts,
+          sourceFacesInfo,
+          createJobPayload,
+        });
+        if (res.error) {
+          notify?.(res.error, 'error');
+          return;
+        }
+        setStagedJobs((prev) => [...prev, ...res.jobs]);
+        setMatrixConfig((prev) => {
+          const updated = { ...prev };
+          cuts.forEach((cut) => {
+            const fs = Math.max(1, cut.src_in != null ? (cut.src_in === 0 ? 1 : cut.src_in + 1) : 1);
+            const fe = cut.src_out || fs;
+            if (updated[splitTargetIdx]) {
+              updated[splitTargetIdx] = {
+                ...updated[splitTargetIdx],
+                frameStart: fs,
+                frameEnd: fe,
+              };
+            }
+          });
+          return updated;
+        });
+        notify?.(`Imported ${res.jobs.length} NLE timeline cut segment(s) from ${file.name}`);
+      } catch (err) {
+        notify?.(`Failed to parse timeline file: ${err.message}`, 'error');
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
   };
 
   const generateMatrixJobs = () => stageWith(
@@ -1110,7 +1161,7 @@ export default function BatchSwap({ settings = {}, notify, onUpdateSetting }) {
       {/* ── Mode 1 Panel: 1 Faceset + 1 Target Face -> Multi Files ── */}
       {batchMode === 'one_to_many' && (
         <Section title="Strategy 1: Single Faceset + Target Mapping ➔ Multi Files">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             {/* Controls */}
             <div className="space-y-4 md:col-span-1">
               {/* Multi-Face Mapping Builder */}
@@ -1507,6 +1558,15 @@ export default function BatchSwap({ settings = {}, notify, onUpdateSetting }) {
                 <Button size="sm" variant="secondary" onClick={bulkAutoIncrementTargetPersons}>
                   Auto-Inc Person Ranks
                 </Button>
+                <label className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold bg-white/5 hover:bg-white/10 text-white/90 border border-white/10 cursor-pointer transition-colors">
+                  <span>Import EDL/OTIO</span>
+                  <input
+                    type="file"
+                    accept=".edl,.txt,.json,.otio"
+                    onChange={handleImportTimelineFile}
+                    className="hidden"
+                  />
+                </label>
               </div>
             </div>
 
@@ -1801,6 +1861,31 @@ export default function BatchSwap({ settings = {}, notify, onUpdateSetting }) {
               <Button variant="primary" className="w-full justify-center py-2 text-xs" onClick={splitTargetIntoSegments} disabled={targets.length === 0}>
                 ✂ Split Video into {splitSegmentCount} Segments
               </Button>
+            </Card>
+
+            {/* NLE Timeline Cut List Importer */}
+            <Card className="p-4 space-y-3 bg-black/40 flex flex-col justify-between">
+              <div className="space-y-2">
+                <h3 className="font-bold text-sm text-white flex items-center gap-2">
+                  <Icon.film size={18} className="text-accent" />
+                  NLE Timeline Cut List
+                </h3>
+                <p className="text-xs text-white/50">
+                  Import CMX3600 EDL or OpenTimelineIO JSON. Automatically populates segment trim points and stages swapped cuts on Track V2, skipping unreferenced handles.
+                </p>
+              </div>
+
+              <div>
+                <label className="w-full inline-flex items-center justify-center py-2 px-3 rounded-lg text-xs font-bold bg-[var(--accent)] text-black hover:opacity-90 cursor-pointer transition-opacity">
+                  <span>📂 Import EDL / OTIO</span>
+                  <input
+                    type="file"
+                    accept=".edl,.txt,.json,.otio"
+                    onChange={handleImportTimelineFile}
+                    className="hidden"
+                  />
+                </label>
+              </div>
             </Card>
           </div>
         </Section>

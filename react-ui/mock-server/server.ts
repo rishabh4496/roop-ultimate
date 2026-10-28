@@ -272,6 +272,13 @@ let appSettings: Record<string, any> = {
   upscale: '256px',
   // Stage 21: Stereoscopic 3D & VR Viewport
   stereo_mode: 'MONO_2D',
+  // Stage 22: VFX Multi-Pass & Local Cryptographic Provenance
+  vfx_multi_pass: false,
+  vfx_export_matte: true,
+  vfx_export_crops: true,
+  enable_provenance_signer: true,
+  embed_provenance_watermark: false,
+  provenance_disclosure: 'AI-generated synthetic media produced with Roop Ultimate.',
   // Stage 18: WebGL2 3D .cube LUT Color Grading & Broadcast Scopes
   lut_path: '',
   lut_bake: false,
@@ -2664,6 +2671,88 @@ async function startServer() {
 
   app.get('/api/keyframes', (req, res) => {
     res.json({ keyframes: storedKeyframes, count: storedKeyframes.length });
+  });
+
+  // ── Stage 22: NLE Interchange & Cryptographic Provenance ──────────
+  app.post('/api/timeline/catalog', (req, res) => {
+    const { video_path, fps = 30 } = req.body || {};
+    res.json({
+      status: 'ok',
+      ranges: [
+        { frame_in: 0, frame_out: 150, duration_frames: 150, tc_in: '00:00:00:00', tc_out: '00:00:05:00', speaker_cluster_id: 'person_1' },
+        { frame_in: 250, frame_out: 400, duration_frames: 150, tc_in: '00:00:08:10', tc_out: '00:00:13:10', speaker_cluster_id: 'person_2' }
+      ],
+      total_ranges: 2
+    });
+  });
+
+  app.post('/api/timeline/export_edl', (req, res) => {
+    const doc = req.body?.document || req.body || {};
+    const title = (doc.name || 'ROOP_TIMELINE').replace(/\s+/g, '_');
+    const edl = `TITLE: ${title}\nFCM: NON-DROP FRAME\n\n001  AX       V     C        00:00:00:00 00:01:00:00 00:00:00:00 00:01:00:00\n* FROM CLIP NAME: source.mp4\n* TRACK: V1\n\n002  SWAP     V     C        00:00:05:00 00:00:15:00 00:00:05:00 00:00:15:00\n* FROM CLIP NAME: face_swap_v2.mov\n* TRACK: V2\n* SPEAKER: person_1\n`;
+    res.json({ status: 'ok', edl, filename: `${title}.edl` });
+  });
+
+  app.post('/api/timeline/export_otio', (req, res) => {
+    const doc = req.body?.document || req.body || {};
+    const title = (doc.name || 'ROOP_TIMELINE').replace(/\s+/g, '_');
+    const otio = JSON.stringify({
+      OTIO_SCHEMA: 'Timeline.1',
+      name: title,
+      tracks: { OTIO_SCHEMA: 'Stack.1', children: [] }
+    });
+    res.json({ status: 'ok', otio, filename: `${title}.otio` });
+  });
+
+  app.post('/api/timeline/import_edl', (req, res) => {
+    res.json({
+      status: 'ok',
+      cuts: [
+        { event: 1, reel: 'AX', track: 'V1', frame_in: 0, frame_out: 1800, duration_frames: 1800, tc_in: '00:00:00:00', tc_out: '00:01:00:00' },
+        { event: 2, reel: 'SWAP', track: 'V2', frame_in: 150, frame_out: 450, duration_frames: 300, tc_in: '00:00:05:00', tc_out: '00:00:15:00', speaker_cluster_id: 'person_1' }
+      ],
+      count: 2
+    });
+  });
+
+  app.post('/api/timeline/import_otio', (req, res) => {
+    res.json({
+      status: 'ok',
+      cuts: [
+        { name: 'FaceSwap_1', track: 'V2_FaceSwap', frame_in: 150, frame_out: 450, duration_frames: 300, tc_in: '00:00:05:00', tc_out: '00:00:15:00', speaker_cluster_id: 'person_1' }
+      ],
+      count: 1
+    });
+  });
+
+  app.post('/api/provenance/verify', (req, res) => {
+    res.json({
+      status: 'ok',
+      verified: true,
+      manifest: {
+        schema: 'roop.provenance.v1',
+        generator: 'Roop Ultimate',
+        version: '2.1.0',
+        timestamp: new Date().toISOString(),
+        synthetic_media_disclosure: 'AI-generated synthetic media produced with Roop Ultimate.',
+        stage14_receipt_hash: 'mock_receipt_hash_7749',
+        payload_sha256: 'mock_payload_hash_1234',
+        signer_id: 'roop_local_hmac_sha256',
+        signature: 'mock_sig_abcd'
+      },
+      reason: 'Valid cryptographic provenance'
+    });
+  });
+
+  app.get('/api/provenance/receipt', (req, res) => {
+    res.json({
+      status: 'ok',
+      schema: 'roop.provenance.v1',
+      receipt_hash: 'mock_receipt_hash_7749',
+      disclosure: 'AI-generated synthetic media produced with Roop Ultimate.',
+      enabled: true,
+      watermark_enabled: false
+    });
   });
 
   app.post('/api/keyframes', (req, res) => {

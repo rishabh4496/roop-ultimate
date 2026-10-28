@@ -412,6 +412,20 @@ The batch queue.
 | POST | `/api/queue/stop` | useQueue |
 | POST | `/api/queue/update` | useQueue |
 
+### Timeline, NLE Interchange & Provenance
+
+Studio timeline interchange (CMX3600 EDL, OpenTimelineIO), active face cataloging, and cryptographic provenance verification.
+
+| Method | Path | Called from |
+| --- | --- | --- |
+| POST | `/api/timeline/catalog` | FaceSwap |
+| POST | `/api/timeline/export_edl` | FaceSwap |
+| POST | `/api/timeline/export_otio` | FaceSwap |
+| POST | `/api/timeline/import_edl` | BatchSwap |
+| POST | `/api/timeline/import_otio` | BatchSwap |
+| POST | `/api/provenance/verify` | Settings |
+| GET | `/api/provenance/receipt` | Settings |
+
 ### Outputs, history & files
 
 Finished renders, run history, export, projects and storage.

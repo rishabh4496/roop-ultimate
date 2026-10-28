@@ -6960,6 +6960,98 @@ def _serve_index(request):
     return _HTMLResponse(status_code=401, content=_api_access.TOKEN_PAGE)
 
 
+
+# ── Stage 22: NLE Timeline Interchange & Provenance ──────────────────────────
+
+@app.post("/api/timeline/catalog")
+async def timeline_catalog(request: Request):
+    from roop import nle_interchange
+    data = await request.json() if request.headers.get("content-type") == "application/json" else {}
+    video_path = str(data.get("video_path") or "")
+    fps = float(data.get("fps") or 30.0)
+    min_run_length = int(data.get("min_run_length") or 1)
+    drop_frame = bool(data.get("drop_frame", False))
+
+    ranges = nle_interchange.catalog_active_face_timecodes(
+        video_path,
+        fps=fps,
+        drop_frame=drop_frame,
+        min_run_length=min_run_length,
+    )
+    return {"status": "ok", "ranges": ranges, "total_ranges": len(ranges)}
+
+
+@app.post("/api/timeline/export_edl")
+async def timeline_export_edl(request: Request):
+    from roop import nle_interchange
+    data = await request.json() if request.headers.get("content-type") == "application/json" else {}
+    doc = data.get("document") or data
+    fps = float(data.get("fps") or doc.get("fps") or 30.0)
+    drop_frame = bool(data.get("drop_frame", False))
+
+    edl_str = nle_interchange.export_cmx3600_edl(doc, fps=fps, drop_frame=drop_frame)
+    title = str(doc.get("name") or "timeline").replace(" ", "_")
+    return {"status": "ok", "edl": edl_str, "filename": f"{title}.edl"}
+
+
+@app.post("/api/timeline/export_otio")
+async def timeline_export_otio(request: Request):
+    from roop import nle_interchange
+    data = await request.json() if request.headers.get("content-type") == "application/json" else {}
+    doc = data.get("document") or data
+    fps = float(data.get("fps") or doc.get("fps") or 30.0)
+
+    otio_str = nle_interchange.export_otio_json(doc, fps=fps)
+    title = str(doc.get("name") or "timeline").replace(" ", "_")
+    return {"status": "ok", "otio": otio_str, "filename": f"{title}.otio"}
+
+
+@app.post("/api/timeline/import_edl")
+async def timeline_import_edl(request: Request):
+    from roop import nle_interchange
+    data = await request.json() if request.headers.get("content-type") == "application/json" else {}
+    edl_text = str(data.get("edl_text") or "")
+    fps = float(data.get("fps") or 30.0)
+    drop_frame = bool(data.get("drop_frame", False))
+
+    cuts = nle_interchange.parse_cmx3600_edl(edl_text, fps=fps, drop_frame=drop_frame)
+    return {"status": "ok", "cuts": cuts, "count": len(cuts)}
+
+
+@app.post("/api/timeline/import_otio")
+async def timeline_import_otio(request: Request):
+    from roop import nle_interchange
+    data = await request.json() if request.headers.get("content-type") == "application/json" else {}
+    otio_data = data.get("otio_json") or data.get("otio") or {}
+    fps = float(data.get("fps") or 30.0)
+
+    cuts = nle_interchange.parse_otio_json(otio_data, fps=fps)
+    return {"status": "ok", "cuts": cuts, "count": len(cuts)}
+
+
+@app.post("/api/provenance/verify")
+async def provenance_verify(request: Request):
+    from roop import provenance
+    data = await request.json() if request.headers.get("content-type") == "application/json" else {}
+    file_path = str(data.get("file_path") or "")
+
+    valid, manifest, reason = provenance.extract_and_verify_file(file_path)
+    return {"status": "ok" if valid else "error", "verified": valid, "manifest": manifest, "reason": reason}
+
+
+@app.get("/api/provenance/receipt")
+def provenance_receipt():
+    from roop import provenance
+    return {
+        "status": "ok",
+        "schema": provenance.PROVENANCE_SCHEMA,
+        "receipt_hash": provenance.get_stage14_hardware_receipt_hash(),
+        "disclosure": provenance.get_provenance_disclosure(),
+        "enabled": provenance.is_provenance_enabled(),
+        "watermark_enabled": provenance.is_watermark_enabled(),
+    }
+
+
 @app.exception_handler(404)
 async def _spa_fallback(request, exc):
     """Serve the SPA for anything the API did not claim.

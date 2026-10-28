@@ -274,6 +274,13 @@ color_gamma = 1.0
 color_gain = 1.0
 # Stage 21: Stereoscopic 3D & VR Viewport
 stereo_mode = 'MONO_2D'
+# Stage 22: VFX Multi-Pass & Local Cryptographic Provenance
+vfx_multi_pass = False
+vfx_export_matte = True
+vfx_export_crops = True
+enable_provenance_signer = True
+embed_provenance_watermark = False
+provenance_disclosure = 'AI-generated synthetic media produced with Roop Ultimate.'
 # Small-face rescue: when a frame yields no detections, retry on a 2x upscale
 # so tiny/distant faces get picked up (without raising the global det size).
 rescue_small_faces = False

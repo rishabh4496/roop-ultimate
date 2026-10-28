@@ -683,3 +683,112 @@ export interface StereoVRViewportParams {
   stereoMode: StereoInspectionMode;
   stereoLayout: 'sbs' | 'tb' | 'dual';
 }
+
+// ── NLE Interchange, VFX Multi-Pass & Cryptographic Provenance (Stage 22) ────
+
+export interface TimelineCut {
+  event?: number;
+  reel?: string;
+  track?: string;
+  transition?: string;
+  name?: string;
+  src_in?: string;
+  src_out?: string;
+  rec_in?: string;
+  rec_out?: string;
+  frame_in: number;
+  frame_out: number;
+  duration_frames: number;
+  tc_in?: string;
+  tc_out?: string;
+  clip_name?: string;
+  speaker_cluster_id?: string;
+}
+
+export interface TimelineCatalogResponse {
+  status: string;
+  ranges: Array<{
+    frame_in: number;
+    frame_out: number;
+    duration_frames: number;
+    tc_in: string;
+    tc_out: string;
+    speaker_cluster_id: string;
+  }>;
+  total_ranges: number;
+}
+
+export interface TimelineEdlExportResponse {
+  status: string;
+  edl: string;
+  filename: string;
+}
+
+export interface TimelineOtioExportResponse {
+  status: string;
+  otio: string;
+  filename: string;
+}
+
+export interface TimelineImportResponse {
+  status: string;
+  cuts: TimelineCut[];
+  count: number;
+}
+
+export interface ProvenanceManifest {
+  schema: string;
+  generator: string;
+  version: string;
+  timestamp: string;
+  synthetic_media_disclosure: string;
+  stage14_receipt_hash: string;
+  payload_sha256: string;
+  signer_id: string;
+  signature: string;
+}
+
+export interface ProvenanceVerifyResponse {
+  status: string;
+  verified: boolean;
+  manifest: ProvenanceManifest | null;
+  reason: string;
+}
+
+export interface ProvenanceReceiptResponse {
+  status: string;
+  schema: string;
+  receipt_hash: string;
+  disclosure: string;
+  enabled: boolean;
+  watermark_enabled: boolean;
+}
+
+export interface VfxCornerPin {
+  from1: [number, number];
+  from2: [number, number];
+  from3: [number, number];
+  from4: [number, number];
+  to1: [number, number];
+  to2: [number, number];
+  to3: [number, number];
+  to4: [number, number];
+}
+
+export interface VfxFaceTransform {
+  face_index: number;
+  speaker_cluster_id: string;
+  crop_file: string;
+  crop_width: number;
+  crop_height: number;
+  matrix_3x3: number[][];
+  inv_matrix_3x3: number[][];
+  corner_pin: VfxCornerPin;
+}
+
+export interface VfxFrameRecord {
+  frame_index: number;
+  timecode: string;
+  faces: VfxFaceTransform[];
+}
+

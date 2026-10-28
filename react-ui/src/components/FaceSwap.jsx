@@ -810,6 +810,78 @@ export default function FaceSwap({
     } catch (e) { notify('Failed to export recipe: ' + e.message, 'error'); }
   };
 
+  const handleExportEdl = async () => {
+    try {
+      const currentTarget = targets[selTarget];
+      const fps = currentTarget?.fps || 30.0;
+      const totalFrames = currentTarget?.frames || 1800;
+      const res = await postJSON('/api/timeline/export_edl', {
+        document: {
+          name: currentTarget?.name || 'Roop_Ultimate_Timeline',
+          total_frames: totalFrames,
+          timeline: {
+            fps,
+            frame_start: 0,
+            frame_end: totalFrames,
+            face_segments: [],
+          },
+        },
+        fps,
+      });
+      if (res?.edl_text) {
+        const blob = new Blob([res.edl_text], { type: 'text/plain' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        const stem = (currentTarget?.name || 'roop_timeline').replace(/\.[^/.]+$/, '');
+        link.download = `${stem}_TrackV2.edl`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+        notify?.('Exported CMX3600 EDL timeline (Track V1 source, Track V2 face-swapped)');
+      }
+    } catch (err) {
+      notify?.(`Failed to export EDL: ${err.message}`, 'error');
+    }
+  };
+
+  const handleExportOtio = async () => {
+    try {
+      const currentTarget = targets[selTarget];
+      const fps = currentTarget?.fps || 30.0;
+      const totalFrames = currentTarget?.frames || 1800;
+      const res = await postJSON('/api/timeline/export_otio', {
+        document: {
+          name: currentTarget?.name || 'Roop_Ultimate_Timeline',
+          total_frames: totalFrames,
+          timeline: {
+            fps,
+            frame_start: 0,
+            frame_end: totalFrames,
+            face_segments: [],
+          },
+        },
+        fps,
+      });
+      if (res?.otio_json) {
+        const blob = new Blob([res.otio_json], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        const stem = (currentTarget?.name || 'roop_timeline').replace(/\.[^/.]+$/, '');
+        link.download = `${stem}_TrackV2.otio.json`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+        notify?.('Exported OpenTimelineIO JSON timeline (V1 source, V2 face-swap)');
+      }
+    } catch (err) {
+      notify?.(`Failed to export OTIO: ${err.message}`, 'error');
+    }
+  };
+
   const importRecipe = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -3635,6 +3707,49 @@ export default function FaceSwap({
           )}
           <Toggle label="VR mode" checked={!!p.vr_mode} onChange={(v) => set('vr_mode', v)} />
           <Toggle label="Auto rotate horizontal faces" checked={!!p.autorotate_faces} onChange={(v) => set('autorotate_faces', v)} />
+        </InspectorGroup>
+
+        <InspectorGroup id="vfx-multipass" title="VFX Multi-Pass & NLE Export" icon={Icon.film}>
+          <Toggle
+            label="VFX multi-pass export"
+            info="Simultaneously exports 10-bit Beauty, 10-bit grayscale Combined Matte Pass, and uncomposited aligned face crops with 3x3 inverse affine transform matrices."
+            checked={!!p.vfx_multi_pass}
+            onChange={(v) => set('vfx_multi_pass', v)}
+          />
+          {p.vfx_multi_pass && (
+            <>
+              <Toggle
+                label="Export combined matte pass"
+                info="10-bit grayscale matte merging Stage 7 XSeg 3 occlusion mask, vector roto zones, and edge feathering."
+                checked={p.vfx_export_matte ?? true}
+                onChange={(v) => set('vfx_export_matte', v)}
+              />
+              <Toggle
+                label="Export uncomposited crops & JSON inverse affine transforms"
+                info="Aligned face crop sequence accompanied by per-frame JSON 3x3 inverse affine matrices and corner pins for Nuke/Fusion."
+                checked={p.vfx_export_crops ?? true}
+                onChange={(v) => set('vfx_export_crops', v)}
+              />
+            </>
+          )}
+          <div className="pt-2 border-t border-white/10 flex gap-2">
+            <button
+              type="button"
+              onClick={handleExportEdl}
+              className="flex-1 py-1.5 px-2 rounded-lg text-micro font-bold bg-white/5 border border-white/10 hover:bg-white/10 text-white transition-colors"
+              title="Export CMX3600 EDL (V1 untouched source, V2 face-swapped cuts)"
+            >
+              Export EDL (CMX3600)
+            </button>
+            <button
+              type="button"
+              onClick={handleExportOtio}
+              className="flex-1 py-1.5 px-2 rounded-lg text-micro font-bold bg-white/5 border border-white/10 hover:bg-white/10 text-white transition-colors"
+              title="Export OpenTimelineIO JSON (V1 source clip, V2 face-swapped clips & gaps)"
+            >
+              Export OTIO (.json)
+            </button>
+          </div>
         </InspectorGroup>
 
         <Section title="Clip advisor" collapsible defaultOpen={false}>

@@ -27,6 +27,7 @@ export const ERR_NO_MATRIX_FILES = 'No files enabled for matrix batch';
 export const ERR_RECIPE_INPUTS = 'Requires target files and source facesets';
 export const ERR_SPLIT_NO_TARGET = 'Selected target file does not exist';
 export const ERR_SPLIT_SINGLE_FRAME = 'Target file is a single image or has no frames to split';
+export const ERR_NO_CUTS = 'No cuts found in EDL or OTIO file';
 
 export function newStagedJobId() {
   return `staged_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
@@ -321,6 +322,150 @@ export function stageSegments({
         || `Faceset #${built.primarySourceIdx + 1}`,
     });
   }
+  return { jobs, error: null };
+}
+
+export function parseTimelineCutsText(content, filename = '') {
+  if (!content || typeof content !== 'string') return [];
+  const trimmed = content.trim();
+  const isJson = filename.endsWith('.json') || filename.endsWith('.otio') || trimmed.startsWith('{');
+
+  if (isJson) {
+    try {
+      const data = JSON.parse(trimmed);
+      const cuts = [];
+      const tracks = data?.tracks?.children || data?.tracks || [];
+      const v2Track = Array.isArray(tracks)
+        ? tracks.find((t) => t.name === 'V2_FaceSwap' || t.name === 'V2' || (t.name && t.name.includes('V2')))
+        : null;
+      const children = v2Track?.children || [];
+      let cursor = 0;
+      children.forEach((child) => {
+        const schema = child.OTIO_SCHEMA || '';
+        const duration = child.source_range?.duration?.value || 0;
+        if (schema.startsWith('Clip')) {
+          const startVal = child.source_range?.start_time?.value || cursor;
+          const speakerIdStr = child.metadata?.roop?.speaker_cluster_id || '';
+          const speakerMatch = speakerIdStr.match(/person_(\d+)/);
+          cuts.push({
+            index: cuts.length + 1,
+            reel: child.name || 'SWAP',
+            clip_name: child.name || 'face_swapped_v2',
+            track: 'V2',
+            transition: 'C',
+            src_in: Math.round(startVal),
+            src_out: Math.round(startVal + duration),
+            dst_in: Math.round(startVal),
+            dst_out: Math.round(startVal + duration),
+            speaker_id: speakerMatch ? parseInt(speakerMatch[1], 10) : 0,
+            comment: child.metadata?.roop?.comment || null,
+          });
+        }
+        cursor += duration;
+      });
+      return cuts;
+    } catch {
+      return [];
+    }
+  }
+
+  // Parse CMX3600 EDL
+  const lines = trimmed.split(/\r?\n/);
+  const cuts = [];
+  let currentCut = null;
+
+  lines.forEach((line) => {
+    const l = line.trim();
+    if (!l || l.startsWith('TITLE:') || l.startsWith('FCM:')) return;
+    if (l.startsWith('*')) {
+      if (currentCut) {
+        if (l.startsWith('* FROM CLIP NAME:')) {
+          currentCut.clip_name = l.replace('* FROM CLIP NAME:', '').trim();
+        } else if (l.startsWith('* TRACK:')) {
+          currentCut.track = l.replace('* TRACK:', '').trim();
+        } else if (l.startsWith('* SPEAKER:')) {
+          const spk = l.replace('* SPEAKER:', '').trim();
+          const m = spk.match(/person_(\d+)/);
+          currentCut.speaker_id = m ? parseInt(m[1], 10) : 0;
+        }
+      }
+      return;
+    }
+
+    const parts = l.split(/\s+/);
+    if (parts.length >= 8 && /^\d+$/.test(parts[0])) {
+      const parseTc = (tc) => {
+        const p = tc.split(/[:;]/).map(Number);
+        if (p.length === 4) return ((p[0] * 3600) + (p[1] * 60) + p[2]) * 30 + p[3];
+        return 0;
+      };
+      const fIn = parseTc(parts[6]);
+      const fOut = parseTc(parts[7]);
+      currentCut = {
+        index: parseInt(parts[0], 10),
+        reel: parts[1],
+        track: parts[2],
+        transition: parts[3],
+        src_in: fIn,
+        src_out: fOut,
+        dst_in: fIn,
+        dst_out: fOut,
+        speaker_id: 0,
+        clip_name: parts[1],
+      };
+      cuts.push(currentCut);
+    }
+  });
+
+  return cuts;
+}
+
+export function stageTimelineCuts({
+  targets = [],
+  targetIndex = 0,
+  cuts = [],
+  sourceFacesInfo = [],
+  createJobPayload,
+} = {}) {
+  if (targets.length === 0) return { jobs: [], error: ERR_NO_TARGETS };
+  if (!cuts || cuts.length === 0) return { jobs: [], error: ERR_NO_CUTS };
+
+  const jobs = [];
+  cuts.forEach((cut, i) => {
+    let matchedTargetIdx = targetIndex;
+    if (cut.clip_name) {
+      const idx = targets.findIndex((t) => t.name && (t.name === cut.clip_name || cut.clip_name.includes(t.name) || t.name.includes(cut.clip_name)));
+      if (idx >= 0) matchedTargetIdx = idx;
+    }
+    const target = targets[matchedTargetIdx] || targets[0];
+    const totalFrames = target?.frames || 1;
+
+    const fs = Math.max(1, cut.src_in != null ? (cut.src_in === 0 ? 1 : cut.src_in + 1) : 1);
+    const fe = Math.min(totalFrames, Math.max(fs, cut.src_out != null ? cut.src_out : fs));
+    const spkId = Number.isInteger(cut.speaker_id) && cut.speaker_id >= 0 ? cut.speaker_id : 0;
+    const srcIdx = spkId < sourceFacesInfo.length ? spkId : 0;
+
+    const built = createJobPayload([{ personRank: spkId, sourceIdx: srcIdx }], DEFAULT_SWAP_MODE);
+    jobs.push({
+      ...stagedJob({
+        target,
+        targetIndex: matchedTargetIdx,
+        built,
+        sourceFacesInfo,
+        frameStart: fs,
+        frameEnd: fe,
+        totalFrames: fe - fs + 1,
+        label: `NLE Cut #${cut.index || i + 1} (${fs}-${fe}) | ${target.name}`,
+      }),
+      source_name: sourceFacesInfo[srcIdx]?.name || `Faceset #${srcIdx + 1}`,
+      nle_cut: {
+        index: cut.index || i + 1,
+        track: cut.track || 'V2',
+        speaker_id: spkId,
+      },
+    });
+  });
+
   return { jobs, error: null };
 }
 

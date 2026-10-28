@@ -66,6 +66,19 @@ from face_engine.pipeline.stereo import (
     recombine_stereo_frame,
     synchronize_stereo_crops,
 )
+from face_engine.pipeline.provenance import (
+    DEFAULT_DISCLOSURE,
+    DEFAULT_VERSION,
+    PROVENANCE_SCHEMA,
+    compute_file_sha256,
+    create_provenance_manifest,
+    embed_frequency_watermark,
+    extract_and_verify_file,
+    extract_frequency_watermark,
+    sign_and_embed_file,
+    verify_frequency_watermark,
+    verify_provenance_manifest,
+)
 
 __all__ = [
     "AngleResilientSCRFD", "ByteTrackConfig", "ByteTracks", "DualDetections",
@@ -81,4 +94,8 @@ __all__ = [
     "similarity_matrices_cuda", "synchronize_stereo_crops", "template_points",
     "warp_face_by_translation", "warp_face_cuda", "warp_face_gpu", "warp_face_inverse",
     "warp_face_inverse_cuda", "warp_face_inverse_gpu",
+    "PROVENANCE_SCHEMA", "DEFAULT_DISCLOSURE", "DEFAULT_VERSION",
+    "compute_file_sha256", "create_provenance_manifest", "embed_frequency_watermark",
+    "extract_and_verify_file", "extract_frequency_watermark", "sign_and_embed_file",
+    "verify_frequency_watermark", "verify_provenance_manifest",
 ]

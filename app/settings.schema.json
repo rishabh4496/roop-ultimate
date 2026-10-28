@@ -69,6 +69,12 @@
     "synthetic_label",
     "synthetic_watermark",
     "synthetic_watermark_text",
+    "vfx_multi_pass",
+    "vfx_export_matte",
+    "vfx_export_crops",
+    "enable_provenance_signer",
+    "embed_provenance_watermark",
+    "provenance_disclosure",
     "light_harmonizer",
     "light_harmonizer_key_intensity",
     "light_harmonizer_ambient_bias",
@@ -918,6 +924,54 @@
     "stereo_mode": {
       "default": "MONO_2D",
       "type": "str"
+    },
+    "vfx_multi_pass": {
+      "default": false,
+      "type": "bool",
+      "ui": {
+        "label": "VFX multi-pass output",
+        "section": "Output"
+      }
+    },
+    "vfx_export_matte": {
+      "default": true,
+      "type": "bool",
+      "ui": {
+        "label": "VFX export combined matte pass",
+        "section": "Output"
+      }
+    },
+    "vfx_export_crops": {
+      "default": true,
+      "type": "bool",
+      "ui": {
+        "label": "VFX export aligned face crops & JSON",
+        "section": "Output"
+      }
+    },
+    "enable_provenance_signer": {
+      "default": true,
+      "type": "bool",
+      "ui": {
+        "label": "Local cryptographic provenance signer",
+        "section": "Output"
+      }
+    },
+    "embed_provenance_watermark": {
+      "default": false,
+      "type": "bool",
+      "ui": {
+        "label": "Imperceptible frequency-domain watermark",
+        "section": "Output"
+      }
+    },
+    "provenance_disclosure": {
+      "default": "AI-generated synthetic media produced with Roop Ultimate.",
+      "type": "str",
+      "ui": {
+        "label": "Synthetic media disclosure text",
+        "section": "Output"
+      }
     },
     "lut_path": {
       "default": "",
