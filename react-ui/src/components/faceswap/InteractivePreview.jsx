@@ -16,6 +16,15 @@ import ColorGradingPanel from './ColorGradingPanel';
 import { GRADING_DEFAULTS } from './webgl2GradingPipeline';
 import QuadInspectionGrid from './QuadInspectionGrid';
 import {
+  createReferenceChannel,
+  closeReferenceChannel,
+  broadcastFrame,
+  broadcastTransport,
+  broadcastCompare,
+  broadcastGrading,
+  MESSAGE_TYPES,
+} from '../monitor/referenceChannel';
+import {
   ZOOM_MIN, ZOOM_MAX, clampPan, panAnchoredAt, panCenteringAt,
   transformFor, uiScale, wheelZoom, faceTrackingTarget,
 } from './zoomPan';
@@ -146,6 +155,112 @@ export default function InteractivePreview({
   const [_activeLut, setActiveLut] = useState(null);
   // Feature: False-Color Luminance & Skin-Tone Zebra Overlay
   const [zebraActive, setZebraActive] = useState(false);
+  const [monitorActive, setMonitorActive] = useState(false);
+  const refChannelRef = useRef(null);
+
+  const openMonitor = useCallback(() => {
+    setMonitorActive(true);
+    if (typeof window !== 'undefined') {
+      window.open(
+        '#/monitor',
+        'roop_clean_monitor',
+        'width=1280,height=720,menubar=no,toolbar=no,location=no,status=no,resizable=yes'
+      );
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!monitorActive) return undefined;
+    const channel = createReferenceChannel((data) => {
+      if (data?.type === MESSAGE_TYPES.PING) {
+        broadcastTransport(channel, {
+          isPlaying,
+          currentFrame: frame,
+          totalFrames: maxFrames,
+          fps: 30,
+        });
+        broadcastCompare(channel, {
+          mode: compareMode,
+          wipe: sliderPosRef.current ?? 50,
+          compareDir,
+          wipeAngle,
+          diffGain,
+        });
+        broadcastGrading(channel, {
+          ...gradingParams,
+          zebraActive,
+        });
+      }
+    });
+    refChannelRef.current = channel;
+
+    let animId = 0;
+    let lastTs = 0;
+    let isBroadcasting = false;
+
+    const streamLoop = (ts) => {
+      animId = requestAnimationFrame(streamLoop);
+      if (ts - lastTs < 16) return; // ~60fps
+      lastTs = ts;
+
+      if (isBroadcasting) return;
+      const cvs = canvasApiRef.current?.canvas?.();
+      if (!cvs || cvs.width === 0 || cvs.height === 0) return;
+
+      if (typeof createImageBitmap === 'function') {
+        isBroadcasting = true;
+        createImageBitmap(cvs)
+          .then((bmp) => {
+            broadcastFrame(channel, bmp, {
+              width: cvs.width,
+              height: cvs.height,
+              frameIndex: frame,
+              timestamp: Date.now(),
+            });
+          })
+          .catch(() => {})
+          .finally(() => {
+            isBroadcasting = false;
+          });
+      }
+    };
+    animId = requestAnimationFrame(streamLoop);
+
+    return () => {
+      if (animId) cancelAnimationFrame(animId);
+      closeReferenceChannel(channel);
+      refChannelRef.current = null;
+    };
+  }, [monitorActive, frame, maxFrames, isPlaying, compareMode, compareDir, wipeAngle, diffGain, gradingParams, zebraActive]);
+
+  useEffect(() => {
+    if (!refChannelRef.current) return;
+    broadcastTransport(refChannelRef.current, {
+      isPlaying,
+      currentFrame: frame,
+      totalFrames: maxFrames,
+      fps: 30,
+    });
+  }, [isPlaying, frame, maxFrames]);
+
+  useEffect(() => {
+    if (!refChannelRef.current) return;
+    broadcastCompare(refChannelRef.current, {
+      mode: compareMode,
+      wipe: sliderPosition,
+      compareDir,
+      wipeAngle,
+      diffGain,
+    });
+  }, [compareMode, sliderPosition, compareDir, wipeAngle, diffGain]);
+
+  useEffect(() => {
+    if (!refChannelRef.current) return;
+    broadcastGrading(refChannelRef.current, {
+      ...gradingParams,
+      zebraActive,
+    });
+  }, [gradingParams, zebraActive]);
 
   const activeFaceBbox = useMemo(() => {
     if (!faces || faces.length === 0) return null;
@@ -1205,6 +1320,21 @@ export default function InteractivePreview({
           }`}
         >
           Zebra
+        </button>
+
+        {/* Pop-Out Clean Feed Reference Monitor Button */}
+        <button
+          type="button"
+          onClick={openMonitor}
+          aria-pressed={monitorActive}
+          title="Pop-Out Clean Feed Monitor (Open clean reference feed on second display or OBS Window Capture)"
+          className={`px-2 h-7 rounded-lg text-micro font-bold flex items-center gap-1 transition-colors ${
+            monitorActive
+              ? 'text-cyan-300 bg-cyan-500/20 border border-cyan-400/40 shadow-[0_0_10px_rgba(6,182,212,0.3)]'
+              : 'hud-glass-button text-white/70'
+          }`}
+        >
+          Monitor ↗
         </button>
 
         {/* Video Frame controls */}

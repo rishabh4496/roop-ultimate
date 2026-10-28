@@ -26,6 +26,9 @@ class LiveCaptureConfig:
     height: int = 720
     fps: float = 30.0
     buffer_size: int = 1
+    source_type: str = "webcam"  # 'webcam' | 'monitor' | 'window' | 'region'
+    target_id: Optional[Any] = None
+    crop: Optional[Tuple[int, int, int, int] | List[int]] = None
 
 
 def capture_backend_for_system(system: Optional[str] = None) -> int:
@@ -96,6 +99,11 @@ class LiveCapture:
         self.backend = capture_backend_for_system()
 
     def open(self) -> None:
+        if self.config.source_type in ("window", "monitor", "region"):
+            from roop.desktop_capture import get_desktop_capture_provider
+            self.desktop_provider = get_desktop_capture_provider()
+            return
+        self.desktop_provider = None
         self.capture = cv2.VideoCapture(int(self.config.camera_index), self.backend)
         if not self.capture.isOpened():
             self.capture.release()
@@ -126,15 +134,31 @@ class LiveCapture:
 
     def _run(self) -> None:
         try:
-            while self.active and self.capture is not None:
-                ok, frame = self.capture.read()
-                if not ok or frame is None:
-                    self.error = "camera read failed"
-                    break
-                self.mailbox.put(frame)
+            is_desktop = self.config.source_type in ("window", "monitor", "region")
+            target_interval = 1.0 / max(1.0, float(self.config.fps))
+            while self.active:
+                if is_desktop:
+                    frame = self.desktop_provider.capture_frame(
+                        source_type=self.config.source_type,
+                        target_id=self.config.target_id,
+                        crop=self.config.crop,
+                    )
+                    if frame is None:
+                        self.error = "desktop capture failed"
+                        break
+                    self.mailbox.put(frame)
+                    time.sleep(target_interval)
+                else:
+                    if self.capture is None:
+                        break
+                    ok, frame = self.capture.read()
+                    if not ok or frame is None:
+                        self.error = "camera read failed"
+                        break
+                    self.mailbox.put(frame)
         except Exception as exc:
             self.error = str(exc)
-            _swallowed("live_mode.py:capture_loop", exc, "camera stopped")
+            _swallowed("live_mode.py:capture_loop", exc, "capture stopped")
         finally:
             self.active = False
             self.mailbox.close()

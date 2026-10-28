@@ -2154,17 +2154,72 @@ async function startServer() {
     });
   });
 
-  // ── Livecam ─────────────────────────────────────────────────────────
+  // ── Livecam & Desktop Capture (Stage 19) ───────────────────────────
   let livecamActive = false;
-  app.get('/api/livecam/status', (req, res) => res.json({ active: livecamActive, fps: 30 }));
+  let livecamConfig = { source_type: 'webcam', target_id: 0, crop: null };
+
+  const mockMonitors = [
+    { index: 0, name: 'Display 1 (Primary)', width: 1920, height: 1080, left: 0, top: 0, right: 1920, bottom: 1080, is_primary: true },
+    { index: 1, name: 'Display 2 (Reference Monitor)', width: 2560, height: 1440, left: 1920, top: 0, right: 4480, bottom: 1440, is_primary: false },
+  ];
+  const mockWindows = [
+    { hwnd: 1001, title: 'OBS Studio 30.2 - Clean Feed Window', width: 1920, height: 1080, left: 100, top: 100, right: 2020, bottom: 1180, is_minimized: false },
+    { hwnd: 1002, title: 'VLC Media Player - Reference Target', width: 1280, height: 720, left: 200, top: 150, right: 1480, bottom: 870, is_minimized: false },
+    { hwnd: 1003, title: 'DaVinci Resolve Studio 19 - Grading Node', width: 2560, height: 1440, left: 0, top: 0, right: 2560, bottom: 1440, is_minimized: false },
+  ];
+  const mockWebcams = [
+    { id: 'webcam:0', kind: 'webcam', index: 0, name: 'Default Camera (Device 0)' },
+    { id: 'webcam:1', kind: 'webcam', index: 1, name: 'Secondary Camera (Device 1)' },
+  ];
+
+  app.get('/api/livecam/sources', (req, res) => {
+    res.json({
+      webcams: mockWebcams,
+      monitors: mockMonitors,
+      windows: mockWindows,
+    });
+  });
+
+  app.get('/api/livecam/monitors', (req, res) => {
+    res.json({ monitors: mockMonitors });
+  });
+
+  app.get('/api/livecam/windows', (req, res) => {
+    res.json({ windows: mockWindows });
+  });
+
+  app.get('/api/livecam/status', (req, res) => res.json({
+    active: livecamActive,
+    fps: 30,
+    source_type: livecamConfig.source_type,
+    target_id: livecamConfig.target_id,
+    crop: livecamConfig.crop,
+  }));
+
   app.post('/api/livecam/start', (req, res) => {
     livecamActive = true;
-    res.json({ ok: true, active: true });
+    const body = req.body || {};
+    livecamConfig = {
+      source_type: body.source_type || 'webcam',
+      target_id: body.window_id ?? body.monitor_index ?? body.cam_number ?? 0,
+      crop: body.crop || null,
+    };
+    res.json({
+      ok: true,
+      active: true,
+      starting: true,
+      detector_interval: body.detector_interval || 6,
+      source_type: livecamConfig.source_type,
+      target_id: livecamConfig.target_id,
+      crop: livecamConfig.crop,
+    });
   });
+
   app.post('/api/livecam/stop', (req, res) => {
     livecamActive = false;
     res.json({ ok: true, active: false });
   });
+
   app.get('/api/livecam/frame', (req, res) => {
     const thumb = createSampleTargetSvg('Virtual LiveCam Stream', 1, 1, false, 888);
     res.setHeader('Content-Type', 'image/svg+xml');

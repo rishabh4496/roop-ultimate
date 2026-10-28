@@ -390,3 +390,32 @@ class VideoSource:
         proc = subprocess.run(cmd, capture_output=True, text=True)
         if proc.returncode != 0:
             raise RuntimeError(f"ffmpeg demux failed: {proc.stderr.strip()[-500:]}")
+
+class DesktopWindowCaptureProvider:
+    """Stage 19: Desktop Window, Display Monitor, and Sub-Region Capture Provider."""
+
+    def __init__(self):
+        self._provider = None
+
+    def _get_provider(self):
+        if self._provider is None:
+            try:
+                from roop.desktop_capture import get_desktop_capture_provider
+                self._provider = get_desktop_capture_provider()
+            except ImportError:
+                import sys
+                here = Path(__file__).resolve().parent.parent.parent / "app"
+                if str(here) not in sys.path:
+                    sys.path.insert(0, str(here))
+                from roop.desktop_capture import get_desktop_capture_provider
+                self._provider = get_desktop_capture_provider()
+        return self._provider
+
+    def enumerate_monitors(self):
+        return self._get_provider().enumerate_monitors()
+
+    def enumerate_windows(self):
+        return self._get_provider().enumerate_windows()
+
+    def read_frame(self, source_type="monitor", target_id=None, crop=None):
+        return self._get_provider().capture_frame(source_type=source_type, target_id=target_id, crop=crop)

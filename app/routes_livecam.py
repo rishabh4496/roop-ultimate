@@ -34,6 +34,43 @@ def livecam_status():
         return {"active": False, "error": str(_degrade_error)}
 
 
+@router.get("/api/livecam/sources")
+def livecam_sources():
+    try:
+        from roop.desktop_capture import get_desktop_capture_provider
+        prov = get_desktop_capture_provider()
+        monitors = prov.enumerate_monitors()
+        windows = prov.enumerate_windows()
+        webcams = [
+            {"id": "webcam:0", "kind": "webcam", "index": 0, "name": "Default Camera (Device 0)"},
+            {"id": "webcam:1", "kind": "webcam", "index": 1, "name": "Secondary Camera (Device 1)"},
+        ]
+        return {"webcams": webcams, "monitors": monitors, "windows": windows}
+    except Exception as _degrade_error:
+        _swallowed("routes_livecam.py:sources", _degrade_error, "fallback sources")
+        return {"webcams": [], "monitors": [], "windows": []}
+
+
+@router.get("/api/livecam/windows")
+def livecam_windows():
+    try:
+        from roop.desktop_capture import get_desktop_capture_provider
+        return {"windows": get_desktop_capture_provider().enumerate_windows()}
+    except Exception as _degrade_error:
+        _swallowed("routes_livecam.py:windows", _degrade_error, "empty windows list")
+        return {"windows": []}
+
+
+@router.get("/api/livecam/monitors")
+def livecam_monitors():
+    try:
+        from roop.desktop_capture import get_desktop_capture_provider
+        return {"monitors": get_desktop_capture_provider().enumerate_monitors()}
+    except Exception as _degrade_error:
+        _swallowed("routes_livecam.py:monitors", _degrade_error, "empty monitors list")
+        return {"monitors": []}
+
+
 @router.get("/api/livecam/audio/devices")
 def livecam_audio_devices():
     try:

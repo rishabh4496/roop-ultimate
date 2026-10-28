@@ -1,5 +1,5 @@
 import OutputVideoPlayer from './OutputVideoPlayer';
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { fileUrl } from '../api';
 import { useApi } from '../useApi';
 import { Section, Select, Slider, Button } from './ui';
@@ -11,6 +11,14 @@ import MouthCustodyPanel from './faceswap/MouthCustodyPanel';
 import { overridePatch } from './faceswap/mouthCustody';
 import BroadcastScopesDock from './faceswap/BroadcastScopesDock';
 import { drawZebraOverlay } from './faceswap/falseColorZebra';
+import {
+  createReferenceChannel,
+  closeReferenceChannel,
+  broadcastFrame,
+  broadcastTransport,
+  broadcastGrading,
+  MESSAGE_TYPES,
+} from './monitor/referenceChannel';
 
 const RESOLUTIONS = ['Original', '3840x', '2560x', '1920x', '1280x', '1024x', '640x'];
 const ROTATIONS = ['None', '90° Clockwise', '90° Counter-Clockwise', '180°'];
@@ -43,6 +51,80 @@ export default function Extras({ notify, registerFileListener, meta, settings, s
   const [uploadingAudio, setUploadingAudio] = useState(false);
   const [scopeActive, setScopeActive] = useState(false);
   const [zebraActive, setZebraActive] = useState(false);
+  const [monitorActive, setMonitorActive] = useState(false);
+  const refChannelRef = useRef(null);
+
+  const openMonitor = useCallback(() => {
+    setMonitorActive(true);
+    if (typeof window !== 'undefined') {
+      window.open(
+        '#/monitor',
+        'roop_clean_monitor',
+        'width=1280,height=720,menubar=no,toolbar=no,location=no,status=no,resizable=yes'
+      );
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!monitorActive) return undefined;
+    const channel = createReferenceChannel((data) => {
+      if (data?.type === MESSAGE_TYPES.PING) {
+        broadcastTransport(channel, {
+          isPlaying: true,
+          fps: opts.fps || 30,
+        });
+        broadcastGrading(channel, {
+          zebraActive,
+        });
+      }
+    });
+    refChannelRef.current = channel;
+
+    let animId = 0;
+    let lastTs = 0;
+    let isBroadcasting = false;
+
+    const streamLoop = (ts) => {
+      animId = requestAnimationFrame(streamLoop);
+      if (ts - lastTs < 16) return;
+      lastTs = ts;
+
+      if (isBroadcasting) return;
+      const elem = mediaElemRef.current;
+      if (!elem) return;
+      const w = elem.videoWidth || elem.naturalWidth || elem.clientWidth || 0;
+      const h = elem.videoHeight || elem.naturalHeight || elem.clientHeight || 0;
+      if (w === 0 || h === 0) return;
+
+      if (typeof createImageBitmap === 'function') {
+        isBroadcasting = true;
+        createImageBitmap(elem)
+          .then((bmp) => {
+            broadcastFrame(channel, bmp, {
+              width: w,
+              height: h,
+              timestamp: Date.now(),
+            });
+          })
+          .catch(() => {})
+          .finally(() => {
+            isBroadcasting = false;
+          });
+      }
+    };
+    animId = requestAnimationFrame(streamLoop);
+
+    return () => {
+      if (animId) cancelAnimationFrame(animId);
+      closeReferenceChannel(channel);
+      refChannelRef.current = null;
+    };
+  }, [monitorActive, zebraActive, opts.fps]);
+
+  useEffect(() => {
+    if (!refChannelRef.current) return;
+    broadcastGrading(refChannelRef.current, { zebraActive });
+  }, [zebraActive]);
   const mediaElemRef = useRef(null);
   const zebraCanvasRef = useRef(null);
 
@@ -202,6 +284,19 @@ export default function Extras({ notify, registerFileListener, meta, settings, s
                   title="Toggle Zebra Exposure Overlay (>95 / <5 IRE)"
                 >
                   Zebra
+                </button>
+                <button
+                  type="button"
+                  onClick={openMonitor}
+                  aria-pressed={monitorActive}
+                  className={`px-2 py-0.5 rounded-md text-micro font-bold transition-colors ${
+                    monitorActive
+                      ? 'text-cyan-300 bg-cyan-500/20 border border-cyan-400/40 shadow-sm'
+                      : 'bg-black/60 text-white/70 hover:text-white'
+                  }`}
+                  title="Pop-Out Clean Feed Reference Monitor (#/monitor)"
+                >
+                  Monitor ↗
                 </button>
               </div>
 

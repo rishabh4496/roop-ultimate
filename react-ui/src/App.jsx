@@ -46,6 +46,7 @@ import { Icon } from './icons';
 // A rejected prefetch is ignored — React.lazy retries on real render, and the
 // ErrorBoundary below owns the failure case.
 import FaceSwap from './components/FaceSwap';
+import ReferenceMonitor from './components/monitor/ReferenceMonitor';
 import Processing from './components/Processing';
 import useRenderLite, { cycleRenderLiteMode, RENDER_LITE_LABEL }
   from './components/faceswap/useRenderLite';
@@ -151,6 +152,17 @@ export default function App() {
   const [settings, setSettings] = useState(null);
   const [toasts, setToasts] = useState([]);
   const [error, setError] = useState('');
+  const [isMonitor, setIsMonitor] = useState(() => (
+    typeof window !== 'undefined' && String(window.location?.hash || '').includes('monitor')
+  ));
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const onHash = () => {
+      setIsMonitor(String(window.location?.hash || '').includes('monitor'));
+    };
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+  }, []);
 
   // ── Toasts ───────────────────────────────────────────────────────────────
   // Declared HERE, at the very top of the component, and that is not cosmetic.
@@ -1227,6 +1239,10 @@ export default function App() {
     </div>
   ) : null;
 
+
+  if (isMonitor) {
+    return <ReferenceMonitor />;
+  }
 
   return (
     <MotionConfig reducedMotion="user">

@@ -37,10 +37,15 @@ class LiveVirtualCamera:
                  stream_obs: bool, use_xseg: bool, restore_mouth: bool,
                  detector_interval: int = 6, audio_input_device=None,
                  audio_output_device=None, audio_sample_rate: int = 48000,
-                 audio_channels: int = 1):
+                 audio_channels: int = 1, source_type: str = "webcam",
+                 target_id=None, crop=None):
+        self.source_type = str(source_type or "webcam")
+        self.target_id = target_id
+        self.crop = crop
         self.capture = LiveCapture(LiveCaptureConfig(
             camera_index=int(camera_index), width=int(width), height=int(height),
-            fps=float(fps), buffer_size=1))
+            fps=float(fps), buffer_size=1, source_type=self.source_type,
+            target_id=self.target_id, crop=self.crop))
         self.stream_obs = bool(stream_obs)
         self.width = int(width)
         self.height = int(height)
@@ -223,7 +228,10 @@ class LiveVirtualCamera:
         return {
             "active": bool(self.active),
             "error": self.error or self.capture.error,
-            "backend": int(self.capture.backend),
+            "backend": int(self.capture.backend) if self.capture.backend is not None else 0,
+            "source_type": self.source_type,
+            "target_id": self.target_id,
+            "crop": self.crop,
             "camera_index": self.capture.config.camera_index,
             "resolution": f"{self.width}x{self.height}",
             "fps_target": self.fps,
@@ -246,6 +254,9 @@ def start_live_camera(payload: dict):
         except Exception as exc:
             _swallowed("virtualcam.py:resolution", exc, "using default resolution")
             width, height = 1280, 720
+        source_type = str(payload.get("source_type", "webcam"))
+        target_id = payload.get("target_id") or payload.get("window_id") or payload.get("monitor_index")
+        crop = payload.get("crop")
         _engine = LiveVirtualCamera(
             camera_index=int(payload.get("cam_number", 0)),
             width=width, height=height,
@@ -258,6 +269,9 @@ def start_live_camera(payload: dict):
             audio_output_device=payload.get("audio_output_device"),
             audio_sample_rate=int(payload.get("audio_sample_rate", 48000)),
             audio_channels=int(payload.get("audio_channels", 1)),
+            source_type=source_type,
+            target_id=target_id,
+            crop=crop,
         )
         _engine.start()
         cam_active = True

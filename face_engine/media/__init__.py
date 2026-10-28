@@ -1,6 +1,7 @@
 """Video ingestion, GPU decode/encode, demux/remux, shared-memory IPC, segment workers."""
 from face_engine.media.capturer import (
                                         ColorProfile,
+                                        DesktopWindowCaptureProvider,
                                         Segment,
                                         VideoInfo,
                                         VideoSource,
@@ -35,7 +36,7 @@ from face_engine.media.ipc_pool import (
 from face_engine.media.worker_pool import PoolReport, SegmentWorkerPool
 
 __all__ = [
-    "ColorProfile", "DemuxResult", "FFmpegError", "FFmpegWriter", "FrameBatch", "FramePipeline",
+    "ColorProfile", "DesktopWindowCaptureProvider", "DemuxResult", "FFmpegError", "FFmpegWriter", "FrameBatch", "FramePipeline",
     "HardwareVideoDecoder", "NVENCVideoWriter", "OutputReport", "PipelineError", "PoolReport",
     "RangeServer", "RingAborted", "Segment", "SegmentWorkerPool", "SharedMemoryRingBuffer",
     "VideoFrames", "VideoInfo", "VideoSource", "X264TensorWriter", "choose_frame_rate",

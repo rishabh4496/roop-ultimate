@@ -446,9 +446,12 @@ The Editor tab.
 | POST | `/api/lipsync/audio/add` | FaceSwap |
 | GET | `/api/livecam/audio/devices` | useLiveCam |
 | GET | `/api/livecam/frame` | FaceSwap |
+| GET | `/api/livecam/monitors` | useLiveCam |
+| GET | `/api/livecam/sources` | useLiveCam |
 | POST | `/api/livecam/start` | useLiveCam |
 | GET | `/api/livecam/status` | useLiveCam |
 | POST | `/api/livecam/stop` | useLiveCam |
+| GET | `/api/livecam/windows` | useLiveCam |
 
 ### Performance & system
 

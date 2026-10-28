@@ -593,3 +593,69 @@ export interface LutGradingParams {
   color_gain?: number;
 }
 
+
+// ── Zero-Copy Desktop Window Capture & BroadcastChannel Monitor (Stage 19) ────
+
+export type LiveCaptureSourceType = 'webcam' | 'monitor' | 'window' | 'region';
+
+export interface DesktopCropRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface DesktopWindow {
+  hwnd: number;
+  title: string;
+  width: number;
+  height: number;
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+  is_minimized: boolean;
+}
+
+export interface DesktopMonitor {
+  index: number;
+  name: string;
+  width: number;
+  height: number;
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+  is_primary: boolean;
+}
+
+export interface WebcamSource {
+  id: string;
+  kind: 'webcam';
+  index: number;
+  name: string;
+}
+
+export interface LiveSourcesResponse {
+  webcams: WebcamSource[];
+  monitors: DesktopMonitor[];
+  windows: DesktopWindow[];
+}
+
+export interface LiveWindowsResponse {
+  windows: DesktopWindow[];
+}
+
+export interface LiveMonitorsResponse {
+  monitors: DesktopMonitor[];
+}
+
+export interface LiveCamStartPayload {
+  source_type?: LiveCaptureSourceType;
+  window_id?: number;
+  monitor_index?: number;
+  cam_number?: number;
+  crop?: DesktopCropRect | null;
+  resolution?: string;
+  detector_interval?: number;
+}

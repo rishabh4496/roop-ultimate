@@ -3115,7 +3115,7 @@ def target_waveform(index: int = None, media_id: str = None, t0: float = 0.0, t1
 
 
 @app.get("/api/audio/waveform")
-def audio_waveform(path: str, t0: float = 0.0, t1: float = -1.0, bins: int = 2048):
+def audio_waveform(path: str = "", t0: float = 0.0, t1: float = -1.0, bins: int = 2048):
     """Stage 17: audio amplitude peaks of an UPLOADED dub / override track, for the timeline's audio track.
 
     Same envelope and answer shape as ``/api/target/waveform`` (``ready`` / ``state`` / ``duration`` / ``peaks``), keyed by
