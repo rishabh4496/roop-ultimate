@@ -114,6 +114,15 @@ uniform vec3 u_gamma;
 uniform vec3 u_gain;
 uniform float u_premultiply;
 
+// Stage 21 WebGL2 3D / VR Equirectangular & Stereo Inspection Uniforms
+uniform float u_vrMode;        // 0.0: 2D Flat, 1.0: VR180 Equirectangular, 2.0: VR360 Equirectangular
+uniform float u_yaw;           // Camera yaw (radians)
+uniform float u_pitch;         // Camera pitch (radians)
+uniform float u_fov;           // Field of view (radians)
+uniform float u_aspect;        // Viewport aspect ratio (W / H)
+uniform float u_stereoMode;    // 0: Off, 1: Left Eye, 2: Right Eye, 3: Side-by-Side, 4: Red-Cyan Anaglyph, 5: Disparity Diff Map
+uniform float u_stereoLayout;  // 0: Auto, 1: SBS, 2: TB, 3: DualTexture (texA=L, texB=R)
+
 vec3 srgbToLinear(vec3 c) {
   return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(0.04045, c));
 }
@@ -169,8 +178,38 @@ vec3 applyGrade(vec3 rgb) {
   return srgb;
 }
 
-vec4 layer(sampler2D tex, vec4 box, float has, bool grade) {
-  vec2 q = (v_uv - box.xy) / box.zw;
+vec2 computeEquirectangularUV(vec2 uv, float vrMode, float yaw, float pitch, float fov, float aspect) {
+  if (vrMode < 0.5) {
+    return uv;
+  }
+  float tanHalfFov = tan(max(0.01, fov * 0.5));
+  float rx = (uv.x - 0.5) * 2.0 * aspect * tanHalfFov;
+  float ry = (0.5 - uv.y) * 2.0 * tanHalfFov;
+  vec3 ray = normalize(vec3(rx, ry, 1.0));
+
+  // Rotate pitch (X-axis) then yaw (Y-axis)
+  float cp = cos(pitch); float sp = sin(pitch);
+  vec3 rPitch = vec3(ray.x, ray.y * cp - ray.z * sp, ray.y * sp + ray.z * cp);
+  float cy = cos(yaw); float sy = sin(yaw);
+  vec3 dir = vec3(rPitch.x * cy + rPitch.z * sy, rPitch.y, -rPitch.x * sy + rPitch.z * cy);
+
+  float lon = atan(dir.x, dir.z);
+  float lat = asin(clamp(dir.y, -1.0, 1.0));
+
+  float u = 0.5;
+  if (vrMode > 1.5) {
+    // 360 degree sphere
+    u = lon / (2.0 * 3.141592653589793) + 0.5;
+  } else {
+    // 180 degree hemisphere (centered)
+    u = lon / 3.141592653589793 + 0.5;
+  }
+  float v = 0.5 - lat / 3.141592653589793;
+  return vec2(clamp(u, 0.0, 1.0), clamp(v, 0.0, 1.0));
+}
+
+vec4 sampleLayerPos(sampler2D tex, vec4 box, float has, bool grade, vec2 pos) {
+  vec2 q = (pos - box.xy) / box.zw;
   if (has < 0.5 || q.x < 0.0 || q.y < 0.0 || q.x > 1.0 || q.y > 1.0) return vec4(0.0);
   vec4 s = texture(tex, q);
   vec3 c = grade ? applyGrade(s.rgb) : s.rgb;
@@ -180,7 +219,67 @@ vec4 layer(sampler2D tex, vec4 box, float has, bool grade) {
   return vec4(c, s.a);
 }
 
+vec4 layer(sampler2D tex, vec4 box, float has, bool grade) {
+  return sampleLayerPos(tex, box, has, grade, v_uv);
+}
+
 void main() {
+  if (u_vrMode > 0.5 || u_stereoMode > 0.5) {
+    vec2 p = computeEquirectangularUV(v_uv, u_vrMode, u_yaw, u_pitch, u_fov, u_aspect);
+    vec2 uvL = p;
+    vec2 uvR = p;
+    if (u_stereoLayout < 1.5) {
+      // Side-by-Side (SBS)
+      uvL = vec2(p.x * 0.5, p.y);
+      uvR = vec2(0.5 + p.x * 0.5, p.y);
+    } else if (u_stereoLayout < 2.5) {
+      // Top-Bottom (TB)
+      uvL = vec2(p.x, p.y * 0.5);
+      uvR = vec2(p.x, 0.5 + p.y * 0.5);
+    }
+
+    vec4 colL;
+    vec4 colR;
+    if (u_stereoLayout > 2.5) {
+      // Dual texture (Layer A = Left Eye, Layer B = Right Eye)
+      colL = sampleLayerPos(u_texA, u_boxA, u_hasA, false, uvL);
+      colR = sampleLayerPos(u_texB, u_boxB, u_hasB, true, uvR);
+    } else {
+      sampler2D mainTex = (u_hasB > 0.5) ? u_texB : u_texA;
+      vec4 mainBox = (u_hasB > 0.5) ? u_boxB : u_boxA;
+      float mainHas = (u_hasB > 0.5) ? u_hasB : u_hasA;
+      bool mainGrade = (u_hasB > 0.5);
+      colL = sampleLayerPos(mainTex, mainBox, mainHas, mainGrade, uvL);
+      colR = sampleLayerPos(mainTex, mainBox, mainHas, mainGrade, uvR);
+    }
+
+    if (u_stereoMode < 0.5) {
+      // Projection view (mono/active layer or left eye)
+      fragColor = colL;
+    } else if (u_stereoMode < 1.5) {
+      // Left Eye
+      fragColor = colL;
+    } else if (u_stereoMode < 2.5) {
+      // Right Eye
+      fragColor = colR;
+    } else if (u_stereoMode < 3.5) {
+      // Side-by-Side
+      fragColor = v_uv.x < 0.5 ? colL : colR;
+    } else if (u_stereoMode < 4.5) {
+      // Red-Cyan 3D Anaglyph
+      vec3 anaglyph = vec3(colL.r, colR.g, colR.b);
+      fragColor = vec4(anaglyph, max(colL.a, colR.a));
+    } else {
+      // Stereo Disparity Diff Map (amplified difference with color relief)
+      vec3 diff = abs(colL.rgb - colR.rgb);
+      float dMag = max(max(diff.r, diff.g), diff.b) * 4.0;
+      vec3 turbo = vec3(clamp(dMag * 2.0, 0.0, 1.0), clamp(dMag * 0.9, 0.0, 1.0), clamp(1.0 - dMag * 1.4, 0.0, 1.0));
+      fragColor = vec4(mix(diff * 3.5, turbo, 0.55), 1.0);
+    }
+    return;
+  }
+
+  // Standard non-VR execution
   if (u_mode < 0.5) {
     fragColor = layer(u_texA, u_boxA, u_hasA, false);
   } else if (u_mode < 1.5) {
@@ -242,6 +341,14 @@ export class GlRenderer {
       lift_r: 0.0, lift_g: 0.0, lift_b: 0.0, lift_m: 0.0,
       gamma_r: 1.0, gamma_g: 1.0, gamma_b: 1.0, gamma_m: 1.0,
       gain_r: 1.0, gain_g: 1.0, gain_b: 1.0, gain_m: 1.0,
+    };
+    this.vrParams = {
+      vrMode: 'off',        // 'off' | 'vr180' | 'vr360'
+      yaw: 0.0,             // radians
+      pitch: 0.0,           // radians
+      fov: 90.0,            // degrees
+      stereoMode: 'off',    // 'off' | 'left' | 'right' | 'side_by_side' | 'anaglyph' | 'disparity_diff'
+      stereoLayout: 'sbs',  // 'sbs' | 'tb' | 'dual'
     };
     if (!opts.force2d) this._initGl();
     if (!this.gl) {
@@ -327,6 +434,13 @@ export class GlRenderer {
       this.loc.gamma = gl.getUniformLocation(prog, 'u_gamma');
       this.loc.gain = gl.getUniformLocation(prog, 'u_gain');
       this.loc.premultiply = gl.getUniformLocation(prog, 'u_premultiply');
+      this.loc.vrMode = gl.getUniformLocation(prog, 'u_vrMode');
+      this.loc.yaw = gl.getUniformLocation(prog, 'u_yaw');
+      this.loc.pitch = gl.getUniformLocation(prog, 'u_pitch');
+      this.loc.fov = gl.getUniformLocation(prog, 'u_fov');
+      this.loc.aspect = gl.getUniformLocation(prog, 'u_aspect');
+      this.loc.stereoMode = gl.getUniformLocation(prog, 'u_stereoMode');
+      this.loc.stereoLayout = gl.getUniformLocation(prog, 'u_stereoLayout');
     }
 
     // One triangle strip covering the viewport.
@@ -352,6 +466,10 @@ export class GlRenderer {
 
   setGradingParams(params) {
     this.gradingParams = { ...this.gradingParams, ...params };
+  }
+
+  setVrParams(params) {
+    this.vrParams = { ...this.vrParams, ...params };
   }
 
   setLut(parsedLut) {
@@ -492,6 +610,29 @@ export class GlRenderer {
         gl.uniform3f(this.loc.gamma, Math.max(0.01, Number(p.gamma_r ?? 1.0) * gm), Math.max(0.01, Number(p.gamma_g ?? 1.0) * gm), Math.max(0.01, Number(p.gamma_b ?? 1.0) * gm));
         gl.uniform3f(this.loc.gain, Math.max(0.0, Number(p.gain_r ?? 1.0) * gnm), Math.max(0.0, Number(p.gain_g ?? 1.0) * gnm), Math.max(0.0, Number(p.gain_b ?? 1.0) * gnm));
         gl.uniform1f(this.loc.premultiply, 1.0);
+
+        // Stage 21 VR & Stereo Uniforms
+        const vr = this.vrParams;
+        const vrModeVal = vr.vrMode === 'vr360' ? 2.0 : (vr.vrMode === 'vr180' ? 1.0 : 0.0);
+        const stereoModeMap = {
+          off: 0.0,
+          left: 1.0,
+          right: 2.0,
+          side_by_side: 3.0,
+          anaglyph: 4.0,
+          disparity_diff: 5.0,
+        };
+        const stereoModeVal = stereoModeMap[vr.stereoMode] ?? 0.0;
+        const stereoLayoutMap = { auto: 0.0, sbs: 1.0, tb: 2.0, dual: 3.0 };
+        const stereoLayoutVal = stereoLayoutMap[vr.stereoLayout] ?? 1.0;
+
+        gl.uniform1f(this.loc.vrMode, vrModeVal);
+        gl.uniform1f(this.loc.yaw, Number(vr.yaw || 0));
+        gl.uniform1f(this.loc.pitch, Number(vr.pitch || 0));
+        gl.uniform1f(this.loc.fov, Number((vr.fov || 90) * Math.PI / 180));
+        gl.uniform1f(this.loc.aspect, W / Math.max(1, H));
+        gl.uniform1f(this.loc.stereoMode, stereoModeVal);
+        gl.uniform1f(this.loc.stereoLayout, stereoLayoutVal);
       }
 
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);

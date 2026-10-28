@@ -10,6 +10,7 @@ import VideoFramesetExtractor from './extras/VideoFramesetExtractor';
 import MouthCustodyPanel from './faceswap/MouthCustodyPanel';
 import { overridePatch } from './faceswap/mouthCustody';
 import BroadcastScopesDock from './faceswap/BroadcastScopesDock';
+import StereoVRViewport, { DEFAULT_VR_PARAMS } from './faceswap/StereoVRViewport';
 import { drawZebraOverlay } from './faceswap/falseColorZebra';
 import {
   createReferenceChannel,
@@ -52,6 +53,8 @@ export default function Extras({ notify, registerFileListener, meta, settings, s
   const [scopeActive, setScopeActive] = useState(false);
   const [zebraActive, setZebraActive] = useState(false);
   const [monitorActive, setMonitorActive] = useState(false);
+  const [vrActive, setVrActive] = useState(false);
+  const [vrParams, setVrParams] = useState(DEFAULT_VR_PARAMS);
   const refChannelRef = useRef(null);
 
   const openMonitor = useCallback(() => {
@@ -298,6 +301,19 @@ export default function Extras({ notify, registerFileListener, meta, settings, s
                 >
                   Monitor ↗
                 </button>
+                <button
+                  type="button"
+                  onClick={() => setVrActive((v) => !v)}
+                  aria-pressed={vrActive}
+                  className={`px-2 py-0.5 rounded-md text-micro font-bold transition-colors ${
+                    vrActive
+                      ? 'text-teal-300 bg-teal-500/20 border border-teal-400/40 shadow-sm'
+                      : 'bg-black/60 text-white/70 hover:text-white'
+                  }`}
+                  title="Toggle WebGL2 3D / Equirectangular VR180/360 Viewport & Stereoscopic Inspector"
+                >
+                  3D / VR
+                </button>
               </div>
 
               {file.type?.startsWith('video') || /\.(mp4|mkv|mov|avi|webm|gif)$/i.test(fileName) ? (
@@ -306,6 +322,15 @@ export default function Extras({ notify, registerFileListener, meta, settings, s
                 <img ref={mediaElemRef} src={fileUrlSrc} alt="Input source" className="max-w-full max-h-full object-contain pointer-events-none" />
               )}
 
+                            {vrActive && (
+                <StereoVRViewport
+                  active={vrActive}
+                  onClose={() => setVrActive(false)}
+                  mediaSource={mediaElemRef.current}
+                  params={vrParams}
+                  onChange={setVrParams}
+                />
+              )}
               {zebraActive && (
                 <canvas ref={zebraCanvasRef} className="absolute inset-0 w-full h-full object-contain pointer-events-none z-10" />
               )}

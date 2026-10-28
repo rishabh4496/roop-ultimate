@@ -272,6 +272,8 @@ color_skin_protect = 1.0
 color_lift = 0.0
 color_gamma = 1.0
 color_gain = 1.0
+# Stage 21: Stereoscopic 3D & VR Viewport
+stereo_mode = 'MONO_2D'
 # Small-face rescue: when a frame yields no detections, retry on a 2x upscale
 # so tiny/distant faces get picked up (without raising the global det size).
 rescue_small_faces = False

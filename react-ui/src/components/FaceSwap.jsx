@@ -133,7 +133,7 @@ export default function FaceSwap({
     let live = true;
     // The keyframes are per clip and come from localStorage (useIdentityKeyframes), not from the backend's
     // live global (which holds whichever clip was rendered last), so the rehydrate keeps what is already here.
-    fetchIdentityBlend().then((r) => { if (live && r) setIdentityBlend((prev) => ({ ...normalizeBlend(r), keyframes: prev.keyframes })); });
+    fetchIdentityBlend().then((r) => { if (live && r) setIdentityBlend((prev) => ({ ...normalizeBlend(r), keyframes: prev.keyframes })); /* setIdentityBlend(normalizeBlend(r)) */ });
     return () => { live = false; };
   }, []);
   const [targetFaces, setTargetFaces] = useState([]);

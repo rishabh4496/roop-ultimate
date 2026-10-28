@@ -602,3 +602,26 @@ def measure_halo_overshoot(img: np.ndarray, reference: Optional[np.ndarray] = No
 
     violations = (lab_out < lo) | (lab_out > hi)
     return float(np.count_nonzero(violations) / violations.size * 100.0)
+
+
+# ── Stage 21: Restore Ultra Stereo Crop Synchronization ────────────────────
+from face_engine.pipeline.stereo import synchronize_stereo_crops
+
+
+def synchronize_restore_ultra_stereo(
+    left_crop: np.ndarray,
+    right_crop: np.ndarray,
+    seed: Optional[int] = None,
+    sync_norm: bool = True,
+    specular_mask_L: Optional[np.ndarray] = None,
+    specular_mask_R: Optional[np.ndarray] = None,
+) -> Tuple[np.ndarray, np.ndarray, Dict[str, Any]]:
+    """Synchronize latent noise seeds, normalization statistics, and Stage 12 specular highlight masks."""
+    return synchronize_stereo_crops(
+        left_crop=left_crop,
+        right_crop=right_crop,
+        seed=seed,
+        sync_norm=sync_norm,
+        specular_mask_L=specular_mask_L,
+        specular_mask_R=specular_mask_R,
+    )

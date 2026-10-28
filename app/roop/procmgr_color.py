@@ -639,3 +639,17 @@ class ColorTransferMixin:
             s = s_proj @ rot.T
 
         return np.clip(s, 0, 255).astype(np.uint8).reshape(shape)
+
+
+    def synchronize_stereo_specular_masks(
+        self,
+        mask_l: np.ndarray,
+        mask_r: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Stage 21: Synchronize Stage 12 specular highlight masks across Left and Right face crops."""
+        if mask_l is None or mask_r is None:
+            return mask_l, mask_r
+        ml = mask_l.astype(np.float32)
+        mr = mask_r.astype(np.float32)
+        synced = np.clip(0.5 * (ml + mr), 0.0, 1.0)
+        return synced.astype(mask_l.dtype), synced.astype(mask_r.dtype)

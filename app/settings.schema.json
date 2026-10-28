@@ -915,6 +915,10 @@
         "kind": "value"
       }
     },
+    "stereo_mode": {
+      "default": "MONO_2D",
+      "type": "str"
+    },
     "lut_path": {
       "default": "",
       "type": "str"

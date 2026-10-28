@@ -868,3 +868,33 @@ class TemporalQualityMetrics:
         mat = np.corrcoef(v_true, v_track)
         corr = float(mat[0, 1]) if not np.isnan(mat[0, 1]) else 1.0
         return round(max(-1.0, min(1.0, corr)), 3)
+
+
+# ── Stage 21: Epipolar Stereo Track Coupling ────────────────────────────────
+from face_engine.pipeline.stereo import EpipolarStereoCoupler, EpipolarCouplingResult
+
+
+class EpipolarStereoTracker:
+    """Couples Left and Right eye face tracks across time under epipolar geometry constraints."""
+
+    def __init__(self, ema_alpha: float = 0.70):
+        self.coupler = EpipolarStereoCoupler(ema_alpha=ema_alpha)
+        self.track_pairs: Dict[int, Tuple[int, int]] = {}
+
+    def couple_tracks(
+        self,
+        left_faces: List[Any],
+        right_faces: List[Any],
+        frame_idx: int = 0,
+    ) -> List[Tuple[Any, Any, EpipolarCouplingResult]]:
+        """Pair and epipolar-couple faces detected across Left and Right stereo views."""
+        pairs, _, _ = self.coupler.pair_stereo_faces(left_faces, right_faces)
+        coupled_results = []
+        for lf, rf in pairs:
+            lkps = getattr(lf, 'kps', getattr(lf, 'landmarks', None))
+            rkps = getattr(rf, 'kps', getattr(rf, 'landmarks', None))
+            if lkps is not None and rkps is not None:
+                track_id = getattr(lf, 'track_id', getattr(rf, 'track_id', None))
+                res = self.coupler.couple_alignment(lkps, rkps, track_id=track_id)
+                coupled_results.append((lf, rf, res))
+        return coupled_results

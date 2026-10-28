@@ -270,6 +270,8 @@ let appSettings: Record<string, any> = {
   codeformer_fidelity: 0.75,
   subsample_size: 256,
   upscale: '256px',
+  // Stage 21: Stereoscopic 3D & VR Viewport
+  stereo_mode: 'MONO_2D',
   // Stage 18: WebGL2 3D .cube LUT Color Grading & Broadcast Scopes
   lut_path: '',
   lut_bake: false,

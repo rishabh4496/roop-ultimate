@@ -665,3 +665,21 @@ export interface LiveCamStartPayload {
   resolution?: string;
   detector_interval?: number;
 }
+
+
+// ── Stereoscopic 3D & WebGL2 Equirectangular VR Viewport (Stage 21) ─────────
+
+export type StereoMode = 'MONO_2D' | 'STEREO_SBS_HALF' | 'STEREO_SBS_FULL' | 'STEREO_TB' | 'VR180_SBS';
+
+export type StereoInspectionMode = 'off' | 'left' | 'right' | 'side_by_side' | 'anaglyph' | 'disparity_diff';
+
+export type VrProjectionMode = 'off' | 'vr180' | 'vr360';
+
+export interface StereoVRViewportParams {
+  vrMode: VrProjectionMode;
+  yaw: number;
+  pitch: number;
+  fov: number;
+  stereoMode: StereoInspectionMode;
+  stereoLayout: 'sbs' | 'tb' | 'dual';
+}

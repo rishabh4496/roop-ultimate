@@ -53,6 +53,12 @@ self.onmessage = (e) => {
       if (pipeline) pipeline.pushBitmap(m.layer || 0, m.bitmap, m.seq, m.meta);
       else m.bitmap?.close?.();
       break;
+    case 'vrParams':
+      if (renderer) {
+        renderer.setVrParams(m.vrParams);
+        pipeline?.requestDraw();
+      }
+      break;
     case 'mode':
       if (renderer) {
         renderer.setMode(m.mode);

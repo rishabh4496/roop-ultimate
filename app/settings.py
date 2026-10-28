@@ -1226,6 +1226,7 @@ class Settings:
         self.ambient_shadow_match = float(self.default_get(data, 'ambient_shadow_match', 0.0))
         self.subdermal_warmth_match = float(self.default_get(data, 'subdermal_warmth_match', 0.0))
         # Stage 18: WebGL2 3D .cube LUT Grading
+        self.stereo_mode = str(self.default_get(data, 'stereo_mode', 'MONO_2D'))
         self.lut_path = str(self.default_get(data, 'lut_path', ''))
         self.lut_bake = bool(self.default_get(data, 'lut_bake', False))
         self.lut_opacity = float(self.default_get(data, 'lut_opacity', 1.0))
@@ -1628,6 +1629,7 @@ class Settings:
             'specular_highlight_recovery': self.specular_highlight_recovery,
             'ambient_shadow_match': self.ambient_shadow_match,
             'subdermal_warmth_match': self.subdermal_warmth_match,
+            'stereo_mode': self.stereo_mode,
             'lut_path': self.lut_path,
             'lut_bake': self.lut_bake,
             'lut_opacity': self.lut_opacity,

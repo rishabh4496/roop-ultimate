@@ -624,3 +624,31 @@ def reset_geometric_stabilizer() -> None:
     with _INIT_LOCK:
         if _GLOBAL_STABILIZER is not None:
             _GLOBAL_STABILIZER.reset_all()
+
+
+# ── Stage 21: Stereoscopic 3D Epipolar Coupling ─────────────────────────────
+from face_engine.pipeline.stereo import (
+    StereoMode,
+    EpipolarStereoCoupler,
+    EpipolarCouplingResult,
+    partition_stereo_frame,
+    recombine_stereo_frame,
+    synchronize_stereo_crops,
+)
+
+_GLOBAL_STEREO_COUPLER: Optional[EpipolarStereoCoupler] = None
+
+
+def get_stereo_coupler(ema_alpha: float = 0.70) -> EpipolarStereoCoupler:
+    global _GLOBAL_STEREO_COUPLER
+    with _INIT_LOCK:
+        if _GLOBAL_STEREO_COUPLER is None:
+            _GLOBAL_STEREO_COUPLER = EpipolarStereoCoupler(ema_alpha=ema_alpha)
+        return _GLOBAL_STEREO_COUPLER
+
+
+def reset_stereo_coupler(track_id: Optional[Any] = None) -> None:
+    global _GLOBAL_STEREO_COUPLER
+    with _INIT_LOCK:
+        if _GLOBAL_STEREO_COUPLER is not None:
+            _GLOBAL_STEREO_COUPLER.reset(track_id)

@@ -36,6 +36,16 @@ class Provider(str, Enum):
     CPU = "CPUExecutionProvider"
 
 
+class StereoMode(str, Enum):
+    """Stereoscopic 3D and VR format modes (Stage 21)."""
+
+    MONO_2D = "MONO_2D"
+    STEREO_SBS_HALF = "STEREO_SBS_HALF"
+    STEREO_SBS_FULL = "STEREO_SBS_FULL"
+    STEREO_TB = "STEREO_TB"
+    VR180_SBS = "VR180_SBS"
+
+
 DEFAULT_PROVIDER_ORDER: list[Provider] = [Provider.TENSORRT, Provider.CUDA, Provider.CPU]
 
 _FOUR_GIB = 4 * 1024 ** 3
@@ -153,6 +163,7 @@ class EngineConfig(BaseModel):
     cuda: CUDAOptions = Field(default_factory=CUDAOptions)
     intra_op_num_threads: int = Field(default=0, ge=0)
     log_severity_level: int = Field(default=3, ge=0, le=4)
+    stereo_mode: StereoMode = Field(default=StereoMode.MONO_2D)
 
     @field_validator("providers")
     @classmethod

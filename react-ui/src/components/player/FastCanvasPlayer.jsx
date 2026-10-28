@@ -62,6 +62,7 @@ function createWorkerHost(canvas, { force2d, onPresented, onReady }) {
     },
     resize(w, h) { worker.postMessage({ type: 'resize', w, h }); },
     mode(mode, split) { worker.postMessage({ type: 'mode', mode, split }); },
+    setVrParams(vrParams) { worker.postMessage({ type: 'vrParams', vrParams }); },
     clear(layer) { worker.postMessage({ type: 'clear', layer }); },
     reset(layer) { worker.postMessage({ type: 'reset', layer }); },
     stats() {
@@ -96,6 +97,7 @@ function createMainHost(canvas, { force2d, onPresented, onReady }) {
     push: (layer, bytes, seq, meta, mime) => pipeline.push(layer, bytes, seq, meta, mime),
     pushBitmap: (layer, bitmap, seq, meta) => pipeline.pushBitmap(layer, bitmap, seq, meta),
     resize: (w, h) => { if (renderer.resize(w, h)) pipeline.requestDraw(); },
+    setVrParams: (params) => { renderer.setVrParams(params); pipeline.requestDraw(); },
     mode: (mode, split) => {
       renderer.setMode(mode);
       if (split !== undefined) renderer.setSplit(split);
@@ -148,6 +150,7 @@ const FastCanvasPlayer = forwardRef(function FastCanvasPlayer({
   className = '',
   style,
   label = 'Video frame',
+  vrParams = null,
 }, ref) {
   const canvasRef = useRef(null);
   const hostRef = useRef(null);
@@ -201,6 +204,7 @@ const FastCanvasPlayer = forwardRef(function FastCanvasPlayer({
   }, []);
 
   useEffect(() => { hostRef.current?.mode(mode, split); }, [mode, split]);
+  useEffect(() => { if (vrParams) hostRef.current?.setVrParams?.(vrParams); }, [vrParams]);
 
   const pushBytes = (bytes, meta = null, lyr = layer) => {
     const host = hostRef.current;
@@ -234,6 +238,7 @@ const FastCanvasPlayer = forwardRef(function FastCanvasPlayer({
     },
     clear: (lyr = layer) => hostRef.current?.clear(lyr),
     setMode: (m, s) => hostRef.current?.mode(m, s),
+    setVrParams: (params) => hostRef.current?.setVrParams?.(params),
     stats: () => hostRef.current?.stats() ?? Promise.resolve(null),
     get renderKind() { return hostRef.current?.renderKind || ''; },
   }));

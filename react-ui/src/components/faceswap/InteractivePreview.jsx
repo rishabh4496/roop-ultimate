@@ -13,6 +13,7 @@ import FastCanvasPlayer from '../player/FastCanvasPlayer';
 import RadarNavigator from './RadarNavigator';
 import BroadcastScopesDock from './BroadcastScopesDock';
 import ColorGradingPanel from './ColorGradingPanel';
+import StereoVRViewport, { DEFAULT_VR_PARAMS } from './StereoVRViewport';
 import { GRADING_DEFAULTS } from './webgl2GradingPipeline';
 import QuadInspectionGrid from './QuadInspectionGrid';
 import {
@@ -151,6 +152,8 @@ export default function InteractivePreview({
   // Feature: Broadcast Scopes & 3D LUT Color Grading
   const [scopeActive, setScopeActive] = useState(false);
   const [gradingActive, setGradingActive] = useState(false);
+  const [vrActive, setVrActive] = useState(false);
+  const [vrParams, setVrParams] = useState(DEFAULT_VR_PARAMS);
   const [gradingParams, setGradingParams] = useState(GRADING_DEFAULTS);
   const [_activeLut, setActiveLut] = useState(null);
   // Feature: False-Color Luminance & Skin-Tone Zebra Overlay
@@ -1322,6 +1325,21 @@ export default function InteractivePreview({
           Zebra
         </button>
 
+                {/* Stage 21 3D / VR Equirectangular Viewport Button */}
+        <button
+          type="button"
+          onClick={() => setVrActive((v) => !v)}
+          aria-pressed={vrActive}
+          title="Toggle WebGL2 3D / Equirectangular VR180/360 Viewport & Stereoscopic Inspector"
+          className={`px-2 h-7 rounded-lg text-micro font-bold flex items-center gap-1 transition-colors ${
+            vrActive
+              ? 'text-teal-300 bg-teal-500/20 border border-teal-400/40 shadow-[0_0_10px_rgba(20,184,166,0.3)]'
+              : 'hud-glass-button text-white/70'
+          }`}
+        >
+          3D / VR
+        </button>
+
         {/* Pop-Out Clean Feed Reference Monitor Button */}
         <button
           type="button"
@@ -1982,6 +2000,16 @@ export default function InteractivePreview({
         renderedCanvas={canvasApiRef.current?.canvas?.()}
         faceBbox={faces[selectedFaceIndex ?? 0]}
         className="absolute bottom-16 right-3"
+      />
+
+            {/* ── Stage 21 3D / VR Viewport ── */}
+      <StereoVRViewport
+        active={vrActive}
+        onClose={() => setVrActive(false)}
+        mediaSource={afterSrc || beforeSrc || (imageRef.current?.querySelector('canvas') || imageRef.current?.querySelector('img') || imageRef.current?.querySelector('video'))}
+        compareSource={beforeSrc || null}
+        params={vrParams}
+        onChange={setVrParams}
       />
 
       {/* ── WebGL2 3D .cube LUT Grading Panel ── */}
