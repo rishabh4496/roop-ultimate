@@ -245,7 +245,14 @@ class TheStageIsAnUncontrolledCanvas(unittest.TestCase):
         """Closing a bitmap someone else still holds is a use-after-free that
         presents as a silently blank stage, not as an error."""
         canvas = read('components', 'faceswap', 'PreviewCanvas.jsx')
-        self.assertIn('if (img && !layer.external) releaseFrame(img)', canvas)
+        # Ownership is per IMAGE (a WeakSet filled where this component decodes), not a flag on
+        # the layer: a layer that moves from a caller's frame to one it decodes itself flips a
+        # layer flag first, and the outgoing caller frame was then closed as if it were ours.
+        # (Stage 23: the snapshot slots' kept frames were closed under their owner that way.)
+        self.assertIn('const ownedFrames = new WeakSet()', canvas)
+        self.assertIn('ownedFrames.add(img)', canvas)
+        self.assertIn('if (!img || !ownedFrames.has(img)) return;', canvas)
+        self.assertNotIn('!layer.external) releaseFrame', canvas)
 
     def test_teardown_resets_its_own_bookkeeping(self):
         """Both halves of this were shipped broken and BOTH read as a blank

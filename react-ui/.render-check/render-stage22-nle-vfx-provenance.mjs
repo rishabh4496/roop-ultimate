@@ -3,6 +3,7 @@
  * and Cryptographic Provenance Render Checks.
  */
 import fs from 'node:fs';
+import process from 'node:process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 

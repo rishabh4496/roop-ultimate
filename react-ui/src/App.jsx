@@ -19,6 +19,9 @@ import useTelemetrySocket from './useTelemetrySocket';
 import CompileBanner from './components/CompileBanner';
 import { usePipelineStatusSocket } from './usePipelineStatus';
 import { useJobStore } from './store/jobStore';
+import { onHistoryApplied } from './store/historyStore';
+import { useHistoryChannel, SETTINGS_CHANNEL } from './history/historyChannels';
+import { installHistoryDom } from './history/historyDom';
 import './store';
 import { useWorkspaceStore, LAYOUT_PRESETS } from './store/workspaceStore';
 import { setRunTelemetry, setPipelineTelemetry, setDashboardTelemetry, selectProg, etaMsOf, clearEngineTelemetry } from './store/telemetryStore';
@@ -186,6 +189,17 @@ export default function App() {
   // Failures that used to be swallowed (`.catch(() => {})`) report through failureLog;
   // this is where its rate-limited toasts land.
   useEffect(() => setFailureToast(notify), [notify]);
+
+  // Stage 23: the edit history. `settings` is the live recipe (both Face Swap and the Editor edit
+  // it), so it is tracked here; FaceSwap / InteractivePreview / Extras report the mask, roto, pin and
+  // crop state they own. One window-level listener pair turns every slider drag into one entry and
+  // owns Ctrl/Cmd+Z / Y.
+  useHistoryChannel('settings', settings, setSettings, SETTINGS_CHANNEL, settings != null);
+  useEffect(() => installHistoryDom(), []);
+  useEffect(() => onHistoryApplied(({ kind, label }) => {
+    const verb = { undo: 'Undid', redo: 'Redid', jump: 'Went to', restore: 'Applied' }[kind] || 'Applied';
+    notify(`${verb}: ${label}`, 'info');
+  }), [notify]);
 
   // Every existing setTab call site goes through here, so navigation and the
   // URL cannot drift apart. `replace` is for the automatic switch into

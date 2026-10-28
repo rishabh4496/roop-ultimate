@@ -28,7 +28,7 @@ import {
   CircleCheck, CircleX, CircleAlert, Info, Unplug, Bell, Radio, Image,
   Pencil, Film, PanelLeft, PanelRight, PanelBottom, LayoutGrid, FolderOpen as Folder,
   Eye, ExternalLink, ChevronRight, Ellipsis, Camera,
-  House, RotateCcw, Sun, Moon, Monitor,
+  House, RotateCcw, Sun, Moon, Monitor, Undo2, Redo2,
   Link2, Link2Off, Save, SlidersHorizontal, HardDrive, MemoryStick, Terminal, ScanFace, ChevronDown,
 } from 'lucide-react';
 
@@ -94,6 +94,10 @@ export const Icon = {
   // Revert a control to its default. Deliberately counter-clockwise, so it
   // never reads as `refresh` (which re-fetches rather than undoes).
   reset: make(RotateCcw, 'reset'),
+  // Step back / forward through the edit history (Ctrl+Z / Ctrl+Y). Distinct from `reset`, which
+  // returns ONE control to its default.
+  undo: make(Undo2, 'undo'),
+  redo: make(Redo2, 'redo'),
   refresh: make(RefreshCw, 'refresh'),
   compare: make(Columns2, 'compare'),
   split: make(SquareSplitVertical, 'split'),

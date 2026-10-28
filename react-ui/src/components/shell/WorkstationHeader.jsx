@@ -2,6 +2,7 @@ import React from 'react';
 import { Icon } from '../../icons';
 import LayoutSwitcher from './LayoutSwitcher';
 import TelemetryPill from './TelemetryPill';
+import HistoryPopover from './HistoryPopover';
 
 // ── The top workstation header ──────────────────────────────────────────────
 //
@@ -32,6 +33,7 @@ export default function WorkstationHeader({
 
       <div className="ml-auto flex flex-wrap items-center gap-2">
         <LayoutSwitcher tab={tab} onNavigate={onNavigate} />
+        <HistoryPopover />
         <TelemetryPill engine={engine} onOpenDiagnostics={onOpenDiagnostics} />
 
         <div role="group" aria-label="Workspace tools" className="flex items-center gap-0.5 rounded-xl border border-white/10 bg-white/[0.03] p-0.5">

@@ -5,6 +5,10 @@ import { useApi } from '../useApi';
 import { Section, Select, Slider, Button } from './ui';
 import { Icon } from '../icons';
 import { logFailure } from '../failureLog';
+import { SLOT_IDS } from '../store/slotStore';
+import { useHistoryChannel, EXTRAS_OPTS_CHANNEL } from '../history/historyChannels';
+import useSnapshotSlots from './faceswap/useSnapshotSlots';
+import SnapshotSlots from './faceswap/SnapshotSlots';
 import EnhancerPipelineStack from './faceswap/EnhancerPipelineStack';
 import VideoFramesetExtractor from './extras/VideoFramesetExtractor';
 import MouthCustodyPanel from './faceswap/MouthCustodyPanel';
@@ -130,6 +134,34 @@ export default function Extras({ notify, registerFileListener, meta, settings, s
   }, [zebraActive]);
   const mediaElemRef = useRef(null);
   const zebraCanvasRef = useRef(null);
+
+  // Stage 23: the crop / resize / rotate / fps options are part of the undo history, and the four
+  // snapshot slots keep them (with the shared enhancement recipe) plus a thumbnail of the source
+  // frame. The Editor's viewport shows the UNPROCESSED input (Apply runs on the server), so there is
+  // no rendered result frame to flip here and no split-wipe reference; a slot's picture is what the
+  // input looked like when it was captured.
+  useHistoryChannel('extrasOpts', opts, setOpts, EXTRAS_OPTS_CHANNEL);
+  const slotBank = useSnapshotSlots({
+    bank: 'extras',
+    notify,
+    captureFrame: async () => {
+      const el = mediaElemRef.current;
+      if (!el || typeof createImageBitmap !== 'function') return null;
+      try { return { bitmap: await createImageBitmap(el), frameKey: `${fileName}_${el.currentTime ?? 0}` }; } catch { return null; }
+    },
+  });
+  useEffect(() => {
+    const onKey = (e) => {
+      const digit = /^Digit([1-4])$/.exec(e.code || '');
+      if (!digit || e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
+      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName)) return;
+      if (document.querySelector('[role="dialog"]')) return;
+      e.preventDefault();
+      slotBank.activate(SLOT_IDS[Number(digit[1]) - 1]);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [slotBank]);
 
   useEffect(() => {
     if (!zebraActive || !mediaElemRef.current || !zebraCanvasRef.current) return;
@@ -257,6 +289,12 @@ export default function Extras({ notify, registerFileListener, meta, settings, s
             </div>
             <input type="file" accept="image/*,video/*" onChange={onPick} className="sr-only" />
           </label>
+
+          {file && fileUrlSrc && (
+            <div className="mb-2">
+              <SnapshotSlots api={slotBank} supportsReference={false} />
+            </div>
+          )}
 
           {file && fileUrlSrc && (
             <div className="relative overflow-hidden rounded-xl bg-black/45 border border-white/10 aspect-video flex items-center justify-center mb-4 max-h-[300px]">

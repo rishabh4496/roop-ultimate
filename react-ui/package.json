@@ -45,13 +45,14 @@
     "test:console-mirror": "node .render-check/run-module.mjs render-console-mirror.mjs",
     "test:stage11": "node .render-check/run-module.mjs render-stage11-logic.mjs",
     "test:trt-queues": "node .render-check/run-module.mjs render-stage14.mjs",
-    "test:render-checks": "npm run test:render &&npm run test:mapping && npm run test:stage14 && npm run test:batch && npm run test:render:mutations && npm run test:player && npm run test:error-boundary && npm run test:api-client && npm run test:recognition && npm run test:retry-policy && npm run test:brush && npm run test:pipeline-report && npm run test:pipeline-pill && npm run test:retired-controls && npm run test:head-pose-hud && npm run test:provider-matrix && npm run test:pipeline-controls && npm run test:video-io-hud && npm run test:workstation && npm run test:timeline && npm run test:stage5 && npm run test:stage8 && npm run test:console-mirror && npm run test:stage11 && npm run test:trt-queues && npm run test:mouth-custody && npm run test:stage18 && npm run test:stage19 && npm run test:identity-keyframes && npm run test:stage21 && npm run test:stage22",
+    "test:render-checks": "npm run test:render &&npm run test:mapping && npm run test:stage14 && npm run test:batch && npm run test:render:mutations && npm run test:player && npm run test:error-boundary && npm run test:api-client && npm run test:recognition && npm run test:retry-policy && npm run test:brush && npm run test:pipeline-report && npm run test:pipeline-pill && npm run test:retired-controls && npm run test:head-pose-hud && npm run test:provider-matrix && npm run test:pipeline-controls && npm run test:video-io-hud && npm run test:workstation && npm run test:timeline && npm run test:stage5 && npm run test:stage8 && npm run test:console-mirror && npm run test:stage11 && npm run test:trt-queues && npm run test:mouth-custody && npm run test:stage18 && npm run test:stage19 && npm run test:identity-keyframes && npm run test:stage21 && npm run test:stage22 && npm run test:history",
     "test:e2e": "playwright test -c e2e/playwright.config.js",
     "test:e2e:baseline": "node e2e/baseline.js",
     "test:e2e:themes": "node e2e/run-themes.js",
     "test:e2e:themes:baseline": "node e2e/run-themes.js --update",
     "check": "npm run lint && npm run lint:unreachable && npm run lint:api-timeouts && npm run build && npm run verify:offline && npm run test:offline-bundle && npm run test:e2e && npm run test:render-checks",
-    "test:stage22": "node .render-check/run-module.mjs render-stage22-nle-vfx-provenance.mjs"
+    "test:stage22": "node .render-check/run-module.mjs render-stage22-nle-vfx-provenance.mjs",
+    "test:history": "node .render-check/run-module.mjs render-history.mjs"
   },
   "dependencies": {
     "@tanstack/react-virtual": "3.14.18",

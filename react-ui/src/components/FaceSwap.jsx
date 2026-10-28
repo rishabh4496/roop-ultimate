@@ -95,6 +95,12 @@ import { selectProg, etaMsOf, useTelemetryStore } from '../store/telemetryStore'
 import { outputMediaUrl, outputSource } from './outputUrl';
 import { useFrameSocketHold } from '../transport/useFrameSocket';
 import { logFailure, reportFailure } from '../failureLog';
+import { useHistoryStore } from '../store/historyStore';
+import { useSlotStore, SLOT_IDS } from '../store/slotStore';
+import { useHistoryChannel, MASK_CHANNEL, ROTO_CHANNEL, PINS_CHANNEL } from '../history/historyChannels';
+import useSnapshotSlots from './faceswap/useSnapshotSlots';
+import SnapshotSlots from './faceswap/SnapshotSlots';
+import { decodeFrame } from './faceswap/frameDecoder';
 
 // AI upscale models folded into the swap pass (mirrors the Extras post-processor
 // list). value = backend subtype, label = friendly name.
@@ -185,6 +191,7 @@ export default function FaceSwap({
   const [manualMask, setManualMask] = useState(null);
   const [maskRefKps, setMaskRefKps] = useState(null);
   const [maskVersion, setMaskVersion] = useState(0);
+  const maskVersionSeq = useRef(0);
   // Single-frame AI-upscale spot-check (result shown in a modal).
   const [upscaledSrc, setUpscaledSrc] = useState('');
   const [upscaledDims, setUpscaledDims] = useState(null);
@@ -1199,7 +1206,11 @@ export default function FaceSwap({
     // Bind the mask to the currently selected target face's keypoints so the
     // backend can map frame-space paint onto the aligned crop.
     setMaskRefKps(dataUrl ? (previewKps[selTargetFace] || previewKps[0] || null) : null);
-    setMaskVersion((v) => v + 1);
+    // From a counter that only goes up, not from the current version: undo can put an older
+    // version back, and `v + 1` from there would reuse a version a DIFFERENT mask already owns, so
+    // the preview cache (keyed by `mask:<version>`) would serve that other mask's render.
+    maskVersionSeq.current += 1;
+    setMaskVersion(maskVersionSeq.current);
   };
 
   // ── Stage 11: Pen-tool zones and identity pins ───────────────────────────
@@ -1211,6 +1222,20 @@ export default function FaceSwap({
   const [rotoByMedia, setRotoByMedia] = useState({});
   const [pinsByMedia, setPinsByMedia] = useState({});
   const [rotoSelectedId, setRotoSelectedId] = useState(null);
+
+  // Stage 23: what this tab owns, reported to the undo history. The applied mask is three states
+  // that change together, so it travels as one bundle (equal-by-fields, see MASK_CHANNEL).
+  const maskBundle = useMemo(
+    () => ({ dataUrl: manualMask, kps: maskRefKps, version: maskVersion }),
+    [manualMask, maskRefKps, maskVersion],
+  );
+  useHistoryChannel('mask', maskBundle, (b) => {
+    setManualMask(b.dataUrl);
+    setMaskRefKps(b.kps);
+    setMaskVersion(b.version);
+  }, MASK_CHANNEL);
+  useHistoryChannel('roto', rotoByMedia, setRotoByMedia, ROTO_CHANNEL);
+  useHistoryChannel('pins', pinsByMedia, setPinsByMedia, PINS_CHANNEL);
   const NO_ITEMS = useMemo(() => [], []);
   const rotoZones = rotoByMedia[clipKey] || NO_ITEMS;
   const identityPins = pinsByMedia[clipKey] || NO_ITEMS;
@@ -2508,6 +2533,47 @@ export default function FaceSwap({
   const frameUnavailable = !!rawFrameError && !rawIsCurrent
     && !(previewSrc && previewFor === `${activeTargetMediaId || `legacy-index-${selTarget}`}_${frame}`)
     && !getCachedPreview(selTarget, frame)?.image;
+
+  // ── Stage 23: A/B/C/D snapshot slots ─────────────────────────────────────
+  // A slot keeps the recipe state and, when this frame has a rendered preview, a decoded copy of
+  // it. Recalling applies the recipe through the history (one undoable entry) and holds the kept
+  // frame on the stage until the real render of that recipe lands, so the flip is instant.
+  const frameKeyNow = `${activeTargetMediaId || `legacy-index-${selTarget}`}_${frame}`;
+  const [heldSlot, setHeldSlot] = useState(null);
+  const slotBank = useSnapshotSlots({
+    bank: 'faceswap',
+    notify,
+    captureFrame: async () => {
+      // Only a RENDERED preview of THIS frame is worth keeping: the raw frame is not "the look".
+      if (!(previewSrc && previewFor === frameKeyNow)) return null;
+      return { bitmap: await decodeFrame(previewSrc), frameKey: frameKeyNow };
+    },
+    onRecalled: (slot) => {
+      setHeldSlot(slot.bitmap && slot.frameKey === frameKeyNow
+        ? { id: slot.id, bitmap: slot.bitmap, previewSrc, frameKey: frameKeyNow, headId: useHistoryStore.getState().headId }
+        : null);
+      if (slot.frameKey && slot.frameKey !== frameKeyNow) {
+        notify(`Slot ${slot.id} was captured on another frame: its recipe is applied, its picture is not shown`, 'info');
+      }
+    },
+    onReference: (id) => {
+      if (!id) return;
+      // A reference only means something inside the compare wipe, so open it.
+      setCompare(true);
+      setComparingEnhancers(false); setComparingMasks(false); setComparingSwappers(false); setComparingUpscalers(false);
+    },
+  });
+  const headIdNow = useHistoryStore((s) => s.headId);
+  const heldStoreSlot = useSlotStore((s) => (heldSlot ? s.banks.faceswap[heldSlot.id] : null));
+  const referenceId = useSlotStore((s) => s.reference.faceswap);
+  const referenceSlot = useSlotStore((s) => (s.reference.faceswap ? s.banks.faceswap[s.reference.faceswap] : null));
+  // The held picture is good only while NOTHING has moved on: same frame, same preview on the
+  // stage, no edit since the recall, and the slot still owns that bitmap.
+  const heldFrame = heldSlot && !isPlaying && !scrubbingNow
+    && heldSlot.frameKey === frameKeyNow && heldSlot.previewSrc === previewSrc
+    && heldSlot.headId === headIdNow && heldStoreSlot?.bitmap === heldSlot.bitmap
+    ? heldSlot.bitmap : null;
+  const referenceFrame = referenceSlot?.bitmap && referenceSlot.frameKey === frameKeyNow ? referenceSlot.bitmap : null;
 
   // Keep a detached pop-out monitor in sync. It used to receive exactly one
   // frame — the one it was opened with — because nothing ever called
@@ -4193,6 +4259,16 @@ export default function FaceSwap({
                   onRefreshPreview={() => refreshPreview({ force: true })}
                 />
 
+                {/* Stage 23: the four snapshot slots. Keys 1-4 over the stage do the same as these. */}
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
+                  <SnapshotSlots api={slotBank} />
+                  {referenceId && !referenceFrame && (
+                    <span className="text-micro text-amber-300" role="status">
+                      Split-wipe reference Slot {referenceId} is of another frame, so the wipe shows the original.
+                    </span>
+                  )}
+                </div>
+
                 {previewSrc ? (
                   comparingEnhancers ? (
                     <ComparisonGridPanel
@@ -4263,9 +4339,13 @@ export default function FaceSwap({
                     afterSrc={stageAfterSrc}
                     beforeFrame={rawFrameBitmap && loadedRawUrl === rawUrl ? rawFrameBitmap : null}
                     playbackSource={playbackSource}
-                    afterFrame={scrubbingNow && !isPlaying
+                    afterFrame={heldFrame || (scrubbingNow && !isPlaying
                       && stageAfterSrc === rawUrl
-                      && loadedRawUrl === rawUrl ? rawFrameBitmap : null}
+                      && loadedRawUrl === rawUrl ? rawFrameBitmap : null)}
+                    referenceFrame={referenceFrame}
+                    referenceLabel={referenceId ? `Slot ${referenceId}` : ''}
+                    liveLabel={heldFrame ? `Slot ${heldSlot.id}` : 'Live result'}
+                    onSlotHotkey={(n) => slotBank.activate(SLOT_IDS[n - 1])}
                     scrubbing={scrubbingNow}
                     onMaskChange={applyManualMask}
                     maskApplied={!!manualMask}
@@ -4663,6 +4743,9 @@ export default function FaceSwap({
               </div>
               <div className="space-y-2.5">
                 <h4 className="font-bold text-accent text-xs uppercase tracking-wider">Compare & Zoom</h4>
+                <div className="flex items-center justify-between"><span className="text-white/60">Undo / Redo (all edits, masks, roto)</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">Ctrl + Z / Y</kbd></div>
+                <div className="flex items-center justify-between"><span className="text-white/60">Snapshot slots A / B / C / D</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">1 / 2 / 3 / 4</kbd></div>
+                <div className="flex items-center justify-between"><span className="text-white/60">Zoom 1:1 / 200% / 400%</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">Shift + 1 / 2 / 4</kbd></div>
                 <div className="flex items-center justify-between"><span className="text-white/60">Zoom In / Out</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">+ / -</kbd></div>
                 <div className="flex items-center justify-between"><span className="text-white/60">Toggle Comparison</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">C</kbd></div>
                 <div className="flex items-center justify-between"><span className="text-white/60">Toggle Split View</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">S</kbd></div>

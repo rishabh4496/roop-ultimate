@@ -39,9 +39,18 @@ const MAX_EDGE = 2560;
 
 // Release only what this component decoded. Caller-supplied frames belong to
 // the caller's lifecycle.
-const releaseOwned = (layer, img) => {
-    if (img && !layer.external) releaseFrame(img);
-  };
+//
+// Ownership is tracked PER IMAGE. It used to be a flag on the layer (`layer.external`), which is
+// the wrong granularity: a layer that hands over from a caller's frame to one it decodes itself
+// flips the flag first, and the outgoing caller frame (held in `prev` for the cross-fade) is then
+// released as if it were ours. That closed bitmaps the caller still owned - the snapshot slots'
+// kept frames - and the next paint threw "The image source is detached".
+const ownedFrames = new WeakSet();
+const releaseOwned = (_layer, img) => {
+  if (!img || !ownedFrames.has(img)) return;
+  ownedFrames.delete(img);
+  releaseFrame(img);
+};
 
 // `object-fit: contain`, done by hand because a canvas has no such property.
 const fitBox = (cw, ch, iw, ih) => {
@@ -339,6 +348,7 @@ const PreviewCanvas = forwardRef(function PreviewCanvas({
       } else {
         releaseOwned(layer, layer.img);
       }
+      ownedFrames.add(img);
       layer.external = false;
       layer.img = img;
       requestPaint();

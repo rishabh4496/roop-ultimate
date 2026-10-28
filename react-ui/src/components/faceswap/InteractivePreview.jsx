@@ -7,6 +7,8 @@ import PreviewCanvas from './PreviewCanvas';
 import CompareSlider from './CompareSlider';
 import FrameUnavailable from './FrameUnavailable';
 import { brushSample } from './maskBrush';
+import { paintDab, normalizeSample, replayStrokes, clearCanvases } from './maskStrokes';
+import { useHistoryChannel, STROKES_CHANNEL } from '../../history/historyChannels';
 import RotoLayer, { RotoToolbar } from './RotoLayer';
 import { trackLabel } from './identityLock';
 import FastCanvasPlayer from '../player/FastCanvasPlayer';
@@ -77,8 +79,17 @@ export default function InteractivePreview({
   colorBadge = '',
   notify = null,
   onGradingChange = null,
+  // Stage 23. Keys 1-4 call onSlotHotkey(n). referenceFrame, when given, replaces the raw "original"
+  // as the left side of the compare wipe (a snapshot slot assigned as the split-wipe reference), and
+  // the two labels name the sides of the wipe. The frames are owned by the slot store, never closed here.
+  onSlotHotkey = null,
+  referenceFrame = null,
+  referenceLabel = '',
+  liveLabel = '',
 }) {
   // ── State & Refs ──────────────────────────────────────────────────────────
+  const onSlotHotkeyRef = useRef(onSlotHotkey);
+  onSlotHotkeyRef.current = onSlotHotkey;
   const [sliderPosition, setSliderPosition] = useState(50);
   const sliderPosRef = useRef(50);
 
@@ -98,6 +109,13 @@ export default function InteractivePreview({
   const maskCanvasRef = useRef(null);
   const maskExportRef = useRef(null);
   const lastPtRef = useRef(null);
+  // The brush as data (see maskStrokes.js): committed strokes, the one being drawn, and which
+  // array / canvas size the canvases currently show.
+  const [strokes, setStrokes] = useState([]);
+  const strokesRef = useRef(strokes);
+  const strokeRef = useRef(null);
+  const paintedRef = useRef(strokes);
+  const paintedDimRef = useRef('');
 
   // ── Zero-Rerender Viewport Controller (0.1x to 16x) ──────────────────────
   const [zoom, setZoom] = useState(1);
@@ -508,52 +526,48 @@ export default function InteractivePreview({
 
     const sample = brushSample(rect, canvas.width, canvas.height, cx, cy, brushSize, brushFeather);
     if (!sample) return;
-    const { x, y, r, innerR } = sample;
+    const { x, y } = sample;
     const prev = isStart ? null : lastPtRef.current;
     const erase = brushMode === 'erase';
 
-    const tint = erase ? '#ffffff' : 'rgba(233, 69, 96, 0.45)';
-    for (const [c, isExport] of [[canvas, false], [exportCanvas, true]]) {
-      const ctx = c.getContext('2d');
-      if (!ctx) continue;
-      ctx.globalCompositeOperation = erase ? 'destination-out' : 'source-over';
-
-      if (brushFeather > 0.05) {
-        const grad = ctx.createRadialGradient(x, y, Math.max(0, innerR), x, y, r);
-        if (isExport) {
-          grad.addColorStop(0, '#ffffff');
-          grad.addColorStop(1, 'rgba(255, 255, 255, 0)');
-        } else if (erase) {
-          grad.addColorStop(0, '#ffffff');
-          grad.addColorStop(1, 'rgba(255, 255, 255, 0)');
-        } else {
-          grad.addColorStop(0, tint);
-          grad.addColorStop(1, 'rgba(233, 69, 96, 0)');
-        }
-        ctx.fillStyle = grad;
-        ctx.strokeStyle = grad;
-      } else {
-        const color = isExport || erase ? '#ffffff' : tint;
-        ctx.fillStyle = color;
-        ctx.strokeStyle = color;
-      }
-
-      ctx.lineWidth = r * 2;
-      ctx.lineCap = 'round';
-      ctx.lineJoin = 'round';
-
-      if (prev) {
-        ctx.beginPath();
-        ctx.moveTo(prev.x, prev.y);
-        ctx.lineTo(x, y);
-        ctx.stroke();
-      }
-      ctx.beginPath();
-      ctx.arc(x, y, r, 0, Math.PI * 2);
-      ctx.fill();
-    }
+    paintDab(canvas, exportCanvas, sample, prev, erase, brushFeather);
     lastPtRef.current = { x, y };
+
+    // Record the dab. The stroke joins the history when the pointer is released (endStroke), so a
+    // drag is one undo step however many dabs it laid.
+    if (isStart || !strokeRef.current) {
+      strokeRef.current = { erase, feather: brushFeather, pts: [] };
+      paintedDimRef.current = `${canvas.width}x${canvas.height}`;
+    }
+    strokeRef.current.pts.push(normalizeSample(sample, canvas.width, canvas.height));
   }, [brushFeather, brushMode, brushSize]);
+
+  // Pointer released: the stroke in progress becomes a committed, undoable stroke.
+  const endStroke = useCallback(() => {
+    const stroke = strokeRef.current;
+    strokeRef.current = null;
+    if (!stroke || stroke.pts.length === 0) return;
+    const next = [...strokesRef.current, stroke];
+    strokesRef.current = next;
+    paintedRef.current = next;            // the canvases already show it: no replay
+    setStrokes(next);
+  }, []);
+
+  // The canvases are a function of `strokes`. When the list changes by any route other than a live
+  // stroke (undo, redo, time-travel, a slot recall) or the canvas has been resized (which wipes it),
+  // redraw from the data.
+  useEffect(() => {
+    const c = maskCanvasRef.current;
+    if (!c) return;
+    const dim = `${c.width}x${c.height}`;
+    if (paintedRef.current === strokes && paintedDimRef.current === dim) return;
+    replayStrokes(c, maskExportRef.current, strokes);
+    paintedRef.current = strokes;
+    paintedDimRef.current = dim;
+    lastPtRef.current = null;
+  }, [strokes, imgDim]);
+
+  useHistoryChannel('maskStrokes', strokes, (v) => { strokesRef.current = v; setStrokes(v); }, STROKES_CHANNEL);
 
   const commitMask = useCallback(() => {
     if (!onMaskChange) return;
@@ -572,11 +586,14 @@ export default function InteractivePreview({
   }, [onMaskChange]);
 
   const clearMaskCanvas = useCallback(() => {
-    for (const c of [maskCanvasRef.current, maskExportRef.current]) {
-      const ctx = c?.getContext('2d');
-      if (ctx) ctx.clearRect(0, 0, c.width, c.height);
-    }
+    clearCanvases(maskCanvasRef.current, maskExportRef.current);
     lastPtRef.current = null;
+    strokeRef.current = null;
+    if (strokesRef.current.length > 0) {
+      strokesRef.current = [];
+      paintedRef.current = strokesRef.current;
+      setStrokes(strokesRef.current);
+    }
     if (onMaskChange) onMaskChange(null);
   }, [onMaskChange]);
 
@@ -698,6 +715,7 @@ export default function InteractivePreview({
       },
 
       onDragEnd: () => {
+        endStroke();
         setIsDrawingMask(false);
         setIsPanning(false);
         lastPtRef.current = null;
@@ -804,6 +822,21 @@ export default function InteractivePreview({
       // Bare keys only from here
       if (e.ctrlKey || e.metaKey || e.altKey) return;
 
+      // Digits 1-4: the snapshot slots (A-D). The zoom presets that used these keys moved to
+      // Shift+1 / Shift+2 / Shift+4; matched on e.code because Shift+digit reports '!' '@' '$'.
+      const digit = /^Digit([1-4])$/.exec(e.code || '');
+      if (digit) {
+        e.preventDefault();
+        if (e.shiftKey) {
+          if (digit[1] === '1') handlePreset1to1();
+          else if (digit[1] === '2') handlePreset200();
+          else if (digit[1] === '4') handlePreset400();
+        } else {
+          onSlotHotkeyRef.current?.(Number(digit[1]));
+        }
+        return;
+      }
+
       if (e.key === '=' || e.key === '+') {
         e.preventDefault();
         zoomBy(1.4);
@@ -814,18 +847,6 @@ export default function InteractivePreview({
         // Fit Preset (F)
         e.preventDefault();
         handlePresetFit();
-      } else if (e.key === '1') {
-        // 1:1 Pixel Preset (1)
-        e.preventDefault();
-        handlePreset1to1();
-      } else if (e.key === '2') {
-        // 200% Preset (2)
-        e.preventDefault();
-        handlePreset200();
-      } else if (e.key === '4') {
-        // 400% Preset (4)
-        e.preventDefault();
-        handlePreset400();
       } else if (e.key.toLowerCase() === 't') {
         // Lock to Target Face (T)
         e.preventDefault();
@@ -1068,30 +1089,30 @@ export default function InteractivePreview({
         type="button"
         onClick={handlePreset1to1}
         className="px-1.5 py-0.5 rounded text-nano font-mono font-bold bg-white/10 hover:bg-white/20 text-white/80 hover:text-white transition-colors"
-        title="1:1 Native pixel resolution (1)"
-        aria-label="1:1 Native pixel resolution (1)"
+        title="1:1 Native pixel resolution (Shift+1)"
+        aria-label="1:1 Native pixel resolution (Shift+1)"
       >
-        1:1 (1)
+        1:1 (⇧1)
       </button>
 
       <button
         type="button"
         onClick={handlePreset200}
         className="px-1.5 py-0.5 rounded text-nano font-mono font-bold bg-white/10 hover:bg-white/20 text-white/80 hover:text-white transition-colors"
-        title="200% Zoom (2)"
-        aria-label="200% Zoom (2)"
+        title="200% Zoom (Shift+2)"
+        aria-label="200% Zoom (Shift+2)"
       >
-        200% (2)
+        200% (⇧2)
       </button>
 
       <button
         type="button"
         onClick={handlePreset400}
         className="px-1.5 py-0.5 rounded text-nano font-mono font-bold bg-white/10 hover:bg-white/20 text-white/80 hover:text-white transition-colors"
-        title="400% Zoom (4)"
-        aria-label="400% Zoom (4)"
+        title="400% Zoom (Shift+4)"
+        aria-label="400% Zoom (Shift+4)"
       >
-        400% (4)
+        400% (⇧4)
       </button>
 
       <span className="w-px h-3.5 bg-white/15" />
@@ -1816,7 +1837,7 @@ export default function InteractivePreview({
           <PreviewCanvas
             ref={canvasApiRef}
             baseSrc={beforeSrc}
-            baseFrame={beforeFrame}
+            baseFrame={referenceFrame || beforeFrame}
             topSrc={afterSrc || beforeSrc}
             topFrame={afterFrame || (afterSrc ? null : beforeFrame)}
             wipe={canvasWipe}
@@ -1895,8 +1916,8 @@ export default function InteractivePreview({
                 sliderPosRef.current = 100 - pct;
                 setSliderPosition(100 - pct);
               }}
-              labelA="Target original"
-              labelB="Swapped result"
+              labelA={referenceFrame && referenceLabel ? referenceLabel : 'Target original'}
+              labelB={referenceFrame && liveLabel ? liveLabel : 'Swapped result'}
               className="absolute inset-0 z-40 pointer-events-none"
             />
           )}
