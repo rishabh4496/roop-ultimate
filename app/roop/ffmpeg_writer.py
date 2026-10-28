@@ -171,7 +171,8 @@ class FFMPEG_VideoWriter:
     def __init__(self, filename, size, fps, codec="libx265", crf=14, audiofile=None,
                  preset="faster", bitrate=None,
                  logfile=None, threads=None, ffmpeg_params=None,
-                 colorspace=None, sar=None, dar=None, color=None):
+                 colorspace=None, sar=None, dar=None, color=None,
+                 lut_path=None, lut_bake=False):
 
         if logfile is None:
             logfile = sp.PIPE
@@ -179,6 +180,8 @@ class FFMPEG_VideoWriter:
         # A roop.source_color.ColorPlan: encode with the SOURCE's matrix and range and write the SOURCE's tags.
         # None keeps the established BT.709 limited-range path unchanged.
         self._color = color
+        self._lut_path = lut_path
+        self._lut_bake = lut_bake
         self.filename = filename
         self.codec = codec
         self.ext = self.filename.split(".")[-1]
@@ -327,6 +330,25 @@ class FFMPEG_VideoWriter:
         sar = getattr(self, '_sar', None)
         if sar and str(sar).strip() not in ('', '1:1', '1/1'):
             filters.append(f'setsar={sar}')
+
+        # Stage 18: Tetrahedral 3D .cube LUT interpolation filter
+        lut_path = getattr(self, '_lut_path', None)
+        lut_bake = getattr(self, '_lut_bake', False)
+        if lut_path is None:
+            import roop.globals
+            lut_path = getattr(roop.globals, 'lut_path', '')
+            if not lut_path:
+                lut_path = os.environ.get('ROOP_LUT_PATH', '')
+        if not lut_bake:
+            import roop.globals
+            lut_bake = getattr(roop.globals, 'lut_bake', False)
+            if not lut_bake:
+                lut_bake = os.environ.get('ROOP_LUT_BAKE', '').lower() in ('1', 'true', 'yes')
+
+        if lut_bake and lut_path and os.path.isfile(lut_path):
+            clean_path = os.path.abspath(lut_path).replace('\\', '/').replace(':', '\\:')
+            filters.append(f"lut3d=file='{clean_path}':interp=tetrahedral")
+
         plan = getattr(self, '_color', None) if convert else None
         if plan is not None:
             filters.append(plan.video_filter())

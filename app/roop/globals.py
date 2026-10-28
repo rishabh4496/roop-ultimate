@@ -261,6 +261,17 @@ mouth_custody_fallback = ''
 lipsync_coarticulation_mode = 'keep_target_lips'
 oral_cavity_restore = True
 jaw_coarticulation_strength = 0.6
+# Stage 18: WebGL2 3D .cube LUT Color Grading & Broadcast Scopes
+lut_path = ''
+lut_bake = False
+lut_opacity = 1.0
+color_temperature = 0.0
+color_tint = 0.0
+color_vibrance = 0.0
+color_skin_protect = 1.0
+color_lift = 0.0
+color_gamma = 1.0
+color_gain = 1.0
 # Small-face rescue: when a frame yields no detections, retry on a 2x upscale
 # so tiny/distant faces get picked up (without raising the global det size).
 rescue_small_faces = False

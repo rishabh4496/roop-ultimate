@@ -915,6 +915,50 @@
         "kind": "value"
       }
     },
+    "lut_path": {
+      "default": "",
+      "type": "str"
+    },
+    "lut_bake": {
+      "default": false,
+      "type": "bool"
+    },
+    "lut_opacity": {
+      "default": 1.0,
+      "type": "float"
+    },
+    "color_temperature": {
+      "default": 0.0,
+      "type": "float"
+    },
+    "color_tint": {
+      "default": 0.0,
+      "type": "float"
+    },
+    "color_vibrance": {
+      "default": 0.0,
+      "type": "float"
+    },
+    "color_skin_protect": {
+      "default": 1.0,
+      "type": "float"
+    },
+    "lift_m": {
+      "default": 0.0,
+      "type": "float"
+    },
+    "gamma_m": {
+      "default": 1.0,
+      "type": "float"
+    },
+    "gain_m": {
+      "default": 1.0,
+      "type": "float"
+    },
+    "audio_offset_ms": {
+      "default": 0,
+      "type": "int"
+    },
     "refine_landmarks": {
       "default": true,
       "type": "bool"

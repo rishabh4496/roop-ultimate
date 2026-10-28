@@ -4952,6 +4952,23 @@ def _apply_lipsync_settings(payload):
 
 
 
+def _apply_lut_grading_settings(payload):
+    """Stage 18: WebGL2 3D .cube LUT grading & broadcast scope pipeline parameters."""
+    roop_globals.lut_path = str(payload.get("lut_path") or getattr(roop_globals.CFG, "lut_path", "") or "")
+    roop_globals.lut_bake = bool(payload.get("lut_bake", getattr(roop_globals.CFG, "lut_bake", False)))
+    try:
+        roop_globals.lut_opacity = float(payload.get("lut_opacity", getattr(roop_globals.CFG, "lut_opacity", 1.0)))
+        roop_globals.color_temperature = float(payload.get("color_temperature", getattr(roop_globals.CFG, "color_temperature", 0.0)))
+        roop_globals.color_tint = float(payload.get("color_tint", getattr(roop_globals.CFG, "color_tint", 0.0)))
+        roop_globals.color_vibrance = float(payload.get("color_vibrance", getattr(roop_globals.CFG, "color_vibrance", 0.0)))
+        roop_globals.color_skin_protect = float(payload.get("color_skin_protect", getattr(roop_globals.CFG, "color_skin_protect", 1.0)))
+        roop_globals.color_lift = float(payload.get("color_lift", getattr(roop_globals.CFG, "color_lift", 0.0)))
+        roop_globals.color_gamma = float(payload.get("color_gamma", getattr(roop_globals.CFG, "color_gamma", 1.0)))
+        roop_globals.color_gain = float(payload.get("color_gain", getattr(roop_globals.CFG, "color_gain", 1.0)))
+    except (TypeError, ValueError):
+        pass
+
+
 def _apply_parser_region_settings(payload):
     """Push the Face Parser region selection onto roop.globals.
 
@@ -5094,6 +5111,7 @@ def preview(payload: dict = Body(...)):
         _apply_temporal_compositing_settings(payload)
         _apply_temporal_quality_settings(payload)
         _apply_lipsync_settings(payload)
+        _apply_lut_grading_settings(payload)
 
         roop_globals.face_swap_mode = processing_request["swap_mode"]
         selection_state = processing_request["selection_state"]
@@ -5669,6 +5687,7 @@ def _run_swap(payload):
         _apply_parser_region_settings(payload)
         _apply_enhancer_settings(payload)
         _apply_lipsync_settings(payload)
+        _apply_lut_grading_settings(payload)
         roop_globals.video_encoder = roop_globals.CFG.output_video_codec
         roop_globals.video_quality = roop_globals.CFG.video_quality
         roop_globals.max_memory = roop_globals.CFG.memory_limit if roop_globals.CFG.memory_limit > 0 else None

@@ -153,7 +153,8 @@ class SegmentedVideoWriter:
     def __init__(self, target_video, size, fps, codec="libx264", crf=14,
                  source_video="", frame_start=0, frame_end=0, signature="",
                  preset=None, bitrate=None, threads=None,
-                 ffmpeg_params=None, colorspace=None, checkpoint_callback=None):
+                 ffmpeg_params=None, colorspace=None, checkpoint_callback=None,
+                 lut_path=None, lut_bake=False):
         self.target_video = target_video
         self.size = size
         self.fps = float(fps)
@@ -194,6 +195,8 @@ class SegmentedVideoWriter:
             "sar": sar,
             "dar": dar,
             "color": color,
+            "lut_path": lut_path,
+            "lut_bake": lut_bake,
         }
         self._checkpoint_callback = checkpoint_callback
         self._write_lock = threading.RLock()

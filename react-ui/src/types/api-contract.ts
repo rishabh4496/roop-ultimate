@@ -577,3 +577,19 @@ export interface AudioWaveformResponse {
   /** base64 of one uint8 peak (0-255, square-root scale) per bin. */
   peaks: string;
 }
+
+// ── WebGL2 3D .cube LUT Color Grading & Broadcast Scopes (Stage 18) ────────────
+
+export interface LutGradingParams {
+  lut_path?: string;
+  lut_bake?: boolean;
+  lut_opacity?: number;
+  color_temperature?: number;
+  color_tint?: number;
+  color_vibrance?: number;
+  color_skin_protect?: number;
+  color_lift?: number;
+  color_gamma?: number;
+  color_gain?: number;
+}
+

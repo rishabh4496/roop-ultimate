@@ -75,6 +75,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 
+from roop.degrade import swallowed as _swallowed
 from roop.lipsync_audio import AudioFeatureCache
 from roop.typing import Frame
 from roop.utilities import resolve_relative_path

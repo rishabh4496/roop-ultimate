@@ -345,6 +345,7 @@ Target media, the people found in it and their captured angles.
 | GET | `/api/target/scene_cuts` | FaceSwap |
 | GET | `/api/target/timeline_tracks` | Timeline |
 | GET | `/api/target/waveform` | Timeline |
+| GET | /api/audio/waveform | FaceSwap, Extras |
 | POST | `/api/target/remove` | BatchSwap, FaceSwap |
 | POST | `/api/target/remove_face` | PersonGroups |
 | POST | `/api/target/select` | FaceSwap |

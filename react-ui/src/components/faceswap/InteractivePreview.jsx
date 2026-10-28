@@ -11,7 +11,9 @@ import RotoLayer, { RotoToolbar } from './RotoLayer';
 import { trackLabel } from './identityLock';
 import FastCanvasPlayer from '../player/FastCanvasPlayer';
 import RadarNavigator from './RadarNavigator';
-import SkinToneScope from './SkinToneScope';
+import BroadcastScopesDock from './BroadcastScopesDock';
+import ColorGradingPanel from './ColorGradingPanel';
+import { GRADING_DEFAULTS } from './webgl2GradingPipeline';
 import QuadInspectionGrid from './QuadInspectionGrid';
 import {
   ZOOM_MIN, ZOOM_MAX, clampPan, panAnchoredAt, panCenteringAt,
@@ -63,6 +65,8 @@ export default function InteractivePreview({
   sarVal = 1.0,
   darVal = 0.0,
   colorBadge = '',
+  notify = null,
+  onGradingChange = null,
 }) {
   // ── State & Refs ──────────────────────────────────────────────────────────
   const [sliderPosition, setSliderPosition] = useState(50);
@@ -135,8 +139,11 @@ export default function InteractivePreview({
     setRotoActive((a) => { if (!a) setMaskBrushActive(false); return !a; });
   }, []);
 
-  // Feature: Mini RGB Parade / Skin-Tone Vectorscope
+  // Feature: Broadcast Scopes & 3D LUT Color Grading
   const [scopeActive, setScopeActive] = useState(false);
+  const [gradingActive, setGradingActive] = useState(false);
+  const [gradingParams, setGradingParams] = useState(GRADING_DEFAULTS);
+  const [_activeLut, setActiveLut] = useState(null);
   // Feature: False-Color Luminance & Skin-Tone Zebra Overlay
   const [zebraActive, setZebraActive] = useState(false);
 
@@ -1155,18 +1162,34 @@ export default function InteractivePreview({
           </button>
         )}
 
-        {/* Skin-Tone Scope Toggle Button */}
+        {/* Broadcast Scopes Dock Toggle Button */}
         <button
           type="button"
           onClick={() => setScopeActive((s) => !s)}
-          title="Toggle Mini RGB Parade / Skin-Tone Vectorscope overlay"
+          aria-pressed={scopeActive}
+          title="Toggle Broadcast Scopes Dock (Waveform, RGB Parade, Vectorscope with I-Line)"
           className={`px-2 h-7 rounded-lg text-micro font-bold flex items-center gap-1 transition-colors ${
             scopeActive
               ? 'text-amber-300 bg-amber-500/20 border border-amber-400/40 shadow-[0_0_10px_rgba(245,158,11,0.3)]'
               : 'hud-glass-button text-white/70'
           }`}
         >
-          Scope
+          Scopes
+        </button>
+
+        {/* 3D LUT Color Grade Toggle Button */}
+        <button
+          type="button"
+          onClick={() => setGradingActive((g) => !g)}
+          aria-pressed={gradingActive}
+          title="Toggle WebGL2 3D .cube LUT Grading Panel"
+          className={`px-2 h-7 rounded-lg text-micro font-bold flex items-center gap-1 transition-colors ${
+            gradingActive
+              ? 'text-indigo-300 bg-indigo-500/20 border border-indigo-400/40 shadow-[0_0_10px_rgba(99,102,241,0.3)]'
+              : 'hud-glass-button text-white/70'
+          }`}
+        >
+          Grade
         </button>
 
         {/* False-Color / Zebra Exposure Toggle Button */}
@@ -1821,15 +1844,29 @@ export default function InteractivePreview({
         contentRef={imageRef}
       />
 
-      {/* ── Mini RGB Parade / Skin-Tone Vectorscope ────────────────────────── */}
-      <SkinToneScope
+      {/* ── Broadcast Scopes Dock (Waveform, RGB Parade, Vectorscope with I-Line) ── */}
+      <BroadcastScopesDock
         active={scopeActive}
         onClose={() => setScopeActive(false)}
-        faceBbox={faces[selectedFaceIndex ?? 0]}
-        kps={kps[selectedFaceIndex ?? 0]}
         sourceCanvas={canvasApiRef.current?.canvas?.()}
-        imgDim={imgDim}
+        renderedCanvas={canvasApiRef.current?.canvas?.()}
+        faceBbox={faces[selectedFaceIndex ?? 0]}
+        className="absolute bottom-16 right-3"
       />
+
+      {/* ── WebGL2 3D .cube LUT Grading Panel ── */}
+      {gradingActive && (
+        <ColorGradingPanel
+          params={gradingParams}
+          onChange={(patch) => {
+            setGradingParams((prev) => ({ ...prev, ...patch }));
+            if (onGradingChange) onGradingChange(patch);
+          }}
+          onLutLoaded={setActiveLut}
+          notify={notify}
+          className="absolute bottom-16 left-3 w-[290px] z-40 max-h-[75vh] overflow-y-auto"
+        />
+      )}
 
       {/* ── Bottom Floating Pill & HUD ─────────────────────────────────────── */}
       {viewportPill()}

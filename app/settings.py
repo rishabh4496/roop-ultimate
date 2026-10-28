@@ -1225,6 +1225,18 @@ class Settings:
         self.specular_highlight_recovery = float(self.default_get(data, 'specular_highlight_recovery', 0.0))
         self.ambient_shadow_match = float(self.default_get(data, 'ambient_shadow_match', 0.0))
         self.subdermal_warmth_match = float(self.default_get(data, 'subdermal_warmth_match', 0.0))
+        # Stage 18: WebGL2 3D .cube LUT Grading
+        self.lut_path = str(self.default_get(data, 'lut_path', ''))
+        self.lut_bake = bool(self.default_get(data, 'lut_bake', False))
+        self.lut_opacity = float(self.default_get(data, 'lut_opacity', 1.0))
+        self.color_temperature = float(self.default_get(data, 'color_temperature', 0.0))
+        self.color_tint = float(self.default_get(data, 'color_tint', 0.0))
+        self.color_vibrance = float(self.default_get(data, 'color_vibrance', 0.0))
+        self.color_skin_protect = float(self.default_get(data, 'color_skin_protect', 1.0))
+        self.lift_m = float(self.default_get(data, 'lift_m', 0.0))
+        self.gamma_m = float(self.default_get(data, 'gamma_m', 1.0))
+        self.gain_m = float(self.default_get(data, 'gain_m', 1.0))
+        self.audio_offset_ms = int(self.default_get(data, 'audio_offset_ms', 0))
         # Detection refinements
         self.refine_landmarks = self.default_get(data, 'refine_landmarks', True)
         # Swap-model face mask — only hififace/hyperswap emit one; the models that
@@ -1616,6 +1628,17 @@ class Settings:
             'specular_highlight_recovery': self.specular_highlight_recovery,
             'ambient_shadow_match': self.ambient_shadow_match,
             'subdermal_warmth_match': self.subdermal_warmth_match,
+            'lut_path': self.lut_path,
+            'lut_bake': self.lut_bake,
+            'lut_opacity': self.lut_opacity,
+            'color_temperature': self.color_temperature,
+            'color_tint': self.color_tint,
+            'color_vibrance': self.color_vibrance,
+            'color_skin_protect': self.color_skin_protect,
+            'lift_m': self.lift_m,
+            'gamma_m': self.gamma_m,
+            'gain_m': self.gain_m,
+            'audio_offset_ms': self.audio_offset_ms,
             'refine_landmarks': self.refine_landmarks,
             'swap_model_mask_strength': self.swap_model_mask_strength,
             'jaw_reshape': self.jaw_reshape,

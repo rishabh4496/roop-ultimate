@@ -8,7 +8,7 @@
 //
 // LAYERS AND MODES
 //   layer 0 = A (the original / the only picture), layer 1 = B (the result)
-//   'single' — A, fitted `contain` into the whole viewport
+//   'single' — A, fitted contain into the whole viewport
 //   'wipe'   — A left of the split, B right of it; both fitted to the viewport,
 //              so the cut shows the same pixels of two aligned pictures
 //   'side'   — A fitted into the left half, B into the right half
@@ -20,11 +20,16 @@
 // reading for the previous draw. Same-size uploads use texSubImage2D, which
 // reuses the allocation instead of reallocating per frame.
 //
-// FALLBACK
-// WebGL2 -> WebGL1 -> Canvas 2D. The 2D path draws the same three modes with
-// drawImage + a clip rect; it just cannot upload asynchronously. Context loss
-// (the GPU process resetting, which Chromium does under memory pressure) is
-// survived: the next frame re-creates the resources and is drawn normally.
+// FALLBACK & STAGE 18 WEBGL2 3D LUT COLOR PIPELINE
+// WebGL2 -> WebGL1 -> Canvas 2D. In WebGL2 mode, the pipeline executes in linear
+// float space with 3-way Lift/Gamma/Gain wheels, Kelvin Temperature/Tint,
+// Vibrance with 20°-50° skin-tone hue corridor protection, trilinear 3D .cube
+// LUT evaluation on a dedicated float sampler3D unit, and strict premultiplied
+// alpha scaling (rgb * a, a).
+// Context loss (the GPU process resetting, which Chromium does under memory pressure)
+// is survived: the next frame re-creates the resources and is drawn normally.
+
+import { uploadLut3DTexture } from '../faceswap/cubeLut.js';
 
 const VERT = `
 attribute vec2 a_pos;
@@ -69,6 +74,124 @@ void main() {
   }
 }`;
 
+const VERT_300 = `#version 300 es
+in vec2 a_pos;
+out vec2 v_uv;
+void main() {
+  v_uv = vec2(a_pos.x * 0.5 + 0.5, 0.5 - a_pos.y * 0.5);
+  gl_Position = vec4(a_pos, 0.0, 1.0);
+}`;
+
+const FRAG_300 = `#version 300 es
+precision highp float;
+precision highp sampler3D;
+
+in vec2 v_uv;
+out vec4 fragColor;
+
+uniform sampler2D u_texA;
+uniform sampler2D u_texB;
+uniform sampler3D u_lut3d;
+uniform vec4 u_boxA;
+uniform vec4 u_boxB;
+uniform float u_hasA;
+uniform float u_hasB;
+uniform float u_mode;
+uniform float u_split;
+
+// Stage 18 WebGL2 Grading Uniforms
+uniform float u_hasLut;
+uniform float u_lutOpacity;
+uniform float u_lutSize;
+uniform vec3 u_domainMin;
+uniform vec3 u_domainMax;
+uniform float u_temperature;
+uniform float u_tint;
+uniform float u_vibrance;
+uniform float u_skinProtect;
+uniform vec3 u_lift;
+uniform vec3 u_gamma;
+uniform vec3 u_gain;
+uniform float u_premultiply;
+
+vec3 srgbToLinear(vec3 c) {
+  return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(0.04045, c));
+}
+
+vec3 linearToSrgb(vec3 c) {
+  c = clamp(c, 0.0, 1.0);
+  return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, c));
+}
+
+vec3 rgbToHsv(vec3 c) {
+  vec4 K = vec4(0.0, -1.0 / 3.0, 2.0 / 3.0, -1.0);
+  vec4 p = mix(vec4(c.bg, K.wz), vec4(c.gb, K.xy), step(c.b, c.g));
+  vec4 q = mix(vec4(p.xyw, c.r), vec4(c.r, p.yzx), step(p.x, c.r));
+  float d = q.x - min(q.w, q.y);
+  float e = 1.0e-10;
+  return vec3(abs(q.z + (q.w - q.y) / (6.0 * d + e)), d / (q.x + e), q.x);
+}
+
+vec3 hsvToRgb(vec3 c) {
+  vec4 K = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
+  vec3 p = abs(fract(c.xxx + K.xyz) * 6.0 - K.www);
+  return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y);
+}
+
+vec3 applyGrade(vec3 rgb) {
+  vec3 linear = srgbToLinear(rgb);
+  vec3 shift = vec3(0.0);
+  if (u_temperature > 0.0) { shift.r += u_temperature * 0.28; shift.b -= u_temperature * 0.22; }
+  else if (u_temperature < 0.0) { shift.r += u_temperature * 0.20; shift.b -= u_temperature * 0.30; }
+  shift.g -= u_tint * 0.25; shift.r += u_tint * 0.125; shift.b += u_tint * 0.125;
+  linear = max(vec3(0.0), linear + shift);
+  vec3 lifted = max(vec3(0.0), linear + u_lift * (vec3(1.0) - linear));
+  vec3 gained = max(vec3(0.0), lifted * u_gain);
+  linear = pow(gained, vec3(1.0) / max(u_gamma, vec3(0.01)));
+  vec3 srgb = linearToSrgb(linear);
+  if (abs(u_vibrance) > 0.001) {
+    vec3 hsv = rgbToHsv(srgb);
+    float hueDeg = hsv.x * 360.0;
+    float skinDist = abs(hueDeg - 35.0);
+    if (skinDist > 180.0) skinDist = 360.0 - skinDist;
+    float skinWeight = 1.0 - smoothstep(12.0, 25.0, skinDist);
+    float satInv = (1.0 - hsv.y);
+    float effVib = u_vibrance * satInv * (1.0 - skinWeight * u_skinProtect);
+    hsv.y = clamp(hsv.y * (1.0 + effVib), 0.0, 1.0);
+    srgb = hsvToRgb(hsv);
+  }
+  if (u_hasLut > 0.5) {
+    vec3 norm = (clamp(srgb, u_domainMin, u_domainMax) - u_domainMin) / max(u_domainMax - u_domainMin, vec3(0.0001));
+    vec3 coord = (norm * (u_lutSize - 1.0) + 0.5) / u_lutSize;
+    vec3 lutCol = texture(u_lut3d, coord).rgb;
+    srgb = mix(srgb, lutCol, clamp(u_lutOpacity, 0.0, 1.0));
+  }
+  return srgb;
+}
+
+vec4 layer(sampler2D tex, vec4 box, float has, bool grade) {
+  vec2 q = (v_uv - box.xy) / box.zw;
+  if (has < 0.5 || q.x < 0.0 || q.y < 0.0 || q.x > 1.0 || q.y > 1.0) return vec4(0.0);
+  vec4 s = texture(tex, q);
+  vec3 c = grade ? applyGrade(s.rgb) : s.rgb;
+  if (u_premultiply > 0.5) {
+    return vec4(c * s.a, s.a);
+  }
+  return vec4(c, s.a);
+}
+
+void main() {
+  if (u_mode < 0.5) {
+    fragColor = layer(u_texA, u_boxA, u_hasA, false);
+  } else if (u_mode < 1.5) {
+    fragColor = v_uv.x < u_split ? layer(u_texA, u_boxA, u_hasA, false)
+                                 : layer(u_texB, u_boxB, u_hasB, true);
+  } else {
+    vec4 a = layer(u_texA, u_boxA, u_hasA, false);
+    fragColor = a.a > 0.0 ? a : layer(u_texB, u_boxB, u_hasB, true);
+  }
+}`;
+
 const MODES = { single: 0, wipe: 1, side: 2 };
 
 const sourceSize = (src) => {
@@ -79,7 +202,7 @@ const sourceSize = (src) => {
   return [src.width || 0, src.height || 0];
 };
 
-/** `object-fit: contain` of a (iw x ih) picture into a region, as fractions. */
+/** \object-fit: contain\ of a (iw x ih) picture into a region, as fractions. */
 export function fitContain(iw, ih, region, viewW, viewH) {
   const [rx, ry, rw, rh] = region;           // fractions of the viewport
   const pw = rw * viewW;
@@ -108,6 +231,18 @@ export class GlRenderer {
     this.kind = '2d';
     this.gl = null;
     this.ctx2d = null;
+    this.lutTexture = null;
+    this.lutInfo = null;
+    this.gradingParams = {
+      lut_opacity: 1.0,
+      color_temperature: 0.0,
+      color_tint: 0.0,
+      color_vibrance: 0.0,
+      color_skin_protect: 1.0,
+      lift_r: 0.0, lift_g: 0.0, lift_b: 0.0, lift_m: 0.0,
+      gamma_r: 1.0, gamma_g: 1.0, gamma_b: 1.0, gamma_m: 1.0,
+      gain_r: 1.0, gain_g: 1.0, gain_b: 1.0, gain_m: 1.0,
+    };
     if (!opts.force2d) this._initGl();
     if (!this.gl) {
       this.ctx2d = canvas.getContext('2d', { alpha: true });
@@ -125,10 +260,6 @@ export class GlRenderer {
     const attrs = {
       alpha: true, antialias: false, depth: false, stencil: false,
       premultipliedAlpha: true, preserveDrawingBuffer: false,
-      // A preview must never be the reason the render's GPU gets clocked up.
-      // (Not `desynchronized`: the stage has DOM overlays — face boxes, the
-      // compare handle — stacked on this canvas, and a low-latency canvas
-      // trades tearing for latency the preview does not need.)
       powerPreference: 'low-power',
     };
     let gl = null;
@@ -148,6 +279,7 @@ export class GlRenderer {
 
   _initGlResources() {
     const gl = this.gl;
+    const isW2 = this.kind === 'webgl2';
     const compile = (type, src) => {
       const s = gl.createShader(type);
       gl.shaderSource(s, src);
@@ -158,8 +290,8 @@ export class GlRenderer {
       }
       return s;
     };
-    const vs = compile(gl.VERTEX_SHADER, VERT);
-    const fs = compile(gl.FRAGMENT_SHADER, FRAG);
+    const vs = compile(gl.VERTEX_SHADER, isW2 ? VERT_300 : VERT);
+    const fs = compile(gl.FRAGMENT_SHADER, isW2 ? FRAG_300 : FRAG);
     if (!vs || !fs) return false;
     const prog = gl.createProgram();
     gl.attachShader(prog, vs);
@@ -180,6 +312,23 @@ export class GlRenderer {
       mode: gl.getUniformLocation(prog, 'u_mode'),
       split: gl.getUniformLocation(prog, 'u_split'),
     };
+    if (isW2) {
+      this.loc.lut3d = gl.getUniformLocation(prog, 'u_lut3d');
+      this.loc.hasLut = gl.getUniformLocation(prog, 'u_hasLut');
+      this.loc.lutOpacity = gl.getUniformLocation(prog, 'u_lutOpacity');
+      this.loc.lutSize = gl.getUniformLocation(prog, 'u_lutSize');
+      this.loc.domainMin = gl.getUniformLocation(prog, 'u_domainMin');
+      this.loc.domainMax = gl.getUniformLocation(prog, 'u_domainMax');
+      this.loc.temperature = gl.getUniformLocation(prog, 'u_temperature');
+      this.loc.tint = gl.getUniformLocation(prog, 'u_tint');
+      this.loc.vibrance = gl.getUniformLocation(prog, 'u_vibrance');
+      this.loc.skinProtect = gl.getUniformLocation(prog, 'u_skinProtect');
+      this.loc.lift = gl.getUniformLocation(prog, 'u_lift');
+      this.loc.gamma = gl.getUniformLocation(prog, 'u_gamma');
+      this.loc.gain = gl.getUniformLocation(prog, 'u_gain');
+      this.loc.premultiply = gl.getUniformLocation(prog, 'u_premultiply');
+    }
+
     // One triangle strip covering the viewport.
     this.vbo = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, this.vbo);
@@ -189,7 +338,6 @@ export class GlRenderer {
       gl.bindTexture(gl.TEXTURE_2D, t);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-      // NPOT-safe on WebGL1: no mipmaps, clamp.
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
       return { tex: t, w: 0, h: 0 };
@@ -200,6 +348,26 @@ export class GlRenderer {
     gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
     return true;
+  }
+
+  setGradingParams(params) {
+    this.gradingParams = { ...this.gradingParams, ...params };
+  }
+
+  setLut(parsedLut) {
+    if (!this.gl || this.kind !== 'webgl2') return;
+    const gl = this.gl;
+    if (this.lutTexture) {
+      gl.deleteTexture(this.lutTexture);
+      this.lutTexture = null;
+      this.lutInfo = null;
+    }
+    if (!parsedLut) return;
+    const res = uploadLut3DTexture(gl, parsedLut, 2);
+    if (res) {
+      this.lutTexture = res.texture;
+      this.lutInfo = res;
+    }
   }
 
   /** Backing-store size in device pixels. Returns true when it changed. */
@@ -217,13 +385,6 @@ export class GlRenderer {
   /** Wipe position, 0..1 of the viewport width (A is left of it). */
   setSplit(frac) { this.split = Math.max(0, Math.min(1, Number(frac) || 0)); }
 
-  /**
-   * Put a picture on a layer. For an ImageBitmap passed with `owned`, the
-   * renderer takes ownership and closes it as soon as it is no longer needed
-   * (right after the upload on WebGL; on replacement for 2D, which draws from
-   * it). A video or image element is never closed.
-   * Returns [width, height] of the picture, or null if it had no size yet.
-   */
   setLayer(i, src, { owned = false } = {}) {
     const [w, h] = sourceSize(src);
     const layer = this.layers[i];
@@ -247,8 +408,7 @@ export class GlRenderer {
         this.front[i] = back;
         layer.has = true;
       } catch {
-        // A video with no decoded frame yet, or a cross-origin taint. Keep the
-        // previous picture rather than showing a hole.
+        // A video with no decoded frame yet, or a cross-origin taint.
       }
       if (owned) src.close?.();
     } else {
@@ -306,6 +466,34 @@ export class GlRenderer {
       gl.uniform1f(this.loc.hasB, this.layers[1].has ? 1 : 0);
       gl.uniform1f(this.loc.mode, MODES[this.mode]);
       gl.uniform1f(this.loc.split, this.split);
+
+      if (this.kind === 'webgl2') {
+        const p = this.gradingParams;
+        if (this.lutTexture && this.lutInfo) {
+          gl.activeTexture(gl.TEXTURE2);
+          gl.bindTexture(gl.TEXTURE_3D, this.lutTexture);
+          gl.uniform1i(this.loc.lut3d, 2);
+          gl.uniform1f(this.loc.hasLut, 1.0);
+          gl.uniform1f(this.loc.lutOpacity, Number(p.lut_opacity ?? 1.0));
+          gl.uniform1f(this.loc.lutSize, this.lutInfo.size);
+          gl.uniform3fv(this.loc.domainMin, this.lutInfo.domainMin);
+          gl.uniform3fv(this.loc.domainMax, this.lutInfo.domainMax);
+        } else {
+          gl.uniform1f(this.loc.hasLut, 0.0);
+        }
+        gl.uniform1f(this.loc.temperature, Number(p.color_temperature || 0));
+        gl.uniform1f(this.loc.tint, Number(p.color_tint || 0));
+        gl.uniform1f(this.loc.vibrance, Number(p.color_vibrance || 0));
+        gl.uniform1f(this.loc.skinProtect, Number(p.color_skin_protect ?? 1.0));
+        const lm = Number(p.lift_m || 0);
+        const gm = Number(p.gamma_m ?? 1.0);
+        const gnm = Number(p.gain_m ?? 1.0);
+        gl.uniform3f(this.loc.lift, Number(p.lift_r || 0) + lm, Number(p.lift_g || 0) + lm, Number(p.lift_b || 0) + lm);
+        gl.uniform3f(this.loc.gamma, Math.max(0.01, Number(p.gamma_r ?? 1.0) * gm), Math.max(0.01, Number(p.gamma_g ?? 1.0) * gm), Math.max(0.01, Number(p.gamma_b ?? 1.0) * gm));
+        gl.uniform3f(this.loc.gain, Math.max(0.0, Number(p.gain_r ?? 1.0) * gnm), Math.max(0.0, Number(p.gain_g ?? 1.0) * gnm), Math.max(0.0, Number(p.gain_b ?? 1.0) * gnm));
+        gl.uniform1f(this.loc.premultiply, 1.0);
+      }
+
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
       return true;
     }
@@ -335,6 +523,7 @@ export class GlRenderer {
     for (let i = 0; i < 2; i++) this.clearLayer(i);
     if (this.gl && !this.lost) {
       const gl = this.gl;
+      if (this.lutTexture) gl.deleteTexture(this.lutTexture);
       for (const pair of this.tex || []) for (const t of pair) gl.deleteTexture(t.tex);
       if (this.vbo) gl.deleteBuffer(this.vbo);
       if (this.prog) gl.deleteProgram(this.prog);

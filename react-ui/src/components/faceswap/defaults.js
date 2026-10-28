@@ -197,6 +197,18 @@ export const FACESWAP_DEFAULTS = {
   oral_cavity_restore: true,
   jaw_coarticulation_strength: 0.6,
 
+  // Stage 18: WebGL2 3D .cube LUT Color Grading & Broadcast Scopes
+  lut_path: '',
+  lut_bake: false,
+  lut_opacity: 1.0,
+  color_temperature: 0.0,
+  color_tint: 0.0,
+  color_vibrance: 0.0,
+  color_skin_protect: 1.0,
+  lift_m: 0.0,
+  gamma_m: 1.0,
+  gain_m: 1.0,
+
   // Output
   output_method: 'File',
 };

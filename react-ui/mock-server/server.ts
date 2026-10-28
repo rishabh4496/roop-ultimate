@@ -269,6 +269,17 @@ let appSettings: Record<string, any> = {
   codeformer_fidelity: 0.75,
   subsample_size: 256,
   upscale: '256px',
+  // Stage 18: WebGL2 3D .cube LUT Color Grading & Broadcast Scopes
+  lut_path: '',
+  lut_bake: false,
+  lut_opacity: 1.0,
+  color_temperature: 0.0,
+  color_tint: 0.0,
+  color_vibrance: 0.0,
+  color_skin_protect: 1.0,
+  color_lift: 0.0,
+  color_gamma: 1.0,
+  color_gain: 1.0,
 };
 
 // Target and source selection

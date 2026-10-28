@@ -9,6 +9,8 @@ import EnhancerPipelineStack from './faceswap/EnhancerPipelineStack';
 import VideoFramesetExtractor from './extras/VideoFramesetExtractor';
 import MouthCustodyPanel from './faceswap/MouthCustodyPanel';
 import { overridePatch } from './faceswap/mouthCustody';
+import BroadcastScopesDock from './faceswap/BroadcastScopesDock';
+import { drawZebraOverlay } from './faceswap/falseColorZebra';
 
 const RESOLUTIONS = ['Original', '3840x', '2560x', '1920x', '1280x', '1024x', '640x'];
 const ROTATIONS = ['None', '90° Clockwise', '90° Counter-Clockwise', '180°'];
@@ -39,6 +41,30 @@ export default function Extras({ notify, registerFileListener, meta, settings, s
   const set = (k, v) => setOpts((o) => ({ ...o, [k]: v }));
   const patchOpts = (patch) => setOpts((o) => ({ ...o, ...patch }));
   const [uploadingAudio, setUploadingAudio] = useState(false);
+  const [scopeActive, setScopeActive] = useState(false);
+  const [zebraActive, setZebraActive] = useState(false);
+  const mediaElemRef = useRef(null);
+  const zebraCanvasRef = useRef(null);
+
+  useEffect(() => {
+    if (!zebraActive || !mediaElemRef.current || !zebraCanvasRef.current) return;
+    const elem = mediaElemRef.current;
+    const canvas = zebraCanvasRef.current;
+    const w = elem.videoWidth || elem.naturalWidth || elem.clientWidth || 300;
+    const h = elem.videoHeight || elem.naturalHeight || elem.clientHeight || 150;
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      ctx.clearRect(0, 0, w, h);
+      try {
+        ctx.drawImage(elem, 0, 0, w, h);
+        drawZebraOverlay(ctx, w, h, null, 'zebra');
+      } catch {
+        // ignore cross-origin
+      }
+    }
+  }, [zebraActive, fileUrlSrc]);
 
   // Frame post-processor (AI upscale / colorize / stylize) state
   const [frameOps, setFrameOps] = useState(null);
@@ -149,10 +175,44 @@ export default function Extras({ notify, registerFileListener, meta, settings, s
 
           {file && fileUrlSrc && (
             <div className="relative overflow-hidden rounded-xl bg-black/45 border border-white/10 aspect-video flex items-center justify-center mb-4 max-h-[300px]">
+              {/* Stage 12 & Stage 18 Broadcast Scopes & Zebra overlay controls */}
+              <div className="absolute top-2 right-2 flex items-center gap-1 z-30">
+                <button
+                  type="button"
+                  onClick={() => setScopeActive((a) => !a)}
+                  aria-pressed={scopeActive}
+                  className={`px-2 py-0.5 rounded-md text-micro font-bold transition-colors ${
+                    scopeActive
+                      ? 'text-amber-300 bg-amber-500/20 border border-amber-400/40 shadow-sm'
+                      : 'bg-black/60 text-white/70 hover:text-white'
+                  }`}
+                  title="Toggle Broadcast Scopes Dock (Waveform, RGB Parade, Vectorscope)"
+                >
+                  Scopes
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setZebraActive((z) => !z)}
+                  aria-pressed={zebraActive}
+                  className={`px-2 py-0.5 rounded-md text-micro font-bold transition-colors ${
+                    zebraActive
+                      ? 'text-rose-300 bg-rose-500/20 border border-rose-400/40 shadow-sm'
+                      : 'bg-black/60 text-white/70 hover:text-white'
+                  }`}
+                  title="Toggle Zebra Exposure Overlay (>95 / <5 IRE)"
+                >
+                  Zebra
+                </button>
+              </div>
+
               {file.type?.startsWith('video') || /\.(mp4|mkv|mov|avi|webm|gif)$/i.test(fileName) ? (
-                <video src={fileUrlSrc} muted loop autoPlay className="max-w-full max-h-full object-contain pointer-events-none" />
+                <video ref={mediaElemRef} src={fileUrlSrc} muted loop autoPlay className="max-w-full max-h-full object-contain pointer-events-none" />
               ) : (
-                <img src={fileUrlSrc} alt="Input source" className="max-w-full max-h-full object-contain pointer-events-none" />
+                <img ref={mediaElemRef} src={fileUrlSrc} alt="Input source" className="max-w-full max-h-full object-contain pointer-events-none" />
+              )}
+
+              {zebraActive && (
+                <canvas ref={zebraCanvasRef} className="absolute inset-0 w-full h-full object-contain pointer-events-none z-10" />
               )}
               {/* Bounding box crop overlay dims the cropped regions */}
               <div 
@@ -264,6 +324,15 @@ export default function Extras({ notify, registerFileListener, meta, settings, s
           use the legacy Gradio UI for that workflow.
         </p>
       </Section>
+
+      {/* ── Stage 18 Broadcast Scopes Dock ── */}
+      <BroadcastScopesDock
+        active={scopeActive}
+        onClose={() => setScopeActive(false)}
+        sourceCanvas={mediaElemRef.current}
+        renderedCanvas={mediaElemRef.current}
+        className="fixed bottom-6 right-6 z-50 shadow-2xl"
+      />
     </div>
   );
 }

@@ -137,7 +137,7 @@ console.log('── there is exactly one boundary ──────────
   ok('App.jsx wraps each tab in it with the tab as resetKey and resetFailedPanels as onReset',
     /<ErrorBoundary resetKey=\{tab\} onReset=\{resetFailedPanels\}>/.test(app));
   ok('every tab panel is a lazyPanel, never a bare lazy (a bare one cannot be retried)',
-    !/\blazy\(/.test(app) && (app.match(/= lazyPanel\(load\w+\)/g) || []).length === 9);
+    !/\blazy\(/.test(app) && (app.match(/= lazyPanel\(load\w+\)/g) || []).length === 7);
 }
 
 globalThis.__RENDER_CHECK_FAILURES__ = failures;

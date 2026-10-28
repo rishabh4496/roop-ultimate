@@ -71,6 +71,7 @@ def find_issues(app_dir: str = APP) -> list[str]:
         with tempfile.TemporaryDirectory() as tmp:
             current = set(dir(settings.Settings(os.path.join(tmp, "config.yaml"))))
     except Exception as exc:                                 # a broken settings.py is itself the answer
+        print("legacy_ui_check: Settings could not be constructed: %s: %s" % (type(exc).__name__, exc))
         issues.append("Settings could not be constructed: %s: %s" % (type(exc).__name__, exc))
         return issues
     for attr, files in sorted(settings_attributes_read_by_ui(ui_dir).items()):

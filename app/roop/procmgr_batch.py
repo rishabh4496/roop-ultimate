@@ -716,7 +716,9 @@ class BatchProcessingMixin:
                     source_video=source_video, frame_start=frame_start, frame_end=frame_end,
                     signature=str(getattr(roop.globals, '_run_signature', '') or ''),
                     checkpoint_callback=getattr(
-                        roop.globals, '_checkpoint_segment_callback', None))
+                        roop.globals, '_checkpoint_segment_callback', None),
+                    lut_path=getattr(roop.globals, 'lut_path', None),
+                    lut_bake=bool(getattr(roop.globals, 'lut_bake', False)))
                 skip = self.videowriter.resume_frames
                 if skip >= frame_count > 0:
                     # Everything was already encoded by the interrupted run —
