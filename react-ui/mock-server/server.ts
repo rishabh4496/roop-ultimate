@@ -7,6 +7,7 @@ import { createServer as createViteServer } from 'vite';
 import multer from 'multer';
 import { installMockQueue } from './mockQueue';
 import { mouthTelemetry, normalizeMouthCustody, type MouthJob } from './mouthCustody';
+import * as identityMock from './identityMock';
 import { buildStages, precisionSection, IdentityBlendResponse, TrtCacheSnapshot, AutotuneSnapshot, RecognitionCurrent, SegmentStatus, KeyframeOverride } from './pipelineTypes';
 
 // This is a MOCK of app/api.py: simulated swaps, invented telemetry, SVG
@@ -1487,25 +1488,29 @@ async function startServer() {
   ];
   const morphBlend = (body: any) => {
     const comps = Array.isArray(body?.components) ? body.components : [];
-    if (comps.length < 2 || comps.length > 4) return { status: 400, body: { message: 'pick 2 to 4 identities' } };
+    if (comps.length < 2 || comps.length > identityMock.MAX_SOURCES) return { status: 400, body: { message: `pick 2 to ${identityMock.MAX_SOURCES} identities` } };
     const ids = comps.map((c: any) => String(c.id));
     if (new Set(ids).size !== ids.length) return { status: 400, body: { message: 'each identity can be used once' } };
     const cands = morphCandidates();
     const known = ids.map((id: string) => cands.find((c) => c.id === id));
     if (known.some((c: any) => !c || !c.available)) return { status: 400, body: { message: 'saved identity not found or unavailable' } };
+    const mode = String(body?.mode || 'slerp').trim().toLowerCase();
+    if (!(identityMock.BLEND_MODES as readonly string[]).includes(mode)) return { status: 400, body: { message: `mode must be one of ${identityMock.BLEND_MODES.join(', ')}` } };
     const raw = comps.map((c: any) => Math.max(0, Number(c.weight) || 0));
-    const total = raw.reduce((a: number, b: number) => a + b, 0);
-    if (total <= 0) return { status: 400, body: { message: 'at least one weight must be above zero' } };
-    const w = raw.map((x: number) => x / total);
-    // The mock treats the identities as orthonormal, so the blend's cosine to input i is w_i / |w|.
-    const norm = Math.sqrt(w.reduce((a: number, b: number) => a + b * b, 0));
-    const cos = w.map((x: number) => Number((x / norm).toFixed(4)));
-    const dominant = w.indexOf(Math.max(...w));
+    if (raw.reduce((a: number, b: number) => a + b, 0) <= 0) return { status: 400, body: { message: 'at least one weight must be above zero' } };
+    let deid: { references: number[]; max_cosine: number; min_primary_cosine: number } | null = null;
+    const d = body?.deidentify;
+    if (d && typeof d === 'object' && d.enabled && Array.isArray(d.references) && d.references.length) {
+      const refs = d.references.map((r: any) => String(r));
+      if (refs.length > identityMock.MAX_SOURCES || new Set(refs).size !== refs.length) return { status: 400, body: { message: `name 1 to ${identityMock.MAX_SOURCES} different de-identification references` } };
+      const maxCosine = Number(d.max_cosine ?? identityMock.DEFAULT_PRIVACY_COSINE);
+      if (!Number.isFinite(maxCosine)) return { status: 400, body: { message: 'de-identification thresholds must be numbers' } };
+      if (refs.some((r: string) => !cands.find((c) => c.id === r && c.available))) return { status: 400, body: { message: 'saved identity not found or unavailable' } };
+      deid = { references: refs.map((r: string) => ids.indexOf(r)), max_cosine: maxCosine, min_primary_cosine: Number(d.min_primary_cosine ?? 0) || 0 };
+    }
     return { status: 200, body: {
-      weights: w.map((x: number) => Number(x.toFixed(4))), weights_as_given: raw, cosine_to_each: cos, dominant,
-      pairwise_cosine: w.map((_: number, i: number) => w.map((__: number, j: number) => (i === j ? 1 : 0))),
+      ...identityMock.morphSummary(raw, mode, deid),
       components: ids.map((id: string, i: number) => ({ id, label: (known[i] as any).label })),
-      warning: cos[dominant] < 0.5 ? `the blend sits far from every source (cosine to the dominant one is ${cos[dominant].toFixed(2)}); the swap may not resemble any of them` : null,
     } };
   };
   app.get('/api/facemgr/morph/candidates', (req, res) => res.json({ candidates: morphCandidates() }));
@@ -1518,12 +1523,14 @@ async function startServer() {
     const base = name;
     while (morphSaved.includes(name)) { name = `${base} (${n})`; n += 1; }
     morphSaved.push(name);
-    res.json({ entries: [], dir: 'C:/mock/facesets', saved: name, weights: (r.body as any).weights, cosine_to_each: (r.body as any).cosine_to_each });
+    res.json({ entries: [], dir: 'C:/mock/facesets', saved: name, weights: (r.body as any).weights, mode: (r.body as any).mode,
+      deidentify: (r.body as any).deidentify, cosine_to_each: (r.body as any).cosine_to_each });
   });
   app.post('/api/facemgr/morph/preview', (req, res) => {
     const r = morphBlend(req.body);
     if (r.status !== 200) { res.status(r.status).json(r.body); return; }
-    res.json({ source_faces: [], source_faces_info: [], faceset_count: 1, index: 0, weights: (r.body as any).weights });
+    res.json({ source_faces: [], source_faces_info: [], faceset_count: 1, index: 0, weights: (r.body as any).weights,
+      mode: (r.body as any).mode, deidentify: (r.body as any).deidentify });
   });
   app.post('/api/facemgr/remove', (req, res) => {
     const i = Number(req.body?.index);
@@ -2349,39 +2356,74 @@ async function startServer() {
   });
 
   // ── Identity Blender ────────────────────────────────────────────────
-  let identityBlendState: IdentityBlendResponse = {
-    recipe: { sources: [], dials: { age: 0, gender: 0, weight: 0 } },
-    active: false,
-    limits: {
-      max_sources: 4,
-      age_years: 15,
-      dial_sigmas: 2.0,
-      dials: ['age', 'gender', 'weight'],
-      default_min_cosine: 0.85,
-    },
+  // Shapes mirror app/routes_identity.py; the numbers come from mock-server/identityMock.ts (a fixed pair cosine,
+  // not embeddings). The recipe is sanitised the way BlendRecipe.from_payload does it, so the UI reads back what the
+  // backend would hold (dials cleared to the four names, keyframes sorted / deduped / restricted to the sources).
+  let identityRecipe = identityMock.emptyRecipe();
+  const identityLimits = () => ({
+    max_sources: identityMock.MAX_SOURCES, age_years: 30, dial_sigmas: 2.0, dials: ['age', 'gender', 'jawline', 'expression'],
+    default_min_cosine: 0.8, modes: [...identityMock.BLEND_MODES], curves: [...identityMock.CURVES],
+    max_keyframes: identityMock.MAX_KEYFRAMES, default_bezier: identityMock.DEFAULT_BEZIER,
+    default_privacy_cosine: identityMock.DEFAULT_PRIVACY_COSINE,
+  });
+  const identityResponse = (): IdentityBlendResponse => ({
+    recipe: identityRecipe,
+    active: identityMock.recipeActive(identityRecipe),
+    limits: identityLimits(),
     directions: {
-      available: ['age', 'gender', 'weight'],
-      fitted_names: ['age', 'gender', 'weight'],
+      available: ['jawline'],
+      fitted_names: ['age', 'gender', 'jawline', 'expression'],
       heldout: {},
       corpus: {},
-      fitted: '2026-09-01',
+      fitted: '2026-09-26',
       dials: {
-        age: { metric: 'cosine', score: 0.94, writable: true, years_per_step: 5.0, guard_reach_years: 15.0 },
-        gender: { metric: 'cosine', score: 0.96, writable: true, guard_reach_dial: 1.0 },
-        weight: { metric: 'cosine', score: 0.91, writable: true, guard_reach_dial: 1.0 },
+        jawline: { metric: 'r', score: 0.5, writable: true, render_verdict: 'monotone but weak', guard_reach_dial: 1.0 },
       },
     },
-    diagnostics: { note: 'Mock identity blender ready' },
-  };
+    diagnostics: identityMock.describeBlend(identityRecipe),
+  });
 
   app.get('/api/identity/blend', (req, res) => {
-    res.json(identityBlendState);
+    res.json(identityResponse());
   });
 
   app.post('/api/identity/blend', (req, res) => {
-    identityBlendState.recipe = req.body || identityBlendState.recipe;
-    identityBlendState.active = Boolean(req.body && Object.keys(req.body).length > 0);
-    res.json(identityBlendState);
+    identityRecipe = identityMock.sanitizeRecipe(req.body);
+    res.json(identityResponse());
+  });
+
+  app.post('/api/identity/keyframes/evaluate', (req, res) => {
+    const recipe = req.body?.recipe && typeof req.body.recipe === 'object' ? identityMock.sanitizeRecipe(req.body.recipe) : identityRecipe;
+    if (!recipe.keyframes.length || recipe.components.length < 2) {
+      res.status(400).json({ message: 'the recipe has no keyframes over 2 or more sources' });
+      return;
+    }
+    const frames = Array.isArray(req.body?.frames) ? req.body.frames.map((f: any) => Math.trunc(Number(f))) : undefined;
+    const samples = Number.isFinite(Number(req.body?.samples ?? 96)) ? Number(req.body?.samples ?? 96) : NaN;
+    if ((frames && frames.some((f: number) => !Number.isFinite(f))) || !Number.isFinite(samples)) {
+      res.status(400).json({ message: 'frames and samples must be integers' });
+      return;
+    }
+    res.json(identityMock.evaluateKeyframes(recipe, frames, Math.max(2, Math.min(Math.trunc(samples), 512))));
+  });
+
+  app.post('/api/identity/export_fsz', (req, res) => {
+    const recipe = req.body?.recipe && typeof req.body.recipe === 'object' ? identityMock.sanitizeRecipe(req.body.recipe) : identityRecipe;
+    if (!recipe.components.length) {
+      res.status(400).json({ message: 'nothing to export: add a loaded source to the blender' });
+      return;
+    }
+    let name = String(req.body?.name || 'Blended identity').trim() || 'Blended identity';
+    let n = 1;
+    const base = name;
+    while (morphSaved.includes(name)) { name = `${base} (${n})`; n += 1; }
+    morphSaved.push(name);
+    const frame = req.body?.frame_index == null ? null : Math.trunc(Number(req.body.frame_index));
+    res.json({
+      entries: [], dir: 'C:/mock/facesets', saved: name, mode: recipe.mode, frame_index: frame,
+      keyframed: recipe.keyframes.length >= 2 && recipe.components.length >= 2,
+      deidentified: recipe.deidentify.enabled && recipe.deidentify.references.length > 0,
+    });
   });
 
   // ── TensorRT Cache Diagnostics & Pruning ────────────────────────────

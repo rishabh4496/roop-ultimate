@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import useThrottledFrameRequest from './useThrottledFrameRequest';
 import Minimap from './timeline/Minimap';
 import OverrideInspector from './timeline/OverrideInspector';
+import IdentityKeyframeLane from './timeline/IdentityKeyframeLane';
+import IdentityKeyframeInspector from './timeline/IdentityKeyframeInspector';
 import { AudioLane, CacheLane, FilmCanvas, IdentityLane, OverrideLane, RulerLane, SceneLane } from './timeline/Lanes.jsx';
 import useAudioTrackWave from './timeline/useAudioTrackWave';
 import { clampOffset, offsetText, offsetMeaning, trackShiftSeconds } from './mouthCustody';
@@ -182,6 +184,11 @@ export default function Timeline({
    * {offsetMs, onOffsetChange(ms), trackPath, trackName, hasTargetAudio}. Absent = no audio row (the Batch page, tests).
    */
   audioTrack = null,
+  /**
+   * Stage 20: the Identity Keyframe Track. useIdentityKeyframes() plus `recipe`, `components` and `labelOf`
+   * (FaceSwap composes them). Absent = no track (the Batch page, tests).
+   */
+  identityKeys = null,
 }) {
   // ── View window ───────────────────────────────────────────────────────────
   // The lanes show [view.start, view.end] rather than the whole clip. Fall back to the whole clip
@@ -396,6 +403,9 @@ export default function Timeline({
     const next = dir > 0 ? markers.find((m) => m > frame) : [...markers].reverse().find((m) => m < frame);
     if (next !== undefined) setFrame(next);
   };
+  // ── Identity keyframes: the selected one and its successor, for the inspector under the track ──
+  const idKf = identityKeys?.keyframes || EMPTY;
+  const idSel = identityKeys ? idKf.findIndex((k) => k.frame_index === identityKeys.selected) : -1;
   const jumpCut = (dir) => {
     const next = adjacentCut(cuts, frame, dir);
     if (next !== null) setFrame(next);
@@ -787,6 +797,42 @@ export default function Timeline({
             </div>
           </div>
         </div>
+
+        {/* Identity keyframes: the blended identity as a function of the frame, directly beneath the film track and the
+            chapter markers carried down onto it. */}
+        {identityKeys && (
+          <>
+            <LaneHeader title="Identity keyframes">
+              <span className="font-mono text-note tabular-nums text-[var(--text-muted)]" data-testid="identity-keyframe-count">
+                {idKf.length ? `${idKf.length} keyframe${idKf.length === 1 ? '' : 's'}` : 'none'}
+                {idKf.length && identityKeys.recipe && !identityKeys.recipe.enabled ? ' · blender is off, not applied' : ''}
+              </span>
+              <button type="button" className={smallBtn} disabled={!identityKeys.canKey} data-testid="identity-keyframe-add"
+                      onClick={() => identityKeys.add(frame)}
+                      title={identityKeys.canKey ? 'Key the blended identity at the playhead (double-click the track to key any frame)' : 'Add two or more sources to the Identity Blender first'}>
+                + Key at playhead
+              </button>
+              <button type="button" className={smallBtn} disabled={!idKf.length} data-testid="identity-keyframe-clear"
+                      onClick={identityKeys.clear} title="Remove every identity keyframe on this clip">
+                Clear
+              </button>
+            </LaneHeader>
+            <IdentityKeyframeLane
+              view={v} maxFrames={maxFrames} frame={frame} keyframes={idKf} selected={identityKeys.selected}
+              canKey={identityKeys.canKey} markers={markers}
+              onSeek={setFrame} onAdd={identityKeys.add} onMove={identityKeys.move}
+              onRemove={identityKeys.remove} onSelect={identityKeys.setSelected}
+            />
+            {idSel >= 0 && (
+              <IdentityKeyframeInspector
+                keyframe={idKf[idSel]} nextKeyframe={idKf[idSel + 1] || null}
+                components={identityKeys.components || EMPTY} recipe={identityKeys.recipe || { keyframes: idKf }}
+                labelOf={identityKeys.labelOf || ((id) => id)}
+                onUpdate={identityKeys.update} onRemove={identityKeys.remove} onClose={() => identityKeys.setSelected(null)}
+              />
+            )}
+          </>
+        )}
 
         {/* Audio: what will play, drawn where it will play (the slip moves it against the video) */}
         {showAudioRow && (

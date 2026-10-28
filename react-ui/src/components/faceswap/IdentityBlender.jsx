@@ -1,17 +1,26 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Section, Slider, Toggle, Button } from '../ui';
 import { useApi } from '../../useApi';
-import { EMPTY_BLEND, normalizeBlend } from './identityBlend';
+import {
+  BLEND_MODES, BLEND_MODE_LABELS, EMPTY_BLEND, MAX_BLEND_SOURCES, PRIVACY_COSINE_DEFAULT, normalizeBlend,
+} from './identityBlend';
+import { frameIndexOf } from './identityKeyframes';
 import { logFailure } from '../../failureLog';
 
-// Identity Blender: latent blend of up to four source identities on the ArcFace
-// hypersphere, plus attribute offsets along fitted directions. The maths and its
-// caveats live in app/roop/identity_algebra.py; this panel only edits the
-// recipe. The recipe travels inside every preview/swap payload (so the preview
+// Identity Blender: latent blend of up to five source identities on the ArcFace
+// hypersphere (Slerp / spherical mean, or the older normalised sum), attribute offsets along fitted directions,
+// optional de-identification against reference sources, and a readout of how far apart the sources sit.
+// Identity KEYFRAMES (the blend as a function of the frame) are edited on the timeline's Identity Keyframe Track;
+// they ride in this same recipe. The maths and its caveats live in app/roop/identity_algebra.py; this panel only
+// edits the recipe. The recipe travels inside every preview/swap payload (so the preview
 // cache keys on it and a queued job freezes it) and is also POSTed here for the
 // diagnostics readout (share of each source, identity-guard clamping).
 
-const MAX_SLOTS = 4;
+const MAX_SLOTS = MAX_BLEND_SOURCES;
+const MODE_HINT = {
+  slerp: 'A share is the fraction of the great-circle arc between the identities (exact Slerp for two, the spherical mean for 3-5).',
+  linear: 'The normalised weighted sum of the vectors: the same path as Slerp for two sources, but not constant speed along it.',
+};
 
 // Only the dials identity_render_validation.json proves writable through the swapper (BLEND_DIALS in
 // identityBlend.js). Age, Femininity <-> Masculinity and Expression were rendered at t = ±0.4 / ±0.75 on 65
@@ -35,10 +44,14 @@ function scoreBadge(entry) {
   return { text: `${entry.metric === 'auc' ? 'AUC' : 'r'} ${s.toFixed(2)}`, weak };
 }
 
-export default function IdentityBlender({ sourceFaces = [], sourceFacesInfo = [], value, onChange, onUploadSource, notify }) {
+export default function IdentityBlender({
+  sourceFaces = [], sourceFacesInfo = [], value, onChange, onUploadSource, notify, playheadFrame = 1,
+}) {
   const { postJSON } = useApi();
   const recipe = normalizeBlend(value || EMPTY_BLEND);
   const [diag, setDiag] = useState(null);
+  const [exportName, setExportName] = useState('Blended identity');
+  const [exporting, setExporting] = useState(false);
   const [busySlot, setBusySlot] = useState(-1);
   const [pickSlot, setPickSlot] = useState(-1);
   const fileRef = useRef(null);
@@ -53,6 +66,11 @@ export default function IdentityBlender({ sourceFaces = [], sourceFacesInfo = []
   const update = (patch) => onChange(normalizeBlend({ ...recipe, ...patch }));
   const setComponents = (components) => update({ components: components.slice(0, MAX_SLOTS) });
   const setDial = (key, v) => update({ dials: { ...recipe.dials, [key]: v } });
+  const setDeid = (patch) => update({ deidentify: { ...recipe.deidentify, ...patch } });
+  const toggleReference = (id) => {
+    const refs = recipe.deidentify.references;
+    setDeid({ references: refs.includes(id) ? refs.filter((r) => r !== id) : [...refs, id].slice(0, MAX_BLEND_SOURCES) });
+  };
 
   // Diagnostics: debounced, and re-read whenever the recipe or gallery changes.
   const sig = JSON.stringify(recipe) + '|' + sourceFacesInfo.map((i) => i?.id).join(',');
@@ -99,15 +117,46 @@ export default function IdentityBlender({ sourceFaces = [], sourceFacesInfo = []
   };
 
   const slots = Array.from({ length: MAX_SLOTS }, (_, i) => components[i] || null);
+  const nameOf = (id) => infoById.get(id)?.name || 'Not in gallery';
+  const pair = diag?.diagnostics?.pairwise_cosine;
+  const pairIds = diag?.diagnostics?.pairwise_ids || [];
+  const deidDiag = diag?.diagnostics?.deidentify;
+  const kfDiag = diag?.diagnostics?.keyframes?.smoothness;
+  // A keyframed preset is exported at the playhead's frame (the identity the preview is showing right now).
+  const keyed = recipe.keyframes.length > 0 && components.length >= 2;
+
+  const exportFsz = async () => {
+    setExporting(true);
+    try {
+      const res = await postJSON('/api/identity/export_fsz', {
+        recipe: { ...recipe, enabled: true }, frame_index: keyed ? frameIndexOf(playheadFrame) : null, name: exportName,
+      });
+      notify?.(`Saved "${res.saved}.fsz" to the faceset library${keyed ? ` (the identity at frame ${playheadFrame})` : ''}`, 'success');
+    } catch (err) {
+      notify?.(err?.message || 'Could not export the blend', 'error');
+    } finally { setExporting(false); }
+  };
   const clamped = diag?.diagnostics?.clamped;
   const applied = diag?.diagnostics?.applied || {};
 
   return (
     <Section title="Identity Blender" icon={null} collapsible defaultOpen={recipe.enabled}>
-      <div className="space-y-3">
+      <div className="space-y-3" data-testid="identity-blender">
         <Toggle label="Blend identities & shift attributes" checked={!!recipe.enabled}
           info="Replaces the swap identity with normalize(Σ wᵢ·zᵢ) over the sources below, then offsets it along fitted attribute directions. Applies to faces assigned to ANY blended source; with one source, the dials edit whichever source a face was assigned."
           onChange={(v) => update({ enabled: v })} />
+
+        <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Blend mode">
+          <span className="text-mini text-white/60">Mode</span>
+          {BLEND_MODES.map((m) => (
+            <button key={m} type="button" aria-pressed={recipe.mode === m} data-testid={`blend-mode-${m}`}
+              onClick={() => update({ mode: m })} title={MODE_HINT[m]}
+              className={`rounded-md border px-2 py-0.5 text-mini font-semibold transition-colors ${
+                recipe.mode === m ? 'border-[var(--accent)] bg-[var(--accent)]/15 text-white' : 'border-white/10 text-white/50 hover:border-white/25'}`}>
+              {BLEND_MODE_LABELS[m]}
+            </button>
+          ))}
+        </div>
 
         <div className="grid grid-cols-2 gap-2">
           {slots.map((comp, slot) => {
@@ -174,7 +223,7 @@ export default function IdentityBlender({ sourceFaces = [], sourceFacesInfo = []
             );
           })}
         </div>
-        <input ref={fileRef} type="file" accept="image/*" className="sr-only"
+        <input ref={fileRef} type="file" accept="image/*" className="sr-only" aria-label="Choose a photo for this identity slot"
           onChange={(e) => { uploadInto(pendingSlot.current, Array.from(e.target.files || [])); e.target.value = ''; }} />
 
         {components.length === 1 && (
@@ -182,6 +231,37 @@ export default function IdentityBlender({ sourceFaces = [], sourceFacesInfo = []
         )}
         {diag?.diagnostics?.missing?.length > 0 && (
           <p className="text-mini text-amber-300/80">{diag.diagnostics.missing.length} blended source(s) are no longer in the gallery and are skipped.</p>
+        )}
+
+        {pair && pair.length >= 2 && (
+          <div data-testid="identity-pairwise" className="space-y-1">
+            <div className="text-nano font-semibold uppercase tracking-[0.14em] text-muted">Pairwise cosine</div>
+            <table className="w-full border-separate border-spacing-0.5 text-center text-nano tabular-nums">
+              <thead>
+                <tr>
+                  <th aria-hidden="true" />
+                  {pairIds.map((id, j) => (
+                    <th key={id} scope="col" title={nameOf(id)} className="font-semibold text-white/60">{j + 1}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {pair.map((row, i) => (
+                  <tr key={pairIds[i] || i}>
+                    <th scope="row" title={nameOf(pairIds[i])} className="font-semibold text-white/60">{i + 1}</th>
+                    {row.map((c, j) => (
+                      <td key={j} title={`${nameOf(pairIds[i])} vs ${nameOf(pairIds[j])}`}
+                        className={`rounded ${i === j ? 'text-white/25' : 'bg-white/[0.04] text-white/80'}`}
+                        style={i === j ? undefined : { boxShadow: `inset 0 -2px 0 rgba(56,189,248,${Math.max(0, Math.min(1, c)).toFixed(2)})` }}>
+                        {i === j ? '·' : c.toFixed(2)}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p className="m-0 text-nano text-muted">1 = the same identity, about 0 = strangers. Numbers follow the slot order above.</p>
+          </div>
         )}
 
         <div className="space-y-2 border-t border-white/5 pt-2">
@@ -217,8 +297,70 @@ export default function IdentityBlender({ sourceFaces = [], sourceFacesInfo = []
           {dirInfo.reason && <p className="text-mini text-amber-300/80">{dirInfo.reason}</p>}
         </div>
 
-        <div className="flex justify-end">
-          <Button size="sm" variant="secondary" onClick={() => onChange(normalizeBlend(EMPTY_BLEND))}>Reset blender</Button>
+        <div className="space-y-2 border-t border-white/5 pt-2" data-testid="identity-deid">
+          <Toggle label="De-identify against reference sources" checked={recipe.deidentify.enabled}
+            info="Moves the final identity along the great circle toward the point orthogonal to the references, only as far as needed for its cosine to each of them to be at or below the threshold. The bound holds on the vector the swapper receives; what the swapped face does with it is measured, not guaranteed."
+            onChange={(v) => setDeid({ enabled: v })} />
+          {recipe.deidentify.enabled && (
+            <>
+              <div className="flex flex-wrap gap-1.5" role="group" aria-label="De-identification references">
+                {sourceFacesInfo.length === 0 && <span className="text-mini text-muted">No sources in the gallery.</span>}
+                {sourceFacesInfo.map((i, idx) => {
+                  const on = recipe.deidentify.references.includes(i?.id);
+                  return (
+                    <button key={i?.id || idx} type="button" title={`${i?.name || 'Source'} as a reference`}
+                      aria-pressed={on} data-testid={`deid-ref-${idx}`} onClick={() => toggleReference(i?.id)}
+                      className={`h-10 w-10 overflow-hidden rounded-md border ${on ? 'border-[var(--accent)] ring-1 ring-[var(--accent)]' : 'border-white/20 opacity-70 hover:opacity-100'}`}>
+                      {sourceFaces[idx] && <img src={sourceFaces[idx]} alt={i?.name || ''} className="h-full w-full object-cover" />}
+                    </button>
+                  );
+                })}
+              </div>
+              <Slider label="Privacy threshold (max cosine to references)" value={recipe.deidentify.max_cosine}
+                min={0} max={0.95} step={0.01}
+                info="The identity's cosine to every reference ends at or below this. About 0.0-0.2 is how far strangers sit from each other; the same person is well above 0.3."
+                onChange={(v) => setDeid({ max_cosine: v })}
+                modified={Math.abs(recipe.deidentify.max_cosine - PRIVACY_COSINE_DEFAULT) > 1e-9}
+                onReset={() => setDeid({ max_cosine: PRIVACY_COSINE_DEFAULT })} />
+              {recipe.deidentify.references.length === 0 && (
+                <p className="m-0 text-mini text-muted">Pick at least one reference above.</p>
+              )}
+              {deidDiag && (
+                <div className="text-nano tabular-nums text-muted" data-testid="deid-readout">
+                  cosine to references {deidDiag.cosine_before.map((c) => c.toFixed(2)).join(' / ')} → {deidDiag.cosine_after.map((c) => c.toFixed(2)).join(' / ')}
+                  {deidDiag.applied ? ` · ${deidDiag.cosine_to_primary.toFixed(2)} cosine to the un-edited identity` : ''}
+                  {deidDiag.reason === 'already_below' ? ' · already below the threshold, nothing moved' : ''}
+                  {deidDiag.reason === 'degenerate' ? ' · the identity lies inside the references\' span: it cannot be separated from them' : ''}
+                  {deidDiag.reason === 'floor' ? ' · stopped at the closeness floor, threshold not met' : ''}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        {recipe.keyframes.length > 0 && (
+          <p className="m-0 text-mini text-muted" data-testid="identity-keyframe-summary">
+            {recipe.keyframes.length} identity keyframe{recipe.keyframes.length === 1 ? '' : 's'} on this clip, edited on the timeline.
+            {kfDiag ? ` Largest step ${((kfDiag.max_step * 180) / Math.PI).toFixed(2)}° per frame.` : ''}
+            {components.length < 2 ? ' Add a second source: with one, the keyframes do nothing.' : ''}
+          </p>
+        )}
+
+        <div className="flex flex-wrap items-end justify-between gap-2 border-t border-white/5 pt-2">
+          <div className="flex items-end gap-2">
+            <label className="block">
+              <span className="text-nano font-semibold uppercase tracking-wider text-muted">Preset name</span>
+              <input value={exportName} onChange={(e) => setExportName(e.target.value)} maxLength={80} aria-label="Exported preset name"
+                className="mt-1 block w-40 rounded-lg px-2 py-1 glass-input text-white text-mini focus:outline-none" />
+            </label>
+            <Button size="sm" variant="secondary" onClick={exportFsz}
+              disabled={exporting || components.length === 0 || !exportName.trim()} data-testid="identity-export-fsz"
+              title={keyed ? `Saves the composite identity at frame ${playheadFrame} as a .fsz preset` : 'Saves the composite identity as a .fsz preset in the faceset library'}>
+              {exporting ? 'Saving…' : keyed ? `Export identity at frame ${playheadFrame}` : 'Export as .fsz'}
+            </Button>
+          </div>
+          <Button size="sm" variant="secondary"
+            onClick={() => onChange(normalizeBlend({ ...EMPTY_BLEND, keyframes: recipe.keyframes }))}>Reset blender</Button>
         </div>
       </div>
     </Section>

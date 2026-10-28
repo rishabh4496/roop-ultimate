@@ -121,13 +121,16 @@ def pose_conditioned_input(inputface: Any, source_faceset: Any, target_face: Any
     return pose_input
 
 
-def blended_input(inputface: Any, blend: Any, source_faceset: Any, target_face: Any) -> Any:
-    """Step 2: the Identity Blender (latent blend + tangent-plane dial offsets, 0.80 guard) applied to the
-    already pose-selected vector, or `inputface` unchanged when the recipe leaves this face alone.
+def blended_input(inputface: Any, blend: Any, source_faceset: Any, target_face: Any,
+                  frame_index: Optional[int] = None) -> Any:
+    """Step 2: the Identity Blender (latent blend + tangent-plane dial offsets, 0.80 guard, then
+    de-identification) applied to the already pose-selected vector, or `inputface` unchanged when the recipe
+    leaves this face alone. `frame_index` (0-based, absolute in the clip) is what a keyframed recipe reads; the
+    Stage 0 builder passes none and never sees a keyframed recipe (`build` declines it).
     The block `process_face` ran inline (see `pose_conditioned_input`)."""
     from roop.ProcessMgr import _with_unit_embedding
     raw = inputface.get("embedding") if hasattr(inputface, "get") else None
-    new = blend.transform(raw, target_face, source_faceset)
+    new = blend.transform(raw, target_face, source_faceset, frame_index=frame_index)
     if new is None:
         return inputface
     return _with_unit_embedding(inputface, new)
@@ -305,6 +308,10 @@ def build(input_face_datas: List[Any], *, swap_mode: str, use_source_bank: bool,
             # The live path calls `blend.transform` for every face but the recipe answers None for a source it
             # does not apply to, so a recipe that skips this source is the same as no recipe for it.
             effective = blend if (blend is not None and blend.applies_to(fs)) else None
+            if effective is not None and getattr(effective, "time_varying", False):
+                # A keyframed identity is a function of the frame; nine pose cells cannot hold it.
+                table.stats.declined[idx] = "the identity recipe is keyframed: the vector changes with the frame"
+                continue
             reason = decline_reason(fs, swap_mode=swap_mode, use_source_bank=use_source_bank,
                                     quality_engine=quality_engine, has_recipe=effective is not None)
             if reason is not None:

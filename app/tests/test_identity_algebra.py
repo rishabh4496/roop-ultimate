@@ -213,11 +213,12 @@ class RecipeTests(unittest.TestCase):
             "enabled": True,
             "components": [{"source_id": "a", "weight": 60}, {"source_id": "a", "weight": 1},
                            {"source_id": "b", "weight": float("nan")}, {"source_id": ""},
-                           {"source_id": "c", "weight": -4}, {"source_id": "d"}, {"source_id": "e"}],
+                           {"source_id": "c", "weight": -4}, {"source_id": "d"}, {"source_id": "e"},
+                           {"source_id": "f"}],
             "dials": {"age": 99, "gender": -7, "expression": "x"},
             "min_cosine": 2})
-        # Duplicates and blanks do not use up the 4-source cap.
-        self.assertEqual([c["source_id"] for c in r.components], ["a", "b", "c", "d"])
+        # Duplicates and blanks do not use up the 5-source cap (Stage 20; it was 4).
+        self.assertEqual([c["source_id"] for c in r.components], ["a", "b", "c", "d", "e"])
         self.assertEqual(r.components[1]["weight"], 0.0)
         self.assertEqual(r.components[2]["weight"], 0.0)
         self.assertEqual(r.dials["age"], ia.AGE_LIMIT_YEARS)
@@ -235,9 +236,12 @@ class RecipeTests(unittest.TestCase):
         self.assertIsNone(ia.resolve_recipe(off, self.fs))
 
     def test_blend_applies_to_members_only_and_reuses_the_pose_selected_anchor(self):
-        r = ia.BlendRecipe(enabled=True, components=[{"source_id": "s0", "weight": 60},
-                                                     {"source_id": "s1", "weight": 40},
-                                                     {"source_id": "gone", "weight": 10}])
+        # mode="linear": this test pins the normalised-weighted-sum formula; the Slerp default is covered in
+        # test_identity_slerp_keyframes.py.
+        r = ia.BlendRecipe(enabled=True, mode="linear",
+                           components=[{"source_id": "s0", "weight": 60},
+                                       {"source_id": "s1", "weight": 40},
+                                       {"source_id": "gone", "weight": 10}])
         rb = ia.resolve_recipe(r, self.fs, self.dirs)
         self.assertEqual(rb.missing_ids, ("gone",))
         self.assertIsNone(rb.transform(self.fs[2].default_embedding, None, self.fs[2]))

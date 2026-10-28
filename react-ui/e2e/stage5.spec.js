@@ -51,9 +51,10 @@ test.describe('Face Manager', () => {
     await page.mouse.move(box.x + box.width * 0.2, box.y + box.height * 0.5, { steps: 6 });
     await page.mouse.up();
     await expect(page.getByTestId('morph-shares')).toHaveText('Shares: Alice 88% · Bob 12%');
-    // 0.875 / sqrt(0.875^2 + 0.125^2) = 0.9899
-    await expect.poll(async () => Number((await cos.nth(0).innerText()).match(/0\.\d+/)?.[0])).toBeGreaterThan(0.985);
-    await expect.poll(async () => Number((await cos.nth(1).innerText()).match(/0\.\d+/)?.[0])).toBeLessThan(0.15);
+    // Slerp (the default since Stage 20): an orthogonal pair at 87.5 / 12.5 sits 0.125 x 90 deg = 11.25 deg from Alice, so
+    // cos = 0.981 to her and cos(78.75 deg) = 0.195 to Bob (the older normalised sum gave 0.990 / 0.124).
+    await expect.poll(async () => Number((await cos.nth(0).innerText()).match(/0\.\d+/)?.[0])).toBeGreaterThan(0.975);
+    await expect.poll(async () => Number((await cos.nth(1).innerText()).match(/0\.\d+/)?.[0])).toBeLessThan(0.25);
 
     // The slider and the pad are one control: a slider keypress moves the cursor's share too.
     await page.getByTestId('morph-cursor').scrollIntoViewIfNeeded();
@@ -66,7 +67,7 @@ test.describe('Face Manager', () => {
     expect(Number(shares[1])).toBeLessThan(88);
   });
 
-  test('Morph Lab: three identities make a triangle, a fifth is refused, preview opens Face Swap, save adds to the library', async ({ page }) => {
+  test('Morph Lab: three identities make a triangle, four a square, preview opens Face Swap, save adds to the library', async ({ page }) => {
     await openTab(page, 'facemgr');
     await page.getByTestId('facemgr-tab-morph').click();
     for (const id of ['src:0', 'src:1', 'lib:Alice.fsz']) await page.getByTestId(`morph-pick-${id}`).click();
@@ -80,7 +81,7 @@ test.describe('Face Manager', () => {
 
     await page.getByTestId('morph-pick-lib:Bob.fsz').click();
     await page.getByTestId('morph-pick-lib:Bob.fsz').scrollIntoViewIfNeeded();
-    // 4 picked: the pad is a square now, and a fifth pick is refused (the thumbnails are all in the list)
+    // 4 picked: the pad is a square now (five make a pentagon and a sixth is refused: e2e/identity-mixer.spec.js)
     await expect(page.getByTestId('morph-weight-3')).toBeVisible();
     await expect(page.getByTestId('morph-shares')).toContainText('Bob 25%');
 

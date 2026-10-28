@@ -35,9 +35,9 @@ const rnd = () => { seed ^= seed << 13; seed ^= seed >>> 17; seed ^= seed << 5; 
 // ── morph pad ───────────────────────────────────────────────────────────────
 console.log('morph pad');
 {
-  ok('2, 3 and 4 identities have a pad; 1 and 5 do not', [2, 3, 4].every((n) => padVertices(n).length === n)
-    && [1, 5, 0].every((n) => { try { padVertices(n); return false; } catch (e) { return e instanceof RangeError; } }));
-  for (const n of [2, 3, 4]) {
+  ok('2 to 5 identities have a pad; 1 and 6 do not (Stage 20 raised the cap from 4)', [2, 3, 4, 5].every((n) => padVertices(n).length === n)
+    && [1, 6, 0].every((n) => { try { padVertices(n); return false; } catch (e) { return e instanceof RangeError; } }));
+  for (const n of [2, 3, 4, 5]) {
     const verts = padVertices(n);
     ok(`${n}: each vertex is 100% of its own identity`, verts.every((v, i) => {
       const w = weightsAtPoint(v, n);
@@ -46,11 +46,31 @@ console.log('morph pad');
     ok(`${n}: the centroid is an even blend`, weightsAtPoint(pointAtWeights(evenWeights(n), n), n).every((w) => near(w, 1 / n, 1e-9)));
   }
   ok('4: the centre of the square is an even blend', weightsAtPoint([0.5, 0.5], 4).every((w) => near(w, 0.25)));
+  ok('5: the centre of the pentagon is an even blend', weightsAtPoint([0.5, 0.5], 5).every((w) => near(w, 0.2, 1e-9)));
+  ok('5: the pentagon is regular and convex (equal sides, one winding)', (() => {
+    const v = padVertices(5);
+    const side = (i) => Math.hypot(v[(i + 1) % 5][0] - v[i][0], v[(i + 1) % 5][1] - v[i][1]);
+    const turn = (i) => (v[(i + 1) % 5][0] - v[i][0]) * (v[(i + 2) % 5][1] - v[(i + 1) % 5][1])
+      - (v[(i + 1) % 5][1] - v[i][1]) * (v[(i + 2) % 5][0] - v[(i + 1) % 5][0]);
+    return [0, 1, 2, 3, 4].every((i) => near(side(i), side(0), 1e-9)) && [0, 1, 2, 3, 4].every((i) => turn(i) * turn(0) > 0);
+  })());
+  ok('5: a point on an edge is shared linearly by that edge\'s two identities only', (() => {
+    const v = padVertices(5);
+    const mid = [(v[0][0] * 0.25 + v[1][0] * 0.75), (v[0][1] * 0.25 + v[1][1] * 0.75)];
+    const w = weightsAtPoint(mid, 5);
+    return near(w[0], 0.25, 1e-9) && near(w[1], 0.75, 1e-9) && [2, 3, 4].every((i) => near(w[i], 0, 1e-9));
+  })());
+  ok('5: dragging toward a vertex raises exactly that identity and lowers the rest', (() => {
+    const v = padVertices(5);
+    const at = (s) => weightsAtPoint([0.5 + (v[2][0] - 0.5) * s, 0.5 + (v[2][1] - 0.5) * s], 5);
+    const [a, b] = [at(0.4), at(0.8)];
+    return b[2] > a[2] && [0, 1, 3, 4].every((i) => b[i] < a[i]);
+  })());
 
   let bad = 0;
   let roundTrip = 0;
-  for (let t = 0; t < 600; t++) {
-    const n = 2 + (t % 3);
+  for (let t = 0; t < 800; t++) {
+    const n = 2 + (t % 4);
     const p = [rnd() * 1.4 - 0.2, rnd() * 1.4 - 0.2];                // inside AND outside the pad
     const w = weightsAtPoint(p, n);
     if (w.length !== n || w.some((x) => x < -1e-12 || !Number.isFinite(x)) || !near(sum(w), 1, 1e-9)) bad++;
@@ -60,7 +80,7 @@ console.log('morph pad');
     const back = pointAtWeights(weightsAtPoint(q, n), n);
     if (!near(back[0], q[0], 1e-9) || (n !== 2 && !near(back[1], q[1], 1e-9))) roundTrip++;
   }
-  ok('weights are a partition of unity at any point, inside or outside the pad (600 random)', bad === 0, `${bad} violations`);
+  ok('weights are a partition of unity at any point, inside or outside the pad (800 random, n = 2..5)', bad === 0, `${bad} violations`);
   ok('cursor -> weights -> cursor lands where it started (so pad and sliders cannot disagree)', roundTrip === 0, `${roundTrip} drifted`);
   ok('a point outside the triangle is pulled onto its boundary, not clamped to a corner',
     (() => { const q = clampToPad([0.5, 1.2], 3); return near(q[1], 0.86, 1e-9) && q[0] > 0.2 && q[0] < 0.8; })());
@@ -100,10 +120,10 @@ console.log('morph pad');
   ok('free mode changes only the dragged weight', eq(setWeight([50, 30, 20], 1, 80, 'free'), [50, 80, 20]));
   ok('weights are clamped to 0..100 and NaN is 0', eq(setWeight([50, 50], 0, 140, 'free'), [100, 50]) && eq(setWeight([50, 50], 0, NaN, 'free'), [0, 50]));
   ok('even weights total 100', near(sum(evenWeights(3)), 100));
-  ok('picks are capped at four, kept in order, and toggle off', (() => {
+  ok('picks are capped at five, kept in order, and toggle off', (() => {
     let p = [];
-    for (const id of ['a', 'b', 'c', 'd', 'e']) p = togglePick(p, id);
-    return eq(p, ['a', 'b', 'c', 'd']) && MAX_IDENTITIES === 4 && eq(togglePick(p, 'b'), ['a', 'c', 'd']);
+    for (const id of ['a', 'b', 'c', 'd', 'e', 'f']) p = togglePick(p, id);
+    return eq(p, ['a', 'b', 'c', 'd', 'e']) && MAX_IDENTITIES === 5 && eq(togglePick(p, 'b'), ['a', 'c', 'd', 'e']);
   })());
 }
 

@@ -9,16 +9,27 @@ import {
 
 // Embedding Mixer & Morph Lab.
 //
-// Pick 2-4 identities (Face Swap source faces, saved .fsz identities, or the Face Manager's own set),
+// Pick 2-5 identities (Face Swap source faces, saved .fsz identities, or the Face Manager's own set),
 // then blend them: by sliders (auto-normalised to 100%, or free-weighted) or by dragging a cursor on the
-// pad - a line for two, a triangle for three (true barycentric weights), a square for four. Both edit the
-// same weights. The server reports how far the blend sits from each input (cosine on the ArcFace
-// hypersphere) and warns when it has drifted off from all of them.
+// pad - a line for two, a triangle for three (true barycentric weights), a square for four, a pentagon for
+// five. Both edit the same weights. The blend is a Slerp / spherical mean on the ArcFace hypersphere (or the
+// older normalised sum). The server reports how far the blend sits from each input (cosine), the pairwise
+// cosine between the inputs, and warns when it has drifted off from all of them.
 //
-// "Preview" loads the blend as a Face Swap source and opens Face Swap, whose preview renders the active
-// frame with it. "Save" writes a V2 .fsz whose cached identity IS the blend, into the faceset library.
+// Optionally the result can be de-identified: pushed away from reference identities, only as far as needed
+// for its cosine to each of them to be at or below a threshold (a synthetic, privacy-safe character).
+//
+// "Preview" loads the blend as a Face Swap source and opens Face Swap, whose preview (the Stage 7 coalesced,
+// single-flight one) renders the active frame with it. "Save" writes a V2 .fsz whose cached identity IS the
+// blend, into the faceset library. Blending over TIME (identity keyframes) lives on the Face Swap timeline.
 
-const COLORS = ['#38bdf8', '#f472b6', '#a3e635', '#fb923c'];
+const COLORS = ['#38bdf8', '#f472b6', '#a3e635', '#fb923c', '#c084fc'];
+const MODES = [['slerp', 'Slerp'], ['linear', 'Linear']];
+const MODE_HINT = {
+  slerp: 'A share is the fraction of the great-circle arc between the identities (exact Slerp for two, the spherical mean for 3-5).',
+  linear: 'The normalised weighted sum of the vectors: the same path as Slerp for two, but not constant speed along it.',
+};
+const PRIVACY_DEFAULT = 0.3;
 const PAD = 260;
 
 function Pad({ n, weights, onChange, labels, thumbs }) {
@@ -94,6 +105,8 @@ export default function MorphLab({ notify, setTab }) {
   const [picked, setPicked] = useState([]);
   const [weights, setWeights] = useState([]);
   const [mode, setMode] = useState('auto');              // 'auto' = totals 100, 'free' = independent
+  const [blendMode, setBlendMode] = useState('slerp');   // how the identities combine: 'slerp' | 'linear'
+  const [deid, setDeid] = useState({ enabled: false, references: [], max_cosine: PRIVACY_DEFAULT });
   const [summary, setSummary] = useState(null);
   const [name, setName] = useState('Blended identity');
   const [busy, setBusy] = useState('');
@@ -132,6 +145,15 @@ export default function MorphLab({ notify, setTab }) {
     if (auto) setWeights((w) => { const t = w.reduce((a, b) => a + b, 0) || 1; return w.map((x) => (x / t) * 100); });
   };
 
+  // What the server is asked for every blend / preview / save: the components, how they combine, and the optional
+  // de-identification (only sent when it is on and names a reference).
+  const body = () => ({
+    components: picked.map((p, i) => ({ id: p, weight: weights[i] })),
+    mode: blendMode,
+    deidentify: deid.enabled && deid.references.length ? deid : { enabled: false, references: [] },
+  });
+  const deidSig = JSON.stringify(deid);
+
   // Ask the server how the blend sits, debounced so a drag is one request per pause, not per pixel.
   const reqRef = useRef(0);
   useEffect(() => {
@@ -139,16 +161,20 @@ export default function MorphLab({ notify, setTab }) {
     const id = ++reqRef.current;
     const t = setTimeout(async () => {
       try {
-        const res = await postJSON('/api/facemgr/morph/blend', { components: picked.map((p, i) => ({ id: p, weight: weights[i] })) });
+        const res = await postJSON('/api/facemgr/morph/blend', body());
         if (reqRef.current === id) setSummary(res);
       } catch (e) {
         if (reqRef.current === id) setSummary({ error: e.message });
       }
     }, 220);
     return () => clearTimeout(t);
-  }, [picked, weights, usable]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [picked, weights, usable, blendMode, deidSig]);
 
-  const body = () => ({ components: picked.map((p, i) => ({ id: p, weight: weights[i] })) });
+  const toggleReference = (id) => setDeid((d) => ({
+    ...d,
+    references: d.references.includes(id) ? d.references.filter((r) => r !== id) : [...d.references, id].slice(0, MAX_IDENTITIES),
+  }));
 
   const preview = async () => {
     setBusy('preview');
@@ -250,10 +276,54 @@ export default function MorphLab({ notify, setTab }) {
                   {mode === 'free' ? 'Effective shares: ' : 'Shares: '}
                   {chosen.map((c, i) => `${c.label} ${percents[i]}%`).join(' · ')}
                 </p>
+                <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Blend mode">
+                  <span className="text-mini text-white/60">Mode</span>
+                  {MODES.map(([m, label]) => (
+                    <button key={m} type="button" aria-pressed={blendMode === m} data-testid={`morph-mode-${m}`}
+                      onClick={() => setBlendMode(m)} title={MODE_HINT[m]}
+                      className={`rounded-md border px-2 py-0.5 text-mini font-semibold transition-colors ${
+                        blendMode === m ? 'border-[var(--accent)] bg-[var(--accent)]/15 text-white' : 'border-white/10 text-white/50 hover:border-white/25'}`}>
+                      {label}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
           )}
         </Section>
+
+        {usable && (
+          <Section title="De-identify (optional)">
+            <div className="space-y-2" data-testid="morph-deid">
+              <Toggle label="Push the result away from reference identities" checked={deid.enabled}
+                      onChange={(v) => setDeid((d) => ({ ...d, enabled: v }))}
+                      info="Moves the blend along the great circle toward the point orthogonal to the references, only as far as needed for its cosine to each of them to be at or below the threshold." />
+              {deid.enabled && (
+                <>
+                  <p className="m-0 text-mini text-muted">Pick the identities to move away from (any of the ones listed on the left, including the ones you are blending).</p>
+                  <div className="flex flex-wrap gap-1.5" role="group" aria-label="De-identification references">
+                    {candidates.filter((c) => c.available).map((c) => {
+                      const on = deid.references.includes(c.id);
+                      return (
+                        <button key={c.id} type="button" aria-pressed={on} title={`${c.label} as a reference`}
+                                data-testid={`morph-deid-ref-${c.id}`} onClick={() => toggleReference(c.id)}
+                                className={`flex items-center gap-1.5 rounded-lg border px-1.5 py-1 text-nano ${
+                                  on ? 'border-[var(--accent)] bg-[var(--accent)]/10 text-white' : 'border-white/10 text-white/60 hover:border-white/25'}`}>
+                          {c.thumb ? <img src={c.thumb} alt="" className="h-6 w-6 rounded object-cover" /> : <span className="h-6 w-6 rounded bg-white/10" />}
+                          <span className="max-w-[88px] truncate">{c.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <Slider label="Privacy threshold (max cosine to the references)" min={0} max={0.95} step={0.01}
+                          value={deid.max_cosine} info={deid.max_cosine.toFixed(2)}
+                          onChange={(v) => setDeid((d) => ({ ...d, max_cosine: v }))} />
+                  {deid.references.length === 0 && <p className="m-0 text-mini text-muted">Pick at least one reference to apply it.</p>}
+                </>
+              )}
+            </div>
+          </Section>
+        )}
       </div>
 
       {usable && (
@@ -271,6 +341,44 @@ export default function MorphLab({ notify, setTab }) {
                     </li>
                   ))}
                 </ul>
+                {summary.pairwise_cosine?.length >= 2 && (
+                  <div data-testid="morph-pairwise">
+                    <div className="mb-1 text-nano font-semibold uppercase tracking-[0.14em] text-muted">Pairwise cosine between the inputs</div>
+                    <table className="border-separate border-spacing-0.5 text-center text-nano tabular-nums">
+                      <thead>
+                        <tr>
+                          <th aria-hidden="true" />
+                          {summary.components.map((c, j) => (
+                            <th key={c.id} scope="col" title={c.label} style={{ color: COLORS[j] }} className="px-1.5 font-semibold">{j + 1}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {summary.pairwise_cosine.map((row, i) => (
+                          <tr key={summary.components[i].id}>
+                            <th scope="row" title={summary.components[i].label} style={{ color: COLORS[i] }} className="px-1.5 font-semibold">{i + 1}</th>
+                            {row.map((c, j) => (
+                              <td key={j} title={`${summary.components[i].label} vs ${summary.components[j].label}`}
+                                  className={`rounded px-1.5 py-0.5 ${i === j ? 'text-white/25' : 'bg-white/[0.04] text-white/80'}`}>
+                                {i === j ? '·' : c.toFixed(2)}
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    <p className="m-0 mt-1 text-nano text-muted">1 = the same identity, about 0 = strangers. Numbers follow the pick order.</p>
+                  </div>
+                )}
+                {summary.deidentify && (
+                  <p className={`m-0 text-mini ${summary.deidentify.satisfied ? 'text-white/70' : 'text-amber-300'}`} role="status" data-testid="morph-deid-result">
+                    De-identified: cosine to the references {summary.deidentify.cosine_before.map((c) => c.toFixed(2)).join(' / ')} → {summary.deidentify.cosine_after.map((c) => c.toFixed(2)).join(' / ')}
+                    {' '}(threshold {summary.deidentify.max_cosine.toFixed(2)}
+                    {summary.deidentify.applied ? `, ${summary.deidentify.cosine_to_blend.toFixed(2)} cosine to the un-edited blend` : ''}).
+                    {summary.deidentify.reason === 'already_below' ? ' Already below the threshold, nothing moved.' : ''}
+                    {summary.deidentify.reason === 'degenerate' ? ' The blend lies inside the references\' span, so it cannot be separated from them.' : ''}
+                  </p>
+                )}
                 {summary.warning && <p className="m-0 text-mini text-amber-300" role="status" data-testid="morph-warning">{summary.warning}</p>}
               </>
             )}

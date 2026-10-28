@@ -1115,7 +1115,8 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             _line = None if _b is None else (
                 f"[IdentityBlend] {len(_b.facesets)} source(s) "
                 f"weights={[round(float(w), 3) for w in _b.weights]} "
-                f"dials={ {k: v for k, v in _recipe.dials.items() if v} } "
+                f"dials={ {k: v for k, v in _recipe.dials.items() if v} } mode={_b.mode} "
+                f"keyframes={len(_b._kf)} deid_refs={len(_b.deid_refs)} "
                 f"directions={'yes' if _b.directions is not None else 'MISSING'}"
                 + (f" missing={list(_b.missing_ids)}" if _b.missing_ids else ""))
             # live_swap re-initializes on every preview frame: say it once
@@ -6174,7 +6175,12 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         if (_s0_face is None and _blend is not None and not _swap_is_image and inputface is not None
                 and getattr(swap_p, 'embedding_mode', '') != 'cscs_dual'):
             try:
-                inputface = _stage0.blended_input(inputface, _blend, source_faceset, target_face)
+                # A keyframed recipe reads the frame: the 1-based UI frame (the render's clip-relative index
+                # through the clip start, or the frame /api/preview is drawing) as a 0-based absolute index.
+                _ui_frame = self._roto_frame_ui(getattr(self._tls, 'frame_idx', None))
+                inputface = _stage0.blended_input(
+                    inputface, _blend, source_faceset, target_face,
+                    frame_index=None if _ui_frame is None else int(_ui_frame) - 1)
             except Exception as e:
                 bar_write(f"[ProcessMgr] identity blend failed: {e}")
 

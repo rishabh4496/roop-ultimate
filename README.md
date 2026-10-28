@@ -384,13 +384,17 @@ curl -F "files=@front.jpg" -F "files=@left.jpg" -F "files=@right.jpg" "$BASE_URL
 #### Identity Blender: latent blends and attribute dials
 
 The **Identity Blender** panel (under the source gallery in Face Swap) blends up
-to four source identities and shifts attributes of the result. Everything happens
+to five source identities and shifts attributes of the result. Everything happens
 on the unit ArcFace vector (buffalo_l / w600k_r50, 512-D) that the embedding
 swappers consume:
 
-- **Blend:** `z = normalize(Σ wᵢ·zᵢ)`. The weights are renormalised to sum to 1.
-  Two different people sit at cosine ~0.0-0.2, so an un-normalised 50/50 mix is
-  only ~0.7 long, and the normalisation is required. Each component's vector
+- **Blend:** a point on the unit sphere, never an un-normalised mix (two
+  different people sit at cosine ~0.0-0.2, so a raw 50/50 sum is only ~0.7
+  long). `mode` picks the rule: **`slerp`** (the default since Stage 20) walks the
+  great circle, so a weight is the fraction of the arc between the identities
+  (exact Slerp for two sources, the weighted spherical mean for 3-5);
+  **`linear`** is the older `normalize(Σ wᵢ·zᵢ)`. They share the midpoint and
+  differ elsewhere. The weights are renormalised to sum to 1. Each component's vector
   is pose-matched to the target when its faceset supports that (V2 cells or
   folder banks). The blend replaces the identity of every face assigned to any
   of the blended sources.
@@ -461,6 +465,98 @@ print(res["diagnostics"]["cosine_to_anchor"], res["directions"]["heldout"])
 curl -X POST "$BASE_URL/api/identity/blend" -H "Content-Type: application/json" \
   -d '{"enabled":true,"components":[{"source_id":"A","weight":60},{"source_id":"B","weight":40}],"dials":{"age":10}}'
 ```
+
+#### Latent Identity Mixer: de-identification and identity keyframes (Stage 20)
+
+Three additions to the same recipe, all pure vector algebra in
+`app/roop/identity_algebra.py` (no model is loaded there):
+
+- **Mixer.** The Face Swap blender takes 2-5 sources, a Slerp / Linear switch,
+  a pairwise-cosine matrix of the sources (1 = the same identity, about 0 =
+  strangers) and **Export as .fsz**, which saves the composite vector as a V2
+  faceset preset (`POST /api/identity/export_fsz`; a keyframed recipe exports
+  the identity at the playhead). The Face Manager's **Morph Lab** takes the same
+  2-5 identities on a line / triangle / square / pentagon pad with the same mode
+  switch and matrix.
+- **De-identification.** Push the final identity away from reference sources
+  (`deidentify: {enabled, references: [source ids], max_cosine}`). With
+  `B` an orthonormal basis of the references' span and `r = p - B·Bᵀp`, the
+  vector moves along the great circle from `p` toward `r̂ = r/|r|` (cosine 0 to
+  every reference) and stops as soon as every reference is at or below
+  `max_cosine`. `cos(z, ref) = [sin((1-s)φ)/sin φ]·cos(p, ref)` exactly, so the
+  stopping point is closed form, not a search. It runs **last** (after the
+  dials), so the bound holds on the vector the swapper receives. It does **not**
+  promise the swapped *face* stays under the bound, because the swapper's
+  output is not its input: see the measured numbers below. A primary that lies
+  inside the references' span cannot be separated and is reported
+  (`reason: "degenerate"`), never silently returned as satisfied.
+- **Identity keyframes.** `keyframes: [{frame_index, curve, bezier, weights}]`
+  makes the blend a function of the frame. `weights` is `{source_id: share}`
+  over the recipe's own components; `frame_index` is **0-based and absolute in
+  the clip** (so a trimmed or queued-by-scene render still lands on the right
+  frame; the timeline shows 1-based frames and converts in one place). The
+  vector at a frame is the **Slerp between the two bracketing keyframes'
+  blends**, shaped by the `curve` of the keyframe the segment *starts* at:
+  `hold` (keep it, then cut), `linear` (constant angular speed) or
+  `cubic_bezier` (a CSS-style easing; `bezier` is `[x1, y1, x2, y2]`, both
+  coordinates clamped to 0-1 so the identity never overshoots a keyframe).
+  Every per-frame vector is a unit vector. Keyframes are edited on the **Identity
+  Keyframe Track** under the film strip in the Face Swap timeline (double-click to
+  add, drag to move, arrows nudge, Delete removes, a curve and bezier editor
+  below) and stored per clip in the browser; they travel inside the blend
+  recipe, so previews, the render-cache strip and queued jobs all see them. A
+  keyframed recipe is not pre-baked into the Stage 0 identity table (it would
+  need a table per frame): that table declines it and says so.
+
+Measured on real faces (`identity_algebra_bench.py --stage20`: 9 paired faces,
+realswap + UltraMax, one source pair, so a demonstration and not a
+distribution). With de-identification against A, the swapped face's cosine to A
+fell from 0.680 to 0.288 at `max_cosine` 0.30 and to 0.190 at 0.15: the second
+bound was exceeded by 0.04 in the **output** although the **input** vector met
+it. An A to B keyframe walk gave output `cos_B - cos_A` of -0.55, -0.47, +0.13,
++0.46, +0.63 at five positions, rising monotonically (the swapper's response to
+the vector is S-shaped, so it is not linear in the frame). Slerp and linear
+differed by 0.01-0.03 in output cosine, which 9 faces cannot separate from noise.
+
+```bash
+# the keyframe readout: each keyframe's angle to the next, sampled progress, the frame-to-frame smoothness
+curl -X POST "$BASE_URL/api/identity/keyframes/evaluate" -H "Content-Type: application/json" -d '{
+  "recipe": {"enabled": true, "mode": "slerp",
+    "components": [{"source_id": "A", "weight": 50}, {"source_id": "B", "weight": 50}],
+    "keyframes": [{"frame_index": 0,   "curve": "linear",       "weights": {"A": 100, "B": 0}},
+                  {"frame_index": 120, "curve": "cubic_bezier", "bezier": [0.42, 0, 0.58, 1], "weights": {"A": 0, "B": 100}}],
+    "deidentify": {"enabled": false, "references": [], "max_cosine": 0.3}},
+  "samples": 64}'
+```
+
+```python
+import requests
+# save the composite as a faceset preset: the identity at (0-based) frame 60, de-identified from source C
+recipe = {"enabled": True, "mode": "slerp",
+          "components": [{"source_id": "A", "weight": 50}, {"source_id": "B", "weight": 50}],
+          "keyframes": [{"frame_index": 0, "weights": {"A": 100}}, {"frame_index": 120, "weights": {"B": 100}}],
+          "deidentify": {"enabled": True, "references": ["C"], "max_cosine": 0.3}}
+res = requests.post(f"{base_url}/api/identity/export_fsz",
+                    json={"recipe": recipe, "frame_index": 60, "name": "Halfway, anonymised"}, timeout=30).json()
+print(res["saved"], res["keyframed"], res["deidentified"])
+```
+
+```javascript
+// the Morph Lab's blend over saved / loaded identities, now with a mode and a de-identification
+const body = { components: [{ id: 'lib:Alice.fsz', weight: 70 }, { id: 'lib:Bob.fsz', weight: 30 }], mode: 'slerp',
+  deidentify: { enabled: true, references: ['lib:Alice.fsz'], max_cosine: 0.3 } };
+const blend = await fetch(`${baseUrl}/api/facemgr/morph/blend`, {
+  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+}).then(r => r.json());
+console.log(blend.cosine_to_each, blend.pairwise_cosine, blend.deidentify);
+```
+
+`python app/tests/identity_algebra_bench.py --algebra` checks the invariants
+without a clip or a GPU (unit norm, constant angular speed, keyframe smoothness
+and cut counts, the de-identification bound; exit 1 on a violation).
+`--stage20` adds render arms that measure the swapped face, and
+`python app/tests/verify_stage20_render.py` proves keyframes land on the right
+frames of a **trimmed** render.
 
 Video processing forces constant frame rate and explicit generated video PTS;
 audio is muxed with `-c:a copy` and the original audio bitstream when possible.

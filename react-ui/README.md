@@ -260,7 +260,7 @@ file means deleting it from that list. Do not add a file to it to make lint pass
 
 ## API
 
-Every path below is one the UI calls today (132 HTTP endpoints and 3 WebSockets), with the verbs the
+Every path below is one the UI calls today (134 HTTP endpoints and 3 WebSockets), with the verbs the
 backend registers for it. `app/tests/test_ui_api_surface.py` keeps this honest: it fails if the UI calls a
 route the backend does not register, if this section omits one the UI calls, or if it lists one that does
 not exist. Add an endpoint to the UI and that test tells you to list it here. JSON in, JSON out unless the
@@ -380,7 +380,9 @@ Faceset library and builder, identity blending, recognition backbone.
 | POST | `/api/faceset/library/rebuild_thumbs` | FacesetLibrary |
 | POST | `/api/faceset/library/rename` | FacesetLibrary |
 | POST | `/api/faceset/library/save` | FacesetLibrary |
+| POST | `/api/identity/export_fsz` | IdentityBlender |
 | GET, POST | `/api/identity/blend` | IdentityBlender, identityBlend |
+| POST | `/api/identity/keyframes/evaluate` | IdentityKeyframeInspector |
 | GET | `/api/recognition/current` | RecognitionPanel |
 | GET | `/api/recognition/models` | RecognitionPanel |
 | POST | `/api/recognition/set` | RecognitionPanel |

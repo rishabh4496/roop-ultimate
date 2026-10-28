@@ -4,7 +4,8 @@ The rules live in ``roop/identity_lab.py`` (pure, tested against hand-built sets
 thin layer that reads the live Face Manager lists (``routes_facemgr``) and the source gallery, and
 writes results back. Registered in api.py beside the other routers; every route is a literal path.
 
-The Morph Lab blends 2-4 identities on the ArcFace hypersphere (``identity_algebra.blend_embeddings``).
+The Morph Lab blends 2-5 identities on the ArcFace hypersphere (``identity_algebra.blend_vectors``: Slerp or
+linear) and can push the result away from reference identities (``identity_algebra.deidentify``).
 The blend can be loaded as a Face Swap SOURCE to preview on the active frame, or saved as a V2 .fsz
 whose cached identity IS the blend: ``FaceSet.attach_v2_metadata`` reads ``default_embedding`` and
 ``pose_bins`` from the archive, not the embedding of the detected photo, so a saved blend survives
@@ -31,6 +32,7 @@ from api_media import _rgb_to_dataurl
 from roop import identity_lab as lab
 from roop import utilities as util
 from roop.degrade import swallowed as _swallowed
+from roop.identity_algebra import BLEND_MODES, DEFAULT_BLEND_MODE, DEFAULT_PRIVACY_COSINE, MAX_BLEND_SOURCES
 
 router = APIRouter()
 
@@ -271,8 +273,8 @@ def _anchor(cid):
 
 def _components(payload):
     comps = payload.get("components") or []
-    if not 2 <= len(comps) <= 4:
-        raise ValueError("pick 2 to 4 identities")
+    if not 2 <= len(comps) <= MAX_BLEND_SOURCES:
+        raise ValueError(f"pick 2 to {MAX_BLEND_SOURCES} identities")
     ids = [str(c.get("id", "")) for c in comps]
     if len(set(ids)) != len(ids):
         raise ValueError("each identity can be used once")
@@ -281,6 +283,42 @@ def _components(payload):
     except (TypeError, ValueError) as exc:
         raise ValueError("weights must be numbers") from exc
     return ids, [_identity(i) for i in ids], weights
+
+
+def _options(payload):
+    """(mode, deid) from a morph request: the blend mode and the optional de-identification
+    ``{"references": [candidate ids], "max_cosine", "min_primary_cosine"}`` with the references
+    resolved to unit vectors. ``deid`` is None unless ``deidentify.enabled`` and it names references."""
+    mode = str(payload.get("mode") or DEFAULT_BLEND_MODE).strip().lower()
+    if mode not in BLEND_MODES:
+        raise ValueError(f"mode must be one of {', '.join(BLEND_MODES)}")
+    raw = payload.get("deidentify")
+    if not isinstance(raw, dict) or not raw.get("enabled"):
+        return mode, None
+    refs = [str(r) for r in (raw.get("references") or [])]
+    if not refs:
+        return mode, None
+    if len(refs) > MAX_BLEND_SOURCES or len(set(refs)) != len(refs):
+        raise ValueError(f"name 1 to {MAX_BLEND_SOURCES} different de-identification references")
+    try:
+        max_cosine = float(raw.get("max_cosine", DEFAULT_PRIVACY_COSINE))
+        floor = float(raw.get("min_primary_cosine", 0.0))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("de-identification thresholds must be numbers") from exc
+    vectors = []
+    for ref in refs:
+        vec = _identity(ref)[0]
+        if vec is None:
+            raise ValueError(f"de-identification reference '{ref}' has no usable embedding")
+        vectors.append(vec)
+    return mode, {"references": vectors, "max_cosine": max_cosine, "min_primary_cosine": floor}
+
+
+def _summarise(payload):
+    """(ids, resolved, summary) for a morph request, validated."""
+    ids, resolved, weights = _components(payload)
+    mode, deid = _options(payload)
+    return ids, resolved, lab.morph_summary([r[0] for r in resolved], weights, mode=mode, deid=deid)
 
 
 @router.get("/api/facemgr/morph/candidates")
@@ -292,8 +330,7 @@ def morph_candidates():
 def morph_blend(payload: dict = Body(...)):
     """Normalised weights, the blend's cosine to each input, and a warning if it is far from all."""
     try:
-        ids, resolved, weights = _components(payload)
-        summary = lab.morph_summary([r[0] for r in resolved], weights)
+        ids, resolved, summary = _summarise(payload)
     except ValueError as exc:
         return JSONResponse(status_code=400, content={"message": str(exc)})
     summary.pop("embedding")
@@ -335,10 +372,22 @@ def write_blended_fsz(path, embedding, base_image, base_face, name):
     return path
 
 
+def save_blended_to_library(name, embedding, image, face, extra):
+    """Write ``embedding`` into the faceset library as a new V2 .fsz (plus a thumbnail) and return the library
+    payload with ``saved`` and ``extra``. Raises ValueError when there is no anchor image. Shared by the Morph Lab
+    (``/api/facemgr/morph/save``) and the Face Swap blender's export (``/api/identity/export_fsz``)."""
+    from routes_faceset import _faceset_library_payload, _imwrite_unicode, _unique_fsz_path
+    from source_gallery import _shrink_for_thumb
+    path = _unique_fsz_path(name)
+    write_blended_fsz(path, embedding, image, face, name)
+    if image is not None:
+        _imwrite_unicode(os.path.splitext(path)[0] + ".png", _shrink_for_thumb(image))
+    return _faceset_library_payload({"saved": os.path.splitext(os.path.basename(path))[0], **extra})
+
+
 def _prepared(payload):
     """(summary, anchor image, anchor face): the blend and what to anchor it to (the dominant identity's)."""
-    ids, resolved, weights = _components(payload)
-    summary = lab.morph_summary([r[0] for r in resolved], weights)
+    ids, resolved, summary = _summarise(payload)
     image, face = _anchor(ids[summary["dominant"]])
     return summary, image, face
 
@@ -346,23 +395,18 @@ def _prepared(payload):
 @router.post("/api/facemgr/morph/save")
 def morph_save(payload: dict = Body(...)):
     """Save the blend to the faceset library as a new .fsz."""
-    from routes_faceset import _faceset_library_payload, _imwrite_unicode, _unique_fsz_path
-    from source_gallery import _shrink_for_thumb
     try:
         summary, image, face = _prepared(payload)
         name = str(payload.get("name") or "Blended identity").strip() or "Blended identity"
-        path = _unique_fsz_path(name)
-        write_blended_fsz(path, summary["embedding"], image, face, name)
+        return save_blended_to_library(name, summary["embedding"], image, face,
+                                       {"weights": summary["weights"], "mode": summary["mode"],
+                                        "deidentify": summary["deidentify"],
+                                        "cosine_to_each": summary["cosine_to_each"]})
     except ValueError as exc:
         return JSONResponse(status_code=400, content={"message": str(exc)})
     except Exception:
         traceback.print_exc()
         return JSONResponse(status_code=500, content={"message": "failed to write the blended faceset"})
-    if image is not None:
-        _imwrite_unicode(os.path.splitext(path)[0] + ".png", _shrink_for_thumb(image))
-    return _faceset_library_payload({"saved": os.path.splitext(os.path.basename(path))[0],
-                                     "weights": summary["weights"],
-                                     "cosine_to_each": summary["cosine_to_each"]})
 
 
 @router.post("/api/facemgr/morph/preview")
@@ -388,4 +432,6 @@ def morph_preview(payload: dict = Body(...)):
     out = _source_faces_payload()
     out["index"] = index
     out["weights"] = summary["weights"]
+    out["mode"] = summary["mode"]
+    out["deidentify"] = summary["deidentify"]
     return out

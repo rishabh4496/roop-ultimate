@@ -15,8 +15,8 @@ from typing import Any, Dict, List, Optional, Sequence
 
 import numpy as np
 
-from roop.identity_algebra import (blend_embeddings, l2_normalize, normalize_weights,
-                                   MAX_BLEND_SOURCES)
+from roop.identity_algebra import (BLEND_MODES, DEFAULT_BLEND_MODE, DEFAULT_PRIVACY_COSINE, MAX_BLEND_SOURCES,
+                                   blend_vectors, deidentify, l2_normalize, normalize_weights)
 
 BUCKETS = ("frontal", "left_profile", "right_profile", "high_angle", "low_angle")
 BUCKET_LABELS = {
@@ -176,12 +176,19 @@ def plan_prune(rows: Sequence[Dict[str, Any]], embeddings: Sequence[Any],
 
 # ── Morph Lab ───────────────────────────────────────────────────────────────
 
-def morph_summary(embeddings: Sequence[Any], weights: Sequence[float]) -> Dict[str, Any]:
-    """The blend of 2-4 identities and how far it sits from each.
+def morph_summary(embeddings: Sequence[Any], weights: Sequence[float], mode: str = DEFAULT_BLEND_MODE,
+                  deid: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """The blend of 2-5 identities and how far it sits from each.
 
     ``weights`` may be free-weighted (50, 30, 20) or already normalised (0.5, 0.3, 0.2): the blend is
     always unit length, so only the RATIOS matter, and the normalised weights are reported back.
+    ``mode`` is "slerp" (great-circle / spherical mean) or "linear" (normalised weighted sum).
+    ``deid`` = ``{"references": [vectors], "max_cosine": c, "min_primary_cosine": m}`` pushes the blend
+    away from the references until its cosine to each is <= c (``identity_algebra.deidentify``); the
+    returned ``embedding`` and ``cosine_to_each`` are then the de-identified vector's.
     """
+    if mode not in BLEND_MODES:
+        raise ValueError(f"mode must be one of {', '.join(BLEND_MODES)}")
     if not 2 <= len(embeddings) <= MAX_BLEND_SOURCES:
         raise ValueError(f"a morph needs 2 to {MAX_BLEND_SOURCES} identities, got {len(embeddings)}")
     if len(weights) != len(embeddings):
@@ -193,22 +200,39 @@ def morph_summary(embeddings: Sequence[Any], weights: Sequence[float]) -> Dict[s
     if raw.sum() <= 1e-12:
         raise ValueError("at least one weight must be above zero")
     used = normalize_weights(raw.tolist())
-    blended = blend_embeddings(units, used.tolist())
+    blended = blend_vectors(units, used.tolist(), mode)
     if blended is None:
         raise ValueError("the chosen identities cancel out; pick closer ones or change the weights")
+    deid_info = None
+    if deid is not None:
+        refs = [_unit(r) for r in (deid.get("references") or [])]
+        if any(r is None for r in refs):
+            raise ValueError("a de-identification reference has no usable embedding")
+        res = deidentify(blended, refs, _num(deid.get("max_cosine"), DEFAULT_PRIVACY_COSINE),
+                         _num(deid.get("min_primary_cosine"), 0.0))
+        if res is not None and refs:
+            deid_info = {"applied": res.applied, "satisfied": res.satisfied, "reason": res.reason,
+                         "max_cosine": float(min(max(_num(deid.get("max_cosine"), DEFAULT_PRIVACY_COSINE), 0.0), 0.99)),
+                         "cosine_before": [round(x, 4) for x in res.cosine_before],
+                         "cosine_after": [round(x, 4) for x in res.cosine_after],
+                         "cosine_to_blend": round(res.cosine_to_primary, 4)}
+            blended = res.embedding
     cos = [round(float(np.dot(blended, u)), 4) for u in units]
     pair = [[round(float(np.dot(a, b)), 4) for b in units] for a in units]
     dominant = int(np.argmax(used))
     return {
+        "mode": mode,
         "weights": [round(float(w), 4) for w in used],
         "weights_as_given": [round(float(w), 4) for w in raw],
         "cosine_to_each": cos,
         "pairwise_cosine": pair,
         "dominant": dominant,
+        "deidentify": deid_info,
         "embedding": blended.astype(np.float32),
         # Below ~0.5 to the dominant source the result reads as a different person rather than a
-        # blend of the inputs; surfaced as a warning, not enforced.
+        # blend of the inputs; surfaced as a warning, not enforced.  A de-identified result is far from
+        # its references on purpose, so the warning is only about distance from the blended inputs.
         "warning": ("the blend sits far from every source (cosine to the dominant one is "
                     f"{cos[dominant]:.2f}); the swap may not resemble any of them")
-        if cos[dominant] < 0.5 else None,
+        if cos[dominant] < 0.5 and deid_info is None else None,
     }

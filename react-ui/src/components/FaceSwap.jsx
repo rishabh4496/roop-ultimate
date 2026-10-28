@@ -49,6 +49,7 @@ import SliderTrackerBar from './faceswap/SliderTrackerBar';
 import Timeline from './faceswap/Timeline';
 import FacesetLibrary from './faceswap/FacesetLibrary';
 import IdentityBlender from './faceswap/IdentityBlender';
+import useIdentityKeyframes from './faceswap/useIdentityKeyframes';
 import { EMPTY_BLEND, fetchIdentityBlend, normalizeBlend } from './faceswap/identityBlend';
 import AmbilightGlow from './faceswap/AmbilightGlow';
 import FloatingActionDock from './faceswap/FloatingActionDock';
@@ -130,7 +131,9 @@ export default function FaceSwap({
   const [identityBlend, setIdentityBlend] = useState(EMPTY_BLEND);
   useEffect(() => {
     let live = true;
-    fetchIdentityBlend().then((r) => { if (live && r) setIdentityBlend(normalizeBlend(r)); });
+    // The keyframes are per clip and come from localStorage (useIdentityKeyframes), not from the backend's
+    // live global (which holds whichever clip was rendered last), so the rehydrate keeps what is already here.
+    fetchIdentityBlend().then((r) => { if (live && r) setIdentityBlend((prev) => ({ ...normalizeBlend(r), keyframes: prev.keyframes })); });
     return () => { live = false; };
   }, []);
   const [targetFaces, setTargetFaces] = useState([]);
@@ -633,6 +636,15 @@ export default function FaceSwap({
   const timelineKey = activeTargetMediaId || targets[selTarget]?.name || String(selTarget);
   const sceneOverrides = useSceneOverrides(timelineKey, maxFrames);
   const renderLog = useRenderLog(timelineKey);
+  // Stage 20: identity keyframes ride inside the Identity Blender recipe (so previews, the cache strip and queued
+  // jobs all see them) and are stored per clip like the markers and overrides beside them.
+  const identityKeyframes = useIdentityKeyframes(timelineKey, identityBlend, setIdentityBlend, maxFrames);
+  const identityTrack = React.useMemo(() => ({
+    ...identityKeyframes,
+    recipe: identityBlend,
+    components: identityBlend.components,
+    labelOf: (id) => sourceFacesInfo.find((info) => info?.id === id)?.name || 'Not in gallery',
+  }), [identityKeyframes, identityBlend, sourceFacesInfo]);
 
   // Pasted Files Dialog State
   const [pastedFiles, setPastedFiles] = useState(null);
@@ -3968,7 +3980,8 @@ export default function FaceSwap({
           )}
         </Section>
         <IdentityBlender sourceFaces={sourceFaces} sourceFacesInfo={sourceFacesInfo}
-          value={identityBlend} onChange={setIdentityBlend} onUploadSource={onAddSource} notify={notify} />
+          value={identityBlend} onChange={setIdentityBlend} onUploadSource={onAddSource} notify={notify}
+          playheadFrame={frame} />
       </div>
 
         {/* COLUMN 3: Active Canvas, Timeline & Outputs */}
@@ -4273,6 +4286,7 @@ export default function FaceSwap({
                   fpPieces={timelinePieces}
                   liveRange={liveRange}
                   sceneOverrides={sceneOverrides}
+                  identityKeys={identityTrack}
                   swapModels={meta.swap_models}
                   detectionMode={p.face_detection_mode}
                   baseValues={{

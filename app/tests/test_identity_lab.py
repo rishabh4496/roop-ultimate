@@ -138,10 +138,10 @@ class MorphSummary(unittest.TestCase):
         self.assertAlmostEqual(s['cosine_to_each'][0], s['cosine_to_each'][1], places=4)
 
     def test_refusals(self):
-        with self.assertRaisesRegex(ValueError, '2 to 4'):
+        with self.assertRaisesRegex(ValueError, '2 to 5'):
             lab.morph_summary([unit(1)], [1])
-        with self.assertRaisesRegex(ValueError, '2 to 4'):
-            lab.morph_summary([unit(i) for i in range(5)], [1] * 5)
+        with self.assertRaisesRegex(ValueError, '2 to 5'):
+            lab.morph_summary([unit(i) for i in range(6)], [1] * 6)
         with self.assertRaisesRegex(ValueError, 'above zero'):
             lab.morph_summary([unit(1), unit(0, 1)], [0, 0])
         with self.assertRaisesRegex(ValueError, 'no usable embedding'):
@@ -256,7 +256,13 @@ class RoutesOverTheRealApp(unittest.TestCase):
         blend = self.client.post('/api/facemgr/morph/blend', json={'components': comps}).json()
         self.assertEqual(blend['weights'], [0.75, 0.25])
         self.assertEqual(blend['dominant'], 0)
-        self.assertAlmostEqual(blend['cosine_to_each'][0], 0.9487, places=3)      # 0.75/sqrt(0.75^2+0.25^2)
+        # Slerp is the default (Stage 20): the blend of an orthogonal pair at weight 0.25 is 22.5 deg from the
+        # heavier identity, cos 22.5 = 0.9239. The older normalised weighted sum is still one request field away.
+        self.assertEqual(blend['mode'], 'slerp')
+        self.assertAlmostEqual(blend['cosine_to_each'][0], 0.9239, places=3)
+        linear = self.client.post('/api/facemgr/morph/blend', json={'components': comps, 'mode': 'linear'}).json()
+        self.assertEqual(linear['mode'], 'linear')
+        self.assertAlmostEqual(linear['cosine_to_each'][0], 0.9487, places=3)      # 0.75/sqrt(0.75^2+0.25^2)
         self.assertEqual([c['label'] for c in blend['components']], ['alice', 'bob'])
 
         saved = self.client.post('/api/facemgr/morph/save', json={'components': comps, 'name': 'Mix A'}).json()
@@ -288,7 +294,7 @@ class RoutesOverTheRealApp(unittest.TestCase):
 
     def test_bad_requests_are_400_with_a_reason(self):
         self._library_identity('alice', unit(1))
-        for comps, why in (([{'id': 'lib:alice.fsz', 'weight': 1}], '2 to 4'),
+        for comps, why in (([{'id': 'lib:alice.fsz', 'weight': 1}], '2 to 5'),
                            ([{'id': 'lib:alice.fsz', 'weight': 1}, {'id': 'lib:alice.fsz', 'weight': 1}], 'once'),
                            ([{'id': 'lib:alice.fsz', 'weight': 1}, {'id': 'lib:nobody.fsz', 'weight': 1}], 'not found'),
                            ([{'id': 'lib:alice.fsz', 'weight': 0}, {'id': 'lib:alice.fsz', 'weight': 0}], 'once')):

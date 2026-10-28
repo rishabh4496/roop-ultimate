@@ -381,6 +381,12 @@ export interface IdentityBlendLimits {
   dial_sigmas: number;
   dials: string[];
   default_min_cosine: number;
+  /** Stage 20 */
+  modes?: string[];
+  curves?: string[];
+  max_keyframes?: number;
+  default_bezier?: number[];
+  default_privacy_cosine?: number;
 }
 
 export interface IdentityBlendDirections {
