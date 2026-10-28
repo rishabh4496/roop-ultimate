@@ -1,5 +1,5 @@
 import OutputVideoPlayer from './OutputVideoPlayer';
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { API, timeoutFor } from '../api';
 import { useApi } from '../useApi';
@@ -54,6 +54,8 @@ import { EMPTY_BLEND, fetchIdentityBlend, normalizeBlend } from './faceswap/iden
 import AmbilightGlow from './faceswap/AmbilightGlow';
 import FloatingActionDock from './faceswap/FloatingActionDock';
 import PipelinePill from './faceswap/PipelinePill';
+import { ModularPipelineFlowStrip } from './faceswap/PipelinePill';
+import ParameterSweepModal from './faceswap/ParameterSweepModal';
 import MediaTabSessionBar from './faceswap/MediaTabSessionBar';
 import PresetStudioModal from './faceswap/PresetStudioModal';
 import { popoutManager } from './faceswap/PopoutPreviewManager';
@@ -197,6 +199,27 @@ export default function FaceSwap({
   const [upscaledDims, setUpscaledDims] = useState(null);
   const [upscaling, setUpscaling] = useState(false);
   const [fakePreview, setFakePreview] = useState(true);
+  const [soloStage, setSoloStage] = useState(null);
+  const soloStageRef = useRef(null);
+  soloStageRef.current = soloStage;
+  const [bypassedStages, setBypassedStages] = useState({});
+  const [showFlowStrip, setShowFlowStrip] = useState(true);
+  const [showSweepModal, setShowSweepModal] = useState(false);
+
+  const handleSoloStage = useCallback((stage) => {
+    const next = stage === soloStageRef.current ? null : stage;
+    setSoloStage(next);
+    soloStageRef.current = next;
+    setTimeout(() => {
+      if (refreshPreviewRef.current) {
+        refreshPreviewRef.current({ force: true, solo_stage: next });
+      }
+    }, 0);
+  }, []);
+
+  const handleToggleBypass = useCallback((stageId) => {
+    setBypassedStages((prev) => ({ ...prev, [stageId]: !prev[stageId] }));
+  }, []);
   const [uploadingSrc, setUploadingSrc] = useState(false);
   const [uploadingTgt, setUploadingTgt] = useState(false);
   const [uploadingLipsyncAudio, setUploadingLipsyncAudio] = useState(false);
@@ -730,8 +753,8 @@ export default function FaceSwap({
   const cacheSuffix =
     `${meta?.git_version || 'dev'}_${activeTargetMediaId || 'no-target'}_${sourceSig}_${targetSig}_${selSource}_${selTargetFace}`;
 
-  const getCacheKey = (idx = selTarget, fr = frame) => {
-    return `${targetIdAt(idx) || `legacy-index-${idx}`}_${fr}_${previewKey}_${cacheSuffix}`;
+  const getCacheKey = (idx = selTarget, fr = frame, solo = soloStageRef.current) => {
+    return `${targetIdAt(idx) || `legacy-index-${idx}`}_${fr}_${previewKey}_${cacheSuffix}${solo ? `_solo_${solo}` : ''}`;
   };
 
   // Is this url still referenced by a cache entry? Asked before freeing the
@@ -745,8 +768,8 @@ export default function FaceSwap({
     return false;
   };
 
-  const getCachedPreview = (idx = selTarget, fr = frame) => {
-    const key = getCacheKey(idx, fr);
+  const getCachedPreview = (idx = selTarget, fr = frame, solo = soloStageRef.current) => {
+    const key = getCacheKey(idx, fr, solo);
     return previewCacheRef.current[key];
   };
 
@@ -1418,11 +1441,12 @@ export default function FaceSwap({
   // The canonical selection is reduced to its identity fields: the request id
   // and version are per-request bookkeeping and would make every signature
   // unique, which would turn the cache into a no-op.
-  const previewSignature = (params, fake) =>
+  const previewSignature = (params, fake, solo = soloStageRef.current) =>
     JSON.stringify(buildPreviewPayload(params, {
       index: 0, frame: 0, fake, imagemask: `mask:${maskVersion}`,
       processing_selection: selectionIdentity(buildProcessingSelection(params, { requestId: 'sig' })),
       selection_version: null,
+      solo_stage: solo,
     }));
 
   // The settings IN FORCE at the playhead: the clip's, with the scene override covering this frame
@@ -1437,7 +1461,7 @@ export default function FaceSwap({
   // response handler that closed over an older render. Updated every render.
   const wantedPreviewRef = useRef({ key: '', mediaId: null, frame: 1 });
   wantedPreviewRef.current = {
-    key: `${activeTargetMediaId || `legacy-index-${selTarget}`}_${frame}_${previewKey}_${cacheSuffix}`,
+    key: getCacheKey(selTarget, frame, soloStage),
     mediaId: activeTargetMediaId,
     frame,
   };
@@ -1601,8 +1625,9 @@ export default function FaceSwap({
     // current frame. Anything the key cannot see — a source file edited on disk,
     // a model swapped underneath us, a backend restart — left a stale image with
     // no way to clear it.
+    const effectiveSolo = opts.solo_stage !== undefined ? opts.solo_stage : soloStageRef.current;
     if (!opts.force) {
-      const cached = getCachedPreview(idx, fr);
+      const cached = getCachedPreview(idx, fr, effectiveSolo);
       if (cached) {
         setPreviewFaces(cached.faces);
         setPreviewPersonIds(cached.personIds || []);
@@ -1622,7 +1647,7 @@ export default function FaceSwap({
         return;
       }
     } else {
-      delete previewCacheRef.current[getCacheKey(idx, fr)];
+      delete previewCacheRef.current[getCacheKey(idx, fr, effectiveSolo)];
     }
 
     // Single-flight: the backend's live_swap shares one (non-thread-safe)
@@ -1663,7 +1688,7 @@ export default function FaceSwap({
     const request = {
       seq: previewSeqRef.current,
       requestId: null,
-      key: getCacheKey(idx, fr),
+      key: getCacheKey(idx, fr, effectiveSolo),
       mediaId: requestedMediaId,
       frame: fr,
       selection: null,
@@ -1678,6 +1703,8 @@ export default function FaceSwap({
       const res = await postJSON('/api/preview', buildPreviewPayload(patchSettings(p, overrideAt(sceneOverrides.activeOverrides, fr)), {
         index: idx, frame: fr, fake, target_media_id: requestedMediaId,
         processing_selection: selection,
+        solo_stage: effectiveSolo,
+        ...(opts.overrides || {}),
       }), { abortOnUnmount: true, timeout: 0, signal: ctrl.signal });
       if (res?.error) throw new Error(res.message || res.error || 'preview swap failed');
       const verdict = classifyPreviewResponse({
@@ -4247,6 +4274,22 @@ export default function FaceSwap({
                   }}
                 />
 
+                {/* Modular Pipeline Flow Strip & 1-Click Buffer Soloing */}
+                {showFlowStrip && (
+                  <div className="pt-1">
+                    <div className="flex items-center justify-between mb-1 text-micro text-white/50 px-1">
+                      <span className="font-semibold uppercase tracking-wider text-[11px] text-white/70">Modular Pipeline Flow</span>
+                      <span className="text-[10px]">Alt+Click node to solo intermediate buffer &bull; ⏻ bypass</span>
+                    </div>
+                    <ModularPipelineFlowStrip
+                      soloStage={soloStage}
+                      onSoloStage={handleSoloStage}
+                      bypassedStages={bypassedStages}
+                      onToggleBypass={handleToggleBypass}
+                    />
+                  </div>
+                )}
+
                 {/* Live Slider Tracker Bar positioned directly above the preview box */}
                 <SliderTrackerBar
                   params={p}
@@ -4335,6 +4378,8 @@ export default function FaceSwap({
                       that fetched the frame: during playback the buffered
                       player owns it and supplies a url instead. */}
                   <InteractivePreview
+                    soloStage={soloStage}
+                    onSoloStage={handleSoloStage}
                     beforeSrc={rawUrl}
                     afterSrc={stageAfterSrc}
                     beforeFrame={rawFrameBitmap && loadedRawUrl === rawUrl ? rawFrameBitmap : null}
@@ -4535,6 +4580,15 @@ export default function FaceSwap({
               <Button size="sm" variant="secondary" disabled={!previewFaces.length}
                 title="Explicitly capture every detected face as a separate target person"
                 onClick={captureAllPeopleFromFrame}>Capture all people</Button>
+              <Button
+                size="sm"
+                variant="secondary"
+                data-testid="faceswap-sweep-btn"
+                title="Open 3x3 Parameter Sweep Contact Sheet"
+                onClick={() => setShowSweepModal(true)}
+              >
+                Parameter Sweep (3×3 Grid)
+              </Button>
               {previewSrc && !comparingEnhancers && !comparingMasks && !comparingSwappers && !comparingUpscalers && (
                 <Button size="sm" variant="secondary" disabled={upscaling} onClick={upscaleThisFrame}
                   title="AI-upscale just this frame to preview final quality">
@@ -4556,6 +4610,7 @@ export default function FaceSwap({
             <div className="flex items-center flex-wrap gap-3">
               <Toggle label="Live Swap" checked={fakePreview} onChange={setFakePreview} />
               <Toggle label="Compare" checked={compare} onChange={(v) => { setCompare(v); if (v) { setComparingEnhancers(false); setComparingMasks(false); setComparingSwappers(false); setComparingUpscalers(false); } }} />
+              <Toggle label="Flow Nodes" checked={showFlowStrip} onChange={setShowFlowStrip} />
               {compare && <Toggle label="Split View" checked={splitView} onChange={setSplitView} />}
               <Toggle label="Enhancer Grid" checked={comparingEnhancers} onChange={(v) => { setComparingEnhancers(v); if (v) { setCompare(false); setComparingMasks(false); setComparingSwappers(false); setComparingUpscalers(false); } }} />
               <Toggle label="Mask Grid" checked={comparingMasks} onChange={(v) => { setComparingMasks(v); if (v) { setCompare(false); setComparingEnhancers(false); setComparingSwappers(false); setComparingUpscalers(false); } }} />
@@ -4563,6 +4618,21 @@ export default function FaceSwap({
               <Toggle label="Upscale Grid" checked={comparingUpscalers} onChange={(v) => { setComparingUpscalers(v); if (v) { setCompare(false); setComparingEnhancers(false); setComparingMasks(false); setComparingSwappers(false); } }} />
             </div>
           </Section>
+
+          {/* Stage 24 3x3 Parameter Sweep Contact Sheet Modal */}
+          <ParameterSweepModal
+            isOpen={showSweepModal}
+            onClose={() => setShowSweepModal(false)}
+            targetIndex={selTarget}
+            frame={frame}
+            currentSettings={p}
+            onApplyRecipe={(recipe) => {
+              setSettings((s) => ({ ...s, ...recipe }));
+              refreshPreview({ force: true, overrides: recipe });
+              notify?.('Applied sweep recipe parameters', 'info');
+            }}
+            notify={notify}
+          />
 
           {/* Single-frame AI-upscale spot-check modal — portaled to <body> so
               transformed ancestors (TiltCard / motion) can't clip the fixed

@@ -1152,9 +1152,25 @@ async function startServer() {
     if ('error' in mouth) { res.status(422).json({ message: mouth.error }); return; }
     const idx = Number(req.body.index ?? selectedTargetIndex);
     const frame = Number(req.body.frame ?? currentFrame);
+    const soloStage = req.body?.solo_stage || null;
     const target = targetEntries[idx] || targetEntries[0];
+    let label = `SWAPPED: ${sourceInfo[selectedSourceIndex]?.path || 'source'} -> ${target?.name || 'target'}`;
+    if (soloStage === 'detect' || soloStage === 'detect_align' || soloStage === '1') {
+      label = `[STAGE 1 SOLO: DETECT & ALIGN] 512 Crop + 106 Landmarks`;
+    } else if (soloStage === 'swap' || soloStage === 'hyperswap' || soloStage === '2') {
+      label = `[STAGE 2 SOLO: HYPERSWAP] Raw Unrestored Swap Output`;
+    } else if (soloStage === 'gaze_mouth' || soloStage === '3') {
+      label = `[STAGE 3 SOLO: GAZE & MOUTH] Gaze Tracking & Viseme Blend`;
+    } else if (soloStage === 'mask' || soloStage === 'xseg_roto' || soloStage === '4') {
+      label = `[STAGE 4 SOLO: XSEG3 + ROTO] Combined Alpha Matte Buffer`;
+    } else if (soloStage === 'restore' || soloStage === 'restore_ultra' || soloStage === '5') {
+      label = `[STAGE 5 SOLO: RESTORE ULTRA] Neural Restoration & High-Freq Detail`;
+    } else if (soloStage === 'relight_lut' || soloStage === '6') {
+      label = `[STAGE 6 SOLO: RELIGHT & LUT] Photometric Relighting & 3D LUT`;
+    }
+
     const image = createSampleTargetSvg(
-      `SWAPPED: ${sourceInfo[selectedSourceIndex]?.path || 'source'} -> ${target?.name || 'target'}`,
+      label,
       frame,
       target?.frames || 100,
       target?.is_video || false,
@@ -1171,6 +1187,70 @@ async function startServer() {
       pose: [{ pitch: -1.4, yaw: 8.2, roll: 0.4 }],
       enhancer: appSettings.selected_enhancer,
       swap_model: appSettings.swap_model,
+      solo_stage: soloStage,
+    });
+  });
+
+  // Stage 24: 3x3 Parameter Sweep Contact Sheet Generator
+  app.post('/api/preview/sweep', (req, res) => {
+    const {
+      x_param = 'restore_ultra_detail_weight',
+      x_values = [0.25, 0.65, 1.0],
+      y_param = 'mask_erode_dilate_radius',
+      y_values = [-5, 0, 5],
+      index = selectedTargetIndex,
+      frame: reqFrame = currentFrame,
+    } = req.body || {};
+
+    const target = targetEntries[Number(index)] || targetEntries[0];
+    const xVals = Array.isArray(x_values) && x_values.length === 3 ? x_values : [0.25, 0.65, 1.0];
+    const yVals = Array.isArray(y_values) && y_values.length === 3 ? y_values : [-5, 0, 5];
+
+    const tiles = [];
+    for (let yi = 0; yi < 3; yi++) {
+      for (let xi = 0; xi < 3; xi++) {
+        const xv = xVals[xi];
+        const yv = yVals[yi];
+        const tileSvg = createSampleTargetSvg(
+          `SWEEP [${xi},${yi}] ${x_param}=${xv} | ${y_param}=${yv}`,
+          Number(reqFrame),
+          target?.frames || 100,
+          target?.is_video || false,
+          1000 + yi * 10 + xi
+        );
+        tiles.push({
+          tile_id: `${yi}_${xi}`,
+          x_index: xi,
+          y_index: yi,
+          x_value: xv,
+          y_value: yv,
+          image: tileSvg,
+          recipe: { [x_param]: xv, [y_param]: yv },
+        });
+      }
+    }
+
+    res.json({
+      x_param,
+      x_values: xVals,
+      y_param,
+      y_values: yVals,
+      tiles,
+      face_coordinates: {
+        bbox: [190, 60, 140, 160],
+        crop_rect: [140, 30, 240, 220],
+        eyes: {
+          left: [240, 130],
+          right: [280, 130],
+        },
+        mouth: {
+          center: [260, 170],
+        },
+        jawline: {
+          center: [260, 215],
+        },
+      },
+      count: tiles.length,
     });
   });
 

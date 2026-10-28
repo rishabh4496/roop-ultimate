@@ -52,6 +52,7 @@ face_swap_mode = 'DFL XSeg'
 enable_occlusion_mask = True
 blend_ratio = 0.80
 is_preview = False
+solo_stage = None
 distance_threshold = 1
 default_det_size = True
 face_detector_size = '640'

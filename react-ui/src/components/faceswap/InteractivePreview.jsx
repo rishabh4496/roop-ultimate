@@ -31,6 +31,7 @@ import {
   ZOOM_MIN, ZOOM_MAX, clampPan, panAnchoredAt, panCenteringAt,
   transformFor, uiScale, wheelZoom, faceTrackingTarget,
 } from './zoomPan';
+import { MODULAR_FLOW_NODES } from './pillModel';
 
 export default function InteractivePreview({
   beforeSrc,
@@ -86,10 +87,16 @@ export default function InteractivePreview({
   referenceFrame = null,
   referenceLabel = '',
   liveLabel = '',
+  soloStage = null,
+  onSoloStage = null,
 }) {
   // ── State & Refs ──────────────────────────────────────────────────────────
   const onSlotHotkeyRef = useRef(onSlotHotkey);
   onSlotHotkeyRef.current = onSlotHotkey;
+  const soloStageRef = useRef(soloStage);
+  soloStageRef.current = soloStage;
+  const onSoloStageRef = useRef(onSoloStage);
+  onSoloStageRef.current = onSoloStage;
   const [sliderPosition, setSliderPosition] = useState(50);
   const sliderPosRef = useRef(50);
 
@@ -799,6 +806,12 @@ export default function InteractivePreview({
         isSpaceDownRef.current = true;
       }
 
+      if (e.key === 'Escape' && soloStageRef.current) {
+        e.preventDefault();
+        onSoloStageRef.current?.(null);
+        return;
+      }
+
       // Hold Backslash (`\`) for instant Original peek
       if (e.key === '\\') {
         setIsPeekingOriginal(true);
@@ -1451,6 +1464,28 @@ export default function InteractivePreview({
         <span className="rounded-lg bg-indigo-500/20 text-indigo-300 backdrop-blur-md px-2.5 py-1 text-micro font-bold border border-indigo-400/30 shadow-lg">
           {colorBadge}
         </span>
+      )}
+      {soloStage && (
+        <div
+          role="status"
+          data-testid="interactive-preview-solo-badge"
+          className="pointer-events-auto flex items-center gap-2 rounded-lg bg-amber-400 text-black px-2.5 py-1 text-micro font-bold shadow-lg border border-amber-300 select-none animate-pulse"
+        >
+          <span className="h-2 w-2 rounded-full bg-black" />
+          <span>SOLO: {MODULAR_FLOW_NODES.find((n) => n.id === soloStage)?.label || soloStage}</span>
+          <button
+            type="button"
+            data-testid="exit-solo-button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onSoloStage?.(null);
+            }}
+            className="ml-1 px-1.5 py-0.5 rounded bg-black/80 hover:bg-black text-amber-300 text-[10px] uppercase font-bold transition-colors"
+            title="Exit Solo buffer mode (Esc / Alt+Click)"
+          >
+            Exit Solo
+          </button>
+        </div>
       )}
       {zebraActive && (
         <span className="rounded-lg bg-rose-500/20 text-rose-300 backdrop-blur-md px-2.5 py-1 text-micro font-bold border border-rose-400/30 shadow-lg animate-pulse">

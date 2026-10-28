@@ -127,7 +127,7 @@ VIA_MASK_OFFSET_HELPER = {
 }
 
 # Preview-only concepts, meaningless to a full render.
-PREVIEW_ONLY = {"index", "frame", "fake_preview", "show_mask_offsets"}
+PREVIEW_ONLY = {"index", "frame", "fake_preview", "show_mask_offsets", "solo_stage"}
 
 # Run-only: temporal settings that need more than one frame, and output/pipeline
 # settings that do not affect pixels. A single-frame preview cannot show these,

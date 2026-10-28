@@ -5014,6 +5014,8 @@ def preview(payload: dict = Body(...)):
         target_context_lock_held = True
         payload = dict(payload or {})
         roop_globals.is_preview = True
+        solo_stage = payload.get("solo_stage")
+        roop_globals.solo_stage = solo_stage
         _update_mask_offsets_from_payload(payload)
         _routes_identity.apply_identity_blend_from_payload(payload)
         idx, media_id, target_error = _activate_target_from_payload(
@@ -5251,6 +5253,61 @@ def preview(payload: dict = Body(...)):
             # gate then discards used to come back as an unswapped picture with
             # no diagnostic at all (Stage 15 acceptance finding).
             audit_before = dict(_procmgr_runtime._audit)
+            # Stage 24: 1-Click Buffer Solo overrides
+            if solo_stage in ('detect', 'detect_align', '1'):
+                import cv2
+                solo_frame = current_frame.copy()
+                for f in (faces or []):
+                    bbox = f["bbox"].astype(int).tolist()
+                    cv2.rectangle(solo_frame, (bbox[0], bbox[1]), (bbox[2], bbox[3]), (0, 255, 128), 2)
+                    k = f.get("kps") if isinstance(f, dict) else getattr(f, "kps", None)
+                    if k is not None:
+                        for pt in k:
+                            cv2.circle(solo_frame, (int(pt[0]), int(pt[1])), 4, (0, 255, 255), -1)
+                    cv2.putText(solo_frame, "STAGE 1 SOLO: DETECT & ALIGN", (bbox[0], max(24, bbox[1] - 8)),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 255, 128), 2)
+                return {"image": _bgr_to_preview_dataurl(solo_frame), "faces": faces_list, "person_ids": person_ids, "kps": kps_list, "anchors": anchors_list, "pose": pose_list, "face_index_order": _TARGET_FACE_INDEX_ORDER, "solo_stage": solo_stage, **echo, **sar_fields, "target_index": idx, "target_media_id": media_id}
+
+            if solo_stage in ('mask', 'xseg_roto', '4') and faces:
+                try:
+                    import cv2
+                    from roop.ProcessMgr import canonicalize_face_alignment
+                    from roop.core import get_processing_plugins
+                    plugins = get_processing_plugins(mask_engine, swap_model=swap_model)
+                    mask_procs = [p for p in plugins if getattr(p, 'type', None) == 'mask']
+                    if mask_procs:
+                        aligned_img, M, _alignment = canonicalize_face_alignment(
+                            current_frame, faces[0], roop_globals.subsample_size, 'arcface')
+                        crop_mask = mask_procs[0].Run(aligned_img)
+                        if crop_mask is not None:
+                            m_arr = np.clip(np.asarray(crop_mask, dtype=np.float32), 0.0, 1.0)
+                            if m_arr.mean() < 0.5:
+                                m_arr = 1.0 - m_arr
+                            m_u8 = (m_arr * 255.0).astype(np.uint8)
+                            m_bgr = cv2.cvtColor(m_u8, cv2.COLOR_GRAY2BGR) if m_u8.ndim == 2 else m_u8
+                            inv_M = cv2.invertAffineTransform(M)
+                            h_f, w_f = current_frame.shape[:2]
+                            full_matte = cv2.warpAffine(m_bgr, inv_M, (w_f, h_f), flags=cv2.INTER_LINEAR)
+                            return {"image": _bgr_to_preview_dataurl(full_matte), "faces": faces_list, "person_ids": person_ids, "kps": kps_list, "anchors": anchors_list, "pose": pose_list, "face_index_order": _TARGET_FACE_INDEX_ORDER, "solo_stage": solo_stage, **echo, **sar_fields, "target_index": idx, "target_media_id": media_id}
+                except Exception as _mask_err:
+                    _swallowed("api:solo_mask", _mask_err)
+
+            if solo_stage in ('swap', 'hyperswap', '2'):
+                # Bypass mask, enhancer, mouth, and relighting for raw unrestored swap
+                options.processors = [p for p in options.processors if getattr(p, 'type', None) == 'swap']
+                roop_globals.selected_enhancer = "None"
+                roop_globals.light_harmonizer = False
+                roop_globals.expression_restore_strength = 0.0
+
+            elif solo_stage in ('gaze_mouth', '3'):
+                # Swap + expression/mouth, no restorer or relighting
+                roop_globals.selected_enhancer = "None"
+                roop_globals.light_harmonizer = False
+
+            elif solo_stage in ('restore', 'restore_ultra', '5'):
+                # Swap + enhancer, no photometric relighting
+                roop_globals.light_harmonizer = False
+
             swapped = live_swap(current_frame, options, input_facesets=mapped)
             audit_after = _procmgr_runtime._audit
             swap_audit = {key: int(audit_after[key] - audit_before.get(key, 0))
@@ -5258,8 +5315,8 @@ def preview(payload: dict = Body(...)):
                           if audit_after[key] - audit_before.get(key, 0)}
             print(f"[Preview] request={processing_request['request_id']} swap_audit={swap_audit}", flush=True)
             if swapped is None:
-                return {"image": _bgr_to_preview_dataurl(current_frame), "faces": faces_list, "person_ids": person_ids, "kps": kps_list, "anchors": anchors_list, "pose": pose_list, "face_index_order": _TARGET_FACE_INDEX_ORDER, **echo, **sar_fields, "swap_audit": swap_audit, "target_index": idx, "target_media_id": media_id}
-            return {"image": _bgr_to_preview_dataurl(swapped), "faces": faces_list, "person_ids": person_ids, "kps": kps_list, "anchors": anchors_list, "pose": pose_list, "face_index_order": _TARGET_FACE_INDEX_ORDER, **echo, **sar_fields, "swap_audit": swap_audit, "target_index": idx, "target_media_id": media_id}
+                return {"image": _bgr_to_preview_dataurl(current_frame), "faces": faces_list, "person_ids": person_ids, "kps": kps_list, "anchors": anchors_list, "pose": pose_list, "face_index_order": _TARGET_FACE_INDEX_ORDER, "solo_stage": solo_stage, **echo, **sar_fields, "swap_audit": swap_audit, "target_index": idx, "target_media_id": media_id}
+            return {"image": _bgr_to_preview_dataurl(swapped), "faces": faces_list, "person_ids": person_ids, "kps": kps_list, "anchors": anchors_list, "pose": pose_list, "face_index_order": _TARGET_FACE_INDEX_ORDER, "solo_stage": solo_stage, **echo, **sar_fields, "swap_audit": swap_audit, "target_index": idx, "target_media_id": media_id}
         except Exception:
             traceback.print_exc()
             return JSONResponse(status_code=500, content={
@@ -5284,6 +5341,205 @@ def preview(payload: dict = Body(...)):
         except Exception as _degrade_error:
             _swallowed("api.py:2883", _degrade_error, "fallback continued")
             pass
+        if target_context_lock_held:
+            _target_context_lock.release()
+        _preview_request_lock.release()
+
+
+
+@app.post("/api/preview/sweep")
+def preview_sweep(payload: dict = Body(...)):
+    """Evaluate a 3x3 parameter sweep grid on the current frame.
+    Reuses face detection and canonical alignment crop once across all 9 tiles.
+    """
+    if _render_active():
+        return _render_active_response()
+    _preview_request_lock.acquire()
+    target_context_lock_held = False
+    try:
+        _target_context_lock.acquire()
+        target_context_lock_held = True
+        payload = dict(payload or {})
+        roop_globals.is_preview = True
+        _update_mask_offsets_from_payload(payload)
+        _routes_identity.apply_identity_blend_from_payload(payload)
+        idx, media_id, target_error = _activate_target_from_payload(
+            payload, index=payload.get("index", state.selected_target_index), refresh=False)
+        if target_error:
+            return target_error
+        payload["index"] = idx
+        payload["target_index"] = idx
+        payload["target_media_id"] = media_id
+        frame = int(payload.get("frame", 1))
+
+        x_param = str(payload.get("x_param") or "restore_ultra_detail_weight")
+        x_values = payload.get("x_values") or [0.25, 0.65, 1.0]
+        y_param = str(payload.get("y_param") or "mask_erode_dilate_radius")
+        y_values = payload.get("y_values") or [-5, 0, 5]
+
+        if not isinstance(x_values, list) or len(x_values) != 3:
+            x_values = [0.25, 0.65, 1.0]
+        if not isinstance(y_values, list) or len(y_values) != 3:
+            y_values = [-5, 0, 5]
+
+        if idx >= len(list_files_process):
+            return JSONResponse(status_code=404, content={"message": "no target"})
+
+        filename = list_files_process[idx].filename
+        if util.is_video(filename) or filename.lower().endswith("gif") or util.is_animated_webp(filename):
+            try:
+                current_frame = _preview_frames.get_frame(filename, frame)
+            except _preview_provider.PreviewTimeout as exc:
+                return _preview_timeout_response(exc)
+        else:
+            current_frame = get_image_frame(filename)
+        if current_frame is None:
+            return JSONResponse(status_code=404, content={"message": "no frame"})
+
+        # Step 1: Detect face once on this frame
+        faces = _faces_in_target_selection_order(current_frame)
+        if not faces:
+            h, w = current_frame.shape[:2]
+            crop = current_frame[max(0, h//4):min(h, 3*h//4), max(0, w//4):min(w, 3*w//4)]
+            img_data = _bgr_to_preview_dataurl(crop)
+            tiles = []
+            for yi, yv in enumerate(y_values):
+                for xi, xv in enumerate(x_values):
+                    tiles.append({
+                        "tile_id": f"{yi}_{xi}",
+                        "x_index": xi,
+                        "y_index": yi,
+                        "x_value": xv,
+                        "y_value": yv,
+                        "image": img_data,
+                        "recipe": {x_param: xv, y_param: yv},
+                    })
+            return {
+                "x_param": x_param,
+                "x_values": x_values,
+                "y_param": y_param,
+                "y_values": y_values,
+                "tiles": tiles,
+                "face_coordinates": None,
+                "count": len(tiles),
+            }
+
+        target_face = faces[0]
+        k = target_face.get("kps") if isinstance(target_face, dict) else getattr(target_face, "kps", None)
+        kps = np.asarray(k).astype(float).tolist() if k is not None else None
+        raw_b = target_face.get("bbox") if isinstance(target_face, dict) else getattr(target_face, "bbox", [0, 0, 100, 100])
+        bbox = np.asarray(raw_b).astype(int).tolist()
+
+        bx, by, bw, bh = bbox[0], bbox[1], max(10, bbox[2] - bbox[0]), max(10, bbox[3] - bbox[1])
+        pad_x = int(bw * 0.35)
+        pad_y = int(bh * 0.35)
+        cx1 = max(0, bx - pad_x)
+        cy1 = max(0, by - pad_y)
+        cx2 = min(current_frame.shape[1], bx + bw + pad_x)
+        cy2 = min(current_frame.shape[0], by + bh + pad_y)
+
+        face_coords = {
+            "bbox": [bx, by, bw, bh],
+            "crop_rect": [cx1, cy1, cx2 - cx1, cy2 - cy1],
+            "eyes": {
+                "left": [kps[0][0] - cx1, kps[0][1] - cy1] if kps else [bw * 0.3, bh * 0.35],
+                "right": [kps[1][0] - cx1, kps[1][1] - cy1] if kps else [bw * 0.7, bh * 0.35],
+            },
+            "mouth": {
+                "center": [
+                    ((kps[3][0] + kps[4][0]) / 2.0) - cx1,
+                    ((kps[3][1] + kps[4][1]) / 2.0) - cy1
+                ] if kps and len(kps) >= 5 else [bw * 0.5, bh * 0.7]
+            },
+            "jawline": {
+                "center": [
+                    ((kps[3][0] + kps[4][0]) / 2.0) - cx1,
+                    by + bh - cy1
+                ] if kps and len(kps) >= 5 else [bw * 0.5, bh * 0.9]
+            }
+        }
+
+        # Step 2: Evaluate 9 variations reusing detection & alignment crop
+        from roop.core import live_swap, get_processing_plugins
+        from roop.ProcessOptions import ProcessOptions
+
+        processing_request = _canonical_processing_request(
+            payload, target_media_index=idx, target_media_id=media_id)
+        mapped = mapped_facesets(
+            processing_request["source_index_mapping"],
+            processing_request["swap_mode"],
+        )
+        face_index = processing_request["source_index"]
+
+        tiles = []
+        for yi, y_val in enumerate(y_values):
+            for xi, x_val in enumerate(x_values):
+                tile_payload = dict(payload)
+                tile_payload[x_param] = x_val
+                tile_payload[y_param] = y_val
+
+                _apply_stage11_settings(tile_payload, preview_frame=frame)
+                _apply_merger_settings(tile_payload)
+                _apply_enhancer_settings(tile_payload)
+                _apply_target_appearance_settings(tile_payload)
+                _apply_lut_grading_settings(tile_payload)
+
+                for p_name, p_val in [(x_param, x_val), (y_param, y_val)]:
+                    if hasattr(roop_globals, p_name):
+                        try:
+                            cur_v = getattr(roop_globals, p_name)
+                            setattr(roop_globals, p_name, type(cur_v)(p_val) if cur_v is not None else p_val)
+                        except Exception:
+                            setattr(roop_globals, p_name, p_val)
+
+                swap_m = tile_payload.get("swap_model", payload.get("swap_model", "inswapper"))
+                mask_e = map_mask_engines(tile_payload.get("mask_engine", "None"),
+                                          tile_payload.get("mask_engine_2", "None"),
+                                          tile_payload.get("clip_text", ""))
+
+                options = ProcessOptions(
+                    get_processing_plugins(mask_e, swap_model=swap_m),
+                    float(tile_payload.get("face_distance", roop_globals.distance_threshold)),
+                    float(tile_payload.get("blend_ratio", roop_globals.blend_ratio)),
+                    processing_request["swap_mode"], face_index, tile_payload.get("clip_text", ""),
+                    tile_payload.get("imagemask") or None,
+                    1, roop_globals.subsample_size,
+                    False, False,
+                    swap_model=swap_m,
+                    processing_request=processing_request
+                )
+
+                swapped = live_swap(current_frame, options, input_facesets=mapped)
+                if swapped is not None:
+                    tile_crop = swapped[cy1:cy2, cx1:cx2]
+                else:
+                    tile_crop = current_frame[cy1:cy2, cx1:cx2]
+
+                tiles.append({
+                    "tile_id": f"{yi}_{xi}",
+                    "x_index": xi,
+                    "y_index": yi,
+                    "x_value": x_val,
+                    "y_value": y_val,
+                    "image": _bgr_to_preview_dataurl(tile_crop),
+                    "recipe": {x_param: x_val, y_param: y_val},
+                })
+
+        return {
+            "x_param": x_param,
+            "x_values": x_values,
+            "y_param": y_param,
+            "y_values": y_values,
+            "tiles": tiles,
+            "face_coordinates": face_coords,
+            "count": len(tiles),
+        }
+    except Exception as exc:
+        traceback.print_exc()
+        return JSONResponse(status_code=500, content={"message": f"Sweep failed: {str(exc)}"})
+    finally:
+        roop_globals.is_preview = False
+        roop_globals.solo_stage = None
         if target_context_lock_held:
             _target_context_lock.release()
         _preview_request_lock.release()

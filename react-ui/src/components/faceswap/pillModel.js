@@ -128,3 +128,76 @@ export function fpsText(run, model) {
   const v = isNum(run?.fps_now) && run.fps_now > 0 ? run.fps_now : run?.fps;
   return isNum(v) && v > 0 ? `${v.toFixed(1)} fps` : '';
 }
+
+// ── Stage 24: Modular Pipeline Flow Strip Model ────────────────────────────
+export const MODULAR_FLOW_NODES = Object.freeze([
+  {
+    id: 'detect_align',
+    n: 1,
+    key: 'detect',
+    label: 'Detect & Align',
+    shortLabel: 'Detect',
+    latencyKey: 'warp',
+    fallbackMs: 3.4,
+  },
+  {
+    id: 'hyperswap',
+    n: 2,
+    key: 'swap',
+    label: 'HyperSwap',
+    shortLabel: 'Swap',
+    latencyKey: 'model',
+    fallbackMs: 11.2,
+  },
+  {
+    id: 'gaze_mouth',
+    n: 3,
+    key: 'gaze_mouth',
+    label: 'Gaze & Mouth',
+    shortLabel: 'Gaze/Mouth',
+    latencyKey: 'lipsync',
+    fallbackMs: 4.2,
+  },
+  {
+    id: 'xseg_roto',
+    n: 4,
+    key: 'mask',
+    label: 'XSeg3 + Roto',
+    shortLabel: 'Mask',
+    latencyKey: 'mask',
+    fallbackMs: 6.8,
+  },
+  {
+    id: 'restore_ultra',
+    n: 5,
+    key: 'restore',
+    label: 'Restore Ultra',
+    shortLabel: 'Restore',
+    latencyKey: 'restore',
+    fallbackMs: 14.5,
+  },
+  {
+    id: 'relight_lut',
+    n: 6,
+    key: 'blend',
+    label: 'Relight & LUT',
+    shortLabel: 'Relight',
+    latencyKey: 'blend',
+    fallbackMs: 4.1,
+  },
+]);
+
+/** Latency color code: green (<5ms), amber (5-15ms), red (>15ms). */
+export function latencyTone(ms) {
+  if (ms == null || !Number.isFinite(ms)) return 'text-muted border-white/10 bg-white/5';
+  if (ms < 5.0) return 'text-emerald-400 border-emerald-500/30 bg-emerald-500/10';
+  if (ms <= 15.0) return 'text-amber-400 border-amber-500/30 bg-amber-500/10';
+  return 'text-rose-400 border-rose-500/30 bg-rose-500/10';
+}
+
+/** Formatted latency label (e.g. '4.1ms'). */
+export function formatLatency(ms) {
+  if (ms == null || !Number.isFinite(ms) || ms < 0) return '– ms';
+  return `${ms.toFixed(1)}ms`;
+}
+

@@ -14,6 +14,7 @@ import VideoFramesetExtractor from './extras/VideoFramesetExtractor';
 import MouthCustodyPanel from './faceswap/MouthCustodyPanel';
 import { overridePatch } from './faceswap/mouthCustody';
 import BroadcastScopesDock from './faceswap/BroadcastScopesDock';
+import ParameterSweepModal from './faceswap/ParameterSweepModal';
 import StereoVRViewport, { DEFAULT_VR_PARAMS } from './faceswap/StereoVRViewport';
 import { drawZebraOverlay } from './faceswap/falseColorZebra';
 import {
@@ -58,6 +59,7 @@ export default function Extras({ notify, registerFileListener, meta, settings, s
   const [zebraActive, setZebraActive] = useState(false);
   const [monitorActive, setMonitorActive] = useState(false);
   const [vrActive, setVrActive] = useState(false);
+  const [showSweepModal, setShowSweepModal] = useState(false);
   const [vrParams, setVrParams] = useState(DEFAULT_VR_PARAMS);
   const refChannelRef = useRef(null);
 
@@ -352,6 +354,15 @@ export default function Extras({ notify, registerFileListener, meta, settings, s
                 >
                   3D / VR
                 </button>
+                <button
+                  type="button"
+                  data-testid="extras-sweep-btn"
+                  onClick={() => setShowSweepModal(true)}
+                  className="px-2 py-0.5 rounded-md text-micro font-bold transition-colors bg-black/60 text-white/70 hover:text-white border border-white/10"
+                  title="Parameter Sweep (3×3 Grid)"
+                >
+                  Parameter Sweep (3×3 Grid)
+                </button>
               </div>
 
               {file.type?.startsWith('video') || /\.(mp4|mkv|mov|avi|webm|gif)$/i.test(fileName) ? (
@@ -490,6 +501,20 @@ export default function Extras({ notify, registerFileListener, meta, settings, s
         sourceCanvas={mediaElemRef.current}
         renderedCanvas={mediaElemRef.current}
         className="fixed bottom-6 right-6 z-50 shadow-2xl"
+      />
+
+      {/* ── Stage 24 Parameter Sweep (3×3 Grid) Modal ── */}
+      <ParameterSweepModal
+        isOpen={showSweepModal}
+        onClose={() => setShowSweepModal(false)}
+        targetIndex={0}
+        frame={1}
+        currentSettings={opts}
+        onApplyRecipe={(recipe) => {
+          patchOpts(recipe);
+          notify?.('Applied sweep recipe parameters', 'info');
+        }}
+        notify={notify}
       />
     </div>
   );
