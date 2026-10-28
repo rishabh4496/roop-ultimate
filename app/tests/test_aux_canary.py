@@ -94,9 +94,11 @@ class Base(unittest.TestCase):
         self.cache = os.path.join(self._tmp.name, 'trt_cache')
         os.makedirs(self.cache)
         self.model = os.path.join(self._tmp.name, 'm.onnx')
-        open(self.model, 'wb').write(b'onnx-bytes')
+        with open(self.model, 'wb') as f:
+            f.write(b'onnx-bytes')
         self.engine = os.path.join(self.cache, 'TensorrtExecutionProvider_TRTKernel_graph_%s_123_0_0_fp16_sm89.engine' % GRAPH)
-        open(self.engine, 'wb').write(b'engine-one')
+        with open(self.engine, 'wb') as f:
+            f.write(b'engine-one')
         self._patches = [
             mock.patch.object(ac, '_store_path', lambda: os.path.join(self._tmp.name, 'aux_canary.json')),
             mock.patch.dict(os.environ, {}, clear=False),

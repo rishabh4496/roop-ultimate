@@ -459,9 +459,11 @@ class RecordCase(unittest.TestCase):
         pc.PROJECTS_DIR = self.dir
         self.addCleanup(setattr, pc, 'PROJECTS_DIR', old)
         self.media = os.path.join(self.dir, 'target.mp4')
-        open(self.media, 'wb').write(b'0' * 4096)
+        with open(self.media, 'wb') as f:
+            f.write(b'0' * 4096)
         self.src = os.path.join(self.dir, 'src.jpg')
-        open(self.src, 'wb').write(b'1' * 512)
+        with open(self.src, 'wb') as f:
+            f.write(b'1' * 512)
         cfg = SimpleNamespace(provider='tensorrt', trt_precision='mixed', swap_model='realswap',
                               output_path=self.dir, hardware={}, hardware_signature='', output_video_format='mp4',
                               output_video_codec='', video_quality=14, output_method='File', output_template='')

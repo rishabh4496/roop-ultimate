@@ -253,7 +253,7 @@ class DeferredHash(unittest.TestCase):
     """The request thread must not read the whole target; the worker completes the digest."""
 
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
+        self.tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(self.tmp.cleanup)
         self.target = os.path.join(self.tmp.name, "t.mp4")
         with open(self.target, "wb") as fh:
@@ -369,17 +369,21 @@ class DeferredHash(unittest.TestCase):
         self.assertEqual(len(calls), 2)
 
     def test_the_resume_endpoints_validate_quickly_and_the_worker_finalizes(self):
-        projects = open(os.path.join(APP, "routes_projects.py"), encoding="utf-8").read()
+        with open(os.path.join(APP, "routes_projects.py"), encoding="utf-8") as _f:
+            projects = _f.read()
         self.assertNotIn("checkpoints.validate(record, api.roop_globals.CFG)", projects)
         self.assertEqual(projects.count("quick=True"), 2)
-        queue = open(os.path.join(APP, "routes_queue.py"), encoding="utf-8").read()
+        with open(os.path.join(APP, "routes_queue.py"), encoding="utf-8") as _f:
+            queue = _f.read()
         self.assertIn("quick=True", queue[queue.index("def queue_resume"):])
-        api_src = open(os.path.join(APP, "api.py"), encoding="utf-8").read()
+        with open(os.path.join(APP, "api.py"), encoding="utf-8") as _f:
+            api_src = _f.read()
         run = api_src[api_src.index("def _run_swap("):]
         self.assertIn("_project_checkpoint.finalize_inputs(project_id)", run[:6500])
 
     def test_the_request_path_defers_and_the_worker_completes(self):
-        src = open(os.path.join(APP, "api.py"), encoding="utf-8").read()
+        with open(os.path.join(APP, "api.py"), encoding="utf-8") as _f:
+            src = _f.read()
         create = src[src.index("def _create_processing_project("):src.index("\ndef ", src.index("def _create_processing_project(") + 10)]
         sources = src[src.index("def _project_sources("):src.index("\ndef _project_target_faces(")]
         self.assertIn("file_identity(entry.filename, defer_hash=True)", create)

@@ -141,7 +141,8 @@ def test_a_mux_that_dies_leaves_the_intermediate_and_no_partial_output(tmp_path)
 
     def dies(temp_v, source, s, e, destination):
         with open(destination, "wb") as fh:
-            fh.write(open(temp_v, "rb").read()[:4000])      # a truncated mp4
+            with open(temp_v, "rb") as rf:
+                fh.write(rf.read()[:4000])      # a truncated mp4
         return False
 
     r = fo.finalize_render(temp, dest, audio_source=src, trim_start=None, trim_end=None,
@@ -220,7 +221,8 @@ def test_helper_files_are_removed_and_leftover_parts_are_reported(tmp_path):
     scratch = str(tmp_path / "o.__audio_cut.mka")
     part = str(tmp_path / ".o__temp.mp4.seg0001.mp4")
     for p in (scratch, part):
-        open(p, "wb").write(b"x")
+        with open(p, "wb") as f:
+            f.write(b"x")
     r = fo.finalize_render(temp, dest, audio_source=src, trim_start=None, trim_end=None, expected_frames=30)
     assert r["ok"]
     assert not os.path.exists(scratch), "audio-cut scratch left behind"
@@ -229,7 +231,8 @@ def test_helper_files_are_removed_and_leftover_parts_are_reported(tmp_path):
 
 def test_unreadable_intermediate_is_kept_and_reported(tmp_path):
     temp = str(tmp_path / "bad__temp.mp4")
-    open(temp, "wb").write(b"not a video")
+    with open(temp, "wb") as f:
+        f.write(b"not a video")
     r = fo.finalize_render(temp, str(tmp_path / "bad.mp4"), audio_source=None, trim_start=None,
                            trim_end=None, expected_frames=10)
     assert not r["ok"] and os.path.exists(temp)

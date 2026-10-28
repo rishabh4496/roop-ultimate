@@ -9,5 +9,5 @@
     "noEmit": true,
     "types": ["node"]
   },
-  "include": ["react-ui/mock-server/**/*.ts"]
+  "include": ["react-ui/mock-server/**/*.ts", "react-ui/src/types/**/*.ts"]
 }

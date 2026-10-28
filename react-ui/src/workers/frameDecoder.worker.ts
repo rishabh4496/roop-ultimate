@@ -89,7 +89,7 @@ self.onmessage = async (e: MessageEvent<WorkerMessage>) => {
     }
 
     // Zero-copy transfer of ImageBitmap to the caller
-    self.postMessage(
+    (self.postMessage as any)(
       {
         id,
         ok: true,

@@ -69,13 +69,16 @@ class CompileDetail(unittest.TestCase):
 
     def test_cache_hit_needs_both_listings_and_sees_a_new_or_rewritten_plan(self):
         plan = os.path.join(self.cache, "a.engine")
-        open(plan, "wb").write(b"1")
+        with open(plan, "wb") as f:
+            f.write(b"1")
         before = ps.engine_cache_files(self.cache)
         self.assertTrue(ps.cache_hit(before, ps.engine_cache_files(self.cache)))
-        open(os.path.join(self.cache, "b.engine"), "wb").write(b"2")
+        with open(os.path.join(self.cache, "b.engine"), "wb") as f:
+            f.write(b"2")
         self.assertFalse(ps.cache_hit(before, ps.engine_cache_files(self.cache)), "a new plan = a build")
         before = ps.engine_cache_files(self.cache)
-        open(plan, "wb").write(b"123456")
+        with open(plan, "wb") as f:
+            f.write(b"123456")
         self.assertFalse(ps.cache_hit(before, ps.engine_cache_files(self.cache)), "a rewritten plan = a build")
         self.assertIsNone(ps.cache_hit(None, before), "an unreadable cache is unknown, not a hit")
         self.assertIsNone(ps.engine_cache_files(os.path.join(self.cache, "missing")))

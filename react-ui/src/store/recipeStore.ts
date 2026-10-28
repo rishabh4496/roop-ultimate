@@ -2,189 +2,49 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 
 // ── Types for Normalized Swap Recipe Slices ──────────────────────────────────
+// Canonically imported from react-ui/src/types/api-contract.ts
 
-export interface DetectionSlice {
-  detectorModel: string;
-  confidence: number;
-  maxFaces: number | 'all';
-  order: 'left-right' | 'right-left' | 'top-bottom' | 'bottom-top' | 'small-large' | 'large-small' | 'best-worst';
-  genderFilter: 'any' | 'male' | 'female';
-  ageFilter: 'any' | 'child' | 'young' | 'adult' | 'senior';
-  advanced: {
-    iouThreshold: number;
-    nmsThreshold: number;
-    detSize: string | number;
-    defaultDetSize: boolean;
-    scalePyramid: string;
-    refineLandmarks: boolean;
-  };
-}
+import {
+  type DetectionSlice,
+  type SourceFaceInfo,
+  type TargetFaceBinding,
+  type BlendComponent,
+  type BlendWeights,
+  type IdentitySlice,
+  type MaskTypes,
+  type BoxPadding,
+  type ParserRegions,
+  type FaceCanvasMatte,
+  type MaskingSlice,
+  type OrderedEnhancer,
+  type RestorationSlice,
+  type SegmentKeyframeOverride,
+  type TemporalSlice,
+  type OutputSlice,
+  type ViewportSlice,
+  type SwapRecipe,
+} from '../types/api-contract';
 
-export interface SourceFaceInfo {
-  id: string;
-  name?: string;
-  url?: string;
-  embedding?: number[];
-}
-
-export interface TargetFaceBinding {
-  sourceId: string;
-  referenceFaceId?: string;
-  similarity?: number;
-}
-
-export interface BlendComponent {
-  source_id: string;
-  weight: number;
-}
-
-export interface BlendWeights {
-  enabled: boolean;
-  jawline: number;
-  min_cosine: number;
-  components: BlendComponent[];
-}
-
-export interface IdentitySlice {
-  sourceFaces: SourceFaceInfo[];
-  targetBindings: Record<string, TargetFaceBinding>;
-  blendWeights: BlendWeights;
-  similarityThreshold: number;
-  identityConfidenceThreshold: number;
-}
-
-export interface MaskTypes {
-  engine1: string;
-  engine2: string;
-  clipText: string;
-  sam2ModelSize: string;
-}
-
-export interface BoxPadding {
-  top: number;
-  bottom: number;
-  left: number;
-  right: number;
-  linkedSides: boolean;
-}
-
-export interface ParserRegions {
-  regions: string[];
-  glassesFrameProtect: boolean;
-  regionGrow: Record<string, number>;
-}
-
-export interface FaceCanvasMatte {
-  edgeMode: 'gaussian' | 'distance';
-  flowWarp: boolean;
-  guidedFilter: boolean;
-  imageMask: string | null;
-}
-
-export interface MaskingSlice {
-  maskTypes: MaskTypes;
-  boxPadding: BoxPadding;
-  parserRegions: ParserRegions;
-  erosion: number;
-  feather: number;
-  faceCanvasMatte: FaceCanvasMatte;
-}
-
-export interface OrderedEnhancer {
-  name: string;
-  enabled: boolean;
-  order: number;
-}
-
-export interface RestorationSlice {
-  orderedEnhancers: OrderedEnhancer[];
-  selectedEnhancer: string;
-  restorationMode: string;
-  modelWeights: {
-    codeformerFidelity: number;
-    tileDiffusionStrength: number;
-    tileDiffusionSteps: number;
-    restoreUltraDetailWeight: number;
-    ultramaxDetailWeight: number;
-  };
-  grainCloser: {
-    grainMatch: number;
-    clarity: number;
-    degrade: number;
-  };
-  skinTextureBlend: {
-    restoreUltraFrequencyBlend: boolean;
-    ultramaxSwapLowband: boolean;
-    skinTextureStrength: number;
-    restoreUltraInnerOnly: boolean;
-  };
-  colorTransfer: {
-    mode: string;
-    matchAfterEnhance: boolean;
-    skinToneWarmth: number;
-    saturationMatch: number;
-    histMatch: number;
-  };
-}
-
-export interface SegmentKeyframeOverride {
-  segmentId: string;
-  frameStart: number;
-  frameEnd: number;
-  overrides: Record<string, any>;
-}
-
-export interface TemporalSlice {
-  temporalPreset: 'off' | 'smooth' | 'cinematic' | 'action';
-  smartSkipRoiReuse: boolean;
-  prepassDetectInterval: number;
-  emaLandmarkSmoothing: {
-    enabled: boolean;
-    stabilizeFace: boolean;
-    stabilizeLandmarks: boolean;
-    stabilizeMethod: 'one_euro' | 'ema';
-    minCutoff: number;
-    beta: number;
-  };
-  sceneCutSensitivity: number;
-  keyframeOverrides: SegmentKeyframeOverride[];
-}
-
-export interface OutputSlice {
-  codec: string;
-  nvencQuality: string;
-  crf: number;
-  videoBitrate: string;
-  segmentLength: number;
-  keepTempSegments: boolean;
-  audioRemux: boolean;
-  audioSource: string;
-  audioPath: string | null;
-}
-
-export interface ViewportSlice {
-  zoom: number;
-  panX: number;
-  panY: number;
-  fitMode: 'contain' | 'cover' | 'actual';
-  lockToFaceId: string | number | null;
-  compareMode: 'side-by-side' | 'split-wipe' | 'diff' | 'off';
-  wipeAngle: number;
-  wipePosition: number;
-  activeScope: 'preview' | 'timeline' | 'source' | 'target';
-  timelineZoom: number;
-  timelineScroll: number;
-}
-
-export interface SwapRecipe {
-  detection: DetectionSlice;
-  identity: IdentitySlice;
-  masking: MaskingSlice;
-  restoration: RestorationSlice;
-  temporal: TemporalSlice;
-  output: OutputSlice;
-  viewport: ViewportSlice;
-}
+export {
+  type DetectionSlice,
+  type SourceFaceInfo,
+  type TargetFaceBinding,
+  type BlendComponent,
+  type BlendWeights,
+  type IdentitySlice,
+  type MaskTypes,
+  type BoxPadding,
+  type ParserRegions,
+  type FaceCanvasMatte,
+  type MaskingSlice,
+  type OrderedEnhancer,
+  type RestorationSlice,
+  type SegmentKeyframeOverride,
+  type TemporalSlice,
+  type OutputSlice,
+  type ViewportSlice,
+  type SwapRecipe,
+};
 
 // ── Default State ────────────────────────────────────────────────────────────
 
