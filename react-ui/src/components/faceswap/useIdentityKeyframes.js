@@ -88,6 +88,9 @@ export default function useIdentityKeyframes(targetKey, recipe, setRecipe, maxFr
 
   const update = useCallback((frameIndex, patch) => commit(updateKeyframe(listRef.current, frameIndex, patch)), [commit]);
   const clear = useCallback(() => { commit([]); setSelected(null); }, [commit]);
+  // Replace the whole track at once (the Curve Editor's Identity Morph Weight compiles into it). One commit, so the
+  // preview re-renders once and a queued job sees the finished track, never a half-written one.
+  const replace = useCallback((list) => { commit(normalizeKeyframes(list)); setSelected(null); }, [commit]);
 
   return useMemo(() => ({
     keyframes: recipe.keyframes || [],
@@ -99,5 +102,6 @@ export default function useIdentityKeyframes(targetKey, recipe, setRecipe, maxFr
     remove,
     update,
     clear,
-  }), [recipe.keyframes, selected, canKey, add, move, remove, update, clear]);
+    replace,
+  }), [recipe.keyframes, selected, canKey, add, move, remove, update, clear, replace]);
 }

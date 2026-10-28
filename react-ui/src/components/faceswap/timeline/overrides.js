@@ -66,10 +66,12 @@ function sanitizeParams(params) {
   return out;
 }
 
-export function addOverride(list, { start, end, label }, maxFrames) {
+// `bypass` lets a caller create the override already bypassing: add() followed by update() in one handler would read the
+// list from before the add (useSceneOverrides reads it from the last render) and write that stale list back.
+export function addOverride(list, { start, end, label, bypass = false }, maxFrames) {
   const order = list.reduce((m, o) => Math.max(m, o.order ?? 0), -1) + 1;
   const created = {
-    id: newId(), start, end, label: label || `Override ${list.length + 1}`, bypass: false, params: {}, order,
+    id: newId(), start, end, label: label || `Override ${list.length + 1}`, bypass: !!bypass, params: {}, order,
   };
   const next = normalizeOverrides([...list, created], maxFrames);
   return { list: next, created: next.find((o) => o.id === created.id) };

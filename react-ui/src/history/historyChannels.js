@@ -6,6 +6,7 @@ import {
 } from './historyEngine';
 import { LABELS } from '../components/settingsDiff';
 import { SETTINGS_CATALOG } from '../components/settingsCatalog';
+import { describeCurvesChange } from '../components/faceswap/curves/curveHistory';
 
 // The channels the app registers, and the hook an owner uses to report one.
 //
@@ -55,7 +56,8 @@ export const SETTINGS_CHANNEL = {
 
 export const ROTO_CHANNEL = { scope: 'faceswap', describe: describeRotoChange, coalesce: false };
 export const PINS_CHANNEL = { scope: 'faceswap', describe: describePinsChange, coalesce: false };
-export const STROKES_CHANNEL = { scope: 'faceswap', describe: describeStrokesChange, coalesce: false };
+export const CURVES_CHANNEL = { scope: 'faceswap', describe: describeCurvesChange, coalesce: false };
+export const STROKES_CHANNEL ={ scope: 'faceswap', describe: describeStrokesChange, coalesce: false };
 export const MASK_CHANNEL = { scope: 'faceswap', equals: shallowEqual, describe: describeAppliedMaskChange, coalesce: false };
 
 export const EXTRAS_OPTS_CHANNEL = {

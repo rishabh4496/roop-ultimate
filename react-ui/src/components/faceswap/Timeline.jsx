@@ -4,6 +4,7 @@ import Minimap from './timeline/Minimap';
 import OverrideInspector from './timeline/OverrideInspector';
 import IdentityKeyframeLane from './timeline/IdentityKeyframeLane';
 import IdentityKeyframeInspector from './timeline/IdentityKeyframeInspector';
+import CurveEditor from './curves/CurveEditor';
 import { AudioLane, CacheLane, FilmCanvas, IdentityLane, OverrideLane, RulerLane, SceneLane } from './timeline/Lanes.jsx';
 import useAudioTrackWave from './timeline/useAudioTrackWave';
 import { clampOffset, offsetText, offsetMeaning, trackShiftSeconds } from './mouthCustody';
@@ -189,6 +190,18 @@ export default function Timeline({
    * (FaceSwap composes them). Absent = no track (the Batch page, tests).
    */
   identityKeys = null,
+  /**
+   * Stage 25: the Curve Editor. {open, onToggle, api (useParameterCurves), tracks, enabled, settings, morph, planNote}.
+   * `open` lives in FaceSwap because the C key that toggles it is owned there (one owner per bare key). Absent = no
+   * editor (the Batch page, tests).
+   */
+  curveEditor = null,
+  /**
+   * A ref the parent reads `.current.sceneAt(frame)` from: the scene under a frame as this timeline draws it (its cuts
+   * are the merge of the scan's and the backend's), so an action elsewhere on the page - the face menu's "bypass on
+   * this scene" - cuts at the same shots the lanes show. Absent = nothing is published.
+   */
+  sceneApiRef = null,
 }) {
   // ── View window ───────────────────────────────────────────────────────────
   // The lanes show [view.start, view.end] rather than the whole clip. Fall back to the whole clip
@@ -613,6 +626,17 @@ export default function Timeline({
 
   const scene = sceneAt(scenes, frame);
   const hasCuts = cuts.length > 0;
+  useLayoutEffect(() => {
+    if (!sceneApiRef) return undefined;
+    sceneApiRef.current = {
+      hasCuts,
+      sceneAt: (f) => {
+        const s = sceneAt(scenes, f);
+        return s ? { start: s.start, end: s.end, label: `Scene ${s.index + 1}`, index: s.index } : null;
+      },
+    };
+    return () => { sceneApiRef.current = null; };
+  }, [sceneApiRef, scenes, hasCuts]);
   const presenceNote = tracks.presenceSource === 'none' && !tracks.presence.length
     ? 'Who is on screen: press "Scan faces" to fill this lane'
     : '';
@@ -637,6 +661,18 @@ export default function Timeline({
           )}
         </div>
         <div className="flex items-center gap-1.5">
+          {curveEditor && maxFrames > 1 && (
+            <button type="button" onClick={curveEditor.onToggle} aria-pressed={curveEditor.open} data-testid="curve-editor-toggle"
+                    title="Show the parameter curve editor: keyframe a setting across the clip (C)"
+                    className={`inline-flex items-center gap-1.5 rounded-lg border px-2 py-1 text-mini font-semibold transition-colors ${
+                      curveEditor.open
+                        ? 'border-[var(--accent)]/30 bg-[var(--accent)]/10 text-accent'
+                        : 'border-[var(--border-color)] bg-[var(--surface-2)] text-[var(--text-muted)] hover:border-[var(--border-strong)] hover:text-[var(--text-main)]'}`}>
+              <Ico size={13} d="M3 18c4 0 5-12 9-12s5 12 9 12" />
+              Curve Editor (C)
+              {curveEditor.api?.any && <span className="h-1.5 w-1.5 rounded-full bg-[var(--accent)]" aria-label="has keyframes" />}
+            </button>
+          )}
           <RangeField label="In" value={startFrame} min={1} max={endFrame}
                       onCommit={(n) => setFrameMarkerVal('start', n)} />
           <RangeField label="Out" value={endFrame} min={startFrame} max={maxFrames}
@@ -832,6 +868,16 @@ export default function Timeline({
               />
             )}
           </>
+        )}
+
+        {/* Parameter curves: a value-vs-frame graph on the same x-axis as every lane above and below it */}
+        {curveEditor?.open && maxFrames > 1 && (
+          <CurveEditor
+            view={v} maxFrames={maxFrames} frame={frame}
+            tracks={curveEditor.tracks} enabled={curveEditor.enabled} onEnabledChange={curveEditor.api.setEnabled}
+            settings={curveEditor.settings} api={curveEditor.api} onSeek={setFrame}
+            onClose={curveEditor.onToggle} morph={curveEditor.morph} planNote={curveEditor.planNote}
+          />
         )}
 
         {/* Audio: what will play, drawn where it will play (the slip moves it against the video) */}

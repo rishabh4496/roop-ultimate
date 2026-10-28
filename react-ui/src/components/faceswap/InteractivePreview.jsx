@@ -29,8 +29,11 @@ import {
 } from '../monitor/referenceChannel';
 import {
   ZOOM_MIN, ZOOM_MAX, clampPan, panAnchoredAt, panCenteringAt,
-  transformFor, uiScale, wheelZoom, faceTrackingTarget,
+  transformFor, uiScale, wheelZoom, faceTrackingTarget, focusPanFor,
 } from './zoomPan';
+import FaceContextMenu from './FaceContextMenu';
+import { cropRectFor, faceBadgeText, warmthDeltaFor } from './faceContextModel';
+import { cropToPng, loadStageImage, sampleFaceSkin } from './faceSample';
 import { MODULAR_FLOW_NODES } from './pillModel';
 
 export default function InteractivePreview({
@@ -72,6 +75,10 @@ export default function InteractivePreview({
   pins = [],
   onPinIdentity,
   onUnpinIdentity,
+  // Stage 25: the right-click menu on a face. {sourceNames[i], sources: [{index, name, thumb}], assign(faceIndex,
+  // sourceIndex|-1), bypassInfo(faceIndex) -> {reason, rangeText}, bypass(faceIndex), extract(faceIndex, pngBlob),
+  // applySkin(faceIndex, measurement)}. Absent = no menu (the Batch page, tests).
+  faceMenu = null,
   playbackSource = null,
   frameUnavailable = false,
   onRetryFrame,
@@ -924,10 +931,107 @@ export default function InteractivePreview({
   const stepFrame = (delta) => setFrame && setFrame((f) => Math.max(1, Math.min(maxFrames, f + delta)));
   const isVideo = maxFrames > 1;
 
+  // ── Face context menu (Stage 25) ──────────────────────────────────────────
+  // Right-click inside a detected face's box. The menu is a portal (FaceContextMenu); what it does is decided here,
+  // where the frame, the boxes and the viewport are, and in FaceSwap, where the settings and the timeline are.
+  const [faceMenuAt, setFaceMenuAt] = useState(null);        // { faceIndex, x, y } in client px
+  const faceBusyRef = useRef(false);
+  const closeFaceMenu = useCallback(() => setFaceMenuAt(null), []);
+  const openFaceMenu = useCallback((faceIndex, e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setFaceMenuAt({ faceIndex, x: e.clientX, y: e.clientY });
+  }, []);
+  // A menu is about one face on one frame: another frame, or fewer faces, and it is about nothing.
+  useEffect(() => { setFaceMenuAt(null); }, [frame]);
+  useEffect(() => { setFaceMenuAt((m) => (m && m.faceIndex >= faces.length ? null : m)); }, [faces.length]);
+
+  const faceMenuFace = (i) => {
+    const info = faceRoles[i] || null;
+    const personId = personIds[i] ?? null;
+    const sourceName = faceMenu?.sourceNames?.[i] || null;
+    const pinSource = Number.isInteger(faceSources[i]) && faceSources[i] >= 0 ? faceSources[i] : null;
+    const pinned = pinSource !== null ? (pins.find((p) => p.source_index === pinSource && p.frame === frame) || null) : null;
+    const swapped = !!info && info.role !== 'bystander';
+    const bypass = faceMenu?.bypassInfo?.(i) || { reason: '', rangeText: '' };
+    return {
+      index: i,
+      badge: faceBadgeText({ faceIndex: i, personId, sourceName, role: info?.role, excluded: !!info?.excluded }),
+      trackText: trackLabel(personId ?? i),
+      sourceName,
+      sourceIndex: pinSource,
+      excluded: !!info?.excluded,
+      pinned: !!pinned,
+      pinReason: typeof onPinIdentity !== 'function' ? 'Pinning is not available here'
+        : pinSource === null ? 'No source to lock yet: assign one first' : '',
+      bypassReason: bypass.reason,
+      bypassSub: bypass.reason ? '' : bypass.rangeText,
+      extractReason: imgDim ? '' : 'The frame is still loading',
+      skinReason: !swapped ? 'This face is not swapped, so there is no swapped skin to match'
+        : (!afterFrame && (!afterSrc || afterSrc === beforeSrc)) ? 'There is no swapped result on the stage to compare with' : '',
+    };
+  };
+
+  const runFaceAction = async (label, job) => {
+    if (faceBusyRef.current) return;
+    faceBusyRef.current = true;
+    try { await job(); } catch (err) { notify?.(`${label}: ${err?.message || err}`, 'error'); } finally { faceBusyRef.current = false; }
+  };
+  const faceMenuActions = (i) => ({
+    assign: (sourceIndex) => faceMenu?.assign?.(i, sourceIndex),
+    pin: () => {
+      const f = faceMenuFace(i);
+      if (f.pinned) {
+        const pinSource = faceSources[i];
+        const pin = pins.find((p) => p.source_index === pinSource && p.frame === frame);
+        if (pin) onUnpinIdentity?.(pin.id);
+      } else onPinIdentity?.(i);
+    },
+    bypass: () => faceMenu?.bypass?.(i),
+    focus: () => {
+      stopInertia();
+      setLockTargetFace(false);
+      updateViewport(2.0, focusPanFor(faces[i], imgDim, containerRef.current, 2.0) || { x: 0, y: 0 }, true);
+    },
+    extract: () => runFaceAction('Extract face', async () => {
+      const img = await loadStageImage(beforeFrame, beforeSrc);
+      try {
+        const rect = cropRectFor(faces[i], imgDim, { w: img.w, h: img.h });
+        if (!rect) throw new Error('this face is too small to crop');
+        await faceMenu.extract(i, await cropToPng(img, rect), { frame, rect });
+      } finally { img.release(); }
+    }),
+    skin: () => runFaceAction('Skin tone match', async () => {
+      const plate = await loadStageImage(beforeFrame, beforeSrc);
+      let swap = null;
+      try {
+        swap = await loadStageImage(afterFrame, afterSrc);
+        if (Math.abs(plate.w / plate.h - swap.w / swap.h) > 0.02) throw new Error('the original and the swapped frame are different shapes');
+        const m = warmthDeltaFor(
+          sampleFaceSkin(plate, faces[i], kps[i], imgDim),
+          sampleFaceSkin(swap, faces[i], kps[i], imgDim),
+        );
+        if (!m) throw new Error('not enough skin shows in the cheeks and forehead to measure');
+        await faceMenu.applySkin(i, m);
+      } finally { plate.release(); swap?.release(); }
+    }),
+  });
+  const faceMenuNode = faceMenu && faceMenuAt && faces[faceMenuAt.faceIndex] ? (
+    <FaceContextMenu
+      menu={faceMenuAt}
+      onClose={closeFaceMenu}
+      face={faceMenuFace(faceMenuAt.faceIndex)}
+      sources={faceMenu.sources || []}
+      actions={faceMenuActions(faceMenuAt.faceIndex)}
+    />
+  ) : null;
+
   // ── Face Bounding Boxes Overlay ───────────────────────────────────────────
   const faceBoxes = useMemo(() => {
     if (!faces.length || !imgDim || !showBoxes) return null;
     const selectable = typeof onSelectFace === 'function';
+    const menuable = !!faceMenu;
+    const interactive = selectable || menuable;
     return faces.map((bbox, i) => {
       const [sx, sy, ex, ey] = bbox;
       const left = (sx / imgDim.w) * 100;
@@ -954,18 +1058,28 @@ export default function InteractivePreview({
       return (
         <div
           key={i}
-          className={`absolute border-2 ${selected ? 'border-white bg-white/15 ring-2 ring-[var(--accent)]' : 'border-[var(--accent)]'} shadow-[0_0_10px_var(--accent-glow)] z-20 ${
-            selectable
-              ? 'pointer-events-auto cursor-pointer group/face hover:bg-[var(--accent)]/10 transition-colors'
+          className={`absolute border-2 ${selected ? 'border-white bg-white/15 ring-2 ring-[var(--accent)]' : 'border-[var(--accent)] hover:border-white/80'} shadow-[0_0_10px_var(--accent-glow)] z-20 ${
+            interactive
+              ? `pointer-events-auto group/face hover:bg-[var(--accent)]/10 transition-colors ${selectable ? 'cursor-pointer' : ''}`
               : 'pointer-events-none'
           }`}
           style={{ left: `${left}%`, top: `${top}%`, width: `${width}%`, height: `${height}%` }}
           data-face-index={i}
           data-face-role={info ? info.role : undefined}
-          title={selectable ? `Click to use Face ${i + 1} (Person ${personLabel}) as target` : undefined}
-          onPointerDown={selectable ? (e) => e.stopPropagation() : undefined}
+          title={selectable ? `Click to use Face ${i + 1} (Person ${personLabel}) as target${menuable ? ' - right-click for actions' : ''}` : undefined}
+          onPointerDown={interactive ? (e) => e.stopPropagation() : undefined}
           onClick={selectable ? (e) => { e.stopPropagation(); onSelectFace(i); } : undefined}
+          onContextMenu={menuable ? (e) => openFaceMenu(i, e) : undefined}
         >
+          {/* Who this box is, on hover: its track and the identity it is wearing. */}
+          {menuable && (
+            <span
+              data-testid="face-identity-badge"
+              className="pointer-events-none absolute inset-x-1 top-1 z-10 truncate rounded bg-black/75 px-1.5 py-0.5 text-nano font-semibold text-white opacity-0 shadow transition-opacity group-hover/face:opacity-100"
+            >
+              {faceBadgeText({ faceIndex: i, personId: personIds[i] ?? null, sourceName: faceMenu.sourceNames?.[i] || null, role: info?.role, excluded: !!info?.excluded })}
+            </span>
+          )}
           <span className="absolute -top-6 left-0 bg-[var(--accent)] text-white text-micro font-bold px-1.5 py-0.5 rounded whitespace-nowrap">
             Face {i + 1}
           </span>
@@ -1005,7 +1119,7 @@ export default function InteractivePreview({
       );
     });
   }, [faces, imgDim, showBoxes, personIds, selectedFaceIndex, onSelectFace, faceRoles, onToggleExclude,
-    faceSources, pins, frame, onPinIdentity, onUnpinIdentity]);
+    faceSources, pins, frame, onPinIdentity, onUnpinIdentity, faceMenu, openFaceMenu]);
 
   // ── Landmark Telemetry Debug Overlay ──────────────────────────────────────
   const debugOverlay = useMemo(() => {
@@ -1220,7 +1334,7 @@ export default function InteractivePreview({
           <button
             type="button"
             onClick={() => onToggleCompare()}
-            title="Toggle Compare Modes (C)"
+            title="Toggle Compare Modes (Shift+C)"
             className={`px-2.5 h-7 rounded-lg text-micro font-bold flex items-center gap-1.5 transition-all duration-200 ${
               compare
                 ? 'text-white bg-[var(--accent)] shadow-[0_0_12px_var(--accent-glow)] border border-white/20'
@@ -1532,6 +1646,7 @@ export default function InteractivePreview({
         style={{ touchAction: 'none' }}
       >
         {stageInfo()}
+        {faceMenuNode}
 
         {/* 4-Up Quad View Component */}
         <QuadInspectionGrid
@@ -1631,6 +1746,7 @@ export default function InteractivePreview({
       )}
 
       {stageInfo()}
+      {faceMenuNode}
 
       {/* ── 5 Instant Comparison Toolbar Modes ─────────────────────────────── */}
       {compare && !splitMode && !maskBrushActive && (

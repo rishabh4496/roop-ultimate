@@ -43,13 +43,17 @@ import ProjectsPanel from './faceswap/ProjectsPanel';
 import useSegments from './faceswap/useSegments';
 import { useRenderLog, useSceneOverrides } from './faceswap/timeline/useSceneOverrides';
 import { canBypass, overrideAt, overridePieces, patchPayload, patchSettings } from './faceswap/timeline/overrides';
-import { fingerprint } from './faceswap/timeline/laneModel';
+import { fingerprint, sceneAt, scenesFromCuts } from './faceswap/timeline/laneModel';
+import { nextWarmth } from './faceswap/faceContextModel';
 import SegmentBar from './faceswap/SegmentBar';
 import SliderTrackerBar from './faceswap/SliderTrackerBar';
 import Timeline from './faceswap/Timeline';
 import FacesetLibrary from './faceswap/FacesetLibrary';
 import IdentityBlender from './faceswap/IdentityBlender';
 import useIdentityKeyframes from './faceswap/useIdentityKeyframes';
+import useParameterCurves from './faceswap/curves/useParameterCurves';
+import { applyCurveValues, morphToIdentityKeyframes, patchSettingsWithCurves } from './faceswap/curves/curveModel';
+import { bakeCurvePieces, describeBake, piecesHaveCurves } from './faceswap/curves/curvePieces';
 import { EMPTY_BLEND, fetchIdentityBlend, normalizeBlend } from './faceswap/identityBlend';
 import AmbilightGlow from './faceswap/AmbilightGlow';
 import FloatingActionDock from './faceswap/FloatingActionDock';
@@ -666,6 +670,11 @@ export default function FaceSwap({
   const timelineKey = activeTargetMediaId || targets[selTarget]?.name || String(selTarget);
   const sceneOverrides = useSceneOverrides(timelineKey, maxFrames);
   const renderLog = useRenderLog(timelineKey);
+  // Stage 25: parameter curves (keyframed settings), per clip. The preview reads them exactly; a render reads them as
+  // pieces, the way it reads scene overrides. `curveOpen` is here, not in the Timeline, because the C key is owned by
+  // this component's shortcut handler.
+  const curves = useParameterCurves(timelineKey, maxFrames);
+  const [curveOpen, setCurveOpen] = useState(false);
   // Stage 20: identity keyframes ride inside the Identity Blender recipe (so previews, the cache strip and queued
   // jobs all see them) and are stored per clip like the markers and overrides beside them.
   const identityKeyframes = useIdentityKeyframes(timelineKey, identityBlend, setIdentityBlend, maxFrames);
@@ -1454,7 +1463,13 @@ export default function FaceSwap({
   // changes identity until the playhead crosses into one. Scrubbing into an override range
   // therefore previews the override; the key below changes with it, so a cached preview of the
   // un-overridden frame cannot be served for the overridden one.
-  const pAtFrame = patchSettings(p, overrideAt(sceneOverrides.activeOverrides, frame));
+  //
+  // Stage 25: a parameter curve is written over that last, at the frame's own value (the curve is the finest control:
+  // it can ramp across an override's edge, which an override alone could only do as a pop). Exact here; a render
+  // approximates it in steps (curves/curvePieces.js).
+  const settingsAtFrame = (fr) => patchSettingsWithCurves(
+    patchSettings(p, overrideAt(sceneOverrides.activeOverrides, fr)), curves.activeTracks, fr);
+  const pAtFrame = settingsAtFrame(frame);
   const previewKey = previewSignature(pAtFrame, fakePreview);
 
   // What the stage wants to show RIGHT NOW, readable from inside an async
@@ -1700,7 +1715,7 @@ export default function FaceSwap({
       const selection = buildProcessingSelection(p);
       request.requestId = selection.request_id;
       request.selection = selection;
-      const res = await postJSON('/api/preview', buildPreviewPayload(patchSettings(p, overrideAt(sceneOverrides.activeOverrides, fr)), {
+      const res = await postJSON('/api/preview', buildPreviewPayload(settingsAtFrame(fr), {
         index: idx, frame: fr, fake, target_media_id: requestedMediaId,
         processing_selection: selection,
         solo_stage: effectiveSolo,
@@ -3034,9 +3049,13 @@ export default function FaceSwap({
         return;
       }
 
-      // Comparison modes: 'C' to compare, 'S' to toggle split view
+      // 'C' opens the timeline's Curve Editor (Stage 25) and Shift+C is the comparison view it displaced - this handler
+      // stays the one owner of the bare C key (test_ui_shortcut_keys). A still image has no timeline to hang a curve
+      // on, so there plain C keeps doing what it always did. 'S' toggles split view.
       if (e.key.toLowerCase() === 'c') {
+        if (e.ctrlKey || e.metaKey || e.altKey) return;       // Ctrl/Cmd+C is copy
         e.preventDefault();
+        if (!e.shiftKey && maxFrames > 1) { setCurveOpen((open) => !open); return; }
         setCompare((prev) => {
           const nextVal = !prev;
           if (nextVal) { setComparingEnhancers(false); setComparingMasks(false); setComparingSwappers(false); setComparingUpscalers(false); }
@@ -3133,13 +3152,25 @@ export default function FaceSwap({
   // when a finished render of it used the settings in force AT THAT FRAME now (the clip's own, or the
   // clip's with a scene override on top), so moving a slider turns the strip amber again instead of
   // leaving it green. Recomputed only when those inputs change, not on every playback tick.
+  //
+  // Stage 25: the pieces are the scene overrides' AND the parameter curves' (a curve is rendered as steps). The cut
+  // itself depends only on the overrides, the curves and the range, so it is memoised apart from the fingerprints:
+  // dragging a slider must not re-walk every frame of a long clip.
+  const clipPlan = React.useMemo(
+    () => bakeCurvePieces(overridePieces(sceneOverrides.activeOverrides, 1, Math.max(1, maxFrames)), curves.activeTracks),
+    [sceneOverrides.activeOverrides, curves.activeTracks, maxFrames]);
+  const rangeIsClip = startFrame <= 1 && endFrame >= maxFrames;
+  const rangePlan = React.useMemo(
+    () => (rangeIsClip ? clipPlan
+      : bakeCurvePieces(overridePieces(sceneOverrides.activeOverrides, startFrame, endFrame), curves.activeTracks)),
+    [rangeIsClip, clipPlan, sceneOverrides.activeOverrides, curves.activeTracks, startFrame, endFrame]);
+  const pieceBase = (base, pc) => applyCurveValues(patchPayload(base, pc.override), pc.curves);
   const timelinePieces = React.useMemo(() => {
     const base = buildSwapPayload();
-    return overridePieces(sceneOverrides.activeOverrides, 1, Math.max(1, maxFrames))
-      .map((pc) => ({ start: pc.start, end: pc.end, fp: fingerprint(patchPayload(base, pc.override)) }));
+    return clipPlan.pieces.map((pc) => ({ start: pc.start, end: pc.end, fp: fingerprint(pieceBase(base, pc)) }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [p, selSource, activeTargetMediaId, selectionVersion, faceMapping, targetPersonIds, maskJson,
-    identityBlend, sceneOverrides.activeOverrides, maxFrames]);
+    identityBlend, clipPlan]);
 
   // The range an in-flight run is working through, for the strip filling in as frames land. A queued
   // piece reports its own range; a direct run reports the In/Out.
@@ -3180,10 +3211,146 @@ export default function FaceSwap({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [queue.jobs, activeTargetMediaId]);
 
-  /** The In/Out range cut into the pieces its scene overrides define. `has` = any piece differs. */
+  /**
+   * The In/Out range cut into the pieces its scene overrides and parameter curves define. `has` = any piece differs
+   * from the clip's own settings (a curve that sits exactly on its slider changes nothing and costs no extra job).
+   */
   const overrideRangePlan = () => {
-    const pieces = overridePieces(sceneOverrides.activeOverrides, startFrame, endFrame);
-    return { pieces, has: pieces.some((pc) => pc.override) };
+    const { pieces } = rangePlan;
+    return { pieces, has: pieces.some((pc) => pc.override) || piecesHaveCurves(pieces, buildSwapPayload()) };
+  };
+
+  // The Curve Editor's view of all this. Identity Morph Weight is the one curve that is not a settings key: it is
+  // compiled into the Identity Keyframe Track (the first two sources of the blender, 0 -> 1), which the backend
+  // already renders per frame, with the curve's own easing.
+  const morphSources = identityBlend.components || [];
+  const morphKeys = curves.tracks.identity_morph || [];
+  const curveEditor = {
+    open: curveOpen,
+    onToggle: () => setCurveOpen((open) => !open),
+    api: curves,
+    tracks: curves.tracks,
+    enabled: curves.enabled,
+    settings: p,
+    planNote: describeBake(rangePlan),
+    morph: {
+      ready: morphSources.length >= 2,
+      note: morphSources.length >= 2
+        ? `Written into the Identity Keyframe Track as ${identityTrack.labelOf(morphSources[0].source_id)} (0) to ${identityTrack.labelOf(morphSources[1].source_id)} (1); the renderer follows it frame by frame.${
+          identityKeyframes.keyframes.length ? ` This replaces the ${identityKeyframes.keyframes.length} identity keyframe${identityKeyframes.keyframes.length === 1 ? '' : 's'} on the clip now.` : ''}${
+          identityBlend.enabled ? '' : ' The Identity Blender is off, so nothing applies until it is turned on.'}`
+        : 'Needs an Identity Blender with two or more sources: the curve is written into the Identity Keyframe Track as a weight between the first two.',
+      title: 'Compile this curve into the Identity Keyframe Track',
+      onApply: async () => {
+        const had = identityKeyframes.keyframes.length;
+        if (had && !(await confirmDialog({
+          title: 'Replace identity keyframes?',
+          message: `The clip has ${had} identity keyframe${had === 1 ? '' : 's'}. Writing the morph curve replaces them with ${morphKeys.length}.`,
+          confirmLabel: 'Replace', danger: true,
+        }))) return;
+        identityKeyframes.replace(morphToIdentityKeyframes(morphKeys, morphSources, maxFrames));
+        notify(`Wrote ${morphKeys.length} identity keyframe${morphKeys.length === 1 ? '' : 's'} from the morph curve`, 'info');
+      },
+    },
+  };
+
+  // ── Stage 25: the right-click menu on a detected face ────────────────────────
+  // Where a "bypass this face" override would go: the scene under the playhead, as the timeline draws it (its cuts
+  // merge the scan's and the backend's); the page's own scan cuts when the timeline deck is not mounted.
+  const sceneApiRef = useRef(null);
+  const bypassRange = () => {
+    const api = sceneApiRef.current;
+    const own = scenesFromCuts(sceneCuts, maxFrames);
+    const s = (api ? api.sceneAt(frame) : null)
+      || (() => { const sc = sceneAt(own, frame); return sc ? { start: sc.start, end: sc.end, label: `Scene ${sc.index + 1}` } : null; })()
+      || { start: 1, end: Math.max(1, maxFrames), label: 'Whole clip' };
+    const known = api ? api.hasCuts : sceneCuts.length > 0;
+    return {
+      ...s,
+      text: known ? `${s.label}: frames ${s.start}-${s.end}` : `Whole clip, frames ${s.start}-${s.end} (no scene cuts found yet)`,
+    };
+  };
+  const bypassInfoFor = (faceIndex) => {
+    const info = previewFaceRoles[faceIndex];
+    if (!info || info.role === 'bystander') return { reason: 'This face is not swapped, so there is nothing to bypass', rangeText: '' };
+    if (!canBypass(p.face_detection_mode)) {
+      return { reason: 'Needs the "Selected face" detection mode: the other modes have no match threshold to close', rangeText: '' };
+    }
+    const swapped = previewFaceRoles.filter((r) => r && r.role !== 'bystander').length;
+    if (swapped > 1) {
+      return { reason: `${swapped} people are swapped on this frame and a bypass covers the whole scene - use Skip for this one person`, rangeText: '' };
+    }
+    return { reason: '', rangeText: bypassRange().text };
+  };
+
+  // Map one captured person to a source (or, with -1, to "never swap"). The same rules PersonGroups' dropdown follows:
+  // see its setMapping for why the implicit "Selected face" person is written out first and why two mapped people
+  // move the mode to "Selected people".
+  const setPersonSource = (personId, sourceIndex) => {
+    const sourceId = sourceIndex >= 0 ? sourceIdAt(sourceIndex) : null;
+    const next = { ...faceMapping };
+    if (p.face_detection_mode === 'Selected face' && selectedTargetPersonId && selectedTargetPersonId !== personId
+        && !Object.prototype.hasOwnProperty.call(next, selectedTargetPersonId)) {
+      const implicit = sourceIdAt(Number(selSource));
+      if (implicit) next[selectedTargetPersonId] = implicit;
+    }
+    if (sourceId) next[personId] = sourceId;
+    else Object.assign(next, excludePerson(next, personId));
+    setFaceMapping(next);
+    if (p.face_detection_mode === 'Selected face' && Object.keys(next).filter((k) => next[k]).length >= 2) {
+      set('face_detection_mode', 'Selected people');
+      notify('2+ people mapped - switched to "Selected people" so all of them swap', 'info');
+    }
+    commitTargetContext({ face_mapping: next, target_person_source_mapping: next });
+    clearPreviewCache();
+  };
+
+  const faceMenu = {
+    sourceNames: previewFaces.map((_, i) => (Number.isInteger(faceSources[i]) ? sourceNameAt(faceSources[i]) : null)),
+    sources: sourceFaces.map((thumb, index) => ({ index, name: sourceNameAt(index) || `Face ${index + 1}`, thumb: typeof thumb === 'string' ? thumb : null })),
+    bypassInfo: bypassInfoFor,
+    assign: async (faceIndex, sourceIndex) => {
+      // A box nobody has captured has no person to map yet: capture it first, as a click on the box does.
+      let personId = previewFaceRoles[faceIndex]?.personId ?? null;
+      if (!personId) personId = await captureTargetFaceFromFrame({ faceIndex });
+      if (!personId) return;
+      setPersonSource(personId, sourceIndex);
+      notify(sourceIndex >= 0 ? `Face ${faceIndex + 1} now swaps from ${sourceNameAt(sourceIndex)}` : `Face ${faceIndex + 1} is never swapped`, 'info');
+    },
+    bypass: (faceIndex) => {
+      const { reason } = bypassInfoFor(faceIndex);
+      if (reason) { notify(reason, 'error'); return; }
+      const r = bypassRange();
+      const wasOff = sceneOverrides.enabled === false;
+      if (wasOff) sceneOverrides.setEnabled(true);
+      sceneOverrides.add({ start: r.start, end: r.end, bypass: true }, `Bypass ${trackLabel(previewPersonIds[faceIndex] ?? faceIndex)}`);
+      notify(`Bypassing the swap on frames ${r.start}-${r.end} (Scene overrides lane)${wasOff ? ' - scene overrides were off and are on again' : ''}`);
+    },
+    // The crop goes through the same ingest as an uploaded image: the Face Manager detects the face in it, aligns it,
+    // embeds it and adds it to its bank. Building the .fsz is still the Face Manager's "Build" step.
+    extract: async (faceIndex, blob, meta) => {
+      const file = new File([blob], `${(targets[selTarget]?.name || 'target').replace(/\.[^.]+$/, '')}_f${meta.frame}_face${faceIndex + 1}.png`, { type: 'image/png' });
+      const res = await postFiles('/api/facemgr/add', [file], { detector: 'scrfd', restore: 'false' }, { timeout: 0 });
+      const n = res?.faces?.length || 0;
+      if (!n) throw new Error('the Face Manager found no face in that crop');
+      notify(`Added Face ${faceIndex + 1} (frame ${meta.frame}, ${meta.rect.w}x${meta.rect.h}) to the Face Manager bank, now ${n} face${n === 1 ? '' : 's'}. Build the faceset in #/facemgr.`);
+    },
+    // m is faceContextModel.warmthDeltaFor: the chroma difference between the plate's skin and the swapped skin, fitted
+    // with the renderer's own warmth gain. Warmth is relative to the slider, so a second run converges instead of
+    // stacking: it measures what the CURRENT result still lacks.
+    applySkin: (faceIndex, m) => {
+      const measured = `a* ${m.da >= 0 ? '+' : ''}${m.da.toFixed(1)}, b* ${m.db >= 0 ? '+' : ''}${m.db.toFixed(1)}`;
+      if (m.verdict === 'matched') { notify(`Skin tone already matches the plate (swapped skin is off by ${measured})`, 'info'); return; }
+      if (m.verdict === 'tint') {
+        notify(`Swapped skin is off by ${measured}, mostly a green / magenta tint that warmth cannot fix - try Saturation match or a different colour transfer mode`, 'info');
+        return;
+      }
+      const current = num(p.skin_tone_warmth, 0);
+      const next = nextWarmth(current, m.warmthDelta);
+      if (next === current) { notify(`Skin tone warmth is already at its limit (${current}); swapped skin is still off by ${measured}`, 'info'); return; }
+      set('skin_tone_warmth', next);
+      notify(`Skin tone warmth ${current} to ${next} (swapped skin was off by ${measured}${m.residual > 2 ? `; ${m.residual} of it is tint warmth cannot move` : ''})`);
+    },
   };
 
   // One queued job per piece, each with its own range and its own payload, stamped as one split
@@ -3194,7 +3361,7 @@ export default function FaceSwap({
       return false;
     }
     const { pieces, has } = overrideRangePlan();
-    if (!has) { notify('No scene override changes anything inside the In/Out range', 'info'); return false; }
+    if (!has) { notify('No scene override or parameter curve changes anything inside the In/Out range', 'info'); return false; }
     if (pieces.some((pc) => pc.override?.bypass) && !canBypass(p.face_detection_mode)) {
       notify('Bypass swap needs the "Selected face" detection mode: in the all-faces modes there is no match threshold to close.', 'error');
       return false;
@@ -3203,10 +3370,10 @@ export default function FaceSwap({
     const name = targets[selTarget]?.name || '';
     const group = `ovr-${Date.now().toString(36)}`;
     await queue.addMany(pieces.map((pc, i) => currentJob({
-      label: `${name} - ${pc.override ? pc.override.label : 'clip settings'} (${pc.start}-${pc.end})`,
+      label: `${name} - ${pc.override ? pc.override.label : 'clip settings'}${pc.curves ? ' + curves' : ''} (${pc.start}-${pc.end})`,
       frame_start: pc.start,
       frame_end: pc.end,
-      payload: patchPayload(base, pc.override),
+      payload: pieceBase(base, pc),
       ...(pieces.length > 1 ? { segment: { group, index: i + 1, count: pieces.length } } : {}),
     })));
     notify(`Queued ${pieces.length} piece${pieces.length === 1 ? '' : 's'} of "${name}" with scene overrides`);
@@ -4411,6 +4578,8 @@ export default function FaceSwap({
                     pins={identityPins}
                     onPinIdentity={onPinIdentity}
                     onUnpinIdentity={onUnpinIdentity}
+                    faceMenu={faceMenu}
+                    notify={notify}
                     splitView={splitView}
                     compare={compare}
                     onToggleCompare={() => setCompare((v) => { const n = !v; if (n) { setComparingEnhancers(false); setComparingMasks(false); setComparingSwappers(false); setComparingUpscalers(false); } return n; })}
@@ -4527,6 +4696,8 @@ export default function FaceSwap({
                   liveRange={liveRange}
                   sceneOverrides={sceneOverrides}
                   identityKeys={identityTrack}
+                  curveEditor={curveEditor}
+                  sceneApiRef={sceneApiRef}
                   swapModels={meta.swap_models}
                   detectionMode={p.face_detection_mode}
                   baseValues={{
@@ -4817,7 +4988,8 @@ export default function FaceSwap({
                 <div className="flex items-center justify-between"><span className="text-white/60">Snapshot slots A / B / C / D</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">1 / 2 / 3 / 4</kbd></div>
                 <div className="flex items-center justify-between"><span className="text-white/60">Zoom 1:1 / 200% / 400%</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">Shift + 1 / 2 / 4</kbd></div>
                 <div className="flex items-center justify-between"><span className="text-white/60">Zoom In / Out</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">+ / -</kbd></div>
-                <div className="flex items-center justify-between"><span className="text-white/60">Toggle Comparison</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">C</kbd></div>
+                <div className="flex items-center justify-between"><span className="text-white/60">Toggle Comparison</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">Shift + C</kbd></div>
+                <div className="flex items-center justify-between"><span className="text-white/60">Parameter Curve Editor (video)</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">C</kbd></div>
                 <div className="flex items-center justify-between"><span className="text-white/60">Toggle Split View</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">S</kbd></div>
                 <div className="flex items-center justify-between"><span className="text-white/60">Blend / slider mode</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">W</kbd></div>
                 <div className="flex items-center justify-between"><span className="text-white/60">Split axis</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">X</kbd></div>

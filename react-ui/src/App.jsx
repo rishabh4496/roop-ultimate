@@ -1347,7 +1347,7 @@ export default function App() {
               </div>
               <div className="flex items-center justify-between py-1.5">
                 <span className="text-white/70">Toggle Split-Screen Compare</span>
-                <kbd className="font-mono text-micro bg-white/10 px-2 py-0.5 rounded border border-white/10">C</kbd>
+                <kbd className="font-mono text-micro bg-white/10 px-2 py-0.5 rounded border border-white/10">Shift + C</kbd>
               </div>
             </div>
           </div>

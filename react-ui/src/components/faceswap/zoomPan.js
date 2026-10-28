@@ -157,6 +157,24 @@ export function screenToMedia(clientX, clientY, stage, imgDim, zoom, pan) {
 }
 
 /**
+ * The pan that puts the centre of `bbox` at the centre of the stage at a FIXED `zoom` (faceTrackingTarget picks its
+ * own zoom to frame the face; this is "zoom to 200% and centre on this face"). Clamped so the picture's edge never
+ * leaves the stage's. Null when the stage or the box is unknown.
+ */
+export function focusPanFor(bbox, imgDim, stage, zoom) {
+  if (!bbox || bbox.length < 4 || !imgDim || !imgDim.w || !imgDim.h || !stage || !(zoom > 0)) return null;
+  const ss = stageSize(stage);
+  const scale = Math.min(ss.w / imgDim.w, ss.h / imgDim.h);
+  const contentW = imgDim.w * scale;
+  const contentH = imgDim.h * scale;
+  const cx = (bbox[0] + bbox[2]) / 2;
+  const cy = (bbox[1] + bbox[3]) / 2;
+  const ux = (cx / imgDim.w - 0.5) * contentW;
+  const uy = (cy / imgDim.h - 0.5) * contentH;
+  return clampPan({ x: -ux * zoom, y: -uy * zoom }, zoom, stage, { offsetWidth: contentW, offsetHeight: contentH });
+}
+
+/**
  * Calculates smoothed camera target zoom and pan to lock and center on a face.
  * Uses 5-point ArcFace landmark telemetry when available, falling back to bbox.
  */
