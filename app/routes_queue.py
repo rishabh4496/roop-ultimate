@@ -988,8 +988,8 @@ def _loop(gen):
             try:
                 from roop import crash_autopsy
                 crash_autopsy.generate_crash_report(e, job_id=job.get("id"), stage="Stage 3 (Queue Runner)")
-            except Exception:
-                pass
+            except Exception as _ce:
+                _swallowed("routes_queue:crash_autopsy", _ce)
             status, error = "FAILED", str(e)
 
         try:
@@ -1029,8 +1029,8 @@ def _loop(gen):
                         seg_path = _segment_path(final_job, spec)
                         exp_frames = int(spec.end_frame) - int(spec.start_frame) + 1
                         segment_output.audit_segment_custody(seg_path, expected_frames=exp_frames)
-                    except Exception:
-                        pass
+                    except Exception as _se:
+                        _swallowed("routes_queue:audit_segment_custody", _se)
                 _announce_segment(final_job, spec, status, error=error)
                 if status == "COMPLETED":
                     _join_if_group_done(job["id"])
@@ -1153,6 +1153,20 @@ def _resume_job(job_id):
 
 def resume_project_job(project_id: str):
     """Make one validated persisted project runnable, without auto-resuming it."""
+    try:
+        import project_checkpoint as pc
+        from roop.journal import verify_and_recover_segments
+        record = pc.load(project_id)
+        checkpoint_data = record.get("checkpoint") or {}
+        segs = list(checkpoint_data.get("segments") or [])
+        output_dir = (record.get("output") or {}).get("directory") or pc.PROJECTS_DIR
+        verified, done, discarded = verify_and_recover_segments(output_dir, segs, discard_truncated_tail=True)
+        if discarded:
+            checkpoint_data["segments"] = verified
+            record["checkpoint"] = checkpoint_data
+            pc.save(record)
+    except Exception as _re:
+        _swallowed("routes_queue:resume_project_job", _re)
     with _lock:
         job = next((item for item in _queue["jobs"]
                     if str(item.get("project_id") or "") == str(project_id)), None)

@@ -3417,6 +3417,10 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
     @pause_aware
     def process_frame(self, frame:Frame, frame_idx=None):
         """Process one frame inside the shared pause-safe work boundary."""
+        if getattr(roop.globals, 'throttle_mode', False):
+            import time as _t_time
+            delay = float(getattr(roop.globals, 'throttle_delay_s', 0.05) or 0.05)
+            _t_time.sleep(delay)
         # Pause admission is owned by the wrapper above; this implementation
         # runs only after the controller has granted the frame's work scope.
         if len(self.input_face_datas) < 1 and not self.options.show_face_masking:
@@ -3487,6 +3491,18 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             else:
                 self.last_swapped_frame = None
             self._publish_live(temp_frame)
+            try:
+                from roop import debug_snapshot
+                debug_snapshot.set_latest_frame_data(
+                    frame_idx=frame_idx if frame_idx is not None else 0,
+                    original=frame,
+                    raw_swap=resimg,
+                    restored=temp_frame,
+                )
+                if debug_snapshot.is_snapshot_requested():
+                    debug_snapshot.dump_snapshot(frame_idx=frame_idx if frame_idx is not None else 0)
+            except Exception as _snap_err:
+                _swallowed("ProcessMgr:debug_snapshot", _snap_err)
             return temp_frame
         if roop.globals.no_face_action == eNoFaceAction.USE_LAST_SWAPPED:
             if self.last_swapped_frame is not None and self.num_frames_no_face < self.options.max_num_reuse_frame:

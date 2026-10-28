@@ -260,6 +260,15 @@ def project_resume(project_id: str):
     if reasons:
         return _failure(record, reasons)
     try:
+        from roop.journal import verify_and_recover_segments
+        checkpoint_data = record.get("checkpoint") or {}
+        segs = list(checkpoint_data.get("segments") or [])
+        output_dir = (record.get("output") or {}).get("directory") or checkpoints.PROJECTS_DIR
+        verified, done, discarded = verify_and_recover_segments(output_dir, segs, discard_truncated_tail=True)
+        if discarded:
+            checkpoint_data["segments"] = verified
+            record["checkpoint"] = checkpoint_data
+            checkpoints.save(record)
         # A paused in-process project already owns the live worker and model
         # sessions. Wake that worker instead of reloading globals underneath it.
         api = _api()

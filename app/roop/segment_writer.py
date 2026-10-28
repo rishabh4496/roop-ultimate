@@ -62,6 +62,21 @@ MANIFEST_VERSION = 1
 _parts_lock = threading.Lock()
 _parts = []          # finalized, oldest first
 _current = None      # the part being written, or None between/after segments
+_active_writer = None
+
+
+def get_active_writer():
+    """Return the active SegmentedVideoWriter instance, or None if idle."""
+    return _active_writer
+
+
+def flush_active_writer():
+    """Flush and finalize the current segment and encoder cleanly."""
+    writer = _active_writer
+    if writer is not None:
+        writer.flush_checkpoint()
+        return True
+    return False
 
 
 def reset_parts():
@@ -206,6 +221,8 @@ class SegmentedVideoWriter:
         if _hdr is not None:
             self._identity["hdr"] = _hdr
 
+        global _active_writer
+        _active_writer = self
         self.segments, self.resume_frames = self._load_resume()
         self._seg_index = len(self.segments)
         self._writer = None
@@ -257,7 +274,13 @@ class SegmentedVideoWriter:
                         return [], 0
                 elif have != want:
                     return [], 0
-            segments, done = _segments_that_exist(m, self._dir)
+            from roop.journal import verify_and_recover_segments
+            raw_segments, raw_done = _segments_that_exist(m, self._dir)
+            segments, done, discarded = verify_and_recover_segments(
+                self._dir, raw_segments, fps=self.fps, discard_truncated_tail=True
+            )
+            if discarded:
+                bar_write(f"[Resume] verified segments with ffprobe: discarded {len(discarded)} truncated tail file(s)")
             stored_codec = str(m.get("effective_codec") or "").strip()
             self._effective_codec = stored_codec or (self.codec if segments else None)
             return segments, done
@@ -284,6 +307,28 @@ class SegmentedVideoWriter:
             bar_write(f"[Resume] could not write manifest: {e}")
 
     # ── writing ──────────────────────────────────────────────────────────────
+    def _write_journal(self):
+        try:
+            import roop.globals as g
+            from roop.journal import write_journal, build_journal_record
+            job_id = str(getattr(g, "_active_project_id", "") or getattr(self, "signature", "") or "swap_job")
+            record = build_journal_record(
+                job_id=job_id,
+                project_id=job_id,
+                source_path=self._identity.get("source", ""),
+                target_path=self.target_video,
+                payload=self._identity,
+                segments=self.segments,
+                frame_start=self._identity.get("frame_start", 0),
+                frame_end=self._identity.get("frame_end", 0),
+                current_frame=self.total_encoded,
+                status="IN_PROGRESS",
+                seg_dir=self._dir,
+            )
+            write_journal(self._dir, record)
+        except Exception as _journal_err:
+            _swallowed("roop/segment_writer.py:_write_journal", _journal_err, "journal write fallback")
+
     def _default_chunk(self):
         """Choose a rotation interval from the detected source frame rate.
 
@@ -426,6 +471,7 @@ class SegmentedVideoWriter:
             bar_write(f"[Resume] ✓ part {last['index']} written · frames "
                   f"{last['first']}-{last['last']} · {last['bytes'] / 1048576:.0f} MB")
             self._write_manifest()
+            self._write_journal()
             self._notify_checkpoint()
             gc.collect()
         else:
@@ -446,6 +492,8 @@ class SegmentedVideoWriter:
 
     # ── finish ───────────────────────────────────────────────────────────────
     def close(self):
+        global _active_writer
+        _active_writer = None
         finalize_error = None
         with self._write_lock:
             try:

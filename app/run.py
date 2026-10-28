@@ -208,6 +208,8 @@ parser.add_argument('--execution-batch-size', dest='execution_batch_size',
                          'clamped to the worker thread count and free VRAM. Beats config.yaml perf_batch_max')
 parser.add_argument('--source', '--source-path', dest='source_reference_path', default=None,
                     help='source image or folder of same-identity reference images')
+parser.add_argument('--resume', dest='resume', default=None,
+                    help='resume an interrupted job by job_id or project_id')
 parser.add_argument('--project', dest='project', default=None,
                     help='portable .roop project session to load')
 parser.add_argument('--render', action='store_true', default=False,
@@ -314,6 +316,40 @@ def _announce_react_backend_when_ready(api_thread, api_port):
 
 
 if __name__ == '__main__':
+    if getattr(args, 'resume', None):
+        import project_checkpoint as pc
+        from roop.journal import verify_and_recover_segments
+        target_id = args.resume
+        print(f"[Resume] CLI resuming render for job/project: {target_id}", flush=True)
+        project_file = None
+        record = None
+        try:
+            record = pc.load(target_id)
+            project_file = pc.project_path(target_id)
+        except Exception:
+            for p in pc.list_projects():
+                if str(p.get("job_id")) == str(target_id) or str(p.get("id")) == str(target_id):
+                    record = p
+                    project_file = pc.project_path(p["id"])
+                    break
+        if record is not None:
+            checkpoint_data = record.get("checkpoint") or {}
+            segs = list(checkpoint_data.get("segments") or [])
+            output_dir = (record.get("output") or {}).get("directory") or pc.PROJECTS_DIR
+            verified, done, discarded = verify_and_recover_segments(output_dir, segs, discard_truncated_tail=True)
+            if discarded:
+                print(f"[Resume] Verified with ffprobe: discarded {len(discarded)} truncated tail file(s).", flush=True)
+                checkpoint_data["segments"] = verified
+                record["checkpoint"] = checkpoint_data
+                pc.save(record)
+            os.environ['ROOP_HEADLESS_PROJECT'] = '1'
+            args.project = project_file
+            args.render = True
+            core.run()
+            raise SystemExit(0)
+        else:
+            print(f"[Resume] Error: Could not locate project record for '{target_id}'", flush=True)
+            sys.exit(1)
     if getattr(args, 'benchmark', False) and args.benchmark_mode == 'regression':
         from roop.benchmark.regression import run_regression_from_args
         sys.exit(run_regression_from_args(args))

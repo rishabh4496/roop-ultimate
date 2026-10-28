@@ -136,3 +136,11 @@ def test_apply_color_transfer_triggers_with_lighting_controls():
     
     out = mgr.apply_color_transfer(swapped, target)
     assert int(out[60, 60].mean()) > int(swapped[60, 60].mean())
+
+
+def load_tests(loader, tests, pattern):
+    try:
+        from tests.unittest_shim import load_tests_for
+    except ImportError:
+        from unittest_shim import load_tests_for
+    return load_tests_for(globals())

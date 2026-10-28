@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import atexit
 import datetime
+import json
 import math
 import os
 import re
@@ -711,6 +712,11 @@ class TerminalProgressManager:
         self._snap: Dict[str, Any] = _idle_snapshot()
         self._active = False
         self._mode = "off"
+        self._input_thread: Optional[threading.Thread] = None
+        self._detail_telemetry: bool = False
+        self._throttle_mode: bool = False
+        self._flash_message: Optional[str] = None
+        self._flash_message_expiry: float = 0.0
         self._reset_state()
         atexit.register(self._atexit)
 
@@ -731,6 +737,10 @@ class TerminalProgressManager:
         self._last_bar: Optional[Tuple[int, Optional[int]]] = None     # (n, total) of the last 'Processing' bar that closed
         self._lat_cache: Tuple[Dict[str, Optional[float]], Optional[Dict[str, Any]], int] = (
             {**{c[0]: None for c in LATENCY_COLUMNS}, "other": None}, None, 0)
+        self._detail_telemetry = False
+        self._throttle_mode = False
+        self._flash_message = None
+        self._flash_message_expiry = 0.0
 
     @property
     def active(self) -> bool:
@@ -763,6 +773,8 @@ class TerminalProgressManager:
                 self._tick()
                 self._thread = threading.Thread(target=self._loop, name="terminal_dashboard", daemon=True)
                 self._thread.start()
+                if self._mode == "live":
+                    self._start_key_listener()
             except Exception:
                 # Half-started is worse than not started: put stdout/stderr back and report inactive, then let the
                 # facade's guard record why.
@@ -777,6 +789,7 @@ class TerminalProgressManager:
             if not self._active:
                 return
             self._stop.set()
+            self._stop_key_listener()
             t = self._thread
         if t is not None and t is not threading.current_thread() and t.is_alive():
             t.join(timeout=2.0)
@@ -823,6 +836,197 @@ class TerminalProgressManager:
                 self._tick()
             except Exception as exc:
                 _swallowed("roop/terminal_dashboard.py:tick", exc, "dashboard skipped one repaint")
+
+    # -- interactive key listener --
+    def _set_flash_message(self, msg: str, duration: float = 3.5) -> None:
+        with self._lock:
+            self._flash_message = msg
+            self._flash_message_expiry = self._wall() + duration
+
+    def _start_key_listener(self) -> None:
+        if self._mode != "live":
+            return
+        if not (sys.stdin and hasattr(sys.stdin, "isatty") and sys.stdin.isatty()):
+            return
+        if self._input_thread is not None and self._input_thread.is_alive():
+            return
+        self._input_thread = threading.Thread(target=self._key_listener_loop, name="terminal_hotkeys", daemon=True)
+        self._input_thread.start()
+
+    def _stop_key_listener(self) -> None:
+        t = self._input_thread
+        self._input_thread = None
+        if t is not None and t is not threading.current_thread() and t.is_alive():
+            t.join(timeout=0.5)
+
+    def _key_listener_loop(self) -> None:
+        old_termios = None
+        fd = None
+        if sys.platform != "win32":
+            try:
+                import termios, tty
+                fd = sys.stdin.fileno()
+                old_termios = termios.tcgetattr(fd)
+                tty.setcbreak(fd)
+            except Exception as exc:
+                _swallowed("terminal_dashboard:posix_cbreak", exc, "posix cbreak skipped")
+        try:
+            while not self._stop.is_set():
+                key = self._poll_key(fd)
+                if key:
+                    self.handle_key(key)
+                if self._stop.wait(0.05):
+                    break
+        finally:
+            if old_termios is not None and fd is not None:
+                try:
+                    import termios
+                    termios.tcsetattr(fd, termios.TCSADRAIN, old_termios)
+                except Exception as exc:
+                    _swallowed("terminal_dashboard:restore_termios", exc)
+
+    def _poll_key(self, fd: Optional[int] = None) -> Optional[str]:
+        if sys.platform == "win32":
+            try:
+                import msvcrt
+                if msvcrt.kbhit():
+                    ch = msvcrt.getch()
+                    if ch in (b"\x00", b"\xe0"):
+                        if msvcrt.kbhit():
+                            msvcrt.getch()
+                        return None
+                    return ch.decode("utf-8", errors="ignore")
+            except Exception as exc:
+                _swallowed("terminal_dashboard:poll_key_win", exc)
+                return None
+        elif fd is not None:
+            try:
+                import select
+                r, _, _ = select.select([fd], [], [], 0.0)
+                if r:
+                    return sys.stdin.read(1)
+            except Exception as exc:
+                _swallowed("terminal_dashboard:poll_key_posix", exc)
+                return None
+        return None
+
+    def handle_key(self, key: str) -> Optional[str]:
+        if not key:
+            return None
+        k = key.lower()
+        if k == 'p':
+            return self._handle_pause_resume()
+        elif k == 's':
+            return self._handle_debug_snapshot()
+        elif k == 'd':
+            return self._handle_toggle_detail()
+        elif k == 't':
+            return self._handle_toggle_throttle()
+        elif k == 'q':
+            return self._handle_graceful_quit()
+        return None
+
+    def _handle_pause_resume(self) -> str:
+        try:
+            pr = sys.modules.get("roop.procmgr_runtime")
+            if pr is None:
+                from roop import procmgr_runtime as pr
+            snap = pr.pause_controller.snapshot()
+            if snap["requested"] or snap["acknowledged"]:
+                pr.pause_controller.resume()
+                try:
+                    import roop.globals as g
+                    g.pause = False
+                except Exception as exc:
+                    _swallowed("terminal_dashboard:pause_flag", exc)
+                msg = "[Interactive] Render RESUMED."
+            else:
+                pr.pause_controller.request()
+                try:
+                    import roop.globals as g
+                    g.pause = True
+                except Exception as exc:
+                    _swallowed("terminal_dashboard:pause_flag", exc)
+                try:
+                    import torch
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                except Exception as exc:
+                    _swallowed("terminal_dashboard:cuda_cache", exc)
+                try:
+                    from roop.buffer_pool import release_frame_buffer_pools
+                    release_frame_buffer_pools()
+                except Exception as exc:
+                    _swallowed("terminal_dashboard:release_pools", exc)
+                msg = "[Interactive] Render PAUSED — GPU scratch buffers released."
+            self._set_flash_message(msg)
+            return msg
+        except Exception as exc:
+            _swallowed("terminal_dashboard:pause_key", exc, "pause hotkey failed")
+            return f"Error: {exc}"
+
+    def _handle_debug_snapshot(self) -> str:
+        try:
+            from roop import debug_snapshot
+            s3_done = int(self._snap.get("stages", {}).get("S3", {}).get("done") or 0)
+            png_path, json_path = debug_snapshot.dump_snapshot(frame_idx=s3_done)
+            msg = f"[Snapshot] Saved frame {s3_done} grid -> {os.path.basename(png_path)}"
+            self._set_flash_message(msg)
+            return msg
+        except Exception as exc:
+            _swallowed("terminal_dashboard:snapshot_key", exc, "snapshot hotkey failed")
+            return f"Error: {exc}"
+
+    def _handle_toggle_detail(self) -> str:
+        self._detail_telemetry = not self._detail_telemetry
+        state = "EXPANDED" if self._detail_telemetry else "COLLAPSED"
+        msg = f"[Interactive] Telemetry detail: {state}"
+        self._set_flash_message(msg)
+        return msg
+
+    def _handle_toggle_throttle(self) -> str:
+        self._throttle_mode = not self._throttle_mode
+        try:
+            import roop.globals as g
+            g.throttle_mode = self._throttle_mode
+            g.throttle_delay_s = 0.05 if self._throttle_mode else 0.0
+        except Exception as exc:
+            _swallowed("terminal_dashboard:throttle_flag", exc)
+        state = "ON (50ms cooldown)" if self._throttle_mode else "OFF"
+        msg = f"[Interactive] Throttle mode: {state}"
+        self._set_flash_message(msg)
+        return msg
+
+    def _handle_graceful_quit(self) -> str:
+        msg = "[Interactive] Checkpoint & Exit requested — finalizing current segment."
+        self._set_flash_message(msg)
+        try:
+            import roop.globals as g
+            g.quit_requested = True
+            pr = sys.modules.get("roop.procmgr_runtime")
+            if pr:
+                pr.pause_controller.request()
+            from roop import segment_writer
+            segment_writer.flush_active_writer()
+            receipt = {
+                "job_id": self._job.get("id") or self._job.get("job_id") or "swap_job",
+                "status": "CHECKPOINT_SAVED",
+                "timestamp": time.time(),
+                "exit_code": 0,
+                "checkpoint": self._snap.get("stages", {}).get("S3", {}),
+            }
+            logs_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs")
+            receipt_path = os.path.join(logs_dir, ".checkpoint.json")
+            os.makedirs(logs_dir, exist_ok=True)
+            with open(receipt_path + ".tmp", "w", encoding="utf-8") as fh:
+                json.dump(receipt, fh, indent=2)
+            os.replace(receipt_path + ".tmp", receipt_path)
+            self.end_job(ok=True)
+            if os.environ.get("ROOP_REACT_CLIENT") != "1" and not os.environ.get("PYTEST_CURRENT_TEST"):
+                sys.exit(0)
+        except Exception as exc:
+            _swallowed("terminal_dashboard:quit_key", exc, "quit hotkey failed")
+        return msg
 
     # -- hooks (called by the pipeline; each is cheap) --
     def s1_step(self, name: str) -> None:
@@ -1097,8 +1301,21 @@ class TerminalProgressManager:
         self._last_states = states
         if self._mode == "live" and self._term is not None:
             color = _color_on()
-            self._term.set_lines(render_stage_lines(snap, color=color, width=self._cols()) +
-                                 render_telemetry_lines(snap, color=color, width=self._cols()))
+            lines = (render_stage_lines(snap, color=color, width=self._cols()) +
+                     render_telemetry_lines(snap, color=color, width=self._cols(), detailed=self._detail_telemetry))
+            if not final:
+                msg = self._flash_message if self._wall() < self._flash_message_expiry else None
+                footer = render_hotkey_footer(
+                    paused=self._paused(),
+                    throttle=self._throttle_mode,
+                    detailed=self._detail_telemetry,
+                    color=color,
+                    width=self._cols(),
+                    message=msg
+                )
+                if footer:
+                    lines.append(footer)
+            self._term.set_lines(lines)
         elif self._mode == "log":
             t = self._clock()
             if final or changed or t - self._last_log >= self.LOG_EVERY_S:
@@ -1110,7 +1327,7 @@ class TerminalProgressManager:
     def _final_lines(self, snap: Dict[str, Any]) -> List[str]:
         if self._mode == "live":
             color = _color_on()
-            return render_stage_lines(snap, color=color, width=self._cols()) + render_telemetry_lines(snap, color=color, width=self._cols())
+            return render_stage_lines(snap, color=color, width=self._cols()) + render_telemetry_lines(snap, color=color, width=self._cols(), detailed=self._detail_telemetry)
         return []                                        # log mode already printed its final lines from the last tick
 
 
@@ -1170,7 +1387,7 @@ def render_stage_lines(snap: Dict[str, Any], *, color: bool, width: int = 110) -
     return out
 
 
-def render_telemetry_lines(snap: Dict[str, Any], *, color: bool, width: int = 110) -> List[str]:
+def render_telemetry_lines(snap: Dict[str, Any], *, color: bool, width: int = 110, detailed: bool = False) -> List[str]:
     t = snap["telemetry"]
     lat, bn, hr = t["latency_ms"], t["bottleneck"], t["hit_rates"]
     short = width < 120
@@ -1189,7 +1406,70 @@ def render_telemetry_lines(snap: Dict[str, Any], *, color: bool, width: int = 11
     roi = "off" if hr.get("smart_skip_enabled") is False and hr["smart_skip_roi_reused_pct"] is None else f"{_num(hr['smart_skip_roi_reused_pct'])}%"
     line2 = (f"{tag}  Smart-Skip ROI reused {roi} · Stage-2 face-free skipped {_num(hr['stage2_face_free_skipped_pct'])}% · "
              f"VRAM {_num(hr['vram_allocated_gb'], '{:.2f}')} / peak {_num(hr['vram_peak_gb'], '{:.2f}')} GB")
-    return [line1, line2]
+    lines = [line1, line2]
+
+    if detailed:
+        hist_parts = []
+        valid_vals = [v for v in lat.values() if v is not None and v > 0]
+        total_lat = sum(valid_vals) if valid_vals else 0.0
+        for key, label, abbr, _ in LATENCY_COLUMNS:
+            val = lat.get(key)
+            if val is not None and total_lat > 0:
+                share = (val / total_lat) * 100.0
+                bar_len = int(round(share / 10.0))
+                bar_str = "█" * bar_len + "░" * max(0, 10 - bar_len)
+                hist_parts.append(f"{abbr}:[{bar_str}]{share:.0f}%({val:.1f}ms)")
+        if hist_parts:
+            hdr = f"{BOLD}{GRAY}Histograms:{RESET} " if color else "Histograms: "
+            lines.append(hdr + " ".join(hist_parts[:4]))
+            if len(hist_parts) > 4:
+                lines.append("            " + " ".join(hist_parts[4:]))
+
+        try:
+            import psutil
+            cpu_percs = psutil.cpu_percent(percpu=True)
+            if cpu_percs:
+                cpu_items = [f"C{i}:{int(p)}%" for i, p in enumerate(cpu_percs[:16])]
+                hdr_cpu = f"{BOLD}{GRAY}CPU Util:{RESET} " if color else "CPU Util: "
+                lines.append(hdr_cpu + " ".join(cpu_items))
+        except Exception as exc:
+            _swallowed("terminal_dashboard:cpu_util", exc)
+
+    return lines
+
+
+def render_hotkey_footer(
+    *,
+    paused: bool = False,
+    throttle: bool = False,
+    detailed: bool = False,
+    color: bool = True,
+    width: int = 110,
+    message: Optional[str] = None,
+) -> str:
+    """Compact hotkey footer bar:
+    [P] Pause/Resume GPU    [S] Dump Debug Frame    [D] Toggle Kernel Detail    [T] Throttle Mode    [Q] Save Checkpoint & Exit
+    """
+    if message:
+        prefix = f"{GOLD}▶ {RESET}" if color else "▶ "
+        return f"{prefix}{message}"
+
+    k_c = GOLD if color else ""
+    d_c = WHITE if color else ""
+    r = RESET if color else ""
+    b = BOLD if color else ""
+
+    p_label = "Resume GPU" if paused else "Pause/Resume GPU"
+    d_label = "Kernel Detail (ON)" if detailed else "Toggle Kernel Detail"
+    t_label = "Throttle Mode (ON)" if throttle else "Throttle Mode"
+
+    item_p = f"{k_c}{b}[P]{r} {d_c}{p_label}{r}"
+    item_s = f"{k_c}{b}[S]{r} {d_c}Dump Debug Frame{r}"
+    item_d = f"{k_c}{b}[D]{r} {d_c}{d_label}{r}"
+    item_t = f"{k_c}{b}[T]{r} {d_c}{t_label}{r}"
+    item_q = f"{k_c}{b}[Q]{r} {d_c}Save Checkpoint & Exit{r}"
+
+    return f"{item_p}    {item_s}    {item_d}    {item_t}    {item_q}"
 
 
 def render_log_lines(snap: Dict[str, Any], only: Optional[Tuple[str, ...]] = None) -> List[str]:
@@ -1246,6 +1526,10 @@ def begin_job(job: Optional[Dict[str, Any]] = None, profile: Optional[Dict[str, 
 
 def end_job(ok: bool = True) -> None:
     _guard("end_job", manager.end_job, ok)
+
+
+def handle_key(key: str) -> Optional[str]:
+    return manager.handle_key(key)
 
 
 def s1_step(name: str) -> None:

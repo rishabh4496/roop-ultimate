@@ -20,6 +20,14 @@ import time
 import uuid
 from typing import Any, Callable, Mapping
 
+from roop.degrade import swallowed as _swallowed
+from roop.journal import (
+    write_journal,
+    read_journal,
+    verify_and_recover_segments,
+    build_journal_record,
+)
+
 
 # A project record is read-modify-written from several threads: the render worker (state, runtime,
 # the Stage 1/2 records below) and the segment writer (a committed segment). Without one lock the
@@ -382,7 +390,31 @@ def update_checkpoint(project_id: str, *, safe_frame: int, next_frame: int,
             }
         if state:
             record["state"] = state
-        return save(record)
+        saved = save(record)
+        try:
+            job_dir = os.path.join(PROJECTS_DIR, project_id)
+            inputs = record.get("inputs") or {}
+            target = inputs.get("target") or {}
+            sources = list(inputs.get("sources") or [])
+            src_path = sources[0].get("path", "") if sources else ""
+            tgt_path = target.get("path", "")
+            j_rec = build_journal_record(
+                job_id=record.get("job_id") or project_id,
+                project_id=project_id,
+                source_path=src_path,
+                target_path=tgt_path,
+                payload=(record.get("settings") or {}).get("payload") or {},
+                segments=record["checkpoint"]["segments"],
+                frame_start=inputs.get("frame_start", 0),
+                frame_end=inputs.get("frame_end", 0),
+                current_frame=next_frame,
+                status=record.get("state", "IN_PROGRESS"),
+                seg_dir=job_dir,
+            )
+            write_journal(job_dir, j_rec)
+        except Exception as _j_exc:
+            _swallowed("project_checkpoint:update_checkpoint_journal", _j_exc, "journal update skipped")
+        return saved
 
 
 def complete_hashes(project_id: str) -> dict | None:
@@ -809,4 +841,5 @@ __all__ = [
     "stage_cache_key",
     "stage_sidecar_path", "usable_stage_cache", "verify_sidecar",
     "update_checkpoint", "update_runtime", "update_state", "validate",
+    "write_journal", "read_journal", "verify_and_recover_segments",
 ]
