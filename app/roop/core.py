@@ -419,6 +419,8 @@ def decode_execution_providers(execution_providers: List[str]) -> List[str]:
 
                 print(f"[TRT] device {total_gb:.1f}GB VRAM -> workspace limit "
                       f"({workspace_size / (1024**3):.1f}GB), partition_iters from env/default")
+                # Read by the VRAM governor's admission line; the value is hashed into the cache namespace below.
+                roop.globals.trt_workspace_mb = workspace_size / (1024 * 1024)
                 try:
                     partition_iters = int(os.environ.get('ROOP_TRT_PARTITION_ITERATIONS', '2000'))
                 except ValueError:

@@ -1,6 +1,6 @@
 import React from 'react';
 import { useTelemetryStore } from '../../store/telemetryStore';
-import { STAGE_TONE, bottleneckText, hasJob, hitRateCells, latencyCells, stageRows } from './dashboardModel';
+import { STAGE_TONE, bottleneckText, hasJob, hitRateCells, latencyCells, queueBound, queueCells, stageRows } from './dashboardModel';
 
 // The terminal dashboard on #/processing: the four stages, the per-frame latency split, the bottleneck and the
 // optimizer hit rates - the numbers the console prints, because the backend paints the console from the same object
@@ -11,6 +11,8 @@ import { STAGE_TONE, bottleneckText, hasJob, hitRateCells, latencyCells, stageRo
 // numbers; the bars are decorative (aria-hidden) beside a role="progressbar" carrying the same percentage.
 
 const SEVERITY = { red: 'text-red-300', yellow: 'text-amber-300' };
+// The verdict is words in brackets first; the tone only reinforces it (never colour alone).
+const BOUND_TONE = { ok: 'text-emerald-300', warn: 'text-amber-300', muted: 'text-muted' };
 
 function StageRow({ row }) {
   const tone = STAGE_TONE[row.id];
@@ -39,6 +41,8 @@ export function ConsoleMirrorView({ dash }) {
   const rows = stageRows(dash);
   const cells = latencyCells(dash);
   const hits = hitRateCells(dash);
+  const queues = queueCells(dash);
+  const bound = queueBound(dash);
   const bn = dash.telemetry && dash.telemetry.bottleneck;
   const job = dash.job || {};
   return (
@@ -66,6 +70,22 @@ export function ConsoleMirrorView({ dash }) {
           ))}
           <span className="text-muted">ms / frame</span>
         </div>
+        {queues.length > 0 && (
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-micro font-mono" data-testid="console-queues"
+            data-bound={dash.telemetry.queues.bound || ''} aria-label="Pipeline queue fill">
+            {queues.map((c) => (
+              <span key={c.key} data-queue={c.key} className="inline-flex items-center gap-1.5 text-white/80"
+                title={c.unit ? `${c.label} (${c.unit})` : c.label}>
+                {c.label} <span className="tabular-nums">{c.value}</span>
+                <span aria-hidden="true" className="inline-block h-1 w-10 overflow-hidden rounded-full bg-white/10">
+                  <span className="block h-full rounded-full bg-cyan-400" style={{ width: `${c.fill == null ? 0 : Math.round(c.fill * 100)}%` }} />
+                </span>
+              </span>
+            ))}
+            <span data-testid="console-bound" title={bound.basis}
+              className={`font-bold ${BOUND_TONE[bound.tone]}`}>{bound.text}</span>
+          </div>
+        )}
         <div className="flex flex-wrap items-baseline gap-x-4 gap-y-0.5 text-micro font-mono">
           <span className={bn ? `${SEVERITY[bn.severity] || 'text-amber-300'} font-bold` : 'text-muted'}>{bottleneckText(dash)}</span>
           {hits.map((h) => (

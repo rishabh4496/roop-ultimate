@@ -483,16 +483,22 @@ class UnifiedRuntimeScheduler:
         # blocks the next frame would reuse, so "free" understates what is available).
         floor_gb = governor_floor_gb()
         below_floor = bool(vram_total and floor_gb > 0 and vram_free < floor_gb)
-        if below_floor:
+        # The ceiling holds whatever ROOP_SCHEDULER_VRAM_MARGIN says: a margin set under 10% must
+        # not let a render run past 90% of the card (above ~95% the Windows driver pages to RAM).
+        from roop import vram_governor
+        over_ceiling = bool(vram_total and
+                            (1.0 - vram_free / vram_total) >= vram_governor.RUNTIME_FRACTION)
+        if below_floor or over_ceiling:
             self._flush_vram_cache()
         vram_pressure = bool(vram_total and
-                             vram_free <= vram_total * self.budget.vram_margin_ratio) or below_floor
+                             vram_free <= vram_total * self.budget.vram_margin_ratio) or below_floor or over_ceiling
         ram_pressure = bool(ram_total and
                             ram_available <= ram_total * self.budget.ram_margin_ratio)
         queue_depths = resource.get("queue_depths") or {}
         queue_pressure = any(
             _number(depth) >= self.queue_capacity for depth in queue_depths.values())
         pressured = vram_pressure or ram_pressure or queue_pressure
+        stepped = healthy_tick = False
         with self._lock:
             if pressured:
                 self._pressure_samples += 1
@@ -504,10 +510,33 @@ class UnifiedRuntimeScheduler:
             if self._pressure_samples >= 2:
                 self._effective_inflight = max(1, old - 1)
                 self._pressure_samples = 0
+                stepped = True
             elif self._healthy_samples >= 4:
                 self._effective_inflight = min(self.budget.in_flight_limit, old + 1)
                 self._healthy_samples = 0
+                healthy_tick = True
             new = self._effective_inflight
+        used_mb = (vram_total - vram_free) * 1024.0 if vram_total else None
+        total_mb = vram_total * 1024.0 if vram_total else None
+        # Second rung: in-flight frames cannot go below 1, so VRAM pressure that persists at 1 lowers the
+        # swap batch instead (vram_governor.runtime_step_down). Queue / RAM pressure is not VRAM: it is left alone.
+        if stepped and new == old and vram_pressure:
+            action = vram_governor.runtime_step_down()
+            if action:
+                with self._lock:
+                    self.metrics.actions.append({"reason": "vram_pressure", "changes": {"swap_batch": action},
+                                                 "scope": "future_work", "safe_boundary": True})
+                from roop import pipeline_status as _status
+                _status.governor_throttle(reason="vram_ceiling" if over_ceiling else "vram_margin",
+                                          action=action, vram_free_gb=round(vram_free, 3))
+                self._vram_throttled = True
+                vram_governor.announce(f"in-flight frames already 1, {action}", used_mb=used_mb, total_mb=total_mb,
+                                       detail="VRAM caches flushed; the look is unchanged")
+        # Recovery: once in-flight frames are back at their limit and the card has been healthy, win the batch back.
+        if healthy_tick and new == self.budget.in_flight_limit:
+            action = vram_governor.runtime_restore()
+            if action:
+                vram_governor.announce(f"VRAM healthy again, {action}", used_mb=used_mb, total_mb=total_mb)
         if new != old:
             action = {
                 "reason": ("resource_pressure" if new < old else "resources_healthy"),
@@ -524,6 +553,15 @@ class UnifiedRuntimeScheduler:
                     in_flight_before=old, in_flight_after=new,
                     vram_free_gb=round(vram_free, 3), vram_floor_gb=floor_gb,
                     queue_pressure=bool(queue_pressure), ram_pressure=bool(ram_pressure))
+                if vram_pressure:
+                    self._vram_throttled = True
+                    vram_governor.announce(f"in-flight frames {old} -> {new}", used_mb=used_mb, total_mb=total_mb,
+                                           detail="VRAM cache flushed" if (below_floor or over_ceiling) else "")
+            elif vram_total and getattr(self, "_vram_throttled", False):
+                # Only when VRAM caused the step down: queue or RAM pressure recovering is not this governor's news.
+                self._vram_throttled = new < self.budget.in_flight_limit
+                vram_governor.announce(f"in-flight frames {old} -> {new}", used_mb=used_mb, total_mb=total_mb,
+                                       detail="VRAM healthy again")
             if self.adaptive is not None:
                 try:
                     self.adaptive.tuning = self.adaptive.tuning  # keep ownership explicit

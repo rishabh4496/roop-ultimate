@@ -47,6 +47,7 @@ import json
 import os
 import threading
 import time
+import weakref
 from dataclasses import asdict, dataclass, field, replace
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -188,6 +189,23 @@ class JobSpec:
             self.swap_model, enh, masks or '-', self.swap_contexts,
             self.detmask_contexts, self.enhancer_contexts,
             _resolution_class(self.width, self.height)))
+
+
+def tier_label(total_mb: float) -> str:
+    """The card class the plan was made for: '6GB' | '8GB' | '12GB' | '16GB' | '24GB+'.
+
+    A label for the log, not a switch: the plan itself is computed from MEASURED free memory
+    (`plan_job`), which is what makes a 12 GB card with a browser open plan like a smaller one."""
+    gb = float(total_mb or 0.0) / 1024.0
+    if gb < 7.0:
+        return '6GB'
+    if gb < 10.0:
+        return '8GB'
+    if gb < 14.0:
+        return '12GB'
+    if gb < 20.0:
+        return '16GB'
+    return '24GB+'
 
 
 def _resolution_class(width: int, height: int) -> str:
@@ -491,6 +509,82 @@ _active_lock = threading.Lock()
 _active: Optional[Tuple[VramPlan, _PeakSampler, float]] = None
 
 
+# ── runtime rungs (the part of the governor that acts DURING a render) ─────────────────────────────────────
+#
+# `admit()` plans once, before any session exists. `runtime_scheduler.UnifiedRuntimeScheduler` watches the
+# card while frames flow and, past RUNTIME_FRACTION used, reduces in-flight frames; when that is already 1
+# it has nothing left to give, so the next rung is the cross-frame swap batch (8 -> 4 -> 2 -> 1), which is
+# the largest transient allocation a render still controls. The look never changes: this is the same
+# "throughput only" ladder `plan_job` walks, applied live. Every action is printed as `[VRAM-GOVERNOR]`.
+
+# Used fraction of the card at or above which the runtime governor acts, whatever the margin ratio says.
+RUNTIME_FRACTION = 0.90
+
+_batcher_lock = threading.Lock()
+_batchers: "weakref.WeakSet[Any]" = weakref.WeakSet()
+
+
+def register_batcher(batcher: Any) -> None:
+    """Hand the live `SwapBatcher` to the runtime rungs. Held weakly: a stopped batcher just drops out."""
+    with _batcher_lock:
+        _batchers.add(batcher)
+
+
+def clear_batchers() -> None:
+    """Forget every registered batcher: a render ended (or is starting), and a stopped batcher that has
+    not been collected yet must not be lowered by the next render's pressure."""
+    with _batcher_lock:
+        _batchers.clear()
+
+
+def _live_batchers() -> List[Any]:
+    with _batcher_lock:
+        return [b for b in list(_batchers) if hasattr(b, 'set_max_batch')]
+
+
+def runtime_step_down() -> Optional[str]:
+    """Lower every live swap batcher one rung of BATCH_STEPS. The action text, or None when none can drop.
+
+    A batch already running finishes at its size; the next one is smaller (`SwapBatcher.set_max_batch`)."""
+    changed: List[Tuple[int, int]] = []
+    for batcher in _live_batchers():
+        current = int(batcher.max_batch)
+        lower = next((s for s in BATCH_STEPS if s < current), None)
+        if lower is None or lower >= current:
+            continue
+        changed.append((current, int(batcher.set_max_batch(lower))))
+    if not changed:
+        return None
+    before, after = changed[0]
+    return f"swap batch {before} -> {after}"
+
+
+def runtime_restore() -> Optional[str]:
+    """Raise every lowered swap batcher one rung back toward the size it was warmed up for."""
+    changed: List[Tuple[int, int]] = []
+    for batcher in _live_batchers():
+        current, ceiling = int(batcher.max_batch), int(getattr(batcher, '_ceiling', batcher.max_batch))
+        higher = next((s for s in reversed(BATCH_STEPS) if s > current), None)
+        target = min(ceiling, higher) if higher is not None else ceiling
+        if target > current:
+            changed.append((current, int(batcher.set_max_batch(target))))
+    if not changed:
+        return None
+    before, after = changed[0]
+    return f"swap batch {before} -> {after}"
+
+
+def announce(action: str, *, used_mb: Optional[float] = None, total_mb: Optional[float] = None,
+             detail: str = '') -> str:
+    """Print one `[VRAM-GOVERNOR]` line (through the progress bar's writer) and return it."""
+    where = ''
+    if used_mb is not None and total_mb:
+        where = f" at {100.0 * used_mb / total_mb:.0f}% VRAM ({used_mb:.0f} of {total_mb:.0f} MiB)"
+    line = f"[VRAM-GOVERNOR] {action}{where}" + (f" - {detail}" if detail else '')
+    _say(line)
+    return line
+
+
 def current_plan() -> Optional[VramPlan]:
     """The plan of the render in flight, or None (preview, CPU, no render)."""
     active = _active
@@ -560,6 +654,7 @@ def governed_enhancer_concurrency(requested: int) -> int:
 def admit(job: JobSpec, margin_gb: float, device_id: int = 0) -> Optional[VramPlan]:
     """Plan the render and start the peak sampler. None when there is no GPU."""
     global _active
+    clear_batchers()                  # the previous render's batcher is not this render's to lower
     reading = query_vram_mb(device_id)
     if reading is None:
         return None
@@ -583,6 +678,11 @@ def admit(job: JobSpec, margin_gb: float, device_id: int = 0) -> Optional[VramPl
           f"margin {plan.margin_mb:.0f}MB -> headroom {plan.headroom_mb:.0f}MB; "
           f"batch cap {plan.batch_cap}"
           + (f", GPEN {plan.gpen_size}" if plan.gpen_size else ''), flush=True)
+    import roop.globals as _g
+    workspace_mb = getattr(_g, 'trt_workspace_mb', None)
+    print(f"[VRAM-GOVERNOR] {tier_label(total_mb)} card: swap batch cap {plan.batch_cap}"
+          + (f", TRT workspace {workspace_mb:.0f} MB per session" if workspace_mb else '')
+          + f"; runtime guard at {RUNTIME_FRACTION:.0%} used", flush=True)
     for action in plan.actions:
         print(f"[VramGovernor] step-down: {action}", flush=True)
     if plan.pool_caps:
@@ -599,6 +699,7 @@ def admit(job: JobSpec, margin_gb: float, device_id: int = 0) -> Optional[VramPl
 def finish() -> Optional[Dict[str, float]]:
     """Stop sampling, fold the measured peak into calibration, clear the plan."""
     global _active
+    clear_batchers()
     with _active_lock:
         active, _active = _active, None
     try:

@@ -111,6 +111,29 @@ export function bottleneckText(dash) {
   return bn ? `[BOTTLENECK: ${bn.label} ${Math.round(bn.share_pct)}%]` : '[bottleneck: measuring]';
 }
 
+/**
+ * Decode / GPU / Encode fill, as the console prints them (`Decode Queue: 8/8 | GPU Queue: 4/4 | Encode Queue: 2/8`).
+ * `fill` is 0..1 for the bar (null when the backend has no capacity to divide by); the GPU cell is absent on a path
+ * that cannot count its workers. A unit other than frames (stabilization chunks) is named, never silently reused.
+ */
+export function queueCells(dash) {
+  const q = dash && dash.telemetry && dash.telemetry.queues;
+  if (!q || !q.decode || !q.encode) return [];
+  const fill = (n, cap) => (isNum(n) && isNum(cap) && cap > 0 ? Math.max(0, Math.min(1, n / cap)) : null);
+  const cells = [{ key: 'decode', label: 'Decode Queue', value: `${count(q.decode.depth)}/${count(q.decode.cap)}`, fill: fill(q.decode.depth, q.decode.cap), unit: q.unit || '' }];
+  if (q.gpu) cells.push({ key: 'gpu', label: 'GPU Queue', value: `${count(q.gpu.busy)}/${count(q.gpu.cap)}`, fill: fill(q.gpu.busy, q.gpu.cap), unit: 'workers busy' });
+  cells.push({ key: 'encode', label: 'Encode Queue', value: `${count(q.encode.depth)}/${count(q.encode.cap)}`, fill: fill(q.encode.depth, q.encode.cap), unit: q.unit || '' });
+  return cells;
+}
+
+/** `[GPU-BOUND]` etc. and its tone; `[bound: measuring]` until the monitor has a window of frames. */
+export function queueBound(dash) {
+  const q = dash && dash.telemetry && dash.telemetry.queues;
+  if (!q || !q.bound) return { text: '[bound: measuring]', tone: 'muted', basis: '' };
+  // GPU-bound is the shape this pipeline should have; a starved decoder or a backed-up encoder is the fault.
+  return { text: `[${q.bound}]`, tone: q.bound === 'GPU-BOUND' ? 'ok' : 'warn', basis: q.bound_basis || '' };
+}
+
 /** Smart-Skip ROI reuse, Stage-2 face-free skip share, VRAM allocated / peak. */
 export function hitRateCells(dash) {
   const h = dash && dash.telemetry && dash.telemetry.hit_rates;

@@ -1263,7 +1263,21 @@ class TerminalProgressManager:
                               "smart_skip_enabled": ss.get("smart_skip_enabled"),
                               "stage2_face_free_skipped_pct": _r(view.get("skipped_frames_pct"), 1),
                               "vram_allocated_gb": _r(vram.get("allocated_gb"), 2), "vram_peak_gb": _r(vram.get("peak_gb"), 2),
-                              "vram_total_gb": _r(vram.get("total_gb"), 2)}}
+                              "vram_total_gb": _r(vram.get("total_gb"), 2)},
+                "queues": self._queues(s3_running)}
+
+    @staticmethod
+    def _queues(s3_running: bool) -> Optional[Dict[str, Any]]:
+        """Decode / GPU / Encode fill and the verdict, from the pipeline monitor's own sampler (None until a frame finished).
+
+        Kept after Stage 3 ends, like the latency split: the last window's verdict is the one worth reading."""
+        from roop import pipeline_monitor
+        view = pipeline_monitor.levels_view()
+        if view is None:
+            return None
+        view["live"] = bool(s3_running)
+        view.pop("updated_at", None)             # a wall-clock stamp would make every tick a "change"
+        return view
 
     def _window_split(self, base: Tuple[float, Dict[str, Tuple[float, int]], int]):
         """(latency_ms by column, bottleneck, frames) between `base` and the newest ring entry."""
@@ -1387,6 +1401,34 @@ def render_stage_lines(snap: Dict[str, Any], *, color: bool, width: int = 110) -
     return out
 
 
+def queue_cells(queues: Optional[Dict[str, Any]]) -> List[Tuple[str, str]]:
+    """[(label, 'depth/cap')] for the three stages; the GPU cell is absent when the path cannot count its workers."""
+    if not queues:
+        return []
+    cells = [("Decode Queue", f"{queues['decode']['depth']}/{queues['decode']['cap']}")]
+    if queues.get("gpu"):
+        cells.append(("GPU Queue", f"{queues['gpu']['busy']}/{queues['gpu']['cap']}"))
+    cells.append(("Encode Queue", f"{queues['encode']['depth']}/{queues['encode']['cap']}"))
+    return cells
+
+
+def render_queue_line(queues: Optional[Dict[str, Any]], *, color: bool) -> str:
+    """`Decode Queue: 8/8 | GPU Queue: 4/4 | Encode Queue: 2/8  [GPU-BOUND]`. Empty until the monitor has sampled."""
+    cells = queue_cells(queues)
+    if not cells:
+        return ""
+    unit = f" {queues['unit']}" if queues.get("unit") else ""
+    body = " | ".join(f"{label}: {value}" for label, value in cells) + unit
+    bound = queues.get("bound")
+    if not bound:
+        tag = f"{DIM if color else ''}[bound: measuring]{RESET if color else ''}"
+    else:
+        text = f"[{bound}]"
+        healthy = bound == "GPU-BOUND"            # a GPU-bound render is the shape this pipeline should have
+        tag = f"{BOLD if healthy else YELLOW}{text}{RESET}" if color else text
+    return f"{body}  {tag}"
+
+
 def render_telemetry_lines(snap: Dict[str, Any], *, color: bool, width: int = 110, detailed: bool = False) -> List[str]:
     t = snap["telemetry"]
     lat, bn, hr = t["latency_ms"], t["bottleneck"], t["hit_rates"]
@@ -1407,6 +1449,9 @@ def render_telemetry_lines(snap: Dict[str, Any], *, color: bool, width: int = 11
     line2 = (f"{tag}  Smart-Skip ROI reused {roi} · Stage-2 face-free skipped {_num(hr['stage2_face_free_skipped_pct'])}% · "
              f"VRAM {_num(hr['vram_allocated_gb'], '{:.2f}')} / peak {_num(hr['vram_peak_gb'], '{:.2f}')} GB")
     lines = [line1, line2]
+    queue_line = render_queue_line(t.get("queues"), color=color)
+    if queue_line:
+        lines.append(queue_line)
 
     if detailed:
         hist_parts = []
@@ -1504,6 +1549,10 @@ def render_log_lines(snap: Dict[str, Any], only: Optional[Tuple[str, ...]] = Non
                      + f" | smart_skip_roi_reused={_num(hr['smart_skip_roi_reused_pct'])}% stage2_face_free_skipped="
                        f"{_num(hr['stage2_face_free_skipped_pct'])}% | vram_gb={_num(hr['vram_allocated_gb'], '{:.2f}')}/peak "
                        f"{_num(hr['vram_peak_gb'], '{:.2f}')}")
+        q = t.get("queues")
+        if q:
+            cells = " ".join(f"{label.split()[0].lower()}_queue={value}" for label, value in queue_cells(q))
+            lines.append(f"[Telemetry] t={stamp} queues {cells} bound={q.get('bound') or 'n/a'} basis={q.get('bound_basis')}")
     return lines
 
 

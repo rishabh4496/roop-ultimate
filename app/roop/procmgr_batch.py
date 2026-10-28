@@ -460,6 +460,7 @@ class BatchProcessingMixin:
         self._runtime_adaptive = None
         with self.lock:
             self._runtime_worker_busy.clear()
+        self._gpu_busy.clear()
         set_runtime_monitor(None)
         self._small_card_enhancer_policy = None
         self._small_card_decode_policy = None

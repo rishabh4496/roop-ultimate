@@ -667,6 +667,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         self._runtime_read_queue = None
         self._runtime_write_queue = None
         self._runtime_worker_busy = set()
+        self._gpu_busy = set()          # workers inside a frame right now (pipeline monitor's GPU level)
         self._runtime_summary = None
         self.num_frames_no_face = 0
         self.last_swapped_frame = None
@@ -851,6 +852,9 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         _bp.vram_snapshot(entry['stage'])
 
     def _runtime_worker_enter(self, threadindex):
+        # Always on (the pipeline monitor's GPU level reads it): set.add is atomic under the GIL, so
+        # unlike the monitor's own set below it takes no lock on the per-frame path.
+        self._gpu_busy.add(int(threadindex))
         monitor = getattr(self, '_runtime_monitor', None)
         if monitor is None or not monitor.enabled:
             return
@@ -858,6 +862,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             self._runtime_worker_busy.add(int(threadindex))
 
     def _runtime_worker_exit(self, threadindex):
+        self._gpu_busy.discard(int(threadindex))
         monitor = getattr(self, '_runtime_monitor', None)
         if monitor is None or not monitor.enabled:
             return
@@ -922,15 +927,25 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         scheduler = getattr(self, '_runtime_scheduler', None)
         live = getattr(scheduler, 'live_queues', None)
         if live:                                  # one-owner stream
-            return {'input': group([live[0]]), 'output': group([live[1]])}
-        if getattr(self, '_runtime_read_queue', None) is not None:   # parallel stab
+            state = {'input': group([live[0]]), 'output': group([live[1]])}
+        elif getattr(self, '_runtime_read_queue', None) is not None:   # parallel stab
             # One slot here is a whole stabilization CHUNK, not a frame.
-            return {'input': group([self._runtime_read_queue]),
-                    'output': group([self._runtime_write_queue])
-                    if getattr(self, '_runtime_write_queue', None) is not None else (0, 0),
-                    'unit': 'chunks'}
-        return {'input': group(self.frames_queue or ()),                 # threaded workers
-                'output': group(self.processed_queue or ())}
+            state = {'input': group([self._runtime_read_queue]),
+                     'output': group([self._runtime_write_queue])
+                     if getattr(self, '_runtime_write_queue', None) is not None else (0, 0),
+                     'unit': 'chunks'}
+        else:
+            state = {'input': group(self.frames_queue or ()),            # threaded workers
+                     'output': group(self.processed_queue or ())}
+        # The middle stage has no queue of its own: it is the workers. "GPU 3/4" = 3 of 4 workers are inside a
+        # frame (detect, swap, restore, composite) at this instant - the same count a queue's fill would give.
+        # The parallel-stabilization path never enters `_runtime_worker_enter`, so its count would read a
+        # structural 0 ("workers idle") on the path that is MOST GPU-bound: there the middle stage is left
+        # to the monitor's by-elimination verdict instead of a made-up number.
+        busy = getattr(self, '_gpu_busy', None)
+        if busy is not None and 'unit' not in state:
+            state['gpu'] = (len(busy), max(1, int(getattr(self, 'num_threads', 0) or 0)))
+        return state
 
     def _runtime_adaptive_boundary(self):
         monitor = getattr(self, '_runtime_monitor', None)
@@ -2328,6 +2343,9 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             max_batch=max_b, max_wait_ms=wait_ms)
         print(f"[BatchSwap] cross-frame batching ON (max_batch={max_b}, threads={threads}, wait={wait_ms}ms).")
         roop.globals.last_swap_batch_max = max_b
+        # The runtime governor lowers this batcher's ceiling under VRAM pressure (vram_governor.runtime_step_down).
+        from roop.vram_governor import register_batcher
+        register_batcher(b)
         return b
 
 

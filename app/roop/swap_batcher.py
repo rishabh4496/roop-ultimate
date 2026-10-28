@@ -52,6 +52,7 @@ class SwapBatcher:
         self._run_fn = run_fn
         self._guard_fn = guard_fn
         self._max_batch = max(1, int(max_batch))
+        self._ceiling = self._max_batch          # what the engine profile was built for
         self._max_wait = max(0.0, float(max_wait_ms) / 1000.0)
         self._cond = threading.Condition(threading.Lock())
         self._queue = []
@@ -64,6 +65,21 @@ class SwapBatcher:
         self._hist = {}
         self._thread = threading.Thread(target=self._loop, name='swap_batcher', daemon=True)
         self._thread.start()
+
+    @property
+    def max_batch(self):
+        return self._max_batch
+
+    def set_max_batch(self, n):
+        """Lower (or restore) the batch ceiling while the batcher runs: the VRAM governor's runtime step.
+
+        Read by `_loop` under `_cond` at every batch, so the next batch honours it; a batch already
+        running finishes at the size it started with. Never above the size the engine was warmed up
+        for - `warmup_batch(max_b)` built its profile for that - so a RAISE is clamped to it."""
+        with self._cond:
+            self._max_batch = max(1, min(int(n), self._ceiling))
+            self._cond.notify_all()
+        return self._max_batch
 
     def _record(self, size, dt):
         with self._stats_lock:

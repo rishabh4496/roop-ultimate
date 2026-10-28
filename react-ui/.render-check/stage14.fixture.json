@@ -1,0 +1,180 @@
+{
+ "after_cuda": {
+  "active": [],
+  "canary": false,
+  "compiling": false,
+  "events": [],
+  "governor": {
+   "last": null,
+   "throttles": 0
+  },
+  "last_compile": {
+   "elapsed_s": 0.0,
+   "model": "cuda_model",
+   "ok": true,
+   "precision": "n/a",
+   "stage": "TRT_COMPILE",
+   "time": 1793166862.9356334
+  },
+  "segments": {},
+  "seq": 2,
+  "time": 1793166862.9356334
+ },
+ "after_hit": {
+  "active": [],
+  "canary": false,
+  "compiling": false,
+  "events": [],
+  "governor": {
+   "last": null,
+   "throttles": 0
+  },
+  "last_compile": {
+   "cache_hit": true,
+   "cache_path": "G:\\pinokio\\cache\\TMPDIR\\tmp_pkmntp3",
+   "elapsed_s": 0.0,
+   "model": "gpen_256",
+   "ok": true,
+   "precision": "FP16",
+   "stage": "TRT_COMPILE",
+   "time": 1793166862.9356334,
+   "workspace_mb": 2048
+  },
+  "segments": {},
+  "seq": 4,
+  "time": 1793166862.9356334
+ },
+ "after_miss": {
+  "active": [],
+  "canary": false,
+  "compiling": false,
+  "events": [],
+  "governor": {
+   "last": null,
+   "throttles": 0
+  },
+  "last_compile": {
+   "cache_hit": false,
+   "cache_path": "G:\\pinokio\\cache\\TMPDIR\\tmp_pkmntp3",
+   "elapsed_s": 1.116,
+   "model": "gpen_256",
+   "ok": true,
+   "precision": "FP16",
+   "stage": "TRT_COMPILE",
+   "time": 1793166862.9356334,
+   "workspace_mb": 2048
+  },
+  "segments": {},
+  "seq": 2,
+  "time": 1793166862.9356334
+ },
+ "cache_path": "G:\\pinokio\\cache\\TMPDIR\\tmp_pkmntp3",
+ "compiling": {
+  "active": [
+   {
+    "cache_path": "G:\\pinokio\\cache\\TMPDIR\\tmp_pkmntp3",
+    "elapsed_s": 1.115,
+    "kind": "STAGE_COMPILING_TRT",
+    "model": "gpen_256",
+    "precision": "FP16",
+    "since": 1793166861.8196735,
+    "stage": "TRT_COMPILE",
+    "workspace_mb": 2048
+   }
+  ],
+  "canary": false,
+  "compiling": true,
+  "events": [],
+  "governor": {
+   "last": null,
+   "throttles": 0
+  },
+  "last_compile": null,
+  "segments": {},
+  "seq": 1,
+  "time": 1793166862.9346328
+ },
+ "console": {
+  "chunks": "Decode Queue: 1/2 | Encode Queue: 0/2 chunks  [GPU-BOUND]",
+  "decode_bound": "Decode Queue: 0/8 | GPU Queue: 1/4 | Encode Queue: 0/8  [DISK/DECODE-BOUND]",
+  "encode_bound": "Decode Queue: 8/8 | GPU Queue: 4/4 | Encode Queue: 8/8  [ENCODE-BOUND]",
+  "gpu_bound": "Decode Queue: 8/8 | GPU Queue: 4/4 | Encode Queue: 2/8  [GPU-BOUND]"
+ },
+ "hit_receipt": "[TRT CACHE HIT: 0.00s] gpen_256 FP16",
+ "miss_receipt": "[TRT CACHE MISS: built in 1.1s] gpen_256 FP16",
+ "queues": {
+  "chunks": {
+   "bound": "GPU-BOUND",
+   "bound_basis": "by elimination (queues healthy)",
+   "decode": {
+    "cap": 2,
+    "depth": 1
+   },
+   "encode": {
+    "cap": 2,
+    "depth": 0
+   },
+   "frames": 24,
+   "gpu": null,
+   "live": true,
+   "unit": "chunks"
+  },
+  "decode_bound": {
+   "bound": "DISK/DECODE-BOUND",
+   "bound_basis": "workers busy",
+   "decode": {
+    "cap": 8,
+    "depth": 0
+   },
+   "encode": {
+    "cap": 8,
+    "depth": 0
+   },
+   "frames": 24,
+   "gpu": {
+    "busy": 1,
+    "cap": 4
+   },
+   "live": true,
+   "unit": ""
+  },
+  "encode_bound": {
+   "bound": "ENCODE-BOUND",
+   "bound_basis": "workers busy",
+   "decode": {
+    "cap": 8,
+    "depth": 8
+   },
+   "encode": {
+    "cap": 8,
+    "depth": 8
+   },
+   "frames": 24,
+   "gpu": {
+    "busy": 4,
+    "cap": 4
+   },
+   "live": true,
+   "unit": ""
+  },
+  "gpu_bound": {
+   "bound": "GPU-BOUND",
+   "bound_basis": "workers busy",
+   "decode": {
+    "cap": 8,
+    "depth": 8
+   },
+   "encode": {
+    "cap": 8,
+    "depth": 2
+   },
+   "frames": 24,
+   "gpu": {
+    "busy": 4,
+    "cap": 4
+   },
+   "live": true,
+   "unit": ""
+  }
+ }
+}

@@ -484,7 +484,7 @@ async function startServer() {
   // One row of the backend registry (app/roop/pipeline_status.py). `kind` is a STAGE_* name; any other field the
   // e2e suite posts (model, tag, ...) rides along untouched.
   interface PipelineActive { kind: string; since: number; [field: string]: unknown }
-  const pipeline = { seq: 0, active: [] as PipelineActive[] };
+  const pipeline = { seq: 0, active: [] as PipelineActive[], lastCompile: null as Record<string, unknown> | null };
   const pipelineSnapshot = () => {
     const nowS = Date.now() / 1000;
     const active = pipeline.active.map((a) => ({ ...a, elapsed_s: Math.max(0, nowS - Number(a.since)) }));
@@ -495,6 +495,7 @@ async function startServer() {
       compiling: active.some((a) => a.kind === 'STAGE_COMPILING_TRT'),
       canary: active.some((a) => a.kind === 'STAGE_RUNNING_CANARY'),
       governor: { throttles: 0, last: null },
+      last_compile: pipeline.lastCompile,
       segments: {},
       events: [],
     };
@@ -512,6 +513,8 @@ async function startServer() {
   app.post('/__mock/pipeline', (req, res) => {
     const rows: Array<Record<string, unknown>> = Array.isArray(req.body?.active) ? req.body.active : [];
     pipeline.active = rows.map((a): PipelineActive => ({ since: Date.now() / 1000 - Number(a.elapsed_s || 0), kind: String(a.kind ?? ''), ...a }));
+    // The registry keeps the last finished compile for the whole session; a post without the field leaves it alone.
+    if ('last_compile' in (req.body ?? {})) pipeline.lastCompile = req.body.last_compile ?? null;
     pipeline.seq += 1;
     res.json({ ok: true, seq: pipeline.seq });
   });

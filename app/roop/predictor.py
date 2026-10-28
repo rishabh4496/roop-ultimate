@@ -548,10 +548,20 @@ def warmup_session(session, tag: str = "model",
         started = time.time()
         # TensorRT builds (or loads) its engine inside this first call; there is no frame
         # counter yet, so say so on the status channel instead of looking hung.
-        from roop import pipeline_status
-        with pipeline_status.stage(pipeline_status.STAGE_COMPILING_TRT, model=tag,
-                                   precision=pipeline_status.session_precision(session)):
+        from roop import pipeline_status, trt_console
+        trt_console.attach()
+        info = pipeline_status.session_trt_info(session)
+        plans_before = pipeline_status.engine_cache_files(info["cache_path"])
+        token = pipeline_status.begin(pipeline_status.STAGE_COMPILING_TRT, model=tag, **info)
+        run_ok = False
+        try:
             session.run(None, feed)
+            run_ok = True
+        finally:
+            # A plan that appeared or changed under the cache path means this call BUILT an engine;
+            # an untouched cache means it deserialised one. None = not a TensorRT cache we can read.
+            pipeline_status.end(token, ok=run_ok, cache_hit=pipeline_status.cache_hit(
+                plans_before, pipeline_status.engine_cache_files(info["cache_path"])))
         elapsed = time.time() - started
     except Exception as exc:
         print("[Warmup] %s: dummy pass FAILED (%s: %s). The first real frame "

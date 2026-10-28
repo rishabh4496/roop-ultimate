@@ -97,3 +97,52 @@ test('axe and layout: no violations, no horizontal scroll at 1280 and at phone w
     expect(overflow.right, `mirror leaves the viewport at ${w}`).toBeLessThanOrEqual(1);
   }
 });
+
+// Stage 14: the Decode / GPU / Encode fill row. Queue snapshots come from the BACKEND (.render-check/gen-stage14-fixture.py:
+// a real PipelineMonitor feeding roop/terminal_dashboard.py), spliced into the real running snapshot above.
+const s14 = JSON.parse(readFileSync(join(here, '..', '.render-check', 'stage14.fixture.json'), 'utf8'));
+const withQueues = (q) => ({ ...fx.running, telemetry: { ...fx.running.telemetry, queues: q } });
+
+test('processing: queue fill row names the stage that limits the render', async ({ page }) => {
+  for (const [key, bound, cells] of [
+    ['gpu_bound', '[GPU-BOUND]', ['Decode Queue 8/8', 'GPU Queue 4/4', 'Encode Queue 2/8']],
+    ['decode_bound', '[DISK/DECODE-BOUND]', ['Decode Queue 0/8', 'GPU Queue 1/4', 'Encode Queue 0/8']],
+    ['encode_bound', '[ENCODE-BOUND]', ['Decode Queue 8/8', 'GPU Queue 4/4', 'Encode Queue 8/8']],
+  ]) {
+    const p = await page.context().newPage();         // one page per snapshot: a socket route cannot be swapped in place
+    await scriptTelemetry(p, [frame({ event: 'hello', dashboard: withQueues(s14.queues[key]) }), frame({ dashboard: withQueues(s14.queues[key]) })]);
+    await p.goto('/#/processing');
+    const row = p.getByTestId('console-queues');
+    await expect(row, key).toBeVisible();
+    await expect(p.getByTestId('console-bound')).toHaveText(bound);
+    for (const c of cells) await expect(row).toContainText(c);
+  }
+});
+
+test('processing: no queue row until the monitor has sampled, and none on a path that cannot count workers', async ({ page }) => {
+  await scriptTelemetry(page, [frame({ event: 'hello', dashboard: fx.running })]);
+  await page.goto('/#/processing');
+  await expect(page.getByTestId('console-mirror')).toBeVisible();
+  await expect(page.getByTestId('console-queues')).toHaveCount(0);
+
+  const p2 = await page.context().newPage();
+  await scriptTelemetry(p2, [frame({ event: 'hello', dashboard: withQueues(s14.queues.chunks) })]);
+  await p2.goto('/#/processing');
+  const row = p2.getByTestId('console-queues');
+  await expect(row).toBeVisible();
+  await expect(row.locator('[data-queue="gpu"]')).toHaveCount(0);
+  await expect(row).toContainText('Encode Queue 0/2');
+});
+
+test('axe and layout: the queue row passes at 1280 and at phone width', async ({ page }) => {
+  await scriptTelemetry(page, [frame({ event: 'hello', dashboard: withQueues(s14.queues.gpu_bound) })]);
+  for (const [w, h] of [[1280, 800], [390, 844]]) {
+    await page.setViewportSize({ width: w, height: h });
+    await page.goto('/#/processing');
+    await expect(page.getByTestId('console-queues')).toBeVisible();
+    const { violations } = await new AxeBuilder({ page }).include('[data-testid="console-queues"]').withTags(AXE).analyze();
+    expect(violations.map((v) => ({ rule: v.id, targets: v.nodes.slice(0, 3).map((n) => n.target.join(' ')) })), `axe at ${w}`).toEqual([]);
+    const over = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    expect(over, `page overflows at ${w}`).toBeLessThanOrEqual(0);
+  }
+});

@@ -25,6 +25,23 @@ export const STAGE_COMPILING_TRT = 'STAGE_COMPILING_TRT';
 export const STAGE_RUNNING_CANARY = 'STAGE_RUNNING_CANARY';
 const BUSY_KINDS = new Set([STAGE_COMPILING_TRT, STAGE_RUNNING_CANARY]);
 
+/** How long the banner stays up as a receipt after a build it watched finish. */
+export const RECEIPT_MS = 8000;
+
+/** `45s`, `2m 23s`. */
+export const clock = (s) => {
+  const t = Math.max(0, Math.round(s));
+  return t >= 60 ? `${Math.floor(t / 60)}m ${String(t % 60).padStart(2, '0')}s` : `${t}s`;
+};
+
+/** The receipt's words. A cache hit is sub-second, so it keeps its decimals; a build reads as a clock. */
+export function receiptText(r) {
+  if (!r.ok) return `Engine build failed after ${clock(r.elapsedS)}`;
+  if (r.cacheHit === true) return `TRT cache hit · ${r.elapsedS.toFixed(2)}s`;
+  if (r.cacheHit === false) return `TRT cache miss · built in ${clock(r.elapsedS)}`;
+  return `Engine ready · ${clock(r.elapsedS)}`;
+}
+
 /** A busy claim older than this, unconfirmed, is not believed. */
 export const STALE_MS = 6000;
 /** While a deadline is suspended on a stage, re-confirm it this often. */
@@ -33,7 +50,7 @@ const PROBE_TIMEOUT_MS = 3000;
 const BACKOFF_MIN_MS = 500;
 const BACKOFF_MAX_MS = 15000;
 
-const IDLE = Object.freeze({ busy: false, active: [], connected: false });
+const IDLE = Object.freeze({ busy: false, active: [], lastCompile: null, connected: false });
 
 let status = IDLE;
 let confirmedAt = 0;
@@ -59,7 +76,31 @@ export function activeStages(snapshot) {
       precision: a.precision && a.precision !== 'n/a' ? String(a.precision).toUpperCase() : null,
       since: Number.isFinite(a.since) ? a.since * 1000 : null,
       elapsedS: Number.isFinite(a.elapsed_s) ? a.elapsed_s : 0,
+      // Only a TensorRT session can say these; null is "the backend could not tell", never a guess.
+      workspaceMb: Number.isFinite(a.workspace_mb) ? a.workspace_mb : null,
+      cachePath: a.cache_path ? String(a.cache_path) : null,
     }));
+}
+
+/**
+ * The compile that finished last, as the banner's receipt: `cacheHit` true (deserialised from the cache),
+ * false (an engine was built) or null (the cache could not be inspected). A CUDA / CPU warm-up is not an
+ * engine build, so it has no receipt.
+ */
+export function lastCompile(snapshot) {
+  const c = snapshot?.last_compile;
+  if (!c || !Number.isFinite(c.time) || !c.precision || c.precision === 'n/a') return null;
+  let cacheHit = null;
+  if (c.cache_hit === true) cacheHit = true;
+  else if (c.cache_hit === false) cacheHit = false;
+  return {
+    model: c.model ? String(c.model) : 'model',
+    precision: String(c.precision).toUpperCase(),
+    cacheHit,
+    elapsedS: Number.isFinite(c.elapsed_s) ? c.elapsed_s : 0,
+    ok: c.ok !== false,
+    at: c.time,
+  };
 }
 
 function publish(next) {
@@ -80,7 +121,7 @@ function releaseIdleWaiters() {
 export function applySnapshot(snapshot) {
   const active = activeStages(snapshot);
   confirmedAt = now();
-  publish({ busy: active.length > 0, active, connected: status.connected });
+  publish({ busy: active.length > 0, active, lastCompile: lastCompile(snapshot), connected: status.connected });
 }
 
 function setConnected(connected) {

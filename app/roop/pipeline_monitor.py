@@ -46,6 +46,51 @@ FULL_FRACTION = 0.90
 QueueState = Dict[str, object]
 
 
+BOUND_DECODE = 'DISK/DECODE-BOUND'
+BOUND_GPU = 'GPU-BOUND'
+BOUND_ENCODE = 'ENCODE-BOUND'
+BOUND_BALANCED = 'BALANCED'
+# Mean share of workers inside a frame at which "nothing starved, nothing backed up" is the GPU stage.
+GPU_BUSY_SHARE = 0.5
+# Samples (finished frames) a window needs before its verdict replaces the previous one.
+MIN_BOUND_SAMPLES = 8
+
+
+def classify_bound(starved: float, backed_up: float, busy_share: Optional[float]) -> str:
+    """Which of the three stages limits the render, from shares of samples in a window (0..1).
+
+    DECODE: workers found the input queue empty. ENCODE: the output queue sat (nearly) full. Otherwise
+    the limit is the middle: GPU-BOUND when the workers are busy (`busy_share`), or - for a path that
+    cannot count its workers (`busy_share` None: the stabilization chunks) - by elimination, because
+    both queues are healthy. An input queue that is FULL is not a fault (see the module docstring)."""
+    if starved >= STARVE_SHARE and starved >= backed_up:
+        return BOUND_DECODE
+    if backed_up >= STARVE_SHARE:
+        return BOUND_ENCODE
+    if busy_share is None or busy_share >= GPU_BUSY_SHARE:
+        return BOUND_GPU
+    return BOUND_BALANCED
+
+
+_levels_lock = threading.Lock()
+_levels: Optional[Dict[str, object]] = None
+
+
+def levels_view() -> Optional[Dict[str, object]]:
+    """The latest Decode / GPU / Encode levels of the render in flight, or None. A copy; any thread.
+
+    The ONE source for the terminal dashboard and the React Processing page (`dashboard.telemetry.queues`):
+    the monitor samples on every finished frame and writes here, the readers only copy."""
+    with _levels_lock:
+        return None if _levels is None else {k: (dict(v) if isinstance(v, dict) else v) for k, v in _levels.items()}
+
+
+def clear_levels() -> None:
+    global _levels
+    with _levels_lock:
+        _levels = None
+
+
 def log_every_from_env(default: int = 100) -> int:
     try:
         return max(0, int(os.environ.get('ROOP_PIPELINE_LOG_EVERY', '') or default))
@@ -86,12 +131,16 @@ class PipelineMonitor:
         self._w_out_depth = 0.0
         self._in_cap = 0
         self._out_cap = 0
+        self._w_gpu_busy = 0.0       # sum of busy-worker counts over the window's samples
+        self._w_gpu_n = 0            # samples that carried a GPU level at all
+        self._gpu_cap = 0
 
     def start(self):
         with self._lock:
             if self._t0 is None:
                 self._t0 = self._clock()
                 self._reset_window(self._t0)
+                clear_levels()           # a new render must not show the last one's queues
 
     def _sample(self):
         if not self._sampling:
@@ -115,6 +164,31 @@ class PipelineMonitor:
             self._w_in_empty += 1
         if c_out > 0 and d_out >= FULL_FRACTION * c_out:
             self._w_out_full += 1
+        gpu = state.get('gpu')
+        if gpu:
+            self._w_gpu_busy += gpu[0]
+            self._w_gpu_n += 1
+            self._gpu_cap = gpu[1]
+        self._publish(d_in, c_in, d_out, c_out, gpu)
+
+    def _window_bound(self) -> str:
+        n = max(1, self._w_samples)
+        busy = (self._w_gpu_busy / self._w_gpu_n / self._gpu_cap) if (self._w_gpu_n and self._gpu_cap) else None
+        return classify_bound(self._w_in_empty / n, self._w_out_full / n, busy)
+
+    def _publish(self, d_in, c_in, d_out, c_out, gpu):
+        """Write this instant's levels, and the window's verdict once it has enough samples to mean something."""
+        global _levels
+        bound = self._window_bound() if self._w_samples >= MIN_BOUND_SAMPLES else (
+            _levels.get('bound') if _levels else None)
+        view = {'decode': {'depth': int(d_in), 'cap': int(c_in)},
+                'gpu': {'busy': int(gpu[0]), 'cap': int(gpu[1])} if gpu else None,
+                'encode': {'depth': int(d_out), 'cap': int(c_out)},
+                'unit': self._unit, 'bound': bound,
+                'bound_basis': 'workers busy' if gpu else 'by elimination (queues healthy)',
+                'frames': self.frames, 'updated_at': time.time()}
+        with _levels_lock:
+            _levels = view
 
     # -- the hook -----------------------------------------------------------
     def frame_done(self, work: int = 0):
@@ -163,6 +237,11 @@ class PipelineMonitor:
         line = '[Pipeline] frames %d | %.2f fps (avg %.2f) | %s | %s' % (
             self.frames, self._w_frames / win, self.frames / total, queues,
             self._verdict())
+        if self._w_samples and self._sampling and self._w_gpu_n:
+            # The three-stage reading, window means: where the render is waiting.
+            line += ' | Decode Queue: %.0f/%d | GPU Queue: %.0f/%d | Encode Queue: %.0f/%d | %s' % (
+                self._w_in_depth / n, self._in_cap, self._w_gpu_busy / self._w_gpu_n, self._gpu_cap,
+                self._w_out_depth / n, self._out_cap, self._window_bound())
         if self._tot_work > 0:
             line += ' | %.2f faces/frame, %.1f faces/s' % (
                 self._w_work / max(1, self._w_frames), self._w_work / win)

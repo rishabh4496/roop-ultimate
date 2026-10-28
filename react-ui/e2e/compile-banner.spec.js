@@ -49,6 +49,47 @@ test('banner: names model + precision, persists across routes, clears when the s
   await expect(page.locator('nav[aria-label="Main"] button[aria-current="page"]')).toBeVisible();
 });
 
+const compileDetail = { stage: 'TRT_COMPILE', workspace_mb: 2048, cache_path: 'C:/roop/trt_cache/fp16_mixed' };
+const lastCompile = (cache_hit, elapsed_s) => ({
+  kind: 'STAGE_COMPILING_TRT', state: 'finished', model: 'gpen_256', precision: 'FP16', cache_hit, ok: true,
+  elapsed_s, time: Date.now() / 1000, ...compileDetail,
+});
+
+test('banner: shows workspace + cache directory while building, then a hit/miss receipt that expires', async ({ page, request }) => {
+  test.setTimeout(60_000);
+  await openTab(page, 'faceswap');
+  const banner = page.getByTestId('compile-banner');
+
+  await mock(request, [{ ...stage('STAGE_COMPILING_TRT', 'gpen_256', 'FP16'), ...compileDetail }]);
+  await expect(banner.locator('[data-field="workspace"]')).toHaveText('workspace 2048 MB');
+  await expect(banner.locator('[data-field="cache"]')).toHaveText('cache C:/roop/trt_cache/fp16_mixed');
+  await expect(banner.locator('[data-field="precision"]')).toHaveText('FP16');
+
+  // The build ends having written a plan: a MISS, with how long it took. Not a modal, and it goes away by itself.
+  await request.post(`http://127.0.0.1:${MOCK_PORT}/__mock/pipeline`, { data: { active: [], last_compile: lastCompile(false, 143) } });
+  const receipt = page.getByTestId('compile-receipt');
+  await expect(receipt).toBeVisible();
+  await expect(receipt).toHaveAttribute('data-cache-hit', 'false');
+  await expect(receipt).toContainText('TRT cache miss · built in 2m 23s');
+  await expect(banner).toHaveAttribute('role', 'status');
+  await expect(banner, 'the receipt expires on its own').toHaveCount(0, { timeout: 15_000 });
+
+  // The next build deserialises from the cache: a HIT, with its sub-second time.
+  await mock(request, [{ ...stage('STAGE_COMPILING_TRT', 'gpen_256', 'FP16'), ...compileDetail }]);
+  await expect(banner).toBeVisible();
+  await request.post(`http://127.0.0.1:${MOCK_PORT}/__mock/pipeline`, { data: { active: [], last_compile: lastCompile(true, 0.18) } });
+  await expect(receipt).toHaveAttribute('data-cache-hit', 'true');
+  await expect(receipt).toContainText('TRT cache hit · 0.18s');
+});
+
+test('banner: a build that finished before the page connected leaves no receipt', async ({ page, request }) => {
+  await request.post(`http://127.0.0.1:${MOCK_PORT}/__mock/pipeline`, { data: { active: [], last_compile: lastCompile(false, 90) } });
+  await openTab(page, 'faceswap');
+  await page.waitForTimeout(800);
+  await expect(page.getByTestId('compile-banner')).toHaveCount(0);
+  await request.post(`http://127.0.0.1:${MOCK_PORT}/__mock/pipeline`, { data: { active: [], last_compile: null } });
+});
+
 test('deadline: a 15 s request is not timed out while compiling, and gets a fresh deadline after', async ({ page, request }) => {
   test.setTimeout(90_000);
   const logs = [];
