@@ -5,6 +5,7 @@ import {
   MESSAGE_TYPES,
 } from './referenceChannel.js';
 import { drawZebraOverlay } from '../faceswap/falseColorZebra.js';
+import { eventMatches } from '../../store/shortcutStore';
 
 /**
  * Stage 19: Pop-Out Clean Feed Reference Monitor (#/monitor).
@@ -250,7 +251,7 @@ export default function ReferenceMonitor() {
   useEffect(() => {
     const handleKey = (e) => {
       showHudBriefly();
-      if (e.key === 'f' || e.key === 'F' || e.key === 'F11') {
+      if (eventMatches(e, 'monitor.fullscreen')) {
         e.preventDefault();
         toggleFullscreen();
       }

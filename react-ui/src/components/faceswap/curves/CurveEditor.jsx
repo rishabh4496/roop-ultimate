@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import NumericInput from '../../NumericInput';
 import { useLaneCanvas } from '../timeline/useLaneCanvas';
 import { frameAtX, normalizeView, viewSpan } from '../timeline/viewMath';
 import {
@@ -196,14 +197,6 @@ export default function CurveEditor({
     }
   };
 
-  const [valueDraft, setValueDraft] = useState(null);
-  const commitValue = () => {
-    if (valueDraft !== null && selKey) {
-      const n = Number(valueDraft);
-      if (Number.isFinite(n)) api.setValue(paramId, selKey.frame, n);
-    }
-    setValueDraft(null);
-  };
 
   const ineffective = list.length && enabled ? curveIneffective(param, settings) : null;
   const atPlayhead = list.some((k) => k.frame === frame);
@@ -268,18 +261,19 @@ export default function CurveEditor({
         {selKey && !selIsLast && <span className="text-note text-[var(--text-muted)]">{INTERP_LABELS[selKey.interp]}</span>}
         <span className="flex-1" />
         {selKey && (
-          <label className="inline-flex items-center gap-1.5 text-note text-[var(--text-muted)]">
-            Value
-            <input type="number" data-testid="curve-value" aria-label={`${param.label} value at the selected key`}
-                   min={param.min} max={param.max} step={param.quantum}
-                   value={valueDraft ?? selKey.value}
-                   onFocus={(e) => { setValueDraft(String(selKey.value)); e.target.select(); }}
-                   onChange={(e) => setValueDraft(e.target.value)}
-                   onBlur={commitValue}
-                   onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') { setValueDraft(null); e.currentTarget.blur(); } }}
-                   className="w-[8ch] rounded-md border border-[var(--border-color)] bg-[var(--input-bg)] py-0.5 text-center font-mono text-mini tabular-nums text-[var(--text-main)] outline-none focus:border-[var(--accent)]" />
-            {param.unit}
-          </label>
+          <NumericInput
+            label="Value"
+            testId="curve-value"
+            ariaLabel={`${param.label} value at the selected key`}
+            value={selKey.value}
+            min={param.min}
+            max={param.max}
+            step={param.quantum}
+            unit={param.unit}
+            onCommit={(n) => api.setValue(paramId, selKey.frame, n)}
+            className="gap-1.5 text-note text-[var(--text-muted)]"
+            inputClassName="w-[8ch] rounded-md border border-[var(--border-color)] bg-[var(--input-bg)] py-0.5 text-center font-mono text-mini tabular-nums text-[var(--text-main)] outline-none focus:border-[var(--accent)]"
+          />
         )}
       </div>
 

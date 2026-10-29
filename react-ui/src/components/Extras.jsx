@@ -15,6 +15,8 @@ import MouthCustodyPanel from './faceswap/MouthCustodyPanel';
 import { overridePatch } from './faceswap/mouthCustody';
 import BroadcastScopesDock from './faceswap/BroadcastScopesDock';
 import ParameterSweepModal from './faceswap/ParameterSweepModal';
+import { SLOT_ACTION_IDS } from '../shortcuts/actions';
+import { eventMatches } from '../store/shortcutStore';
 import StereoVRViewport, { DEFAULT_VR_PARAMS } from './faceswap/StereoVRViewport';
 import { drawZebraOverlay } from './faceswap/falseColorZebra';
 import {
@@ -154,12 +156,13 @@ export default function Extras({ notify, registerFileListener, meta, settings, s
   });
   useEffect(() => {
     const onKey = (e) => {
-      const digit = /^Digit([1-4])$/.exec(e.code || '');
-      if (!digit || e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
+      // The same four snapshot-slot actions as Face Swap (shortcuts/actions.js), so one remap covers both tabs.
+      const slot = SLOT_ACTION_IDS.findIndex((id) => eventMatches(e, id));
+      if (slot < 0) return;
       if (['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName)) return;
       if (document.querySelector('[role="dialog"]')) return;
       e.preventDefault();
-      slotBank.activate(SLOT_IDS[Number(digit[1]) - 1]);
+      slotBank.activate(SLOT_IDS[slot]);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);

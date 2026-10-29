@@ -1,4 +1,5 @@
 import { useHistoryStore } from '../store/historyStore';
+import { eventMatches } from '../store/shortcutStore';
 
 // Stage 23: the window-level half of the history. Two jobs:
 //
@@ -11,7 +12,7 @@ import { useHistoryStore } from '../store/historyStore';
 //     stage's gesture layer call stopPropagation() on pointerdown, which would hide it from a
 //     bubble-phase listener.
 //
-//  2. KEYS. Ctrl/Cmd+Z undo, Ctrl/Cmd+Y and Ctrl/Cmd+Shift+Z redo.
+//  2. KEYS. Undo and redo (Ctrl/Cmd+Z, Ctrl/Cmd+Y / Ctrl/Cmd+Shift+Z unless remapped in Settings).
 
 const NON_TEXT_INPUT = new Set(['range', 'checkbox', 'radio', 'button', 'submit', 'reset', 'color', 'file', 'image']);
 
@@ -25,12 +26,13 @@ export function isTextEntry(el) {
   return false;
 }
 
-/** 'undo' | 'redo' | null for a keydown, before any focus rules. */
+/**
+ * 'undo' | 'redo' | null for a keydown, before any focus rules. The keys are the `edit.undo` / `edit.redo` actions
+ * (shortcuts/actions.js: Ctrl/Cmd+Z, Ctrl/Cmd+Y and Ctrl/Cmd+Shift+Z by default), so a remap reaches this listener.
+ */
 export function historyKeyAction(e) {
-  if (!(e.ctrlKey || e.metaKey) || e.altKey) return null;
-  const k = String(e.key || '').toLowerCase();
-  if (k === 'z') return e.shiftKey ? 'redo' : 'undo';
-  if (k === 'y' && !e.shiftKey) return 'redo';
+  if (eventMatches(e, 'edit.undo')) return 'undo';
+  if (eventMatches(e, 'edit.redo')) return 'redo';
   return null;
 }
 

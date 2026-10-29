@@ -18,7 +18,7 @@ const IDLE = 'text-white/65 hover:bg-white/10 hover:text-white';
 export default function WorkstationHeader({
   current, tab, onNavigate, runChip, engine, onOpenDiagnostics,
   zoom, onBumpZoom, onResetZoom,
-  profileName, onOpenProfiles, onOpenSnapshots, onOpenPalette,
+  profileName, onOpenProfiles, onOpenSnapshots, onOpenPalette, pipOn, onTogglePip,
 }) {
   const Ico = current?.icon;
   return (
@@ -49,6 +49,17 @@ export default function WorkstationHeader({
           </button>
           <button type="button" onClick={onOpenSnapshots} title="Workspace session snapshots" aria-label="Session snapshots" className={`${BTN} ${IDLE}`}>
             <Icon.snapshot size={14} />
+          </button>
+          <button
+            type="button"
+            onClick={onTogglePip}
+            aria-pressed={!!pipOn}
+            title="Floating preview: keeps the Face Swap picture in a corner while you work in Face Manager, Batch or Settings"
+            aria-label="Floating preview"
+            data-testid="pip-toggle"
+            className={`${BTN} ${pipOn ? 'bg-[var(--accent)]/20 text-white' : IDLE}`}
+          >
+            <Icon.pip size={14} />
           </button>
           <button type="button" onClick={onOpenPalette} title="Command palette (Ctrl/⌘ K)" aria-label="Command palette (Ctrl K)" className={`${BTN} ${IDLE}`}>
             <Icon.search size={14} />

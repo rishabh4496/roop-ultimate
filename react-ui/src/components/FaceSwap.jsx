@@ -79,6 +79,8 @@ import { QUICK_RECIPES, activeRecipeId } from './faceswap/recipes';
 import { temporalModeOf } from './faceswap/temporalModes';
 import HeadPoseHud from './faceswap/HeadPoseHud';
 import useThrottledFrameRequest from './faceswap/useThrottledFrameRequest';
+import { eventMatches, useShortcutStore } from '../store/shortcutStore';
+import { usePipStore } from '../store/pipStore';
 import FrameUnavailable from './faceswap/FrameUnavailable';
 import {
   dataUrlToOwnedBlobUrl, releaseOwner, revokeUrl, blobUrlToDataUrl,
@@ -652,7 +654,6 @@ export default function FaceSwap({
   } = useProfiles({ settings, setSettings, notify });
 
   // Keyboard Shortcuts Modal visibility
-  const [showShortcutHUD, setShowShortcutHUD] = useState(false);
 
   // Drag and drop overlay state removed (managed globally by App.jsx)
 
@@ -1720,7 +1721,11 @@ export default function FaceSwap({
         processing_selection: selection,
         solo_stage: effectiveSolo,
         ...(opts.overrides || {}),
-      }), { abortOnUnmount: true, timeout: 0, signal: ctrl.signal });
+      }), {
+        abortOnUnmount: true, timeout: 0, signal: ctrl.signal,
+        // The floating preview keeps this request so it can ask for the same picture again while this panel is unmounted.
+        tap: (body) => usePipStore.getState().rememberRequest(body),
+      });
       if (res?.error) throw new Error(res.message || res.error || 'preview swap failed');
       const verdict = classifyPreviewResponse({
         request, response: res, wanted: wantedPreviewRef.current,
@@ -2963,6 +2968,15 @@ export default function FaceSwap({
   }, [progress.processing, isGeneratingPreviewClip, origStartEnd]);
   /* eslint-enable react-hooks/exhaustive-deps */
 
+  // The floating preview (store/pipStore.js) refreshes its own picture only while this panel is NOT mounted - while it is,
+  // the previews below are the only ones asked for - and captions itself with where the playhead is.
+  useEffect(() => {
+    const { setFaceswapMounted } = usePipStore.getState();
+    setFaceswapMounted(true);
+    return () => setFaceswapMounted(false);
+  }, []);
+  useEffect(() => { usePipStore.getState().setContext({ frame, total: maxFrames }); }, [frame, maxFrames]);
+
   // Keyboard Escape, Shortcuts HUD, & Global Productivity Hotkeys
   /* eslint-disable react-hooks/exhaustive-deps -- intentional: hotkey handlers read latest callbacks; re-subscribing every render would thrash listeners */
   useEffect(() => {
@@ -2983,15 +2997,13 @@ export default function FaceSwap({
       // so playback/timeline hotkeys don't fire on the page behind it.
       if (document.querySelector('[role="dialog"]')) return;
 
-      // Toggle shortcuts HUD: '?' or 'h'
-      if (e.key === '?' || e.key === 'h' || e.key === 'H') {
-        e.preventDefault();
-        setShowShortcutHUD((prev) => !prev);
-        return;
-      }
+      // The keys below are actions, not literals: shortcuts/actions.js holds the defaults and Settings -> Keyboard
+      // Shortcuts remaps them, so each test is eventMatches(e, '<action>'). The shortcut sheet itself (? / Ctrl+/) is
+      // App's `app.help`; this panel used to carry a second, hand-typed copy of it that answered to `?` and `h` as well,
+      // so `?` opened two overlays at once.
 
-      // Play/Pause: Space
-      if (e.key === ' ') {
+      // Play/Pause
+      if (eventMatches(e, 'transport.playPause')) {
         e.preventDefault();
         if (maxFrames > 1 && setIsPlaying) {
           setIsPlaying((p) => !p);
@@ -3007,55 +3019,58 @@ export default function FaceSwap({
         return;
       }
 
-      // Step frames left/right: Left/Right Arrow
-      if (e.key === 'ArrowLeft' && maxFrames > 1 && setFrame) {
+      // Step frames left/right (and by 10)
+      const stepBack = eventMatches(e, 'transport.stepBack') ? 1 : eventMatches(e, 'transport.stepBack10') ? 10 : 0;
+      if (stepBack && maxFrames > 1 && setFrame) {
         e.preventDefault();
-        setFrame((f) => Math.max(1, f - (e.shiftKey ? 10 : 1)));
+        setFrame((f) => Math.max(1, f - stepBack));
         return;
       }
-      if (e.key === 'ArrowRight' && maxFrames > 1 && setFrame) {
+      const stepForward = eventMatches(e, 'transport.stepForward') ? 1 : eventMatches(e, 'transport.stepForward10') ? 10 : 0;
+      if (stepForward && maxFrames > 1 && setFrame) {
         e.preventDefault();
-        setFrame((f) => Math.min(maxFrames, f + (e.shiftKey ? 10 : 1)));
+        setFrame((f) => Math.min(maxFrames, f + stepForward));
         return;
       }
 
-      // Jump to start/end: Home / End
-      if (e.key === 'Home' && maxFrames > 1 && setFrame) {
+      // Jump to start/end
+      if (eventMatches(e, 'transport.toStart') && maxFrames > 1 && setFrame) {
         e.preventDefault();
         setFrame(1);
         return;
       }
-      if (e.key === 'End' && maxFrames > 1 && setFrame) {
+      if (eventMatches(e, 'transport.toEnd') && maxFrames > 1 && setFrame) {
         e.preventDefault();
         setFrame(maxFrames);
         return;
       }
 
-      // Range Trim Markers: '[' to set start, ']' to set end, 'R' to reset range
-      if (e.key === '[') {
+      // Range trim markers: set start, set end, reset the range
+      if (eventMatches(e, 'timeline.trimStart')) {
         e.preventDefault();
         setFrameMarkerVal('start', frame);
         return;
       }
-      if (e.key === ']') {
+      if (eventMatches(e, 'timeline.trimEnd')) {
         e.preventDefault();
         setFrameMarkerVal('end', frame);
         return;
       }
-      if (e.key.toLowerCase() === 'r' && !e.ctrlKey && !e.metaKey) {
+      if (eventMatches(e, 'timeline.resetRange')) {
         e.preventDefault();
         setFrameMarkerVal('start', 1);
         setFrameMarkerVal('end', maxFrames);
         return;
       }
 
-      // 'C' opens the timeline's Curve Editor (Stage 25) and Shift+C is the comparison view it displaced - this handler
-      // stays the one owner of the bare C key (test_ui_shortcut_keys). A still image has no timeline to hang a curve
-      // on, so there plain C keeps doing what it always did. 'S' toggles split view.
-      if (e.key.toLowerCase() === 'c') {
-        if (e.ctrlKey || e.metaKey || e.altKey) return;       // Ctrl/Cmd+C is copy
+      // The curve-editor key opens the timeline's Curve Editor (Stage 25) and Shift+C is the comparison view it displaced -
+      // this handler stays the one owner of both (test_ui_shortcut_keys). A still image has no timeline to hang a curve on,
+      // so there the curve key keeps doing what the bare C always did: compare. Ctrl/Cmd+C is a different combo and is
+      // never claimed, so copy still works.
+      const curveKey = eventMatches(e, 'timeline.curveEditor');
+      if (curveKey || eventMatches(e, 'viewport.compare')) {
         e.preventDefault();
-        if (!e.shiftKey && maxFrames > 1) { setCurveOpen((open) => !open); return; }
+        if (curveKey && maxFrames > 1) { setCurveOpen((open) => !open); return; }
         setCompare((prev) => {
           const nextVal = !prev;
           if (nextVal) { setComparingEnhancers(false); setComparingMasks(false); setComparingSwappers(false); setComparingUpscalers(false); }
@@ -3063,21 +3078,21 @@ export default function FaceSwap({
         });
         return;
       }
-      if (e.key.toLowerCase() === 's') {
+      if (eventMatches(e, 'viewport.splitView')) {
         e.preventDefault();
         setSplitView((prev) => !prev);
         return;
       }
 
-      // Add to batch queue: 'Q'
-      if (e.key.toLowerCase() === 'q') {
+      // Add to the batch queue
+      if (eventMatches(e, 'transport.addToQueue')) {
         e.preventDefault();
         addToQueue();
         return;
       }
 
-      // Swapping execution: Ctrl + Enter
-      if (e.key === 'Enter' && e.ctrlKey) {
+      // Swapping execution
+      if (eventMatches(e, 'transport.run')) {
         e.preventDefault();
         if (queue.running) return;
         if (queue.pending.length > 0) {
@@ -3091,7 +3106,6 @@ export default function FaceSwap({
 
     const handleEsc = (e) => {
       if (e.key === 'Escape') {
-        setShowShortcutHUD(false);
         setPastedFiles(null);
       }
     };
@@ -3132,7 +3146,7 @@ export default function FaceSwap({
     compare: () => setCompare((v) => { const n = !v; if (n) { setComparingEnhancers(false); setComparingMasks(false); setComparingSwappers(false); setComparingUpscalers(false); } return n; }),
     split: () => setSplitView((v) => !v),
     preview: () => refreshPreview({ force: true }),   // explicit user action — same as Refresh
-    shortcuts: () => setShowShortcutHUD(true),
+    shortcuts: () => useShortcutStore.getState().openOverlay(),
     maskOverlay: () => set('show_mask_offsets', !p.show_mask_offsets),
     // Applying a named preset is the one command that takes an argument, hence
     // the detail object being forwarded to the handler below.
@@ -4129,7 +4143,7 @@ export default function FaceSwap({
         <Section title="Live Telemetry & Diagnostics" collapsible defaultOpen={false}>
             <div><HeadPoseHud /></div>
             <div className="mt-3 flex justify-between items-center">
-              <Button size="sm" variant="secondary" onClick={() => setShowShortcutHUD(true)}>Keyboard Shortcuts Info</Button>
+              <Button size="sm" variant="secondary" onClick={() => useShortcutStore.getState().openOverlay()}>Keyboard Shortcuts Info</Button>
             </div>
         </Section>
       </div>
@@ -4952,67 +4966,6 @@ export default function FaceSwap({
       )}
 
       {/* Drag-n-Drop overlay removed (managed globally by App.jsx) */}
-
-      {/* Keyboard Shortcuts HUD */}
-      {showShortcutHUD && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center animate-slide-up" onClick={() => setShowShortcutHUD(false)}>
-          <Card className="p-6 max-w-lg w-full border border-white/10 shadow-2xl flex flex-col gap-4" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between border-b border-white/10 pb-3">
-              <h3 className="text-lg font-bold text-white flex items-center gap-2">Pro Keyboard Shortcuts</h3>
-              <Button size="sm" variant="ghost" onClick={() => setShowShortcutHUD(false)}>✕</Button>
-            </div>
-            <div className="grid grid-cols-2 gap-x-8 gap-y-5 py-2 text-sm text-white/80">
-              <div className="space-y-2.5">
-                <h4 className="font-bold text-accent text-xs uppercase tracking-wider">Playback & Nav</h4>
-                <div className="flex items-center justify-between"><span className="text-white/60">Play / Pause</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">Space</kbd></div>
-                <div className="flex items-center justify-between"><span className="text-white/60">Prev / Next Frame</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">← / →</kbd></div>
-                <div className="flex items-center justify-between"><span className="text-white/60">Step 10 Frames</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">Shift + ← / →</kbd></div>
-                <div className="flex items-center justify-between"><span className="text-white/60">Jump to Start/End</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">Home / End</kbd></div>
-              </div>
-              <div className="space-y-2.5">
-                <h4 className="font-bold text-accent text-xs uppercase tracking-wider">Timeline Trimming</h4>
-                <div className="flex items-center justify-between"><span className="text-white/60">Set Start Frame</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">[</kbd></div>
-                <div className="flex items-center justify-between"><span className="text-white/60">Set End Frame</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">]</kbd></div>
-                <div className="flex items-center justify-between"><span className="text-white/60">Reset Range</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">R</kbd></div>
-                <div className="flex items-center justify-between"><span className="text-white/60">Marker at playhead</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">M</kbd></div>
-                <div className="flex items-center justify-between"><span className="text-white/60">Set In / Out</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">I / O</kbd></div>
-                <div className="flex items-center justify-between"><span className="text-white/60">Shuttle back / pause / fwd</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">J / K / L</kbd></div>
-                <div className="flex items-center justify-between"><span className="text-white/60">Step 1 / 10 frames</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">, . / Shift</kbd></div>
-                <div className="flex items-center justify-between"><span className="text-white/60">Prev / next scene cut</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">↑ / ↓</kbd></div>
-                <div className="flex items-center justify-between"><span className="text-white/60">Zoom timeline</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">Ctrl + Wheel</kbd></div>
-                <div className="flex items-center justify-between"><span className="text-white/60">Scroll timeline</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">Shift + Wheel</kbd></div>
-              </div>
-              <div className="space-y-2.5">
-                <h4 className="font-bold text-accent text-xs uppercase tracking-wider">Compare & Zoom</h4>
-                <div className="flex items-center justify-between"><span className="text-white/60">Undo / Redo (all edits, masks, roto)</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">Ctrl + Z / Y</kbd></div>
-                <div className="flex items-center justify-between"><span className="text-white/60">Snapshot slots A / B / C / D</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">1 / 2 / 3 / 4</kbd></div>
-                <div className="flex items-center justify-between"><span className="text-white/60">Zoom 1:1 / 200% / 400%</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">Shift + 1 / 2 / 4</kbd></div>
-                <div className="flex items-center justify-between"><span className="text-white/60">Zoom In / Out</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">+ / -</kbd></div>
-                <div className="flex items-center justify-between"><span className="text-white/60">Toggle Comparison</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">Shift + C</kbd></div>
-                <div className="flex items-center justify-between"><span className="text-white/60">Parameter Curve Editor (video)</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">C</kbd></div>
-                <div className="flex items-center justify-between"><span className="text-white/60">Toggle Split View</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">S</kbd></div>
-                <div className="flex items-center justify-between"><span className="text-white/60">Blend / slider mode</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">W</kbd></div>
-                <div className="flex items-center justify-between"><span className="text-white/60">Split axis</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">X</kbd></div>
-                <div className="flex items-center justify-between"><span className="text-white/60">Auto-swipe</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">A</kbd></div>
-              </div>
-              <div className="space-y-2.5">
-                <h4 className="font-bold text-accent text-xs uppercase tracking-wider">Preview Tools</h4>
-                <div className="flex items-center justify-between"><span className="text-white/60">Magnifier lens</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">G</kbd></div>
-                <div className="flex items-center justify-between"><span className="text-white/60">Mask brush</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">B</kbd></div>
-                <div className="flex items-center justify-between"><span className="text-white/60">Keypoints &amp; pose</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">D</kbd></div>
-                <div className="flex items-center justify-between"><span className="text-white/60">Lock to target face</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">T</kbd></div>
-              </div>
-              <div className="space-y-2.5">
-                <h4 className="font-bold text-accent text-xs uppercase tracking-wider">Queue & Process</h4>
-                <div className="flex items-center justify-between"><span className="text-white/60">Add to Batch Queue</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">Q</kbd></div>
-                <div className="flex items-center justify-between"><span className="text-white/60">Run Swapper / Queue</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">Ctrl + Enter</kbd></div>
-                <div className="flex items-center justify-between"><span className="text-white/60">Toggle Shortcuts HUD</span> <kbd className="bg-white/10 px-2 py-0.5 rounded text-xs font-mono text-white">?</kbd></div>
-              </div>
-            </div>
-            <p className="text-xs text-muted text-center mt-2">Click anywhere outside this modal or press Esc to close.</p>
-          </Card>
-        </div>
-      )}
 
       {/* Floating Action Dock HUD */}
       <FloatingActionDock

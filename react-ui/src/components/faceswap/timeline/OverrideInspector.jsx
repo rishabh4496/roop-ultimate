@@ -1,6 +1,6 @@
 import React from 'react';
 import { OVERRIDE_FIELDS, canBypass } from './overrides';
-import { clamp } from './viewMath';
+import NumericInput from '../../NumericInput';
 
 // The editor for the SELECTED scene override. Each field is opt-in: an unticked field inherits the
 // clip's settings, so an override only ever states what is different about this range.
@@ -8,27 +8,19 @@ import { clamp } from './viewMath';
 const inputCls = 'rounded-md border border-[var(--border-color)] bg-[var(--input-bg)] px-1.5 py-0.5 text-mini font-mono tabular-nums text-[var(--text-main)] outline-none focus:border-[var(--accent)]';
 
 function NumberBox({ label, value, min, max, onCommit }) {
-  const [draft, setDraft] = React.useState(null);
-  const commit = () => {
-    if (draft !== null) {
-      const n = parseInt(draft, 10);
-      if (Number.isFinite(n) && n !== value) onCommit(clamp(n, min, max));
-    }
-    setDraft(null);
-  };
+  // Whole frames. Drag the label to scrub, or type a frame / an expression (`1200/2`).
   return (
-    <label className="inline-flex items-center gap-1 text-nano uppercase tracking-wider text-[var(--text-muted)]">
-      {label}
-      <input
-        type="number" min={min} max={max} value={draft ?? value}
-        aria-label={label}
-        onFocus={(e) => { setDraft(String(value)); e.target.select(); }}
-        onChange={(e) => setDraft(e.target.value)}
-        onBlur={commit}
-        onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') { setDraft(null); e.currentTarget.blur(); } }}
-        className={`${inputCls} w-[8ch] text-right`}
-      />
-    </label>
+    <NumericInput
+      label={label}
+      ariaLabel={label}
+      value={value}
+      min={min}
+      max={max}
+      step={1}
+      onCommit={onCommit}
+      className="text-nano uppercase tracking-wider text-[var(--text-muted)]"
+      inputClassName={`${inputCls} w-[8ch] text-right`}
+    />
   );
 }
 

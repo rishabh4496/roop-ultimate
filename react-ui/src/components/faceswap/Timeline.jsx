@@ -18,6 +18,7 @@ import {
 } from './timeline/laneModel';
 import { overrideCandidates } from './timeline/hit';
 import { IDLE, reverseTick, shuttleKey, shuttleLabel, shuttleRate, stepSize } from './timeline/shuttle';
+import { eventMatches } from '../../store/shortcutStore';
 import {
   clamp, fitRange, fmtSeconds, fmtTimecode, followFrame, frameAtX, isZoomed, normalizeView, panView, placeView,
   spanAtFraction, thumbSlots, viewSpan, zoomFraction, zoomView,
@@ -585,13 +586,14 @@ export default function Timeline({
   }, [shuttle]);
 
   // ── Keyboard ──────────────────────────────────────────────────────────────
-  // Same guards as the app's global shortcut handler so it never fires while typing or behind a
-  // modal. Reached through a ref so the listener is bound once instead of re-subscribing on every
-  // frame the playback loop paints. Each key is tested in the `e.key... === 'x'` form on purpose:
-  // test_ui_shortcut_keys.py reads those to prove no two components claim the same bare key.
+  // Same guards as the app's global shortcut handler so it never fires while typing or behind a modal. Reached through
+  // a ref so the listener is bound once instead of re-subscribing on every frame the playback loop paints.
+  //
+  // The keys are actions (shortcuts/actions.js: timeline.* and transport.shuttle*), remappable in Settings -> Keyboard
+  // Shortcuts. Matching is exact, modifiers included, so there is no separate "bare keys only" guard: Ctrl+J is not J.
+  // test_ui_shortcut_keys.py proves from the action table that no two actions live on the same tab share a key.
   useEffect(() => {
     const onKey = (e) => {
-      if (e.ctrlKey || e.metaKey || e.altKey) return;
       if (['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName)) return;
       if (document.querySelector('[role="dialog"]')) return;
       const L = latest.current;
@@ -601,16 +603,18 @@ export default function Timeline({
         if (next.dir > 0) { L.setPlaybackRate?.(shuttleRate(next)); L.setIsPlaying?.(true); }
         else L.setIsPlaying?.(false);
       };
-      if (e.key.toLowerCase() === 'm') { e.preventDefault(); L.toggleMarker(); }
-      else if (e.key.toLowerCase() === 'j') { e.preventDefault(); shuttleTo(shuttleKey(shuttleRef.current, 'j')); }
-      else if (e.key.toLowerCase() === 'k') { e.preventDefault(); shuttleTo(shuttleKey(shuttleRef.current, 'k')); }
-      else if (e.key.toLowerCase() === 'l') { e.preventDefault(); shuttleTo(shuttleKey(shuttleRef.current, 'l')); }
-      else if (e.key.toLowerCase() === 'i') { e.preventDefault(); L.setFrameMarkerVal('start', L.frame); }
-      else if (e.key.toLowerCase() === 'o') { e.preventDefault(); L.setFrameMarkerVal('end', L.frame); }
-      else if (e.key === ',' || e.key === '<') { e.preventDefault(); L.step(-stepSize(e.shiftKey || e.key === '<')); }
-      else if (e.key === '.' || e.key === '>') { e.preventDefault(); L.step(stepSize(e.shiftKey || e.key === '>')); }
-      else if (e.key === 'ArrowUp') { if (L.jumpCut(-1)) e.preventDefault(); }
-      else if (e.key === 'ArrowDown') { if (L.jumpCut(1)) e.preventDefault(); }
+      if (eventMatches(e, 'timeline.marker')) { e.preventDefault(); L.toggleMarker(); }
+      else if (eventMatches(e, 'transport.shuttleBack')) { e.preventDefault(); shuttleTo(shuttleKey(shuttleRef.current, 'j')); }
+      else if (eventMatches(e, 'transport.shuttlePause')) { e.preventDefault(); shuttleTo(shuttleKey(shuttleRef.current, 'k')); }
+      else if (eventMatches(e, 'transport.shuttleForward')) { e.preventDefault(); shuttleTo(shuttleKey(shuttleRef.current, 'l')); }
+      else if (eventMatches(e, 'timeline.setIn')) { e.preventDefault(); L.setFrameMarkerVal('start', L.frame); }
+      else if (eventMatches(e, 'timeline.setOut')) { e.preventDefault(); L.setFrameMarkerVal('end', L.frame); }
+      else if (eventMatches(e, 'timeline.frameBack')) { e.preventDefault(); L.step(-stepSize(false)); }
+      else if (eventMatches(e, 'timeline.frameBack10')) { e.preventDefault(); L.step(-stepSize(true)); }
+      else if (eventMatches(e, 'timeline.frameForward')) { e.preventDefault(); L.step(stepSize(false)); }
+      else if (eventMatches(e, 'timeline.frameForward10')) { e.preventDefault(); L.step(stepSize(true)); }
+      else if (eventMatches(e, 'timeline.prevCut')) { if (L.jumpCut(-1)) e.preventDefault(); }
+      else if (eventMatches(e, 'timeline.nextCut')) { if (L.jumpCut(1)) e.preventDefault(); }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);

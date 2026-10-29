@@ -6,6 +6,7 @@ import {
   MAX_IDENTITIES, MIN_IDENTITIES, clampToPad, evenWeights, padVertices, pointAtWeights, setWeight, toPercents,
   togglePick, weightsAtPoint,
 } from './morphPad';
+import { usePipStore } from '../../store/pipStore';
 
 // Embedding Mixer & Morph Lab.
 //
@@ -182,8 +183,16 @@ export default function MorphLab({ notify, setTab }) {
       // The server loads the blend as a source and SELECTS it; Face Swap rehydrates its sources and
       // selection from /api/state when it mounts, so opening it is all it takes to see the blend.
       await postJSON('/api/facemgr/morph/preview', body(), { timeout: 0 });
-      notify?.('Blend loaded as a source. Showing it on the active frame in Face Swap');
-      setTab?.('faceswap');
+      // With the floating preview on and holding a frame, stay here: it re-renders that frame with the blend a moment after
+      // this call lands (the API client announces the mutation to it), so the result appears in the corner while the
+      // weights are still under your hand. Without it there is nowhere to show the result but Face Swap.
+      const pip = usePipStore.getState();
+      if (pip.enabled && pip.frame && pip.lastRequest) {
+        notify?.('Blend loaded as a source. The floating preview is re-rendering the active frame with it');
+      } else {
+        notify?.('Blend loaded as a source. Showing it on the active frame in Face Swap');
+        setTab?.('faceswap');
+      }
     } catch (e) { notify?.(e.message, 'error'); }
     finally { setBusy(''); }
   };

@@ -35,6 +35,12 @@ import FaceContextMenu from './FaceContextMenu';
 import { cropRectFor, faceBadgeText, warmthDeltaFor } from './faceContextModel';
 import { cropToPng, loadStageImage, sampleFaceSkin } from './faceSample';
 import { MODULAR_FLOW_NODES } from './pillModel';
+import { SLOT_ACTION_IDS } from '../../shortcuts/actions';
+import { eventMatches, keyupMatches } from '../../store/shortcutStore';
+import { usePipStore } from '../../store/pipStore';
+
+// The floating preview keeps its own copy of each picture the stage receives (store/pipStore.js); a no-op while it is off.
+const offerPipFrame = (img) => usePipStore.getState().offerFrame(img);
 
 export default function InteractivePreview({
   beforeSrc,
@@ -803,92 +809,114 @@ export default function InteractivePreview({
     }
   );
 
+  // Switching the floating preview ON while a picture is already up: frames are offered as the stage decodes them, so
+  // without this it would stay empty until the next frame change.
+  const pipEnabled = usePipStore((s) => s.enabled);
+  useEffect(() => {
+    if (pipEnabled) offerPipFrame(canvasApiRef.current?.topImage?.());
+  }, [pipEnabled]);
+
+  // ── Is the stage on screen? ───────────────────────────────────────────────
+  // The floating preview also appears on THIS tab when the stage has been scrolled or collapsed out of view (a short window
+  // stacks the panels). The observer is the single source for that: "visible" means a real share of the stage is in view, so
+  // a sliver peeking in at the edge does not hide the floating copy.
+  useEffect(() => {
+    const el = containerRef.current;
+    const { setStageVisible } = usePipStore.getState();
+    if (!el || typeof IntersectionObserver === 'undefined') return undefined;
+    // "In view" means a piece of the picture big enough to look at is on screen. A share of the ELEMENT is the wrong test:
+    // the stage can be taller than the window, so a fully visible window-sized slice of it is a small fraction of it.
+    // Smaller than the floating window itself, the floating copy is the better view.
+    const io = new IntersectionObserver((entries) => {
+      const e = entries[entries.length - 1];
+      const r = e?.intersectionRect;
+      setStageVisible(!!e && e.isIntersecting && !!r && r.width >= 220 && r.height >= 160);
+    }, { threshold: [0, 0.05, 0.1, 0.25, 0.5, 0.75, 1] });
+    io.observe(el);
+    return () => { io.disconnect(); setStageVisible(true); };
+  }, [splitMode]);                      // split view renders a different root element
+
   // ── Keyboard Shortcuts (Coexisting & clash-free) ──────────────────────────
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName)) return;
       if (document.querySelector('[role="dialog"]')) return;
 
+      // Space-drag to pan is a pointer gesture that needs Space HELD, not a command: it is not an action in
+      // shortcuts/actions.js and stays on Space whatever Play/Pause is remapped to.
       if (e.code === 'Space') {
         isSpaceDownRef.current = true;
       }
 
+      // Escape leaves solo-stage. Fixed: Esc is reserved so it can always close the thing in front of you.
       if (e.key === 'Escape' && soloStageRef.current) {
         e.preventDefault();
         onSoloStageRef.current?.(null);
         return;
       }
 
-      // Hold Backslash (`\`) for instant Original peek
-      if (e.key === '\\') {
+      // Every other key is an action, bound in shortcuts/actions.js and remappable in Settings -> Keyboard Shortcuts.
+      // Matching is exact (modifiers included), so Ctrl+B, Alt+B and Shift+B are never the bare B.
+
+      // Hold for an instant Original peek (released on keyup, below)
+      if (eventMatches(e, 'viewport.peekOriginal')) {
         setIsPeekingOriginal(true);
         return;
       }
 
-      // Shift + [ and Shift + ] for brush feather falloff
-      if (e.shiftKey && maskBrushActive) {
-        if (e.code === 'BracketLeft') {
+      // Brush feather falloff, while the brush is active
+      if (maskBrushActive) {
+        if (eventMatches(e, 'mask.featherDown')) {
           e.preventDefault();
           setBrushFeather((f) => Math.max(0, parseFloat((f - 0.1).toFixed(2))));
           return;
         }
-        if (e.code === 'BracketRight') {
+        if (eventMatches(e, 'mask.featherUp')) {
           e.preventDefault();
           setBrushFeather((f) => Math.min(1, parseFloat((f + 0.1).toFixed(2))));
           return;
         }
       }
 
-      // Bare keys only from here
-      if (e.ctrlKey || e.metaKey || e.altKey) return;
-
-      // Digits 1-4: the snapshot slots (A-D). The zoom presets that used these keys moved to
-      // Shift+1 / Shift+2 / Shift+4; matched on e.code because Shift+digit reports '!' '@' '$'.
-      const digit = /^Digit([1-4])$/.exec(e.code || '');
-      if (digit) {
+      // Snapshot slots A-D (1-4 by default)
+      const slot = SLOT_ACTION_IDS.findIndex((id) => eventMatches(e, id));
+      if (slot >= 0) {
         e.preventDefault();
-        if (e.shiftKey) {
-          if (digit[1] === '1') handlePreset1to1();
-          else if (digit[1] === '2') handlePreset200();
-          else if (digit[1] === '4') handlePreset400();
-        } else {
-          onSlotHotkeyRef.current?.(Number(digit[1]));
-        }
+        onSlotHotkeyRef.current?.(slot + 1);
         return;
       }
 
-      if (e.key === '=' || e.key === '+') {
+      // Zoom presets (Shift+1 / Shift+2 / Shift+4 by default)
+      if (eventMatches(e, 'viewport.zoom100')) { e.preventDefault(); handlePreset1to1(); return; }
+      if (eventMatches(e, 'viewport.zoom200')) { e.preventDefault(); handlePreset200(); return; }
+      if (eventMatches(e, 'viewport.zoom400')) { e.preventDefault(); handlePreset400(); return; }
+
+      if (eventMatches(e, 'viewport.zoomIn')) {
         e.preventDefault();
         zoomBy(1.4);
-      } else if (e.key === '-' || e.key === '_') {
+      } else if (eventMatches(e, 'viewport.zoomOut')) {
         e.preventDefault();
         zoomBy(1 / 1.4);
-      } else if (e.key.toLowerCase() === 'f') {
-        // Fit Preset (F)
+      } else if (eventMatches(e, 'viewport.fit')) {
         e.preventDefault();
         handlePresetFit();
-      } else if (e.key.toLowerCase() === 't') {
-        // Lock to Target Face (T)
+      } else if (eventMatches(e, 'viewport.lockTarget')) {
         e.preventDefault();
         setLockTargetFace((v) => !v);
-      } else if (e.key.toLowerCase() === 'd') {
-        // Debug Landmarks/Pose (D)
+      } else if (eventMatches(e, 'viewport.debugOverlay')) {
         setShowDebug((v) => !v);
-      } else if ((e.key.toLowerCase() === 'g' || e.code === 'KeyM') && !splitMode) {
-        // Loupe / Glass (G or M)
+      } else if (eventMatches(e, 'viewport.loupe') && !splitMode) {
         setMagnifierActive((m) => !m);
-      } else if (e.key.toLowerCase() === 'b' && !splitMode) {
-        // Mask Brush (B)
+      } else if (eventMatches(e, 'mask.brush') && !splitMode) {
         toggleBrush();
-      } else if (e.key.toLowerCase() === 'p' && !splitMode) {
-        // Pen tool: vector exclusion / inclusion zones (P)
+      } else if (eventMatches(e, 'mask.pen') && !splitMode) {
         e.preventDefault();
         toggleRoto();
-      } else if (e.key.toLowerCase() === 'x' && compare && !splitMode) {
+      } else if (eventMatches(e, 'viewport.compareAxis') && compare && !splitMode) {
         setCompareDir((d) => (d === 'vertical' ? 'horizontal' : 'vertical'));
-      } else if (e.key.toLowerCase() === 'w' && compare && !splitMode) {
+      } else if (eventMatches(e, 'viewport.compareMode') && compare && !splitMode) {
         setCompareMode((m) => (m === 'blend' ? 'slider' : 'blend'));
-      } else if (e.key.toLowerCase() === 'a' && compare && !splitMode && compareMode !== 'diff') {
+      } else if (eventMatches(e, 'viewport.autoSwipe') && compare && !splitMode && compareMode !== 'diff') {
         setAutoSwipe((a) => !a);
       }
     };
@@ -897,7 +925,8 @@ export default function InteractivePreview({
       if (e.code === 'Space') {
         isSpaceDownRef.current = false;
       }
-      if (e.key === '\\') {
+      // The modifier may have been released before the key, so a keyup is matched on the key alone.
+      if (keyupMatches(e, 'viewport.peekOriginal')) {
         setIsPeekingOriginal(false);
       }
     };
@@ -1372,7 +1401,7 @@ export default function InteractivePreview({
             <button
               type="button"
               onClick={() => setMagnifierActive((m) => !m)}
-              title="Toggle 3.5×–8× Floating Magnifier Loupe (G or M)"
+              title="Toggle 3.5×–8× Floating Magnifier Loupe (G)"
               className={`px-2 h-7 rounded-l-lg text-micro font-bold flex items-center gap-1 transition-colors ${
                 magnifierActive
                   ? 'text-cyan-300 bg-cyan-500/20 border border-cyan-400/40 shadow-[0_0_10px_rgba(6,182,212,0.3)]'
@@ -2001,6 +2030,7 @@ export default function InteractivePreview({
             zebra={zebraActive}
             faceBbox={activeFaceBbox}
             onDimensions={setImgDim}
+            onTopFrame={offerPipFrame}
             className="relative z-[1] w-full h-full object-contain pointer-events-none"
           />
 

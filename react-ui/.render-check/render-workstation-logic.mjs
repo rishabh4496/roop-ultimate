@@ -89,7 +89,8 @@ ok('a non-object has no rows', eq(rowsOf(undefined), []) && eq(rowsOf('s'), []))
 
 // ── settings tabs ──────────────────────────────────────────────────────────
 console.log('settings tabs');
-ok('five tabs, each with a label', SETTINGS_TABS.length === 5 && SETTINGS_TABS.every((t) => TAB_LABELS[t]));
+ok('six tabs (five settings sections + the Keyboard Shortcuts remapper), each with a label',
+  SETTINGS_TABS.length === 6 && SETTINGS_TABS.at(-1) === 'shortcuts' && SETTINGS_TABS.every((t) => TAB_LABELS[t]));
 ok('provider and TensorRT go to providers', tabForSetting('provider', 'Performance') === 'providers' && tabForSetting('trt_cuda_graph', 'Advanced performance') === 'providers');
 ok('thread controls go to cpu', ['max_threads', 'auto_thread_selection', 'memory_limit'].every((k) => tabForSetting(k, 'Performance') === 'cpu') && tabForSetting('perf_trt_pool', 'Advanced performance') === 'cpu');
 ok('server and output go to paths', tabForSetting('server_port', 'Server') === 'paths' && tabForSetting('output_video_codec', 'Output') === 'paths');

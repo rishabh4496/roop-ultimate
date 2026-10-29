@@ -1,6 +1,7 @@
 // Thin client for the FastAPI backend (app/api.py) proxied via Vite.
 import { longRunningKey } from './longRunning';
 import { suspendWhileBusy } from './pipelineStatus';
+import { noteMutation } from './mutationBus';
 
 export const API = window.location.origin;
 
@@ -139,7 +140,9 @@ async function request(method, path, init, opts = {}) {
 
   try {
     const res = await fetch(`${API}${path}`, { ...init, signal: ctrl ? ctrl.signal : caller });
-    return await handle(res, method, path, track);
+    const out = await handle(res, method, path, track);
+    noteMutation(method, path);                      // after the parse: a failure here is not this request's
+    return out;
   } catch (err) {
     if (err instanceof ApiError) throw err;
     if (timedOut && !caller?.aborted) {
@@ -161,14 +164,19 @@ async function request(method, path, init, opts = {}) {
 
 export const getJSON = (path, opts = {}) => request('GET', path, {}, opts);
 
-export const postJSON = (path, body, opts = {}) => request('POST', path, {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify(body || {}),
-  // keepalive lets the request outlive a page teardown (e.g. Pinokio's
-  // Run<->Dev webview reload) so a last-moment flush still reaches the server.
-  keepalive: opts.keepalive,
-}, opts);
+// `opts.tap(body)` is called with the request body just before it is sent: a read-only look for a caller that needs to
+// remember what it asked (Face Swap hands its /api/preview body to the floating preview so it can ask again).
+export const postJSON = (path, body, opts = {}) => {
+  if (opts.tap) opts.tap(body);
+  return request('POST', path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body || {}),
+    // keepalive lets the request outlive a page teardown (e.g. Pinokio's
+    // Run<->Dev webview reload) so a last-moment flush still reaches the server.
+    keepalive: opts.keepalive,
+  }, opts);
+};
 
 // Uploads go through XHR, not fetch.
 //
@@ -226,9 +234,9 @@ const xhrUpload = (path, fd, { onProgress, signal, timeout } = {}) => new Promis
     cleanup();
     if (xhr.status >= 200 && xhr.status < 300) {
       const ct = xhr.getResponseHeader('content-type') || '';
-      if (!ct.includes('application/json')) { resolve(xhr.responseText); return; }
+      if (!ct.includes('application/json')) { noteMutation(method, path); resolve(xhr.responseText); return; }
       // Mirrors handle(): a 2xx that is not parseable is a server bug.
-      try { resolve(JSON.parse(xhr.responseText)); }
+      try { const body = JSON.parse(xhr.responseText); noteMutation(method, path); resolve(body); }
       catch (cause) {
         reject(new ApiError({ detail: 'Malformed JSON in the server response', status: xhr.status, method, path: bare(path), kind: 'parse', cause, ...elapsed() }));
       }

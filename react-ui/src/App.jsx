@@ -50,6 +50,10 @@ import { Icon } from './icons';
 // ErrorBoundary below owns the failure case.
 import FaceSwap from './components/FaceSwap';
 import ReferenceMonitor from './components/monitor/ReferenceMonitor';
+import ShortcutOverlay from './components/shortcuts/ShortcutOverlay';
+import PipMiniViewport from './components/PipMiniViewport';
+import { installPipRefresh, usePipStore } from './store/pipStore';
+import { eventFiresInText, eventMatches, useShortcutStore } from './store/shortcutStore';
 import Processing from './components/Processing';
 import useRenderLite, { cycleRenderLiteMode, RENDER_LITE_LABEL }
   from './components/faceswap/useRenderLite';
@@ -645,7 +649,6 @@ export default function App() {
       setSettingsTab: st.setSettingsTab,
     }))
   );
-  const [showShortcutsModal, setShowShortcutsModal] = useState(false);
   const [showProfilesModal, setShowProfilesModal] = useState(false);
   const [showSnapshotsModal, setShowSnapshotsModal] = useState(false);
   const [activeQualityProfile, setActiveQualityProfile] = useState('');
@@ -721,29 +724,35 @@ export default function App() {
     }
   }, [notify]);
 
-  // Global keyboard shortcuts: ⌘/Ctrl-K palette, ⌘/Ctrl-B rail, ?, and ⌘/Ctrl +/-/0 zoom.
+  // The floating preview needs to know which tab is showing (it follows you to Face Manager, Batch and Settings) and to hear when
+  // the live source changes behind its back. Both live here because the shell is the one thing mounted on every tab.
+  const pipOn = usePipStore((s) => s.enabled);
+  useEffect(() => { usePipStore.getState().setTab(tab); }, [tab]);
+  useEffect(() => installPipRefresh(), []);
+
+  // Global keyboard shortcuts. The keys are not written here: each is an action in shortcuts/actions.js (app.palette,
+  // app.help, app.toggleRail, app.zoom*), so a remap in Settings reaches this handler on the next keypress.
   useEffect(() => {
     const onKey = (e) => {
-      // The palette opens from anywhere, a text field included: Ctrl/Cmd+K is not
-      // a character in any field this app has, and the settings search box is
-      // exactly where someone reaching for "find a setting" is standing.
-      if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === 'k') {
+      const inField = !!e.target && ['input', 'textarea', 'select'].includes(e.target.tagName?.toLowerCase());
+      // A bare key never fires from a text field (typing "?" must not open a dialog); a Mod+ combo does only for the
+      // actions that opt in - the palette (the settings search box is exactly where someone reaches for it) and help.
+      const fires = (id) => eventMatches(e, id) && (!inField || eventFiresInText(e, id));
+      if (fires('app.palette')) {
         e.preventDefault();
         setShowPalette((v) => !v);
         return;
       }
-      if (e.target && ['input', 'textarea', 'select'].includes(e.target.tagName?.toLowerCase())) return;
-      if (e.key === '?' || (e.shiftKey && e.key === '/')) {
+      if (fires('app.help')) {
         e.preventDefault();
-        setShowShortcutsModal((v) => !v);
+        useShortcutStore.getState().toggleOverlay();
         return;
       }
-      if (!(e.metaKey || e.ctrlKey)) return;
-      const k = e.key.toLowerCase();
-      if (k === 'b') { e.preventDefault(); toggleRail(); }
-      else if (e.key === '=' || e.key === '+') { e.preventDefault(); bumpZoom(0.05); }
-      else if (e.key === '-' || e.key === '_') { e.preventDefault(); bumpZoom(-0.05); }
-      else if (e.key === '0') { e.preventDefault(); setZoom(1); }
+      if (inField) return;
+      if (eventMatches(e, 'app.toggleRail')) { e.preventDefault(); toggleRail(); }
+      else if (eventMatches(e, 'app.zoomIn')) { e.preventDefault(); bumpZoom(0.05); }
+      else if (eventMatches(e, 'app.zoomOut')) { e.preventDefault(); bumpZoom(-0.05); }
+      else if (eventMatches(e, 'app.zoomReset')) { e.preventDefault(); setZoom(1); }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -859,7 +868,8 @@ export default function App() {
     cmds.push({ id: 'act-compare', section: 'Actions', icon: Icon.compare, title: 'Toggle before/after compare', run: () => runFaceswap('compare') });
     cmds.push({ id: 'act-split', section: 'Actions', icon: Icon.split, title: 'Toggle split view', run: () => runFaceswap('split') });
     cmds.push({ id: 'act-preview', section: 'Actions', icon: Icon.refresh, title: 'Refresh preview', run: () => runFaceswap('preview') });
-    cmds.push({ id: 'act-shortcuts', section: 'Actions', icon: Icon.shortcuts, title: 'Show keyboard shortcuts', run: () => setShowShortcutsModal(true) });
+    cmds.push({ id: 'act-shortcuts', section: 'Actions', icon: Icon.shortcuts, title: 'Show keyboard shortcuts', run: () => useShortcutStore.getState().openOverlay() });
+    cmds.push({ id: 'act-pip', section: 'Actions', icon: Icon.pip, title: 'Toggle floating preview', subtitle: 'Keeps the Face Swap picture in a corner while you work in Face Manager, Batch or Settings', run: () => usePipStore.getState().toggle() });
     cmds.push({
       id: 'act-diagnostics', section: 'Actions', icon: Icon.meter, title: 'Open runtime diagnostics',
       subtitle: 'Settings, Runtime Diagnostics & Benchmark',
@@ -1310,49 +1320,23 @@ export default function App() {
         profileName={activeQualityProfile ? (BUILTIN_PROFILES.find(p => p.id === activeQualityProfile)?.name.split(' ')[1] || 'Custom') : 'Standard'}
         onOpenProfiles={() => setShowProfilesModal(true)}
         onOpenSnapshots={() => setShowSnapshotsModal(true)}
+        pipOn={pipOn}
+        onTogglePip={() => usePipStore.getState().toggle()}
         onOpenPalette={() => setShowPalette(true)}
       />
 
-      {/* Shortcuts Cheat Sheet Modal */}
-      {showShortcutsModal && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[70] flex items-center justify-center p-4" onClick={() => setShowShortcutsModal(false)}>
-          <div className="bg-[#121216] border border-white/10 rounded-2xl max-w-lg w-full p-6 space-y-4 shadow-2xl animate-scale-in text-white" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between border-b border-white/10 pb-3">
-              <h3 className="text-base font-bold flex items-center gap-2 text-accent">
-                <Icon.shortcuts size={18} /> Global Keyboard Shortcuts Cheat Sheet
-              </h3>
-              <button type="button" onClick={() => setShowShortcutsModal(false)} aria-label="Close shortcuts cheat sheet modal" className="text-muted hover:text-white font-bold">✕</button>
-            </div>
+      {/* The shortcut sheet: ? or Ctrl+/ . Reads the live keymap, so it shows the user's remaps. */}
+      <ShortcutOverlay onOpenSettings={() => { setSettingsTab('shortcuts'); setTab('settings'); }} />
 
-            <div className="space-y-2 text-xs">
-              <div className="flex items-center justify-between py-1.5 border-b border-white/5">
-                <span className="text-white/70">Open Command Palette</span>
-                <kbd className="font-mono text-micro bg-white/10 px-2 py-0.5 rounded border border-white/10">Ctrl + K / ⌘K</kbd>
-              </div>
-              <div className="flex items-center justify-between py-1.5 border-b border-white/5">
-                <span className="text-white/70">Show Shortcuts Cheat Sheet</span>
-                <kbd className="font-mono text-micro bg-white/10 px-2 py-0.5 rounded border border-white/10">?</kbd>
-              </div>
-              <div className="flex items-center justify-between py-1.5 border-b border-white/5">
-                <span className="text-white/70">Zoom In / Zoom Out</span>
-                <kbd className="font-mono text-micro bg-white/10 px-2 py-0.5 rounded border border-white/10">Ctrl + / Ctrl -</kbd>
-              </div>
-              <div className="flex items-center justify-between py-1.5 border-b border-white/5">
-                <span className="text-white/70">Reset UI Zoom</span>
-                <kbd className="font-mono text-micro bg-white/10 px-2 py-0.5 rounded border border-white/10">Ctrl + 0</kbd>
-              </div>
-              <div className="flex items-center justify-between py-1.5 border-b border-white/5">
-                <span className="text-white/70">Play / Pause Video Swapper</span>
-                <kbd className="font-mono text-micro bg-white/10 px-2 py-0.5 rounded border border-white/10">Spacebar</kbd>
-              </div>
-              <div className="flex items-center justify-between py-1.5">
-                <span className="text-white/70">Toggle Split-Screen Compare</span>
-                <kbd className="font-mono text-micro bg-white/10 px-2 py-0.5 rounded border border-white/10">Shift + C</kbd>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Face Swap's picture in a corner, on the tabs you tune a project from. Only on screen when on, and a frame exists. */}
+      <PipMiniViewport
+        tab={tab}
+        onReturn={() => {
+          // From another tab: go back to Face Swap. Already there (the stage is scrolled out of view): bring the stage into view.
+          if (tab === 'faceswap') document.querySelector('.preview-stage')?.scrollIntoView({ block: 'center' });
+          else setTab('faceswap');
+        }}
+      />
 
       {/* Workspace Snapshots Modal */}
       {showSnapshotsModal && (

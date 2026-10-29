@@ -1,6 +1,6 @@
 // Which Settings tab a setting lives on.
 //
-// The panel used to be one masonry of sixteen sections. It is now five tabs:
+// The panel used to be one masonry of sixteen sections. It is now six tabs:
 //
 //   providers    Execution Providers & TensorRT Engines
 //   cpu          CPU P/E-Core & Thread Pools
@@ -8,6 +8,8 @@
 //   diagnostics  Runtime Diagnostics & Benchmark Runner
 //   general      everything else: theme, the 3-stage pipeline, identity,
 //                mouth/occlusion, lighting, detection defaults
+//   shortcuts    the keyboard remapper. Not a backend setting: bindings live in localStorage
+//                (store/shortcutStore.js), so no setting maps here and `tabForSetting` never returns it.
 //
 // (`general` is a fifth tab the brief did not name. Those sections are real
 // settings with nowhere else to go, and dropping them would have removed controls.)
@@ -23,6 +25,7 @@ export const TAB_LABELS = {
   paths: 'Paths & Storage',
   diagnostics: 'Runtime Diagnostics & Benchmark Runner',
   general: 'Appearance & Pipeline Defaults',
+  shortcuts: 'Keyboard Shortcuts',
 };
 
 // Keys whose section says one thing and whose tab says another.

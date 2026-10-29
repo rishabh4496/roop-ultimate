@@ -30,6 +30,7 @@ import {
   Eye, ExternalLink, ChevronRight, Ellipsis, Camera,
   House, RotateCcw, Sun, Moon, Monitor, Undo2, Redo2,
   Link2, Link2Off, Save, SlidersHorizontal, HardDrive, MemoryStick, Terminal, ScanFace, ChevronDown,
+  PictureInPicture2,
 } from 'lucide-react';
 
 // Small sizes need a heavier stroke to stay legible; large ones need less or
@@ -138,6 +139,8 @@ export const Icon = {
   film: make(Film, 'film'),
   preview: make(Eye, 'preview'),
   popout: make(ExternalLink, 'popout'),
+  // The floating mini-viewport that follows you to other tabs (components/PipMiniViewport).
+  pip: make(PictureInPicture2, 'pip'),
   // Disclosure caret. Call sites rotate it 90° when open, so it must point
   // right at rest — that rotation is why this is a chevron and not a caret
   // glyph, which would have needed a second character for the open state.

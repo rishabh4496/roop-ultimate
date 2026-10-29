@@ -413,11 +413,11 @@ test.describe('settings', () => {
     await openTab(page, 'settings');
   });
 
-  test('five tabs; each shows its own sections and not the others\'', async ({ page }) => {
+  test('six tabs (five sections + the Keyboard Shortcuts remapper); each shows its own sections and not the others\'', async ({ page }) => {
     const tabs = page.getByRole('tablist', { name: 'Settings sections' });
     await expect(tabs.getByRole('tab')).toHaveText([
       'Execution Providers & TensorRT Engines', 'CPU P/E-Core & Thread Pools', 'Paths & Storage',
-      'Runtime Diagnostics & Benchmark Runner', 'Appearance & Pipeline Defaults',
+      'Runtime Diagnostics & Benchmark Runner', 'Appearance & Pipeline Defaults', 'Keyboard Shortcuts',
     ]);
     await expect(tabs.getByRole('tab', { selected: true })).toHaveText('Execution Providers & TensorRT Engines');
     await expect(page.getByText('Provider', { exact: true }).first()).toBeVisible();
@@ -435,6 +435,10 @@ test.describe('settings', () => {
     await tabs.getByRole('tab', { name: /^Appearance/ }).click();
     await expect(page.getByText('Interface Theme')).toBeVisible();
     await expect(page.getByText('Detection defaults')).toBeVisible();
+
+    await tabs.getByRole('tab', { name: /^Keyboard/ }).click();
+    await expect(page.getByTestId('keyboard-shortcuts-tab')).toBeVisible();
+    await expect(page.getByText('Interface Theme'), 'the other sections are gone').toHaveCount(0);
   });
 
   test('the diagnostics tab renders all fourteen runtime sections, naming the ones the engine did not send', async ({ page }) => {
@@ -481,6 +485,6 @@ test.describe('settings', () => {
     await expect(page.getByRole('tab', { name: /^CPU/ })).toBeFocused();
     await expect(page.getByRole('tab', { name: /^CPU/ })).toHaveAttribute('aria-selected', 'true');
     await page.keyboard.press('End');
-    await expect(page.getByRole('tab', { name: /^Appearance/ })).toBeFocused();
+    await expect(page.getByRole('tab', { name: /^Keyboard Shortcuts/ }), 'End goes to the last tab').toBeFocused();
   });
 });

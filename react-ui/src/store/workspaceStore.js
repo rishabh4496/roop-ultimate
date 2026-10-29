@@ -36,7 +36,7 @@ export const LAYOUT_PRESETS = [
 ];
 
 /** The Settings tab's sections. Held here so the palette and the telemetry popover can open one directly. */
-export const SETTINGS_TABS = ['providers', 'cpu', 'paths', 'diagnostics', 'general'];
+export const SETTINGS_TABS = ['providers', 'cpu', 'paths', 'diagnostics', 'general', 'shortcuts'];
 
 const KEY = 'roop_workspace';
 

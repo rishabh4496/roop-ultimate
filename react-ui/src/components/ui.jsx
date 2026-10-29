@@ -2,6 +2,9 @@ import React, { useState, useEffect, useRef } from 'react';
 import { PERSON_COLORS } from './constants';
 import { motion, AnimatePresence, fadeUp, spring, useTilt, TiltGlare } from '../motion';
 import { Icon } from '../icons';
+import { settleTypedValue } from '../numeric/mathExpr';
+import { decimalsFor } from '../numeric/scrubMath';
+import { useScrub } from '../numeric/useScrub';
 
 // Panels rise in on mount (cinematic reveal) and lift on hover.
 //
@@ -215,11 +218,15 @@ export const ResetMark = ({ label, onReset }) => (
 // can scroll to and highlight a specific control by name. It is only supplied
 // by the Settings panel's binding helper; everywhere else it is undefined and
 // React omits the attribute entirely.
-export const Field = ({ label, info, children, modified, onReset, settingKey }) => (
+//
+// `labelProps` is spread onto the label text: Slider uses it to make the label a scrub handle (drag to change the
+// value). `badge` sits beside the reset mark - Slider's modified dot.
+export const Field = ({ label, info, children, modified, onReset, settingKey, labelProps, badge }) => (
   <label className="block" data-setting={settingKey}>
     <div className="flex items-start justify-between gap-2 mb-1.5">
-      <span className="text-xs font-medium text-white/70 leading-snug min-w-0">{label}</span>
+      <span {...labelProps} className={`text-xs font-medium text-white/70 leading-snug min-w-0 ${labelProps?.className || ''}`}>{label}</span>
       <span className="flex items-start gap-1.5 shrink-0">
+        {badge}
         {modified && onReset && <ResetMark label={label} onReset={onReset} />}
         {info && <InfoBadge info={info} />}
       </span>
@@ -289,7 +296,19 @@ const SLIDER_COMMIT_MS = 90;
 //                               i.e. an integer control)
 //   Shift + Arrow keys       -> one fine step
 //   click the number         -> type an exact value (Enter on the focused slider
-//                               opens the same editor, which is the keyboard way in)
+//                               opens the same editor, which is the keyboard way in).
+//                               The field takes arithmetic too - `512/2`, `24*1.5`,
+//                               `+10%` (numeric/mathExpr.js, a parser, not eval) - and
+//                               Enter on an expression that does not parse keeps the
+//                               field open and says why instead of dropping it.
+//   drag the label or number -> scrub the value (numeric/scrubMath.js). Plain drag
+//                               crosses the range in 400-600 px, Shift is x10, Alt is
+//                               x0.1 and snaps to 0.001. A press that does not travel
+//                               3 px is still a click, so the number still opens its
+//                               editor. Shift+drag on the TRACK is unchanged.
+//   cyan dot by the label    -> the value differs from `defaultValue`; click it to
+//                               reset just this control. (The Settings panel has its
+//                               own MOD mark for the same idea, and keeps it.)
 //
 // The number is a mouse affordance with tabindex -1 and aria-hidden: the range
 // input already announces its own value, and a second tab stop per slider would
@@ -305,30 +324,66 @@ const clampNum = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 // toFixed round-trip: 0.1 + 0.2 style drift must not reach the settings object.
 const snapTo = (v, step) => Number((Math.round(v / step) * step).toFixed(6));
 
-function NumberEditor({ initial, min, max, label, onDone }) {
+function NumberEditor({ initial, current, min, max, step, label, onDone }) {
   const [draft, setDraft] = useState(initial);
+  const [error, setError] = useState('');
   const doneRef = useRef(false);
-  const finish = (commit) => {
+  // `commit` is true for Enter and for leaving the field. Enter on something that does not parse keeps the editor open
+  // (the user is looking at it and can fix it); leaving it just restores the old value.
+  const finish = (commit, viaEnter = false) => {
     if (doneRef.current) return;
+    if (!commit) { doneRef.current = true; onDone(null); return; }
+    const r = settleTypedValue(draft, { current, min, max, step });
+    if (!r.ok) {
+      if (viaEnter) { setError(r.error); return; }
+      doneRef.current = true;
+      onDone(null);
+      return;
+    }
     doneRef.current = true;
-    const n = parseFloat(String(draft).replace(',', '.'));
-    onDone(commit && Number.isFinite(n) ? clampNum(Number(n.toFixed(4)), min, max) : null);
+    onDone(r.value);
   };
   return (
-    <FocusedInput
-      select
-      type="text"
-      inputMode="decimal"
-      aria-label={`${label} value`}
-      value={draft}
-      onChange={(e) => setDraft(e.target.value)}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') { e.preventDefault(); finish(true); }
-        else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(false); }
-      }}
-      onBlur={() => finish(true)}
-      className="w-14 text-right text-xs font-semibold tabular-nums rounded px-1 py-0.5 bg-white/10 text-white outline outline-1 outline-[var(--accent)]"
-    />
+    <>
+      <FocusedInput
+        select
+        type="text"
+        inputMode="text"
+        autoComplete="off"
+        spellCheck={false}
+        aria-label={`${label} value`}
+        aria-invalid={error ? true : undefined}
+        title={error || 'Type a number or an expression: 512/2, 24*1.5, +10%'}
+        value={draft}
+        onChange={(e) => { setDraft(e.target.value); setError(''); }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') { e.preventDefault(); finish(true, true); }
+          else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(false); }
+        }}
+        onBlur={() => finish(true)}
+        className={`w-20 text-right text-xs font-semibold tabular-nums rounded px-1 py-0.5 bg-white/10 text-white outline outline-1 ${error ? 'outline-red-400' : 'outline-[var(--accent)]'}`}
+      />
+      {error && <span role="alert" className="sr-only">{error}</span>}
+    </>
+  );
+}
+
+// The cyan dot: this control is not at its default. A mouse affordance like the number beside it (tabindex -1,
+// aria-hidden): the slider already announces its own value, Backspace/Delete on it already resets, and a second tab stop
+// per modified slider is exactly what e2e/tab-stops.spec.js exists to refuse.
+function ModifiedDot({ label, defaultText, onReset }) {
+  return (
+    <button
+      type="button"
+      tabIndex={-1}
+      aria-hidden="true"
+      data-testid="modified-dot"
+      onClick={(e) => { e.preventDefault(); onReset(); }}
+      title={`${label ? `${label}: ` : ''}changed from the default (${defaultText}) — click to reset`}
+      className="shrink-0 inline-flex items-center justify-center h-4 w-4 rounded-full group/dot cursor-pointer"
+    >
+      <span className="h-1.5 w-1.5 rounded-full bg-[var(--mod-dot,#22d3ee)] shadow-[0_0_6px_var(--mod-dot,#22d3ee)] group-hover/dot:scale-150 apple-transition" />
+    </button>
   );
 }
 
@@ -384,6 +439,17 @@ export const Slider = ({ label, info, value, onChange, min = 0, max = 1, step = 
   // uncommitted.
   const flush = () => { if (timerRef.current) commit(localRef.current); };
 
+  // Dragging the label or the number scrubs the value. The same debounce as a thumb drag: local state moves at pointer
+  // rate, the parent hears about it on the trailing edge and at once on release.
+  const scrub = useScrub({
+    getValue: () => localRef.current,
+    min,
+    max,
+    step,
+    onScrub: (v) => { if (v !== localRef.current) setValue(v); },
+    onEnd: () => { flush(); },
+  });
+
   const fineStep = step >= 1 ? step : Math.min(step, FINE_STEP);
   const hasDefault = defaultValue !== undefined && defaultValue !== null;
   const canReset = hasDefault || (modified && !!onReset);
@@ -432,16 +498,31 @@ export const Slider = ({ label, info, value, onChange, min = 0, max = 1, step = 
     }
   };
 
-  const decimals = Math.max(decimalsOf(step), step < 1 ? 2 : 0);
+  // Up to three decimals when the value needs them (an Alt-scrub lands on 0.001), never fewer than the step implies.
+  const baseDecimals = Math.max(decimalsOf(step), step < 1 ? 2 : 0);
+  const decimals = decimalsFor(local ?? 0, baseDecimals);
   const nameText = typeof label === 'string' ? label : 'Value';
   const hint = [
     canReset ? 'Double-click to reset' : null,
     'Shift+drag for fine control',
-    'Enter to type a value',
+    'Enter to type a value or an expression (512/2, +10%)',
+    'Drag the label to scrub (Shift ×10, Alt ×0.1)',
   ].filter(Boolean).join(' · ');
+  // The Settings panel marks a changed control with its own MOD pill (it knows the backend defaults); a caller that
+  // gives a `defaultValue` instead gets the dot. Never both.
+  const showDot = hasDefault && !(modified && onReset) && Math.abs(Number(local ?? 0) - Number(defaultValue)) > 1e-6;
+  const labelProps = { ...scrub.bind, className: 'cursor-ew-resize select-none', title: 'Drag to scrub · Shift ×10 · Alt ×0.1' };
 
   return (
-    <Field label={label} info={info} modified={modified} onReset={onReset} settingKey={settingKey}>
+    <Field
+      label={label}
+      info={info}
+      modified={modified}
+      onReset={onReset}
+      settingKey={settingKey}
+      labelProps={labelProps}
+      badge={showDot ? <ModifiedDot label={nameText} defaultText={Number(defaultValue).toFixed(baseDecimals)} onReset={reset} /> : null}
+    >
       <div className="flex items-center gap-3">
         {/* The native range thumb uses `accent-[var(--accent)]`, not the literal
             #E94560 it had before — that pinned it to Obsidian's crimson in all 38
@@ -466,8 +547,10 @@ export const Slider = ({ label, info, value, onChange, min = 0, max = 1, step = 
         {editing ? (
           <NumberEditor
             initial={Number(local ?? 0).toFixed(decimals)}
+            current={Number(local ?? 0)}
             min={min}
             max={max}
+            step={step}
             label={nameText}
             onDone={(v) => {
               setEditing(false);
@@ -480,8 +563,9 @@ export const Slider = ({ label, info, value, onChange, min = 0, max = 1, step = 
             tabIndex={-1}
             aria-hidden="true"
             title="Click to type a value"
+            {...scrub.bind}
             onClick={(e) => { e.preventDefault(); setEditing(true); }}
-            className="w-12 text-right text-xs font-semibold tabular-nums text-white/60 hover:text-white hover:bg-white/10 rounded px-0.5 cursor-text apple-transition"
+            className="w-12 text-right text-xs font-semibold tabular-nums text-white/60 hover:text-white hover:bg-white/10 rounded px-0.5 cursor-ew-resize select-none apple-transition"
           >
             {Number(local ?? 0).toFixed(decimals)}
           </button>

@@ -50,7 +50,9 @@ class SettingsTabs(unittest.TestCase):
         labels = re.search(r"TAB_LABELS = \{(.*?)\n\};", self.tabs_js, re.S).group(1)
         label_tabs = re.findall(r"^\s+([a-z]+):", labels, re.M)
         self.assertEqual(store_tabs, label_tabs)
-        self.assertEqual(len(store_tabs), 5)
+        # Five settings tabs plus the Keyboard Shortcuts remapper (Stage 26), which is not a backend setting.
+        self.assertEqual(len(store_tabs), 6)
+        self.assertEqual(store_tabs[-1], 'shortcuts')
 
     def test_every_override_key_is_a_real_setting(self):
         """KEY_TAB entries that name a key settings.py does not have would never match anything."""
@@ -93,10 +95,16 @@ class ShellContract(unittest.TestCase):
 
     def test_ctrl_k_is_handled_before_the_text_field_guard(self):
         """The palette must open from inside a field (the Settings search box is where people reach for it)."""
+        # Since Stage 26 the key is the `app.palette` action; "may fire from a field" is its `modInText` flag, and the
+        # handler checks it before the early return for a focused field.
         app = _read(SRC, 'App.jsx')
         body = app.split('const onKey = (e) => {', 1)[1]
-        self.assertLess(body.index("=== 'k'"), body.index("['input', 'textarea', 'select']"),
-                        'Ctrl+K is checked after the "typing in a field" early return, so it cannot open from a field')
+        self.assertLess(body.index("fires('app.palette')"), body.index('if (inField) return;'),
+                        'the palette is checked after the "typing in a field" early return, so it cannot open from a field')
+        actions = _read(SRC, 'shortcuts', 'actions.js')
+        palette = next(line for line in actions.splitlines() if "id: 'app.palette'" in line)
+        self.assertIn('modInText: true', palette, 'app.palette must opt in to firing from a text field')
+        self.assertIn("'Mod+K'", palette)
 
     def test_the_telemetry_poll_has_one_home(self):
         """GPU/VRAM/CPU is shown by the header pill only: the HUD banner, Home's GPU tile and

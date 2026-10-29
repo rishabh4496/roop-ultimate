@@ -19,6 +19,7 @@ import BenchmarkPanel from './BenchmarkPanel';
 import TrtCachePanel from './TrtCachePanel';
 import EnhancerSettings from './EnhancerSettings';
 import AutoTunePanel from './AutoTunePanel';
+import KeyboardShortcutsTab from './shortcuts/KeyboardShortcutsTab';
 import RecognitionPanel from './RecognitionPanel';
 import { mergeSelection } from './recognitionSync';
 import { logFailure, reportFailure } from '../failureLog';
@@ -906,12 +907,16 @@ export default function Settings({ meta, settings, setSettings, notify, progress
             </FilterSection>
           </div>
         )}
+        {/* Not a backend setting and not searchable by the settings filter: its own search box lives inside. */}
+        {tab === 'shortcuts' && !flat && <KeyboardShortcutsTab />}
       </div>
 
 
       {/* Floating Sticky Action Dock — the ONLY place these two actions live.
           The dock follows the page, so a second static copy at the bottom (and
           a third in the header) just gave the same button three times. */}
+      {/* The remapper saves as you go; "Apply Settings" would be a button that does nothing there. */}
+      {!(tab === 'shortcuts' && !flat) && (
       <div className="sticky bottom-6 right-6 z-40 flex justify-end pointer-events-none">
         <div className="pointer-events-auto flex items-center gap-2 p-2 rounded-2xl bg-black/80 backdrop-blur-xl border border-white/15 shadow-2xl">
           <button
@@ -931,6 +936,7 @@ export default function Settings({ meta, settings, setSettings, notify, progress
           </button>
         </div>
       </div>
+      )}
 
       <ThemeStudio
         open={studio.open}
