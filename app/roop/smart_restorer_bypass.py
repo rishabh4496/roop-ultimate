@@ -110,7 +110,7 @@ def is_bypass_swap_model(swap_model: Optional[str]) -> bool:
 
 
 def is_bypass_restorer(restorer_name: Optional[str]) -> bool:
-    """True if the restorer is CodeFormer, GFPGAN, or RestoreFormer++ / RF++."""
+    """True if the restorer is CodeFormer, GFPGAN, RestoreFormer++ / RF++, or UltraMax."""
     raw = str(restorer_name or "").lower()
     return any(token in raw for token in (
         "codeformer",
@@ -119,6 +119,7 @@ def is_bypass_restorer(restorer_name: Optional[str]) -> bool:
         "restore_ultra",
         "restore ultra",
         "rf++",
+        "ultramax",
     ))
 
 
@@ -151,7 +152,7 @@ def should_bypass_restorer(
     1. Smart bypass toggle is enabled.
     2. Swap model is Alpha 256 or HyperSwap (native resolution >= 256px).
     3. Target face bounding box height <= 320px.
-    4. Restorer model is CodeFormer, GFPGAN, or RestoreFormer++ / RF++.
+    4. Restorer model is CodeFormer, GFPGAN, RestoreFormer++ / RF++, or UltraMax.
     """
     if not enabled:
         # Check environment variable as runtime fallback

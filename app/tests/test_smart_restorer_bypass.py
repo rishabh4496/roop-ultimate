@@ -48,6 +48,8 @@ class TestSmartRestorerBypass(unittest.TestCase):
         self.assertTrue(is_bypass_restorer("restoreformer_plus_plus"))
         self.assertTrue(is_bypass_restorer("Restore Ultra"))
         self.assertTrue(is_bypass_restorer("rf++"))
+        self.assertTrue(is_bypass_restorer("UltraMax"))
+        self.assertTrue(is_bypass_restorer("ultramax"))
         self.assertFalse(is_bypass_restorer("GPEN-BFR-512"))
         self.assertFalse(is_bypass_restorer("GPEN 256 Pro"))
         self.assertFalse(is_bypass_restorer("Tile Diffusion Synthesizer"))
@@ -78,6 +80,10 @@ class TestSmartRestorerBypass(unittest.TestCase):
         # Enabled toggle, small face, HyperSwap 512, RF++ -> TRUE
         rf_proc = SimpleNamespace(processorname="RestoreFormer++")
         self.assertTrue(should_bypass_restorer(small_face, "hyperswap_1a_512", rf_proc, enabled=True))
+
+        # Enabled toggle, small face, UltraMax -> TRUE
+        ultramax_proc = SimpleNamespace(processorname="ultramax")
+        self.assertTrue(should_bypass_restorer(small_face, "realswap", ultramax_proc, enabled=True))
 
         # Enabled toggle, large face (>320px) -> FALSE (must use full restorer)
         self.assertFalse(should_bypass_restorer(large_face, "alpha_256", codeformer_proc, enabled=True))
