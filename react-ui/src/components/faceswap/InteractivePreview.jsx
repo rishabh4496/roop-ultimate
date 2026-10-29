@@ -1623,7 +1623,7 @@ export default function InteractivePreview({
               e.stopPropagation();
               onSoloStage?.(null);
             }}
-            className="ml-1 px-1.5 py-0.5 rounded bg-black/80 hover:bg-black text-amber-300 text-[10px] uppercase font-bold transition-colors"
+            className="ml-1 px-1.5 py-0.5 rounded bg-black/80 hover:bg-black text-amber-300 text-micro uppercase font-bold transition-colors"
             title="Exit Solo buffer mode (Esc / Alt+Click)"
           >
             Exit Solo

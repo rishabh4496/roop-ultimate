@@ -211,6 +211,7 @@ export default function ParameterSweepModal({
             onClick={onClose}
             className="flex h-8 w-8 items-center justify-center rounded-lg text-white/60 hover:text-white hover:bg-white/10 transition-colors"
             title="Close (Esc)"
+            aria-label="Close"
           >
             ✕
           </button>
@@ -436,7 +437,7 @@ export default function ParameterSweepModal({
                   {/* Left Y Header */}
                   <div className="py-2 px-1 rounded-lg bg-amber-400/10 border border-amber-400/20 text-center flex flex-col justify-center">
                     <span className="text-micro font-bold text-amber-300">Y{rowIdx + 1}</span>
-                    <span className="text-[10px] font-mono text-white/70">{yVal}</span>
+                    <span className="text-micro font-mono text-white/70">{yVal}</span>
                   </div>
 
                   {/* 3 Tiles in this row */}
@@ -472,13 +473,13 @@ export default function ParameterSweepModal({
                         </div>
 
                         {/* Top-Left Slot Tag */}
-                        <div className="absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded bg-black/75 border border-white/15 text-[10px] font-mono font-bold text-white/80 pointer-events-none">
+                        <div className="absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded bg-black/75 border border-white/15 text-micro font-mono font-bold text-white/80 pointer-events-none">
                           #{tileIndex + 1}
                         </div>
 
                         {/* Bottom Recipe Bar & Apply Button */}
                         <div className="absolute bottom-0 inset-x-0 p-2 bg-gradient-to-t from-black/90 via-black/75 to-transparent flex items-center justify-between gap-1 opacity-90 group-hover:opacity-100 transition-opacity">
-                          <div className="flex flex-col text-[10px] text-white/70 font-mono leading-tight">
+                          <div className="flex flex-col text-micro text-white/70 font-mono leading-tight">
                             <span>{xDef.label.slice(0, 12)}: {xVal}</span>
                             <span>{yDef.label.slice(0, 12)}: {yVal}</span>
                           </div>

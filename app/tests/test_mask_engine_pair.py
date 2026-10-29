@@ -121,7 +121,7 @@ class TheSettingIsWiredEndToEnd(unittest.TestCase):
     def test_both_render_paths_read_it(self):
         """The preview and the run are separate code paths that have drifted
         before; a setting that only one of them reads makes the preview lie."""
-        self.assertEqual(self.api.count('map_mask_engines('), 3)   # def + 2 calls
+        self.assertEqual(self.api.count('map_mask_engines('), 4)   # def + 3 calls
         self.assertIn('payload.get("mask_engine_2", "None")', self.api)
         self.assertIn('"mask_engine_2", getattr(roop_globals.CFG, "mask_engine_2"',
                       self.api)

@@ -276,6 +276,7 @@ Start, watch and stop a render.
 | GET | `/api/live_frame` | Processing |
 | POST | `/api/pause` | Processing |
 | GET | `/api/progress` | App, FaceSwap, useJobRecovery |
+| POST | `/api/render/preflight` | BatchSwap, FaceSwap |
 | POST | `/api/resume` | Processing |
 | POST | `/api/runtime_estimate` | useRuntimeEstimate |
 | POST | `/api/stop` | FaceSwap, Processing |
@@ -289,6 +290,7 @@ Frames for the stage, the scrubber and the compare views.
 | Method | Path | Called from |
 | --- | --- | --- |
 | POST | `/api/preview` | FaceSwap, useGridPreviewLoader |
+| POST | `/api/preview/sweep` | ParameterSweepModal |
 | POST | `/api/preview_upscale` | FaceSwap |
 | GET | `/api/target/preview` | BatchSwap, FaceSwap |
 | GET | `/api/target/preview_seq` | usePlaybackBuffer |

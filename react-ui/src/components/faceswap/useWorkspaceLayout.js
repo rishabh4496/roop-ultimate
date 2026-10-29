@@ -15,8 +15,20 @@ import { WORKSPACE_LAYOUT, WORKSPACE_MODES, useWorkspaceStore } from '../../stor
 export { WORKSPACE_MODES };
 
 export default function useWorkspaceLayout() {
-  const { workspaceMode, setWorkspaceMode } = useWorkspaceStore(
-    useShallow((s) => ({ workspaceMode: s.workspaceMode, setWorkspaceMode: s.setWorkspaceMode }))
+  const {
+    workspaceMode,
+    setWorkspaceMode,
+    panelSizes,
+    setPanelSize,
+    resetPanelSizes,
+  } = useWorkspaceStore(
+    useShallow((s) => ({
+      workspaceMode: s.workspaceMode,
+      setWorkspaceMode: s.setWorkspaceMode,
+      panelSizes: s.panelSizes,
+      setPanelSize: s.setPanelSize,
+      resetPanelSizes: s.resetPanelSizes,
+    }))
   );
   const [ambilightEnabled, setAmbilightEnabled] = useState(true);
   const [drawers, setDrawers] = useState({ left: true, right: true, bottom: true });
@@ -27,6 +39,7 @@ export default function useWorkspaceLayout() {
   // closing a drawer by hand still closes it.
   return {
     workspaceMode, setWorkspaceMode,
+    panelSizes, setPanelSize, resetPanelSizes,
     ambilightEnabled, setAmbilightEnabled,
     drawers, setDrawers,
     showLeftPanel: layout.left && drawers.left,

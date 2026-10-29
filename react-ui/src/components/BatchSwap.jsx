@@ -5,6 +5,7 @@ import { Card, Section, Button, InfoBadge, MotionIcon } from './ui';
 import { Icon } from '../icons';
 import useQueue from './faceswap/useQueue';
 import QueuePanel from './faceswap/QueuePanel';
+import PreFlightLinter from './faceswap/PreFlightLinter';
 import SegmentMatrix from './segments/SegmentMatrix';
 import FacesetLibrary from './faceswap/FacesetLibrary';
 import {
@@ -54,6 +55,35 @@ export default function BatchSwap({ settings = {}, notify, onUpdateSetting }) {
 
   // Queue handle
   const queue = useQueue({ notify });
+
+  const handleBatchAutoFix = useCallback(async (action) => {
+    if (action === 'switch_nvenc') {
+      if (onUpdateSetting) {
+        onUpdateSetting('output_video_codec', 'h264_nvenc');
+      }
+      try {
+        await postJSON('/api/settings', { output_video_codec: 'h264_nvenc' });
+        notify?.('Switched batch video encoder to NVIDIA NVENC');
+      } catch (e) {
+        notify?.(e.message, 'error');
+      }
+    } else if (action === 'enable_restore_ultra') {
+      if (onUpdateSetting) {
+        onUpdateSetting('selected_enhancer', 'Restore Ultra');
+      }
+      try {
+        await postJSON('/api/settings', {
+          selected_enhancer: 'Restore Ultra',
+          restore_ultra_frequency_blend: true,
+          auto_bypass_restorer_native_swap: false,
+        });
+        notify?.('Enabled Restore Ultra for batch matrix renders');
+      } catch (e) {
+        notify?.(e.message, 'error');
+      }
+    }
+  }, [notify, onUpdateSetting, postJSON]);
+
 
   // Staged jobs (ready to be sent to queue)
   const [stagedJobs, setStagedJobs] = useState([]);
@@ -1564,7 +1594,7 @@ export default function BatchSwap({ settings = {}, notify, onUpdateSetting }) {
                     type="file"
                     accept=".edl,.txt,.json,.otio"
                     onChange={handleImportTimelineFile}
-                    className="hidden"
+                    className="sr-only"
                   />
                 </label>
               </div>
@@ -1882,7 +1912,7 @@ export default function BatchSwap({ settings = {}, notify, onUpdateSetting }) {
                     type="file"
                     accept=".edl,.txt,.json,.otio"
                     onChange={handleImportTimelineFile}
-                    className="hidden"
+                    className="sr-only"
                   />
                 </label>
               </div>
@@ -1902,6 +1932,16 @@ export default function BatchSwap({ settings = {}, notify, onUpdateSetting }) {
           }
         >
           <div className="space-y-4">
+            
+            <PreFlightLinter
+              targets={targets}
+              target={targets[0]}
+              settings={settings}
+              batchCount={stagedJobs.length || 1}
+              onAutoFix={handleBatchAutoFix}
+              className="w-full"
+            />
+
             {/* Header + Stats + Reorder Toolbar */}
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 bg-white/5 p-4 rounded-xl border border-white/10">
               <div className="flex flex-col gap-0.5">

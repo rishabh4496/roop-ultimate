@@ -3207,7 +3207,17 @@ def _target_faces_info():
         if kps is None and isinstance(face, dict):
             kps = face.get('kps')
         pose = estimate_face_pose_from_kps(kps) if kps is not None else "Front"
-        info.append({"pose": pose})
+        raw_b = face.get("bbox") if isinstance(face, dict) else getattr(face, "bbox", None)
+        item = {"pose": pose}
+        if raw_b is not None:
+            try:
+                b = [float(v) for v in raw_b[:4]]
+                item["bbox"] = b
+                item["width"] = int(round(abs(b[2] - b[0])))
+                item["height"] = int(round(abs(b[3] - b[1])))
+            except Exception:
+                pass
+        info.append(item)
     return info
 
 
@@ -6596,6 +6606,159 @@ _FACEMGR_DETECTORS = ["scrfd", "retinaface", "retinaface_r50", "yoloface", "yune
 
 
 
+
+
+
+@app.post("/api/render/preflight")
+def render_preflight(payload: dict = Body(default=None)):
+    """Smart Pre-Flight Render Readiness Linter.
+    Performs real-time diagnostics before single-video render or Batch Matrix jobs:
+      1. Disk Space Custody (free space vs required output + GOP segment footprint)
+      2. Hardware Encoder Mismatch (NVIDIA GPU active + CPU libx264)
+      3. Precision / TRT Warmth Check ([TRT Ready] vs [Will Compile ~90s])
+      4. Pose / Resolution Mismatch (Restore Ultra disabled when face bbox > 256px)
+    """
+    p = payload or {}
+
+    # Check 1: Disk Space Custody
+    output_dir = os.path.abspath(getattr(roop_globals, "output_path", None) or os.path.join(os.path.dirname(__file__), "output"))
+    if not os.path.exists(output_dir):
+        output_dir = os.path.abspath(os.path.dirname(__file__))
+    try:
+        total, used, free = shutil.disk_usage(output_dir)
+    except Exception as exc:
+        _swallowed("api.py:render_preflight_disk", exc, "fallback to default disk quota")
+        total, used, free = (100 * 1024**3, 50 * 1024**3, 50 * 1024**3)
+
+    target_size = float(p.get("target_size") or 0)
+    batch_count = max(1, int(p.get("batch_count") or 1))
+    max_frames = int(p.get("max_frames") or 300)
+
+    if target_size <= 0:
+        target_size = max(50 * 1024 * 1024, max_frames * 100 * 1024)
+
+    required_bytes = target_size * 2.5 * batch_count
+    ratio = round(free / max(1.0, required_bytes), 2)
+    disk_warn = ratio < 1.5
+    disk_message = (
+        f"Low disk space: estimated {required_bytes / (1024**3):.1f} GB required (output + GOP segment footprint), "
+        f"but only {free / (1024**3):.1f} GB free on output drive (<1.5x buffer)."
+        if disk_warn else None
+    )
+    disk_check = {
+        "ok": not disk_warn,
+        "free_bytes": free,
+        "free_gb": round(free / (1024**3), 2),
+        "required_bytes": required_bytes,
+        "required_gb": round(required_bytes / (1024**3), 2),
+        "ratio": ratio,
+        "warning": disk_message,
+    }
+
+    # Check 2: Hardware Encoder Mismatch
+    provider = str(getattr(getattr(roop_globals, "CFG", None), "provider", "") or getattr(roop_globals, "provider", "") or "").lower()
+    active_prov = str(getattr(getattr(roop_globals, "CFG", None), "provider_active", "") or "").lower()
+    has_nvidia = ("tensorrt" in provider or "cuda" in provider or "tensorrt" in active_prov or "cuda" in active_prov)
+    codec = str(p.get("codec") or getattr(getattr(roop_globals, "CFG", None), "output_video_codec", "") or "libx264").lower()
+    encoder_mismatch = has_nvidia and (codec in ("libx264", "libx265", "libvpx", "libvpx-vp9") or codec.startswith("libx"))
+    encoder_warning = (
+        "NVIDIA GPU is active for Stage 3 inference, but video encoder is set to slow CPU libx264 instead of NVENC."
+        if encoder_mismatch else None
+    )
+    encoder_check = {
+        "ok": not encoder_mismatch,
+        "has_nvidia": has_nvidia,
+        "current_codec": codec,
+        "recommended_codec": "h264_nvenc" if has_nvidia else codec,
+        "warning": encoder_warning,
+        "auto_fix": "switch_nvenc" if encoder_mismatch else None,
+    }
+
+    # Check 3: Precision / TRT Warmth Check
+    is_trt = "tensorrt" in provider or "tensorrt" in active_prov
+    trt_ready = True
+    trt_status = "[TRT Ready]"
+    trt_warning = None
+    if is_trt:
+        try:
+            import routes_trt_cache as _rtc
+            snap = _rtc.snapshot()
+            status = snap.get("status")
+            active_engines = snap.get("active_engines", 0)
+            if status == "ready" and active_engines > 0:
+                trt_ready = True
+                trt_status = "[TRT Ready]"
+            else:
+                trt_ready = False
+                trt_status = "[Will Compile ~90s]"
+                trt_warning = "First-run TensorRT engine compile will occur (~90s)."
+        except Exception as exc:
+            _swallowed("api.py:render_preflight_trt", exc, "trt status probe fallback")
+            trt_ready = False
+            trt_status = "[Will Compile ~90s]"
+            trt_warning = "First-run TensorRT engine compile will occur (~90s)."
+    trt_check = {
+        "ok": trt_ready,
+        "is_trt": is_trt,
+        "status": trt_status,
+        "warning": trt_warning,
+    }
+
+    # Check 4: Pose / Resolution Mismatch
+    faces_info = _target_faces_info()
+    max_face_px = 0
+    for f in faces_info:
+        w = f.get("width") or 0
+        h = f.get("height") or 0
+        max_face_px = max(max_face_px, w, h)
+
+    if max_face_px <= 0 and p.get("max_face_px"):
+        max_face_px = int(p.get("max_face_px"))
+
+    enhancer = str(p.get("selected_enhancer") or getattr(getattr(roop_globals, "CFG", None), "selected_enhancer", "") or "")
+    freq_blend = getattr(getattr(roop_globals, "CFG", None), "restore_ultra_frequency_blend", False)
+    is_restore_ultra = (enhancer == "Restore Ultra") or (enhancer not in ("", "None") and freq_blend)
+
+    resolution_mismatch = (max_face_px > 256) and not is_restore_ultra
+    resolution_warning = (
+        f"Target face bounding box is {max_face_px}×{max_face_px}px (>256px), but Restore Ultra is disabled. "
+        f"A 128px raw swap upscaled to {max_face_px}px without restoration will look soft."
+        if resolution_mismatch else None
+    )
+    resolution_check = {
+        "ok": not resolution_mismatch,
+        "max_face_px": max_face_px,
+        "selected_enhancer": enhancer,
+        "is_restore_ultra": is_restore_ultra,
+        "warning": resolution_warning,
+        "auto_fix": "enable_restore_ultra" if resolution_mismatch else None,
+    }
+
+    warnings = []
+    auto_fixes = []
+    if disk_check["warning"]:
+        warnings.append({"check": "disk", "message": disk_check["warning"]})
+    if encoder_check["warning"]:
+        warnings.append({"check": "encoder", "message": encoder_check["warning"]})
+        auto_fixes.append({"action": "switch_nvenc", "label": "Switch to NVENC", "codec": "h264_nvenc"})
+    if trt_check["warning"]:
+        warnings.append({"check": "trt", "message": trt_check["warning"]})
+    if resolution_check["warning"]:
+        warnings.append({"check": "resolution", "message": resolution_check["warning"]})
+        auto_fixes.append({"action": "enable_restore_ultra", "label": "Enable Restore Ultra", "enhancer": "Restore Ultra"})
+
+    status = "ready" if not warnings else "warning"
+    return {
+        "status": status,
+        "checks": {
+            "disk": disk_check,
+            "encoder": encoder_check,
+            "trt": trt_check,
+            "resolution": resolution_check,
+        },
+        "warnings": warnings,
+        "auto_fixes": auto_fixes,
+    }
 
 
 # ── Extras: frame post-processors (AI upscale / colorize / stylize filters) ──

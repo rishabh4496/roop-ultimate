@@ -11,7 +11,7 @@ from dataclasses import dataclass
 import platform
 import threading
 import time
-from typing import Callable, Iterable, Optional
+from typing import Any, Callable, Iterable, List, Optional, Tuple
 
 import cv2
 import numpy as np

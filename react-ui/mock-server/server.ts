@@ -176,7 +176,7 @@ const targetFacesList: string[] = [
 let targetGroupsList: number[] = [0];
 let targetNamesList: string[] = ['Actor Lead (Person 1)'];
 let targetFacesInfoList: any[] = [
-  { index: 0, person: 'Person 1', landmarks: 106, gender: 'female', age: 26, bbox: [190, 60, 140, 160], pose: 'Front' },
+  { index: 0, person: 'Person 1', landmarks: 106, gender: 'female', age: 26, bbox: [190, 60, 320, 340], width: 320, height: 340, pose: 'Front' },
 ];
 let storedProfiles: any[] = [];
 
@@ -1659,6 +1659,103 @@ async function startServer() {
     });
   });
 
+  
+  app.post('/api/render/preflight', (req, res) => {
+    const p = req.body || {};
+    const isDesktop = activeHardwareProfile === 'desktop';
+    const freeBytes = isDesktop ? 142 * 1024 * 1024 * 1024 : 18 * 1024 * 1024 * 1024;
+    const targetSize = Number(p.target_size || 400 * 1024 * 1024);
+    const batchCount = Math.max(1, Number(p.batch_count || 1));
+    const requiredBytes = targetSize * 2.5 * batchCount;
+    const ratio = +(freeBytes / Math.max(1, requiredBytes)).toFixed(2);
+    const diskWarn = ratio < 1.5;
+    const diskCheck = {
+      ok: !diskWarn,
+      free_bytes: freeBytes,
+      free_gb: +(freeBytes / (1024 ** 3)).toFixed(2),
+      required_bytes: requiredBytes,
+      required_gb: +(requiredBytes / (1024 ** 3)).toFixed(2),
+      ratio,
+      warning: diskWarn
+        ? `Low disk space: estimated ${(requiredBytes / 1024 ** 3).toFixed(1)} GB required (output + GOP segment footprint), but only ${(freeBytes / 1024 ** 3).toFixed(1)} GB free on output drive (<1.5x buffer).`
+        : null,
+    };
+
+    const hasNvidia = isDesktop || appSettings.provider === 'cuda' || appSettings.provider === 'tensorrt';
+    const codec = String(p.codec || appSettings.output_video_codec || 'libx264').toLowerCase();
+    const encoderMismatch = hasNvidia && (codec === 'libx264' || codec === 'libx265' || codec.startsWith('libx'));
+    const encoderCheck = {
+      ok: !encoderMismatch,
+      has_nvidia: hasNvidia,
+      current_codec: codec,
+      recommended_codec: hasNvidia ? 'h264_nvenc' : codec,
+      warning: encoderMismatch
+        ? 'NVIDIA GPU is active for Stage 3 inference, but video encoder is set to slow CPU libx264 instead of NVENC.'
+        : null,
+      auto_fix: encoderMismatch ? 'switch_nvenc' : null,
+    };
+
+    const isTrt = appSettings.provider === 'tensorrt';
+    const trtReady = !isTrt || isDesktop;
+    const trtStatus = trtReady ? '[TRT Ready]' : '[Will Compile ~90s]';
+    const trtCheck = {
+      ok: trtReady,
+      is_trt: isTrt,
+      status: trtStatus,
+      warning: trtReady ? null : 'First-run TensorRT engine compile will occur (~90s).',
+    };
+
+    let maxFacePx = 0;
+    for (const f of targetFacesInfoList) {
+      if (f.width && f.height) {
+        maxFacePx = Math.max(maxFacePx, f.width, f.height);
+      } else if (f.bbox && f.bbox.length >= 4) {
+        maxFacePx = Math.max(maxFacePx, Math.round(f.bbox[2]), Math.round(f.bbox[3]));
+      }
+    }
+    if (maxFacePx <= 0 && p.max_face_px) {
+      maxFacePx = Number(p.max_face_px);
+    }
+    const enhancer = String(p.selected_enhancer || appSettings.selected_enhancer || '');
+    const isRestoreUltra = enhancer === 'Restore Ultra' || (enhancer !== '' && enhancer !== 'None' && appSettings.restore_ultra_frequency_blend);
+    const resolutionMismatch = (maxFacePx > 256) && !isRestoreUltra;
+    const resolutionCheck = {
+      ok: !resolutionMismatch,
+      max_face_px: maxFacePx,
+      selected_enhancer: enhancer,
+      is_restore_ultra: isRestoreUltra,
+      warning: resolutionMismatch
+        ? `Target face bounding box is ${maxFacePx}×${maxFacePx}px (>256px), but Restore Ultra is disabled. A 128px raw swap upscaled to ${maxFacePx}px will look soft.`
+        : null,
+      auto_fix: resolutionMismatch ? 'enable_restore_ultra' : null,
+    };
+
+    const warnings: Array<{ check: string; message: string }> = [];
+    const autoFixes: Array<{ action: string; label: string; codec?: string; enhancer?: string }> = [];
+    if (diskCheck.warning) warnings.push({ check: 'disk', message: diskCheck.warning });
+    if (encoderCheck.warning) {
+      warnings.push({ check: 'encoder', message: encoderCheck.warning });
+      autoFixes.push({ action: 'switch_nvenc', label: 'Switch to NVENC', codec: 'h264_nvenc' });
+    }
+    if (trtCheck.warning) warnings.push({ check: 'trt', message: trtCheck.warning });
+    if (resolutionCheck.warning) {
+      warnings.push({ check: 'resolution', message: resolutionCheck.warning });
+      autoFixes.push({ action: 'enable_restore_ultra', label: 'Enable Restore Ultra', enhancer: 'Restore Ultra' });
+    }
+
+    res.json({
+      status: warnings.length === 0 ? 'ready' : 'warning',
+      checks: {
+        disk: diskCheck,
+        encoder: encoderCheck,
+        trt: trtCheck,
+        resolution: resolutionCheck,
+      },
+      warnings,
+      auto_fixes: autoFixes,
+    });
+  });
+
   app.post('/api/runtime_estimate', (req, res) => {
     res.json({ estimated_seconds: 14.5, fps: 28.5 });
   });
@@ -2755,7 +2852,7 @@ async function startServer() {
 
   // ── Stage 22: NLE Interchange & Cryptographic Provenance ──────────
   app.post('/api/timeline/catalog', (req, res) => {
-    const { video_path, fps = 30 } = req.body || {};
+    const { video_path: _video_path, fps: _fps = 30 } = req.body || {};
     res.json({
       status: 'ok',
       ranges: [

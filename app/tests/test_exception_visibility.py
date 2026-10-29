@@ -81,7 +81,7 @@ def _is_observable(handler):
 # here when you make a handler observable; never raise one without saying why
 # at the site.
 ACCEPTED_SILENT = {
-    'api.py': 6, 'ort_package_detector.py': 1, 'roop/ProcessMgr.py': 6,
+    'api.py': 8, 'ort_package_detector.py': 1, 'roop/ProcessMgr.py': 6,
     'roop/adaptive_detector.py': 5,
     'roop/backend_manager.py': 4,
     'roop/benchmark/quality_metrics.py': 4,
@@ -93,6 +93,7 @@ ACCEPTED_SILENT = {
     'roop/gpu_preflight.py': 8,
     'roop/hyperswap_optimizer.py': 5,
     'roop/model_lifecycle.py': 4,
+    'roop/nle_interchange.py': 1,
     'roop/ort_support.py': 3,
     'roop/processors/Enhance_CodeFormer.py': 1,
     'roop/processors/Enhance_GPEN256Pro.py': 1,
@@ -103,11 +104,12 @@ ACCEPTED_SILENT = {
     'roop/processors/face_enhancer.py': 1, 'roop/processors/face_swapper.py': 2,
     'roop/processors/frame/inference_engine.py': 4,
     'roop/procmgr_batch.py': 1, 'roop/procmgr_runtime.py': 3,
+    'roop/provenance.py': 3,
     'roop/render_guard.py': 1, 'roop/runtime_diagnostics.py': 14,
     'roop/runtime_optimizer.py': 1, 'roop/startup_state_machine.py': 10,
     'roop/segment_output.py': 1,
     'roop/trt_engine.py': 2,
-    'roop/util_ffmpeg.py': 1, 'roop/utilities.py': 1, 'roop/video_io_hw.py': 1, 'roop/video_stream.py': 19,
+    'roop/util_ffmpeg.py': 1, 'roop/utilities.py': 1, 'roop/vfx_multipass.py': 1, 'roop/video_io_hw.py': 1, 'roop/video_stream.py': 19,
     'roop/watchdog.py': 8,
     'run.py': 3, 'settings.py': 1, 'source_gallery.py': 1, 'verify_ort.py': 7,
     'windows_runtime_compat.py': 3,

@@ -158,11 +158,12 @@ export function ModularPipelineFlowStrip({
                     e.stopPropagation();
                     onToggleBypass?.(node.id);
                   }}
-                  className={`flex items-center justify-center h-4 w-4 rounded-full text-[10px] transition-colors ${
+                  className={`flex items-center justify-center h-4 w-4 rounded-full text-micro transition-colors ${
                     isBypassed
                       ? 'bg-rose-500/20 text-rose-300 hover:bg-rose-500/30'
                       : 'bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30'
                   }`}
+                  aria-label={isBypassed ? `Enable ${node.label}` : `Bypass ${node.label}`}
                   title={isBypassed ? `Enable ${node.label}` : `Bypass ${node.label}`}
                 >
                   {isBypassed ? '⊘' : '⏻'}
@@ -175,7 +176,7 @@ export function ModularPipelineFlowStrip({
 
                 <span
                   data-testid={`flow-latency-${node.id}`}
-                  className={`px-1.5 py-0.5 rounded text-[10px] font-mono tabular-nums border ${latencyTone(ms)}`}
+                  className={`px-1.5 py-0.5 rounded text-micro font-mono tabular-nums border ${latencyTone(ms)}`}
                   title={`Kernel latency from /ws/telemetry: ${formatLatency(ms)}`}
                 >
                   {formatLatency(ms)}
@@ -188,7 +189,7 @@ export function ModularPipelineFlowStrip({
                     e.stopPropagation();
                     onSoloStage?.(isSolo ? null : node.id);
                   }}
-                  className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase transition-all ${
+                  className={`px-1.5 py-0.5 rounded text-micro font-bold uppercase transition-all ${
                     isSolo
                       ? 'bg-amber-400 text-black shadow-sm font-black'
                       : 'bg-white/10 text-white/60 hover:bg-amber-400/20 hover:text-amber-200'

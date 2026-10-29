@@ -325,7 +325,7 @@ class WiringTests(unittest.TestCase):
 
     def test_api_applies_payload_on_preview_and_swap(self):
         src = self._src("api.py")
-        self.assertEqual(src.count("_routes_identity.apply_identity_blend_from_payload(payload)"), 2)
+        self.assertEqual(src.count("_routes_identity.apply_identity_blend_from_payload(payload)"), 3)
         self.assertIn("app.include_router(_routes_identity.router)", src)
 
     def test_route_handlers_round_trip(self):

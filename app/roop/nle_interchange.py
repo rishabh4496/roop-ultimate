@@ -11,7 +11,7 @@ from __future__ import annotations
 import os
 from fractions import Fraction
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any, Iterable, Mapping, Sequence
 from xml.etree import ElementTree as ET
 from xml.dom import minidom
 

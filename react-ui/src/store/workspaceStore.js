@@ -2,17 +2,14 @@ import { create } from 'zustand';
 
 // ── Workstation chrome state ────────────────────────────────────────────────
 //
-// Two things the shell remembers across tabs and reloads:
+// Persistent workstation preferences remembered across tabs and reloads:
+//   workspaceMode   which panels the Face Swap workspace shows (default, cinema, dual, timeline)
+//   railCollapsed   the left navigation rail: icon + label, or icon only
+//   panelSizes      resizable dimensions for Left Inspector, Right Media Rail, Bottom Timeline
+//   customLayouts   user-saved named workspace layouts with custom proportions
+//   activeLayoutId  id of the active preset or custom layout
 //
-//   workspaceMode   which panels the Face Swap workspace shows. This is the SAME
-//                   table the dock's mode menu used (faceswap/useWorkspaceLayout
-//                   used to hold it in component state, so it reset to "default"
-//                   on every tab change). The header's layout switcher and the
-//                   dock now both read and write this one value.
-//   railCollapsed   the left navigation rail: icon + label, or icon only.
-//
-// Persisted to localStorage on a try/catch: a private window, blocked site data
-// or a throwing accessor must leave the app working with in-memory defaults.
+// Persisted to localStorage under KEY = 'roop_workspace'.
 
 //            left faces   right settings   timeline deck
 //  default       yes            yes              yes
@@ -28,11 +25,34 @@ export const WORKSPACE_LAYOUT = {
 
 export const WORKSPACE_MODES = Object.keys(WORKSPACE_LAYOUT);
 
-/** What the header switcher offers: three names over the table's modes. `dual` stays a dock-only mode. */
+export const DEFAULT_PANEL_SIZES = {
+  leftWidth: 350,
+  rightWidth: 330,
+  bottomHeight: 280,
+};
+
+export const PANEL_LIMITS = {
+  leftWidth: { min: 240, max: 620 },
+  rightWidth: { min: 240, max: 580 },
+  bottomHeight: { min: 140, max: 600 },
+};
+
+export const clampPanelSize = (panel, val) => {
+  const limits = PANEL_LIMITS[panel];
+  if (!limits) return val;
+  const num = Number(val);
+  if (!Number.isFinite(num)) return limits.min;
+  return Math.max(limits.min, Math.min(limits.max, Math.round(num)));
+};
+
+/** Built-in workspace presets including specialized workstation profiles. */
 export const LAYOUT_PRESETS = [
-  { id: 'standard', mode: 'default', label: 'Standard', hint: 'Faces, settings, preview and timeline' },
-  { id: 'canvas', mode: 'cinema', label: 'Max Canvas', hint: 'Preview only: every panel hidden' },
-  { id: 'inspect', mode: 'timeline', label: 'Inspection Suite', hint: 'Preview and timeline for frame-by-frame inspection' },
+  { id: 'standard', mode: 'default', label: 'Standard', hint: 'Faces, settings, preview and timeline', sizes: { leftWidth: 350, rightWidth: 330, bottomHeight: 280 } },
+  { id: 'canvas', mode: 'cinema', label: 'Max Canvas', hint: 'Preview only: every panel hidden', sizes: { leftWidth: 350, rightWidth: 330, bottomHeight: 280 } },
+  { id: 'inspect', mode: 'timeline', label: 'Inspection Suite', hint: 'Preview and timeline for frame-by-frame inspection', sizes: { leftWidth: 350, rightWidth: 330, bottomHeight: 380 } },
+  { id: 'roto', mode: 'default', label: 'My Roto Setup', hint: 'Expanded Inspector & high timeline for precision roto', sizes: { leftWidth: 440, rightWidth: 300, bottomHeight: 360 } },
+  { id: 'dual_color', mode: 'dual', label: 'Dual-Monitor Color', hint: 'Wide inspector and faceset rail for grade/color', sizes: { leftWidth: 460, rightWidth: 400, bottomHeight: 220 } },
+  { id: 'laptop', mode: 'default', label: 'Minimal Laptop', hint: 'Compact rails maximizing central stage on 1080p', sizes: { leftWidth: 280, rightWidth: 270, bottomHeight: 200 } },
 ];
 
 /** The Settings tab's sections. Held here so the palette and the telemetry popover can open one directly. */
@@ -51,10 +71,6 @@ const readSaved = () => {
 
 const saved = readSaved();
 
-// Below this LAYOUT width the rail starts icon-only until the user says otherwise. Face Swap is three columns
-// (inspector 350 + media 330 + the stage); at 1280 a 200px rail left the stage 282px wide, narrow enough that
-// its own HUD buttons wrapped across the picture and covered the centre of it. Layout width, not window width:
-// UI zoom is CSS `zoom` on <html>, which media queries cannot see (the same reason the old header divided by it).
 export const RAIL_AUTO_COLLAPSE_BELOW = 1400;
 const autoCollapsed = () => {
   try {
@@ -69,20 +85,31 @@ const persist = (state) => {
   try {
     window.localStorage.setItem(KEY, JSON.stringify({
       workspaceMode: state.workspaceMode,
-      // Only an explicit choice is stored: writing the width-derived default here (as a side effect of
-      // changing the layout or the Settings tab) would turn it into a choice the user never made.
       railCollapsed: state.railChosen ? state.railCollapsed : undefined,
       settingsTab: state.settingsTab,
+      panelSizes: state.panelSizes,
+      customLayouts: state.customLayouts,
+      activeLayoutId: state.activeLayoutId,
     }));
-  } catch { /* storage unavailable: the choice lasts for this session only */ }
+  } catch { /* storage unavailable */ }
 };
+
+const initialSizes = {
+  leftWidth: clampPanelSize('leftWidth', saved.panelSizes?.leftWidth ?? DEFAULT_PANEL_SIZES.leftWidth),
+  rightWidth: clampPanelSize('rightWidth', saved.panelSizes?.rightWidth ?? DEFAULT_PANEL_SIZES.rightWidth),
+  bottomHeight: clampPanelSize('bottomHeight', saved.panelSizes?.bottomHeight ?? DEFAULT_PANEL_SIZES.bottomHeight),
+};
+
+const initialCustom = Array.isArray(saved.customLayouts) ? saved.customLayouts : [];
 
 export const useWorkspaceStore = create((set, get) => ({
   workspaceMode: WORKSPACE_MODES.includes(saved.workspaceMode) ? saved.workspaceMode : 'default',
-  // An explicit choice (saved) wins; with none, the window's width decides.
   railCollapsed: typeof saved.railCollapsed === 'boolean' ? saved.railCollapsed : autoCollapsed(),
   railChosen: typeof saved.railCollapsed === 'boolean',
   settingsTab: SETTINGS_TABS.includes(saved.settingsTab) ? saved.settingsTab : 'providers',
+  panelSizes: initialSizes,
+  customLayouts: initialCustom,
+  activeLayoutId: saved.activeLayoutId || 'standard',
 
   setWorkspaceMode: (mode) => {
     if (!WORKSPACE_MODES.includes(mode) || mode === get().workspaceMode) return;
@@ -100,6 +127,70 @@ export const useWorkspaceStore = create((set, get) => ({
   },
   toggleRail: () => {
     set({ railCollapsed: !get().railCollapsed, railChosen: true });
+    persist(get());
+  },
+
+  setPanelSize: (panel, val) => {
+    const clamped = clampPanelSize(panel, val);
+    const cur = get().panelSizes;
+    if (cur[panel] === clamped) return;
+    const next = { ...cur, [panel]: clamped };
+    set({ panelSizes: next });
+    persist(get());
+  },
+
+  applyLayout: (layoutId) => {
+    const preset = LAYOUT_PRESETS.find((l) => l.id === layoutId);
+    const custom = get().customLayouts.find((l) => l.id === layoutId);
+    const layout = preset || custom;
+    if (!layout) return;
+
+    const nextMode = WORKSPACE_MODES.includes(layout.mode) ? layout.mode : get().workspaceMode;
+    const nextSizes = layout.sizes
+      ? {
+          leftWidth: clampPanelSize('leftWidth', layout.sizes.leftWidth ?? DEFAULT_PANEL_SIZES.leftWidth),
+          rightWidth: clampPanelSize('rightWidth', layout.sizes.rightWidth ?? DEFAULT_PANEL_SIZES.rightWidth),
+          bottomHeight: clampPanelSize('bottomHeight', layout.sizes.bottomHeight ?? DEFAULT_PANEL_SIZES.bottomHeight),
+        }
+      : get().panelSizes;
+
+    set({
+      workspaceMode: nextMode,
+      panelSizes: nextSizes,
+      activeLayoutId: layoutId,
+    });
+    persist(get());
+  },
+
+  saveCustomLayout: (name) => {
+    const trimmed = String(name || '').trim();
+    if (!trimmed) return null;
+    const id = `custom_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const newLayout = {
+      id,
+      name: trimmed,
+      label: trimmed,
+      mode: get().workspaceMode,
+      sizes: { ...get().panelSizes },
+    };
+    const next = [...get().customLayouts.filter((l) => l.name.toLowerCase() !== trimmed.toLowerCase()), newLayout];
+    set({
+      customLayouts: next,
+      activeLayoutId: id,
+    });
+    persist(get());
+    return newLayout;
+  },
+
+  deleteCustomLayout: (layoutId) => {
+    const next = get().customLayouts.filter((l) => l.id !== layoutId);
+    const active = get().activeLayoutId === layoutId ? 'standard' : get().activeLayoutId;
+    set({ customLayouts: next, activeLayoutId: active });
+    persist(get());
+  },
+
+  resetPanelSizes: () => {
+    set({ panelSizes: { ...DEFAULT_PANEL_SIZES } });
     persist(get());
   },
 }));

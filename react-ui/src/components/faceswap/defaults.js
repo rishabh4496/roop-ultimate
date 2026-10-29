@@ -209,6 +209,11 @@ export const FACESWAP_DEFAULTS = {
   gamma_m: 1.0,
   gain_m: 1.0,
 
+  // Stage 22: VFX Multi-Pass & Matte Export
+  vfx_multi_pass: false,
+  vfx_export_matte: false,
+  vfx_export_crops: false,
+
   // Output
   output_method: 'File',
 };

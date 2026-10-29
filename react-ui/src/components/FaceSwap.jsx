@@ -96,6 +96,8 @@ import { useCoalescedPreviewController } from './faceswap/coalescedPreviewContro
 import usePlaybackBuffer from './faceswap/usePlaybackBuffer';
 import useGridPreviewLoader from './faceswap/useGridPreviewLoader';
 import useWorkspaceLayout from './faceswap/useWorkspaceLayout';
+import PreFlightLinter from './faceswap/PreFlightLinter';
+import PanelResizeDivider from './faceswap/PanelResizeDivider';
 import { TRACKER_DEFAULT_VALUES, TRACKER_BYPASS_VALUES } from './faceswap/trackerConfig';
 import { TiltCard } from '../motion';
 import { LiveText } from './LiveTelemetry';
@@ -143,6 +145,8 @@ export default function FaceSwap({
   // preview cache keys on it and a queued job freezes it. Rehydrated from the
   // backend's live global on mount (a Pinokio tab switch reloads this app).
   const [identityBlend, setIdentityBlend] = useState(EMPTY_BLEND);
+
+
   useEffect(() => {
     let live = true;
     // The keyframes are per clip and come from localStorage (useIdentityKeyframes), not from the backend's
@@ -262,6 +266,7 @@ export default function FaceSwap({
   // override it. See faceswap/useWorkspaceLayout.
   const {
     workspaceMode, setWorkspaceMode,
+    panelSizes, setPanelSize,
     ambilightEnabled, setAmbilightEnabled,
     drawers, setDrawers,
     showLeftPanel, showRightPanel, showTimelineDeck,
@@ -1218,6 +1223,35 @@ export default function FaceSwap({
   // same stale snapshot, so the second silently drops the first — which for
   // the region panel would mean toggling a region also reverted its grow.
   const setMany = (patch) => setSettings((s) => ({ ...s, ...patch }));
+
+  const handlePreFlightAutoFix = useCallback(async (action) => {
+    if (action === 'switch_nvenc') {
+      setSettings((s) => ({ ...s, output_video_codec: 'h264_nvenc' }));
+      try {
+        await postJSON('/api/settings', { output_video_codec: 'h264_nvenc' });
+        notify?.('Switched video encoder to NVIDIA NVENC (hardware accelerated)');
+      } catch (e) {
+        notify?.(e.message, 'error');
+      }
+    } else if (action === 'enable_restore_ultra') {
+      setSettings((s) => ({
+        ...s,
+        selected_enhancer: 'Restore Ultra',
+        restore_ultra_frequency_blend: true,
+        auto_bypass_restorer_native_swap: false,
+      }));
+      try {
+        await postJSON('/api/settings', {
+          selected_enhancer: 'Restore Ultra',
+          restore_ultra_frequency_blend: true,
+          auto_bypass_restorer_native_swap: false,
+        });
+        notify?.('Enabled Restore Ultra for high-resolution face restoration');
+      } catch (e) {
+        notify?.(e.message, 'error');
+      }
+    }
+  }, [notify, postJSON, setSettings]);
 
   // Manual mask painted in the preview box. ProcessMgr already understands this
   // format ({"<faceset>": {exclude, canonical, ref_kps}}) — it was simply never
@@ -3487,6 +3521,7 @@ export default function FaceSwap({
       <div
         data-testid="inspector"
         className={`w-full lg:w-[350px] 3xl:w-[400px] 4xl:w-[460px] shrink-0 space-y-3 select-none ${!showLeftPanel ? 'hidden' : ''}`}
+        style={showLeftPanel && panelSizes?.leftWidth ? { width: `${panelSizes.leftWidth}px`, minWidth: `${panelSizes.leftWidth}px` } : undefined}
       >
         <RecipePresetBar
           recipes={QUICK_RECIPES}
@@ -4149,6 +4184,21 @@ export default function FaceSwap({
       </div>
 
 
+      
+      {showLeftPanel && (
+        <PanelResizeDivider
+          direction="vertical"
+          side="left"
+          currentSize={panelSizes?.leftWidth || 350}
+          min={240}
+          max={620}
+          onResize={(val) => setPanelSize('leftWidth', val)}
+          onReset={() => setPanelSize('leftWidth', 350)}
+          title="Drag to resize Inspector panel (Double-click to reset)"
+          className="hidden lg:flex"
+        />
+      )}
+
       {/* COLUMN 2 & 3 WRAPPER: Preview canvas leads (hero) with the media
           asset managers as a right rail (2xl:flex-row-reverse), so the live
           preview is the visual center instead of buried on the far right. */}
@@ -4157,7 +4207,8 @@ export default function FaceSwap({
         {/* COLUMN 2: Media Asset Manager — right rail. Stays put during a run,
             as with column 1: the sources and targets a running job baked in are
             already its own, so editing these is setting up the NEXT job. */}
-        <div className={`w-full xl:w-[330px] 3xl:w-[380px] 4xl:w-[440px] shrink-0 space-y-3.5 select-none ${!showRightPanel ? 'hidden' : ''}`}>
+        <div className={`w-full xl:w-[330px] 3xl:w-[380px] 4xl:w-[440px] shrink-0 space-y-3.5 select-none ${!showRightPanel ? 'hidden' : ''}`}
+          style={showRightPanel && panelSizes?.rightWidth ? { width: `${panelSizes.rightWidth}px`, minWidth: `${panelSizes.rightWidth}px` } : undefined}>
           <Section title="Target media" icon={Icon.faceswap}>
             <PersonGroups
               targetFaces={targetFaces}
@@ -4373,6 +4424,21 @@ export default function FaceSwap({
           playheadFrame={frame} />
       </div>
 
+        
+        {showRightPanel && (
+          <PanelResizeDivider
+            direction="vertical"
+            side="right"
+            currentSize={panelSizes?.rightWidth || 330}
+            min={240}
+            max={580}
+            onResize={(val) => setPanelSize('rightWidth', val)}
+            onReset={() => setPanelSize('rightWidth', 330)}
+            title="Drag to resize Media Asset Rail (Double-click to reset)"
+            className="hidden xl:flex"
+          />
+        )}
+
         {/* COLUMN 3: Active Canvas, Timeline & Outputs */}
         <div className="flex-1 min-w-0 space-y-6">
           {/* run bar */}
@@ -4382,6 +4448,14 @@ export default function FaceSwap({
                 turns into a progress panel — it just says a job is in flight,
                 and offers the way over to it. */}
             <div className="w-full space-y-3">
+              <PreFlightLinter
+                target={targets[selTarget]}
+                targetFacesInfo={targetFacesInfo}
+                settings={settings}
+                onAutoFix={handlePreFlightAutoFix}
+                batchCount={1}
+                className="w-full"
+              />
               <div className="rounded-2xl glass-panel p-3.5 sm:p-4 flex flex-col md:flex-row items-center justify-between gap-3 sm:gap-4 shadow-xl border border-white/5 w-full">
                 <div className="flex items-center gap-3 w-full md:w-auto">
                   {progress.processing ? (
@@ -4459,8 +4533,8 @@ export default function FaceSwap({
                 {showFlowStrip && (
                   <div className="pt-1">
                     <div className="flex items-center justify-between mb-1 text-micro text-white/50 px-1">
-                      <span className="font-semibold uppercase tracking-wider text-[11px] text-white/70">Modular Pipeline Flow</span>
-                      <span className="text-[10px]">Alt+Click node to solo intermediate buffer &bull; ⏻ bypass</span>
+                      <span className="font-semibold uppercase tracking-wider text-mini text-white/70">Modular Pipeline Flow</span>
+                      <span className="text-micro">Alt+Click node to solo intermediate buffer &bull; ⏻ bypass</span>
                     </div>
                     <ModularPipelineFlowStrip
                       soloStage={soloStage}
@@ -4667,6 +4741,18 @@ export default function FaceSwap({
                 it now stays, because this tab is where the next job is set up
                 and the timeline is how a range is chosen. */}
             {maxFrames > 1 && showTimelineDeck && (
+              <div className="flex flex-col">
+                <PanelResizeDivider
+                  direction="horizontal"
+                  side="bottom"
+                  currentSize={panelSizes?.bottomHeight || 280}
+                  min={140}
+                  max={600}
+                  onResize={(val) => setPanelSize('bottomHeight', val)}
+                  onReset={() => setPanelSize('bottomHeight', 280)}
+                  title="Drag to resize Timeline deck (Double-click to reset)"
+                  className="mb-2"
+                />
               <div className="pt-4 border-t border-[var(--border-color)]">
                 <Timeline
                   audioTrack={{
@@ -4743,7 +4829,8 @@ export default function FaceSwap({
                   busy={progress.processing}
                 />
               </div>
-            )}
+            </div>
+          )}
 
             {/* A previous render sent from Outputs, wiped against the live preview. Renders nothing until one is sent. */}
             <ABReferencePanel previewSrc={previewSrc} frame={frame} fps={targets[selTarget]?.fps || 25} startFrame={startFrame} />
