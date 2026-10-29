@@ -538,9 +538,13 @@ class NVHardwareVideoWriter:
         sar: Optional[str] = None,
         dar: Optional[str] = None,
         color=None,
+        lut_path: Optional[str] = None,
+        lut_bake: bool = False,
     ):
         # A roop.source_color.ColorPlan (source matrix + range + tags), or None for the established BT.709/tv path.
         self.color_plan = color
+        self.lut_path = lut_path
+        self.lut_bake = lut_bake
         self.output_path = os.path.abspath(output_path)
         self.width = int(width)
         self.height = int(height)
@@ -664,6 +668,19 @@ class NVHardwareVideoWriter:
         sar = getattr(self, "sar", None)
         if sar and str(sar).strip() not in {"", "1:1", "1/1"}:
             filters.append(f"setsar={sar}")
+        # Stage 18: same tetrahedral .cube LUT bake as FFMPEG_VideoWriter, so the NVENC path honours it too.
+        lut_path = getattr(self, "lut_path", None)
+        lut_bake = getattr(self, "lut_bake", False)
+        if lut_path is None:
+            import roop.globals
+            lut_path = getattr(roop.globals, "lut_path", "") or os.environ.get("ROOP_LUT_PATH", "")
+        if not lut_bake:
+            import roop.globals
+            lut_bake = (getattr(roop.globals, "lut_bake", False)
+                        or os.environ.get("ROOP_LUT_BAKE", "").lower() in ("1", "true", "yes"))
+        if lut_bake and lut_path and os.path.isfile(lut_path):
+            clean_path = os.path.abspath(lut_path).replace("\\", "/").replace(":", "\\:")
+            filters.append(f"lut3d=file='{clean_path}':interp=tetrahedral")
         color = str(getattr(self, "colorspace", None) or os.environ.get("ROOP_FFMPEG_COLORSPACE", "bt709")).strip().lower()
         convert = color not in {"", "off", "none", "passthrough", "0", "false"}
         plan = getattr(self, "color_plan", None) if convert else None
