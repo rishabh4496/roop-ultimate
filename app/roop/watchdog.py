@@ -95,7 +95,7 @@ class RuntimeWatchdog:
         # State tracking for zero-swap & mask collapse
         self._consecutive_zero_swaps = 0
         self._last_zero_swap_alert_frame = -1
-        # (stream_key, thread id) -> (area, frame_idx, scene_cut_id)
+        # (stream_key, thread id, mask shape) -> (area, frame_idx, scene_cut_id)
         self._mask_baselines: Dict[Any, Tuple[int, int, Optional[int]]] = {}
         self._vram_warned_at: float = 0.0
 
@@ -382,10 +382,11 @@ class RuntimeWatchdog:
     ) -> bool:
         """Detect if occlusion mask area suddenly drops to 0px or fluctuates > 70% within the same scene cut.
 
-        The baseline is per (stream_key, thread): the previous mask is only comparable when it
-        is the same face on the immediately preceding frame. Frames run in parallel and a frame
-        can carry several faces of different sizes, so one shared baseline compared unrelated
-        masks and fired on every call.
+        The baseline is per (stream_key, thread, mask shape): the previous mask is only
+        comparable when it is the same face, from the same mask engine, at the same resolution,
+        on the immediately preceding frame. Frames run in parallel, a frame can carry several
+        faces of different sizes, and the occluder runs after the face-mask engine at a different
+        resolution, so one shared baseline compared unrelated masks and fired on every call.
         """
         if mask is None:
             return True
@@ -397,7 +398,7 @@ class RuntimeWatchdog:
             # Compute non-zero / active pixel area
             curr_area = int(np.count_nonzero(arr > 0.5 if np.issubdtype(arr.dtype, np.floating) else arr > 0))
 
-            key = (stream_key, threading.get_ident())
+            key = (stream_key, threading.get_ident(), arr.shape)
             with self._lock:
                 last = self._mask_baselines.get(key)
                 if len(self._mask_baselines) > 512 and last is None:

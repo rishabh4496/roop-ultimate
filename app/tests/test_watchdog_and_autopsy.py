@@ -150,6 +150,31 @@ class TestWatchdogMaskCollapseAndJump(unittest.TestCase):
             watchdog.check_mask_geometry(f, big, stream_key="B")
         self.assertEqual(self.alerts, [])
 
+    def test_two_mask_engines_per_face_per_frame_do_not_warn(self):
+        # The occluder is injected after the face-mask engine: each frame carries a ~512^2 mask
+        # then a ~256^2 mask for the SAME face and stream key (the log showed 41315px -> 166652px
+        # on every frame). Same resolution frame to frame, so neither engine jumped.
+        face_mask = np.zeros((512, 512), dtype=np.uint8)
+        face_mask[:325, :] = 1                              # ~63% coverage
+        occluder_mask = np.zeros((256, 256), dtype=np.uint8)
+        occluder_mask[:162, :] = 1                          # ~63% coverage
+        for f in range(3850, 3860):
+            watchdog.check_mask_geometry(f, face_mask, stream_key=("t", 0))
+            watchdog.check_mask_geometry(f, occluder_mask, stream_key=("t", 0))
+        self.assertEqual(self.alerts, [])
+
+    def test_real_jump_in_one_engine_still_warns_beside_a_second_engine(self):
+        face_mask = np.ones((512, 512), dtype=np.uint8)
+        occluder_ok = np.ones((256, 256), dtype=np.uint8)
+        occluder_jump = np.zeros((256, 256), dtype=np.uint8)
+        occluder_jump[:50, :] = 1
+        watchdog.check_mask_geometry(10, face_mask, stream_key=("t", 0))
+        watchdog.check_mask_geometry(10, occluder_ok, stream_key=("t", 0))
+        watchdog.check_mask_geometry(11, face_mask, stream_key=("t", 0))
+        ok = watchdog.check_mask_geometry(11, occluder_jump, stream_key=("t", 0))
+        self.assertFalse(ok)
+        self.assertEqual(sum("Mask seam jump" in a for a in self.alerts), 1)
+
     def test_same_face_consecutive_frames_still_warn_with_stream_key(self):
         big = np.ones((100, 100), dtype=np.uint8)
         small = np.zeros((100, 100), dtype=np.uint8)

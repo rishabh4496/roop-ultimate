@@ -6550,7 +6550,10 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     try:
                         from roop import watchdog
                         _cur_fidx = getattr(self._tls, 'frame_idx', None)
-                        # One baseline per face: its track id, else its coarse bbox cell.
+                        # One baseline per face AND per mask processor: its track id, else its
+                        # coarse bbox cell. The occluder is injected after the face-mask engine,
+                        # so every face passes through here twice per frame with masks of
+                        # different resolution; sharing a baseline compared one against the other.
                         _wd_key = self._temporal_track_id(target_face)
                         if _wd_key is None:
                             _bb = getattr(target_face, 'bbox', None)
@@ -6558,7 +6561,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                                        if _bb is not None else ('face', face_index))
                         watchdog.check_mask_geometry(
                             _cur_fidx if _cur_fidx is not None else 0, _img_mask,
-                            stream_key=(_wd_key, face_index))
+                            stream_key=(_wd_key, face_index, getattr(p, 'processorname', None)))
                     except Exception:
                         pass
                 if self._stab_history is not None and _img_mask is not None:
