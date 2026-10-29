@@ -6550,7 +6550,15 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     try:
                         from roop import watchdog
                         _cur_fidx = getattr(self._tls, 'frame_idx', None)
-                        watchdog.check_mask_geometry(_cur_fidx if _cur_fidx is not None else 0, _img_mask, scene_cut_id=getattr(self, '_stab_t', None))
+                        # One baseline per face: its track id, else its coarse bbox cell.
+                        _wd_key = self._temporal_track_id(target_face)
+                        if _wd_key is None:
+                            _bb = getattr(target_face, 'bbox', None)
+                            _wd_key = (('bbox',) + tuple(int(v) // 64 for v in _bb[:2])
+                                       if _bb is not None else ('face', face_index))
+                        watchdog.check_mask_geometry(
+                            _cur_fidx if _cur_fidx is not None else 0, _img_mask,
+                            stream_key=(_wd_key, face_index))
                     except Exception:
                         pass
                 if self._stab_history is not None and _img_mask is not None:

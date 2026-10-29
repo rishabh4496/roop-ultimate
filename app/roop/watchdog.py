@@ -95,9 +95,8 @@ class RuntimeWatchdog:
         # State tracking for zero-swap & mask collapse
         self._consecutive_zero_swaps = 0
         self._last_zero_swap_alert_frame = -1
-        self._last_mask_area: Optional[int] = None
-        self._last_mask_scene: Optional[int] = None
-        self._last_mask_frame = -1
+        # (stream_key, thread id) -> (area, frame_idx, scene_cut_id)
+        self._mask_baselines: Dict[Any, Tuple[int, int, Optional[int]]] = {}
         self._vram_warned_at: float = 0.0
 
         # Global active breadcrumbs
@@ -114,9 +113,7 @@ class RuntimeWatchdog:
         with self._lock:
             self._consecutive_zero_swaps = 0
             self._last_zero_swap_alert_frame = -1
-            self._last_mask_area = None
-            self._last_mask_scene = None
-            self._last_mask_frame = -1
+            self._mask_baselines.clear()
             self._vram_warned_at = 0.0
             self._active_frame_idx = None
             self._active_model_name = "unknown"
@@ -381,8 +378,15 @@ class RuntimeWatchdog:
         mask: Any,
         scene_cut_id: Optional[int] = None,
         jump_threshold: float = 0.70,
+        stream_key: Any = None,
     ) -> bool:
-        """Detect if occlusion mask area suddenly drops to 0px or fluctuates > 70% within the same scene cut."""
+        """Detect if occlusion mask area suddenly drops to 0px or fluctuates > 70% within the same scene cut.
+
+        The baseline is per (stream_key, thread): the previous mask is only comparable when it
+        is the same face on the immediately preceding frame. Frames run in parallel and a frame
+        can carry several faces of different sizes, so one shared baseline compared unrelated
+        masks and fired on every call.
+        """
         if mask is None:
             return True
 
@@ -393,17 +397,21 @@ class RuntimeWatchdog:
             # Compute non-zero / active pixel area
             curr_area = int(np.count_nonzero(arr > 0.5 if np.issubdtype(arr.dtype, np.floating) else arr > 0))
 
-            # Reset baseline across scene cuts
-            if self._last_mask_scene is not None and scene_cut_id is not None and scene_cut_id != self._last_mask_scene:
-                self._last_mask_area = curr_area
-                self._last_mask_scene = scene_cut_id
-                self._last_mask_frame = frame_idx
-                return True
+            key = (stream_key, threading.get_ident())
+            with self._lock:
+                last = self._mask_baselines.get(key)
+                if len(self._mask_baselines) > 512 and last is None:
+                    self._mask_baselines.clear()
+                self._mask_baselines[key] = (curr_area, frame_idx, scene_cut_id)
 
-            prev_area = self._last_mask_area
-            self._last_mask_area = curr_area
-            self._last_mask_scene = scene_cut_id
-            self._last_mask_frame = frame_idx
+            # No baseline, a gap in frames, or a scene cut: this mask starts a new baseline.
+            if last is None:
+                return True
+            prev_area, prev_frame, prev_scene = last
+            if frame_idx - prev_frame != 1:
+                return True
+            if prev_scene is not None and scene_cut_id is not None and scene_cut_id != prev_scene:
+                return True
 
             if prev_area is not None and prev_area > 0:
                 # Sudden collapse to 0px
@@ -513,8 +521,9 @@ def check_mask_geometry(
     mask: Any,
     scene_cut_id: Optional[int] = None,
     jump_threshold: float = 0.70,
+    stream_key: Any = None,
 ) -> bool:
-    return WATCHDOG.check_mask_geometry(frame_idx, mask, scene_cut_id, jump_threshold)
+    return WATCHDOG.check_mask_geometry(frame_idx, mask, scene_cut_id, jump_threshold, stream_key)
 
 
 def check_vram_pressure(threshold_ratio: float = 0.92) -> Optional[float]:

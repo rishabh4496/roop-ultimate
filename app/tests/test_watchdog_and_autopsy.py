@@ -141,6 +141,25 @@ class TestWatchdogMaskCollapseAndJump(unittest.TestCase):
         self.assertFalse(ok)
         self.assertTrue(any("[WARN] Mask seam jump detected" in a and "80.0%" in a for a in self.alerts))
 
+    def test_interleaved_faces_and_out_of_order_frames_do_not_warn(self):
+        big = np.ones((400, 450), dtype=np.uint8)    # ~180k px
+        small = np.ones((200, 195), dtype=np.uint8)  # ~39k px
+        # Two faces per frame, frames arriving out of order, as in a parallel render.
+        for f in (29753, 29733, 29817, 29797, 29777):
+            watchdog.check_mask_geometry(f, small, stream_key="A")
+            watchdog.check_mask_geometry(f, big, stream_key="B")
+        self.assertEqual(self.alerts, [])
+
+    def test_same_face_consecutive_frames_still_warn_with_stream_key(self):
+        big = np.ones((100, 100), dtype=np.uint8)
+        small = np.zeros((100, 100), dtype=np.uint8)
+        small[:20, :] = 1
+        watchdog.check_mask_geometry(10, big, stream_key="A")
+        watchdog.check_mask_geometry(10, big, stream_key="B")
+        ok = watchdog.check_mask_geometry(11, small, stream_key="A")
+        self.assertFalse(ok)
+        self.assertEqual(sum("Mask seam jump" in a for a in self.alerts), 1)
+
     def test_scene_cut_resets_baseline_without_warning(self):
         mask1 = np.ones((100, 100), dtype=np.uint8)  # shot 1
         mask2 = np.zeros((100, 100), dtype=np.uint8)  # shot 2 begins with 0px or small mask
