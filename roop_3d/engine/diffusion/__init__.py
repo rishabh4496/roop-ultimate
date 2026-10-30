@@ -1,0 +1,1 @@
+"""Optional diffusion package boundary."""

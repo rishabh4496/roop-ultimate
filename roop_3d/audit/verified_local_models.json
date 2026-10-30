@@ -1,0 +1,6488 @@
+{
+  "schema_version": 1,
+  "timestamp": "2026-10-30T09:48:06.295692+00:00",
+  "verification_contract": "VERIFIED_LOCAL verifies local bytes, not inference or licensing",
+  "scope_evidence": [
+    {
+      "scope": "repository",
+      "state": "VERIFIED_LOCAL",
+      "evidence": "Directory scanned read-only"
+    },
+    {
+      "scope": "user_cache",
+      "state": "VERIFIED_LOCAL",
+      "evidence": "Directory scanned read-only"
+    },
+    {
+      "scope": "insightface_cache",
+      "state": "VERIFIED_LOCAL",
+      "evidence": "Directory scanned read-only"
+    },
+    {
+      "scope": "torch_cache",
+      "state": "UNKNOWN",
+      "reason": "Directory absent"
+    }
+  ],
+  "models": [
+    {
+      "name": "arcface_w600k_r50.batch.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": ".cache/models/arcface_w600k_r50.batch.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 174383870,
+      "sha256": "37f22989b54e98927a2795a450299f47fe539ee9e29ea09e028d363bd1e68e6c",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "recognizer",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "input",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch",
+              3,
+              112,
+              112
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "output",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch",
+              512
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 15
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "arcface_w600k_r50.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": ".cache/models/arcface_w600k_r50.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 174388474,
+      "sha256": "f1f79dc3b0b79a69f94799af1fffebff09fbd78fd96a275fd8f0cbbea23270d1",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "recognizer",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "input",
+            "dtype": "FLOAT",
+            "shape": [
+              "None",
+              3,
+              112,
+              112
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "output",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              512
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 15
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "bisenet_resnet_34.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": ".cache/models/bisenet_resnet_34.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 93632546,
+      "sha256": "4a0b8c958a3c938913bd06a8365dbb3c8761afba6ecbf0d14b3b1f77eb230c96",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "parser",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "input",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch_size",
+              3,
+              512,
+              512
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "output",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch_size",
+              "Resizeoutput_dim_1",
+              "Resizeoutput_dim_2",
+              "Resizeoutput_dim_3"
+            ]
+          },
+          {
+            "name": "0",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch_size",
+              "Resizeoutput_dim_1",
+              "Resizeoutput_dim_2",
+              "Resizeoutput_dim_3"
+            ]
+          },
+          {
+            "name": "1",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch_size",
+              "Resizeoutput_dim_1",
+              "Resizeoutput_dim_2",
+              "Resizeoutput_dim_3"
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 15
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "gpen_bfr_1024.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": ".cache/models/gpen_bfr_1024.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 285203703,
+      "sha256": "bcd31aa52110a2005efc96abbab4546d57e42482648f08715b552423d96b381b",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "restorer",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "input",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              3,
+              1024,
+              1024
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "output",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              3,
+              1024,
+              1024
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 15
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "gpen_bfr_512.batch.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": ".cache/models/gpen_bfr_512.batch.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 284264336,
+      "sha256": "12164ca97f1e5a2b8d687c75b7f3d8d8f43e08efa2ec9783f32a53f7fbcae094",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "restorer",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "input",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch",
+              3,
+              512,
+              512
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "output",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch",
+              3,
+              512,
+              512
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 15
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "gpen_bfr_512.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": ".cache/models/gpen_bfr_512.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 284340240,
+      "sha256": "d5f066b9068a8b74217f9712e28e875a6144629b108a6f7355acbdb3a2832c54",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "restorer",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "input",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              3,
+              512,
+              512
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "output",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              3,
+              512,
+              512
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 15
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "hyperswap_1a_256.batch.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": ".cache/models/hyperswap_1a_256.batch.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 402823210,
+      "sha256": "e22a7b7924d9d3d6e01749e51b1e13071e0a37ab85bf4b3d13c5fb51d7f928e9",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "swapper",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "source",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch",
+              512
+            ]
+          },
+          {
+            "name": "target",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch",
+              3,
+              256,
+              256
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "output",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch",
+              3,
+              256,
+              256
+            ]
+          },
+          {
+            "name": "mask",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch",
+              1,
+              256,
+              256
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 15
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "hyperswap_1a_256.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": ".cache/models/hyperswap_1a_256.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 402742682,
+      "sha256": "c0e98a8a03a238f461ed3d2570e426b49f46745ee400854a60dceeb70c246add",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "swapper",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "source",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              512
+            ]
+          },
+          {
+            "name": "target",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              3,
+              256,
+              256
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "output",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              3,
+              256,
+              256
+            ]
+          },
+          {
+            "name": "mask",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              1,
+              256,
+              256
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 15
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "hyperswap_1b_256.batch.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": ".cache/models/hyperswap_1b_256.batch.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 402823210,
+      "sha256": "4f576c945e89424718e9b7b34e0b8ba0665a7bbaa4fd7ed8ab9da3bec9776dd8",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "swapper",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "source",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch",
+              512
+            ]
+          },
+          {
+            "name": "target",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch",
+              3,
+              256,
+              256
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "output",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch",
+              3,
+              256,
+              256
+            ]
+          },
+          {
+            "name": "mask",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch",
+              1,
+              256,
+              256
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 15
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "hyperswap_1b_256.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": ".cache/models/hyperswap_1b_256.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 402742682,
+      "sha256": "5124031789c42f71b9558fb71954ef7aedb6da7ed9fac79293e23c61a792a73e",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "swapper",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "source",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              512
+            ]
+          },
+          {
+            "name": "target",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              3,
+              256,
+              256
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "output",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              3,
+              256,
+              256
+            ]
+          },
+          {
+            "name": "mask",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              1,
+              256,
+              256
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 15
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "hyperswap_1c_256.batch.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": ".cache/models/hyperswap_1c_256.batch.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 402823210,
+      "sha256": "fdabd05c7fe6ead5191a852f135f2410547277744c71bf513611994b46abb864",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "swapper",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "source",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch",
+              512
+            ]
+          },
+          {
+            "name": "target",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch",
+              3,
+              256,
+              256
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "output",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch",
+              3,
+              256,
+              256
+            ]
+          },
+          {
+            "name": "mask",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch",
+              1,
+              256,
+              256
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 15
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "hyperswap_1c_256.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": ".cache/models/hyperswap_1c_256.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 402742682,
+      "sha256": "5528c2d76fe9986c99d829278987ef9f3a630cb606db7628d02b57b330f406a5",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "swapper",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "source",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              512
+            ]
+          },
+          {
+            "name": "target",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              3,
+              256,
+              256
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "output",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              3,
+              256,
+              256
+            ]
+          },
+          {
+            "name": "mask",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              1,
+              256,
+              256
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 15
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "inswapper_128.batch.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": ".cache/models/inswapper_128.batch.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 554243652,
+      "sha256": "ea7bf4874815ac6ab751eb877317a06282a9cb3aace11f269aeadd422ef66222",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "swapper",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "target",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch",
+              3,
+              128,
+              128
+            ]
+          },
+          {
+            "name": "source",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch",
+              512
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "output",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch",
+              3,
+              128,
+              128
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 11
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "inswapper_128.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": ".cache/models/inswapper_128.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 554253681,
+      "sha256": "e4a3f08c753cb72d04e10aa0f7dbe3deebbf39567d4ead6dce08e98aa49e16af",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "swapper",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "target",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              3,
+              128,
+              128
+            ]
+          },
+          {
+            "name": "source",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              512
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "output",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              3,
+              128,
+              128
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 11
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "liveportrait_appearance_feature_extractor.batch.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": ".cache/models/liveportrait_appearance_feature_extractor.batch.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 3352956,
+      "sha256": "23da014a5c7b6b323b20f2c3b3359eeac487c482fafc65e870e4f1c0e630fe71",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "animation",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "img",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch",
+              3,
+              256,
+              256
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "output",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch",
+              32,
+              16,
+              64,
+              64
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 16
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "liveportrait_appearance_feature_extractor.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": ".cache/models/liveportrait_appearance_feature_extractor.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 3355896,
+      "sha256": "d070afccca7f528ffb0ef5052b21588b42225a996661833f7bdede562d1ab921",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "animation",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "img",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              3,
+              256,
+              256
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "output",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              32,
+              16,
+              64,
+              64
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 16
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "liveportrait_landmark.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": ".cache/models/liveportrait_landmark.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 114666491,
+      "sha256": "31d22a5041326c31f19b78886939a634a5aedcaa5ab8b9b951a1167595d147db",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "animation",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "input",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              3,
+              224,
+              224
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "output",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              214
+            ]
+          },
+          {
+            "name": "853",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              262
+            ]
+          },
+          {
+            "name": "856",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              406
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 13
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "liveportrait_motion_extractor.batch.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": ".cache/models/liveportrait_motion_extractor.batch.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 112602557,
+      "sha256": "7b5277d167f6c9f8e45c8fd65035845034156c1491ba387b235198e37b3c8922",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "animation",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "img",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch",
+              3,
+              256,
+              256
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "pitch",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch",
+              66
+            ]
+          },
+          {
+            "name": "yaw",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch",
+              66
+            ]
+          },
+          {
+            "name": "roll",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch",
+              66
+            ]
+          },
+          {
+            "name": "t",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch",
+              3
+            ]
+          },
+          {
+            "name": "exp",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch",
+              63
+            ]
+          },
+          {
+            "name": "scale",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch",
+              1
+            ]
+          },
+          {
+            "name": "kp",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch",
+              63
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 16
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "liveportrait_motion_extractor.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": ".cache/models/liveportrait_motion_extractor.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 112648514,
+      "sha256": "219a46174297b2b411bb3c5dce48d3a8c8e07a9d82120a0da21f49f58b67fca6",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "animation",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "img",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              3,
+              256,
+              256
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "pitch",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              66
+            ]
+          },
+          {
+            "name": "yaw",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              66
+            ]
+          },
+          {
+            "name": "roll",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              66
+            ]
+          },
+          {
+            "name": "t",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              3
+            ]
+          },
+          {
+            "name": "exp",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              63
+            ]
+          },
+          {
+            "name": "scale",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              1
+            ]
+          },
+          {
+            "name": "kp",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              63
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 16
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "liveportrait_stitching.batch.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": ".cache/models/liveportrait_stitching.batch.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 182105,
+      "sha256": "70f700f268651a166ab4a4c50a27f85849f24d7a61f06ab0c750a56ffc211b41",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "animation",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "input",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch",
+              126
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "output",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch",
+              65
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 16
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "liveportrait_stitching.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": ".cache/models/liveportrait_stitching.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 182363,
+      "sha256": "8e33658425e3f1014dc35b28f60ca7459189e8f78f20540262a2fe5ac1dc6ec7",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "animation",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "input",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              126
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "output",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              65
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 16
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "liveportrait_stitching_eye.batch.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": ".cache/models/liveportrait_stitching_eye.batch.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 580488,
+      "sha256": "d61d02b81215f9fc1e5406e77511b356cc52177e48fca31ee9f59e5c9880f2c8",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "animation",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "input",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch",
+              66
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "output",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch",
+              63
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 16
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "liveportrait_stitching_eye.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": ".cache/models/liveportrait_stitching_eye.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 580926,
+      "sha256": "b9a2086c4d757c9be71b9b290d020678406da6a33c6247252c4bb0aeeff48afc",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "animation",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "input",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              66
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "output",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              63
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 16
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "liveportrait_warping_spade-trt.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": ".cache/models/liveportrait_warping_spade-trt.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 421285286,
+      "sha256": "039bef54972d30b9e795c29ebdbd0e835bcc8bcc08f9d73c99499dbdff6f3d8f",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "animation",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "feature_3d",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              32,
+              16,
+              64,
+              64
+            ]
+          },
+          {
+            "name": "kp_driving",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              21,
+              3
+            ]
+          },
+          {
+            "name": "kp_source",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              21,
+              3
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "out",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              3,
+              512,
+              512
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 16
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "liveportrait_warping_spade.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": ".cache/models/liveportrait_warping_spade.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 421233096,
+      "sha256": "b0e7a566db8fba690c23523bcd2faa4f0d13f05418db84a779397a851062ad69",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "animation",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "feature_3d",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              32,
+              16,
+              64,
+              64
+            ]
+          },
+          {
+            "name": "kp_driving",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              21,
+              3
+            ]
+          },
+          {
+            "name": "kp_source",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              21,
+              3
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "out",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              3,
+              512,
+              512
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 16
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "restoreformer_plus_plus.batch.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": ".cache/models/restoreformer_plus_plus.batch.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 294461250,
+      "sha256": "5830b5ac0552ea16b2d455bc9acb19d5e9dcd60c400736e50e9600478522a845",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "restorer",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "input",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch",
+              3,
+              512,
+              512
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "2701",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch",
+              3,
+              "Conv2701_dim_2",
+              "Conv2701_dim_3"
+            ]
+          },
+          {
+            "name": "1348",
+            "dtype": "FLOAT",
+            "shape": []
+          },
+          {
+            "name": "1358",
+            "dtype": "FLOAT",
+            "shape": []
+          },
+          {
+            "name": "onnx::MatMul_1314",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch",
+              "ScatterElementsonnx::MatMul_1314_dim_1"
+            ]
+          },
+          {
+            "name": "onnx::Shape_1298",
+            "dtype": "INT64",
+            "shape": [
+              "batch",
+              1
+            ]
+          },
+          {
+            "name": "onnx::ArgMin_1295",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch",
+              1024
+            ]
+          },
+          {
+            "name": "input.1",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch",
+              64,
+              512,
+              512
+            ]
+          },
+          {
+            "name": "onnx::Pad_508",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch",
+              64,
+              512,
+              512
+            ]
+          },
+          {
+            "name": "onnx::Pad_600",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch",
+              128,
+              "Conv2701_dim_2",
+              "Conv2701_dim_3"
+            ]
+          },
+          {
+            "name": "onnx::Pad_690",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch",
+              128,
+              "Conv2701_dim_2",
+              "Conv2701_dim_3"
+            ]
+          },
+          {
+            "name": "onnx::Pad_781",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch",
+              256,
+              "Conv2701_dim_2",
+              "Conv2701_dim_3"
+            ]
+          },
+          {
+            "name": "input.176",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch",
+              256,
+              "Conv2701_dim_2",
+              "Conv2701_dim_3"
+            ]
+          },
+          {
+            "name": "input.256",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch",
+              512,
+              "Conv2701_dim_2",
+              "Conv2701_dim_3"
+            ]
+          },
+          {
+            "name": "input.284",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch",
+              512,
+              "Conv2701_dim_2",
+              "Conv2701_dim_3"
+            ]
+          },
+          {
+            "name": "input.292",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch",
+              256,
+              "Conv2701_dim_2",
+              "Conv2701_dim_3"
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 17
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "restoreformer_plus_plus.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": ".cache/models/restoreformer_plus_plus.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 294264812,
+      "sha256": "f4db5a89902b6a2d452446f5721245a6f7185f699b6aec7b77285adb4d504337",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "restorer",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "input",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              3,
+              512,
+              512
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "2701",
+            "dtype": "FLOAT",
+            "shape": [
+              "Conv2701_dim_0",
+              3,
+              "Conv2701_dim_2",
+              "Conv2701_dim_3"
+            ]
+          },
+          {
+            "name": "1348",
+            "dtype": "FLOAT",
+            "shape": []
+          },
+          {
+            "name": "1358",
+            "dtype": "FLOAT",
+            "shape": []
+          },
+          {
+            "name": "onnx::MatMul_1314",
+            "dtype": "FLOAT",
+            "shape": [
+              "ScatterElementsonnx::MatMul_1314_dim_0",
+              "ScatterElementsonnx::MatMul_1314_dim_1"
+            ]
+          },
+          {
+            "name": "onnx::Shape_1298",
+            "dtype": "INT64",
+            "shape": [
+              "ScatterElementsonnx::MatMul_1314_dim_0",
+              1
+            ]
+          },
+          {
+            "name": "onnx::ArgMin_1295",
+            "dtype": "FLOAT",
+            "shape": [
+              "ScatterElementsonnx::MatMul_1314_dim_0",
+              1024
+            ]
+          },
+          {
+            "name": "input.1",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              64,
+              512,
+              512
+            ]
+          },
+          {
+            "name": "onnx::Pad_508",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              64,
+              512,
+              512
+            ]
+          },
+          {
+            "name": "onnx::Pad_600",
+            "dtype": "FLOAT",
+            "shape": [
+              "Addonnx::Pad_600_dim_0",
+              128,
+              "Conv2701_dim_2",
+              "Conv2701_dim_3"
+            ]
+          },
+          {
+            "name": "onnx::Pad_690",
+            "dtype": "FLOAT",
+            "shape": [
+              "Addonnx::Pad_690_dim_0",
+              128,
+              "Conv2701_dim_2",
+              "Conv2701_dim_3"
+            ]
+          },
+          {
+            "name": "onnx::Pad_781",
+            "dtype": "FLOAT",
+            "shape": [
+              "Addonnx::Pad_781_dim_0",
+              256,
+              "Conv2701_dim_2",
+              "Conv2701_dim_3"
+            ]
+          },
+          {
+            "name": "input.176",
+            "dtype": "FLOAT",
+            "shape": [
+              "Addinput.176_dim_0",
+              256,
+              "Conv2701_dim_2",
+              "Conv2701_dim_3"
+            ]
+          },
+          {
+            "name": "input.256",
+            "dtype": "FLOAT",
+            "shape": [
+              "Addinput.256_dim_0",
+              512,
+              "Conv2701_dim_2",
+              "Conv2701_dim_3"
+            ]
+          },
+          {
+            "name": "input.284",
+            "dtype": "FLOAT",
+            "shape": [
+              "Addinput.284_dim_0",
+              512,
+              "Conv2701_dim_2",
+              "Conv2701_dim_3"
+            ]
+          },
+          {
+            "name": "input.292",
+            "dtype": "FLOAT",
+            "shape": [
+              "Convinput.292_dim_0",
+              256,
+              "Conv2701_dim_2",
+              "Conv2701_dim_3"
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 17
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "retinaface_r50.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": ".cache/models/retinaface_r50.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 109110500,
+      "sha256": "ea3f7d12894980d52d3fd7f3f5cab463d48e9cfbcc06f40616bdeeab3e3f31d1",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "detector",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "input",
+            "dtype": "FLOAT",
+            "shape": [
+              "b",
+              3,
+              "h",
+              "w"
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "loc",
+            "dtype": "FLOAT",
+            "shape": [
+              "b",
+              "n",
+              "Concatloc_dim_2"
+            ]
+          },
+          {
+            "name": "conf",
+            "dtype": "FLOAT",
+            "shape": [
+              "b",
+              "n",
+              "Softmaxconf_dim_2"
+            ]
+          },
+          {
+            "name": "landms",
+            "dtype": "FLOAT",
+            "shape": [
+              "b",
+              "n",
+              "Concatlandms_dim_2"
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 12
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "scrfd_10g_bnkps.dims.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": ".cache/models/scrfd_10g_bnkps.dims.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 16923850,
+      "sha256": "9e705c0f6c631739f64f7474dea29c3d8294e1f9a8d8fdadcabcf6b4e79e8d24",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "detector",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "input.1",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch",
+              3,
+              "height",
+              "width"
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "448",
+            "dtype": "FLOAT",
+            "shape": [
+              "n0",
+              1
+            ]
+          },
+          {
+            "name": "471",
+            "dtype": "FLOAT",
+            "shape": [
+              "n1",
+              1
+            ]
+          },
+          {
+            "name": "494",
+            "dtype": "FLOAT",
+            "shape": [
+              "n2",
+              1
+            ]
+          },
+          {
+            "name": "451",
+            "dtype": "FLOAT",
+            "shape": [
+              "n3",
+              4
+            ]
+          },
+          {
+            "name": "474",
+            "dtype": "FLOAT",
+            "shape": [
+              "n4",
+              4
+            ]
+          },
+          {
+            "name": "497",
+            "dtype": "FLOAT",
+            "shape": [
+              "n5",
+              4
+            ]
+          },
+          {
+            "name": "454",
+            "dtype": "FLOAT",
+            "shape": [
+              "n6",
+              10
+            ]
+          },
+          {
+            "name": "477",
+            "dtype": "FLOAT",
+            "shape": [
+              "n7",
+              10
+            ]
+          },
+          {
+            "name": "500",
+            "dtype": "FLOAT",
+            "shape": [
+              "n8",
+              10
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 11
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "scrfd_10g_bnkps.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": ".cache/models/scrfd_10g_bnkps.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 16923827,
+      "sha256": "5838f7fe053675b1c7a08b633df49e7af5495cee0493c7dcf6697200b85b5b91",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "detector",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "input.1",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              3,
+              "?",
+              "?"
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "448",
+            "dtype": "FLOAT",
+            "shape": [
+              12800,
+              1
+            ]
+          },
+          {
+            "name": "471",
+            "dtype": "FLOAT",
+            "shape": [
+              3200,
+              1
+            ]
+          },
+          {
+            "name": "494",
+            "dtype": "FLOAT",
+            "shape": [
+              800,
+              1
+            ]
+          },
+          {
+            "name": "451",
+            "dtype": "FLOAT",
+            "shape": [
+              12800,
+              4
+            ]
+          },
+          {
+            "name": "474",
+            "dtype": "FLOAT",
+            "shape": [
+              3200,
+              4
+            ]
+          },
+          {
+            "name": "497",
+            "dtype": "FLOAT",
+            "shape": [
+              800,
+              4
+            ]
+          },
+          {
+            "name": "454",
+            "dtype": "FLOAT",
+            "shape": [
+              12800,
+              10
+            ]
+          },
+          {
+            "name": "477",
+            "dtype": "FLOAT",
+            "shape": [
+              3200,
+              10
+            ]
+          },
+          {
+            "name": "500",
+            "dtype": "FLOAT",
+            "shape": [
+              800,
+              10
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 11
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "xseg.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": ".cache/models/xseg.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 70327737,
+      "sha256": "0b57328efcb839d85973164b617ceee9dfe6cfcb2c82e8a033bba9f4f09b27e5",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "parser",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "xseg_input:0",
+            "dtype": "FLOAT",
+            "shape": [
+              "unk__1491",
+              256,
+              256,
+              3
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "xseg_output:0",
+            "dtype": "FLOAT",
+            "shape": [
+              "unk__1492",
+              256,
+              256,
+              1
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 17
+          },
+          {
+            "domain": "ai.onnx.ml",
+            "version": 2
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "xseg_3.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": ".cache/models/xseg_3.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 70327709,
+      "sha256": "48ccd7e8541e159a5a754ec9e62df2f12065f7df8f9af842c1750342c6533559",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "parser",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "input",
+            "dtype": "FLOAT",
+            "shape": [
+              "unk__1491",
+              256,
+              256,
+              3
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "output",
+            "dtype": "FLOAT",
+            "shape": [
+              "unk__1492",
+              256,
+              256,
+              1
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 17
+          },
+          {
+            "domain": "ai.onnx.ml",
+            "version": 2
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "yoloface_8n.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": ".cache/models/yoloface_8n.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 12659761,
+      "sha256": "821cdbb1e65fbbabdde7dd0933f754797a343e56fd962729c61ffcefcd135929",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "detector",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "input",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              3,
+              640,
+              640
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "output",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              20,
+              8400
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 15
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "DMDNet.pth",
+      "locator": {
+        "scope": "repository",
+        "path": "app/models/DMDNet.pth"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 603684323,
+      "sha256": "70daeb4b1fd10f241043b587d892a941f2651d7322db02f06ff64b166537f65c",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "restorer",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "UNKNOWN",
+        "reason": "Not deserialized; pickle execution is forbidden during discovery"
+      }
+    },
+    {
+      "name": "GFPGANv1.4.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": "app/models/GFPGANv1.4.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 340256688,
+      "sha256": "5060d6c8d84851bbb8da630bea59b56414b49923a2b9304fb08f72d4c98f0aeb",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "restorer",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "input",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              3,
+              512,
+              512
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "1288",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              3,
+              512,
+              512
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 11
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "GPEN-BFR-512.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": "app/models/GPEN-BFR-512.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 284250449,
+      "sha256": "0960f836488735444d508b588e44fb5dfd19c68fde9163ad7878aa24d1d5115e",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "restorer",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "input",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              3,
+              512,
+              512
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "output",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              3,
+              512,
+              512
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 10
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "adaface_ir101.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": "app/models/adaface_ir101.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 260701576,
+      "sha256": "d177da5864546e761579af1a91e308d7c868a32670f37e7b8b04628a78d7e5b5",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "recognizer",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "input",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch_size",
+              3,
+              112,
+              112
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "embedding",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch_size",
+              512
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 17
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "crossface_hififace.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": "app/models/crossface_hififace.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 22083800,
+      "sha256": "dfb75f960cb8ef1967a82838e64963b9ff621c4af3e22f9fda48ad958dddec9a",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "swapper",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "input",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              512
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "output",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              512
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 15
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "face_detection_yunet_2023mar.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": "app/models/face_detection_yunet_2023mar.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 232589,
+      "sha256": "8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "detector",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "input",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              3,
+              640,
+              640
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "cls_8",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              6400,
+              1
+            ]
+          },
+          {
+            "name": "cls_16",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              1600,
+              1
+            ]
+          },
+          {
+            "name": "cls_32",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              400,
+              1
+            ]
+          },
+          {
+            "name": "obj_8",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              6400,
+              1
+            ]
+          },
+          {
+            "name": "obj_16",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              1600,
+              1
+            ]
+          },
+          {
+            "name": "obj_32",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              400,
+              1
+            ]
+          },
+          {
+            "name": "bbox_8",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              6400,
+              4
+            ]
+          },
+          {
+            "name": "bbox_16",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              1600,
+              4
+            ]
+          },
+          {
+            "name": "bbox_32",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              400,
+              4
+            ]
+          },
+          {
+            "name": "kps_8",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              6400,
+              10
+            ]
+          },
+          {
+            "name": "kps_16",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              1600,
+              10
+            ]
+          },
+          {
+            "name": "kps_32",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              400,
+              10
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 11
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "face_occluder.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": "app/models/face_occluder.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 70324403,
+      "sha256": "ad9bfb90510790711a429935f846eaba2dcf2935d9afc2bda7349f5bfb92a104",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "parser",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "in_face:0",
+            "dtype": "FLOAT",
+            "shape": [
+              "unk__359",
+              256,
+              256,
+              3
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "out_mask:0",
+            "dtype": "FLOAT",
+            "shape": [
+              "unk__360",
+              256,
+              256,
+              1
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 13
+          },
+          {
+            "domain": "ai.onnx.ml",
+            "version": 2
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "face_recognition_sface_2021dec.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": "app/models/face_recognition_sface_2021dec.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 38696353,
+      "sha256": "0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "recognizer",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "data",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              3,
+              112,
+              112
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "fc1",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              128
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 11
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "glintr100.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": "app/models/glintr100.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 260665334,
+      "sha256": "4ab1d6435d639628a6f3e5008dd4f929edf4c4124b1a7169e1048f9fef534cdf",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "recognizer",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "input.1",
+            "dtype": "FLOAT",
+            "shape": [
+              "None",
+              3,
+              112,
+              112
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "1333",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              512
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 11
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "gpen_bfr_256.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": "app/models/gpen_bfr_256.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 75792988,
+      "sha256": "bad8bf0426873828df2dbf4e3b3d9ababba9da7965b8b72426569486f7ae5c25",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "restorer",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "input",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              3,
+              256,
+              256
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "output",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              3,
+              256,
+              256
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 15
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "hififace_unofficial_256.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": "app/models/hififace_unofficial_256.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 203784742,
+      "sha256": "9de9751617976195114d7f067b9b6cf933748363355cf473cab2da57a739c2ef",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "swapper",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "target",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch_size",
+              3,
+              256,
+              256
+            ]
+          },
+          {
+            "name": "source",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch_size",
+              512
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "output",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch_size",
+              3,
+              256,
+              256
+            ]
+          },
+          {
+            "name": "mask",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch_size",
+              1,
+              256,
+              256
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 15
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "hyperswap_1a_256.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": "app/models/hyperswap_1a_256.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 402742682,
+      "sha256": "c0e98a8a03a238f461ed3d2570e426b49f46745ee400854a60dceeb70c246add",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "swapper",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "source",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              512
+            ]
+          },
+          {
+            "name": "target",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              3,
+              256,
+              256
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "output",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              3,
+              256,
+              256
+            ]
+          },
+          {
+            "name": "mask",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              1,
+              256,
+              256
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 15
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "hyperswap_1b_256.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": "app/models/hyperswap_1b_256.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 402742682,
+      "sha256": "5124031789c42f71b9558fb71954ef7aedb6da7ed9fac79293e23c61a792a73e",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "swapper",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "source",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              512
+            ]
+          },
+          {
+            "name": "target",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              3,
+              256,
+              256
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "output",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              3,
+              256,
+              256
+            ]
+          },
+          {
+            "name": "mask",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              1,
+              256,
+              256
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 15
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "hyperswap_1c_256.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": "app/models/hyperswap_1c_256.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 402742682,
+      "sha256": "5528c2d76fe9986c99d829278987ef9f3a630cb606db7628d02b57b330f406a5",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "swapper",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "source",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              512
+            ]
+          },
+          {
+            "name": "target",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              3,
+              256,
+              256
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "output",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              3,
+              256,
+              256
+            ]
+          },
+          {
+            "name": "mask",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              1,
+              256,
+              256
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 15
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "inswapper_128.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": "app/models/inswapper_128.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 554253681,
+      "sha256": "e4a3f08c753cb72d04e10aa0f7dbe3deebbf39567d4ead6dce08e98aa49e16af",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "swapper",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "target",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              3,
+              128,
+              128
+            ]
+          },
+          {
+            "name": "source",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              512
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "output",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              3,
+              128,
+              128
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 11
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "resnet18.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": "app/models/resnet18.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 53205364,
+      "sha256": "0d9bd318e46987c3bdbfacae9e2c0f461cae1c6ac6ea6d43bbe541a91727e33f",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "parser",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "input",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch_size",
+              3,
+              512,
+              512
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "output",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch_size",
+              "Resizeoutput_dim_1",
+              "Resizeoutput_dim_2",
+              "Resizeoutput_dim_3"
+            ]
+          },
+          {
+            "name": "414",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch_size",
+              "Resizeoutput_dim_1",
+              "Resizeoutput_dim_2",
+              "Resizeoutput_dim_3"
+            ]
+          },
+          {
+            "name": "424",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch_size",
+              "Resizeoutput_dim_1",
+              "Resizeoutput_dim_2",
+              "Resizeoutput_dim_3"
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 15
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "restoreformer_plus_plus.batch.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": "app/models/restoreformer_plus_plus.batch.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 294461250,
+      "sha256": "5830b5ac0552ea16b2d455bc9acb19d5e9dcd60c400736e50e9600478522a845",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "restorer",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "input",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch",
+              3,
+              512,
+              512
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "2701",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch",
+              3,
+              "Conv2701_dim_2",
+              "Conv2701_dim_3"
+            ]
+          },
+          {
+            "name": "1348",
+            "dtype": "FLOAT",
+            "shape": []
+          },
+          {
+            "name": "1358",
+            "dtype": "FLOAT",
+            "shape": []
+          },
+          {
+            "name": "onnx::MatMul_1314",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch",
+              "ScatterElementsonnx::MatMul_1314_dim_1"
+            ]
+          },
+          {
+            "name": "onnx::Shape_1298",
+            "dtype": "INT64",
+            "shape": [
+              "batch",
+              1
+            ]
+          },
+          {
+            "name": "onnx::ArgMin_1295",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch",
+              1024
+            ]
+          },
+          {
+            "name": "input.1",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch",
+              64,
+              512,
+              512
+            ]
+          },
+          {
+            "name": "onnx::Pad_508",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch",
+              64,
+              512,
+              512
+            ]
+          },
+          {
+            "name": "onnx::Pad_600",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch",
+              128,
+              "Conv2701_dim_2",
+              "Conv2701_dim_3"
+            ]
+          },
+          {
+            "name": "onnx::Pad_690",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch",
+              128,
+              "Conv2701_dim_2",
+              "Conv2701_dim_3"
+            ]
+          },
+          {
+            "name": "onnx::Pad_781",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch",
+              256,
+              "Conv2701_dim_2",
+              "Conv2701_dim_3"
+            ]
+          },
+          {
+            "name": "input.176",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch",
+              256,
+              "Conv2701_dim_2",
+              "Conv2701_dim_3"
+            ]
+          },
+          {
+            "name": "input.256",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch",
+              512,
+              "Conv2701_dim_2",
+              "Conv2701_dim_3"
+            ]
+          },
+          {
+            "name": "input.284",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch",
+              512,
+              "Conv2701_dim_2",
+              "Conv2701_dim_3"
+            ]
+          },
+          {
+            "name": "input.292",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch",
+              256,
+              "Conv2701_dim_2",
+              "Conv2701_dim_3"
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 17
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "restoreformer_plus_plus.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": "app/models/restoreformer_plus_plus.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 294264812,
+      "sha256": "f4db5a89902b6a2d452446f5721245a6f7185f699b6aec7b77285adb4d504337",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "restorer",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "input",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              3,
+              512,
+              512
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "2701",
+            "dtype": "FLOAT",
+            "shape": [
+              "Conv2701_dim_0",
+              3,
+              "Conv2701_dim_2",
+              "Conv2701_dim_3"
+            ]
+          },
+          {
+            "name": "1348",
+            "dtype": "FLOAT",
+            "shape": []
+          },
+          {
+            "name": "1358",
+            "dtype": "FLOAT",
+            "shape": []
+          },
+          {
+            "name": "onnx::MatMul_1314",
+            "dtype": "FLOAT",
+            "shape": [
+              "ScatterElementsonnx::MatMul_1314_dim_0",
+              "ScatterElementsonnx::MatMul_1314_dim_1"
+            ]
+          },
+          {
+            "name": "onnx::Shape_1298",
+            "dtype": "INT64",
+            "shape": [
+              "ScatterElementsonnx::MatMul_1314_dim_0",
+              1
+            ]
+          },
+          {
+            "name": "onnx::ArgMin_1295",
+            "dtype": "FLOAT",
+            "shape": [
+              "ScatterElementsonnx::MatMul_1314_dim_0",
+              1024
+            ]
+          },
+          {
+            "name": "input.1",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              64,
+              512,
+              512
+            ]
+          },
+          {
+            "name": "onnx::Pad_508",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              64,
+              512,
+              512
+            ]
+          },
+          {
+            "name": "onnx::Pad_600",
+            "dtype": "FLOAT",
+            "shape": [
+              "Addonnx::Pad_600_dim_0",
+              128,
+              "Conv2701_dim_2",
+              "Conv2701_dim_3"
+            ]
+          },
+          {
+            "name": "onnx::Pad_690",
+            "dtype": "FLOAT",
+            "shape": [
+              "Addonnx::Pad_690_dim_0",
+              128,
+              "Conv2701_dim_2",
+              "Conv2701_dim_3"
+            ]
+          },
+          {
+            "name": "onnx::Pad_781",
+            "dtype": "FLOAT",
+            "shape": [
+              "Addonnx::Pad_781_dim_0",
+              256,
+              "Conv2701_dim_2",
+              "Conv2701_dim_3"
+            ]
+          },
+          {
+            "name": "input.176",
+            "dtype": "FLOAT",
+            "shape": [
+              "Addinput.176_dim_0",
+              256,
+              "Conv2701_dim_2",
+              "Conv2701_dim_3"
+            ]
+          },
+          {
+            "name": "input.256",
+            "dtype": "FLOAT",
+            "shape": [
+              "Addinput.256_dim_0",
+              512,
+              "Conv2701_dim_2",
+              "Conv2701_dim_3"
+            ]
+          },
+          {
+            "name": "input.284",
+            "dtype": "FLOAT",
+            "shape": [
+              "Addinput.284_dim_0",
+              512,
+              "Conv2701_dim_2",
+              "Conv2701_dim_3"
+            ]
+          },
+          {
+            "name": "input.292",
+            "dtype": "FLOAT",
+            "shape": [
+              "Convinput.292_dim_0",
+              256,
+              "Conv2701_dim_2",
+              "Conv2701_dim_3"
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 17
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "retinaface_10g.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": "app/models/retinaface_10g.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 16926877,
+      "sha256": "808399c3d0b40ed340634ed590ae564a7caa09e5659916923a95d4470b54ff5a",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "detector",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "input",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              3,
+              "?",
+              "?"
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "0",
+            "dtype": "FLOAT",
+            "shape": [
+              12800,
+              1
+            ]
+          },
+          {
+            "name": "1",
+            "dtype": "FLOAT",
+            "shape": [
+              3200,
+              1
+            ]
+          },
+          {
+            "name": "2",
+            "dtype": "FLOAT",
+            "shape": [
+              800,
+              1
+            ]
+          },
+          {
+            "name": "3",
+            "dtype": "FLOAT",
+            "shape": [
+              12800,
+              4
+            ]
+          },
+          {
+            "name": "4",
+            "dtype": "FLOAT",
+            "shape": [
+              3200,
+              4
+            ]
+          },
+          {
+            "name": "5",
+            "dtype": "FLOAT",
+            "shape": [
+              800,
+              4
+            ]
+          },
+          {
+            "name": "6",
+            "dtype": "FLOAT",
+            "shape": [
+              12800,
+              10
+            ]
+          },
+          {
+            "name": "7",
+            "dtype": "FLOAT",
+            "shape": [
+              3200,
+              10
+            ]
+          },
+          {
+            "name": "8",
+            "dtype": "FLOAT",
+            "shape": [
+              800,
+              10
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 15
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "retinaface_r50.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": "app/models/retinaface_r50.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 109110500,
+      "sha256": "ea3f7d12894980d52d3fd7f3f5cab463d48e9cfbcc06f40616bdeeab3e3f31d1",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "detector",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "input",
+            "dtype": "FLOAT",
+            "shape": [
+              "b",
+              3,
+              "h",
+              "w"
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "loc",
+            "dtype": "FLOAT",
+            "shape": [
+              "b",
+              "n",
+              "Concatloc_dim_2"
+            ]
+          },
+          {
+            "name": "conf",
+            "dtype": "FLOAT",
+            "shape": [
+              "b",
+              "n",
+              "Softmaxconf_dim_2"
+            ]
+          },
+          {
+            "name": "landms",
+            "dtype": "FLOAT",
+            "shape": [
+              "b",
+              "n",
+              "Concatlandms_dim_2"
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 12
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "w600k_mbf.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": "app/models/w600k_mbf.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 13616099,
+      "sha256": "9cc6e4a75f0e2bf0b1aed94578f144d15175f357bdc05e815e5c4a02b319eb4f",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "recognizer",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "input.1",
+            "dtype": "FLOAT",
+            "shape": [
+              "None",
+              3,
+              112,
+              112
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "516",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              512
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 11
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "xseg.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": "app/models/xseg.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 70327737,
+      "sha256": "0b57328efcb839d85973164b617ceee9dfe6cfcb2c82e8a033bba9f4f09b27e5",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "parser",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "xseg_input:0",
+            "dtype": "FLOAT",
+            "shape": [
+              "unk__1491",
+              256,
+              256,
+              3
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "xseg_output:0",
+            "dtype": "FLOAT",
+            "shape": [
+              "unk__1492",
+              256,
+              256,
+              1
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 17
+          },
+          {
+            "domain": "ai.onnx.ml",
+            "version": 2
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "xseg_3.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": "app/models/xseg_3.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 70327709,
+      "sha256": "48ccd7e8541e159a5a754ec9e62df2f12065f7df8f9af842c1750342c6533559",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "parser",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "input",
+            "dtype": "FLOAT",
+            "shape": [
+              "unk__1491",
+              256,
+              256,
+              3
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "output",
+            "dtype": "FLOAT",
+            "shape": [
+              "unk__1492",
+              256,
+              256,
+              1
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 17
+          },
+          {
+            "domain": "ai.onnx.ml",
+            "version": 2
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "yoloface_8n.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": "app/models/yoloface_8n.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 12659761,
+      "sha256": "821cdbb1e65fbbabdde7dd0933f754797a343e56fd962729c61ffcefcd135929",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "detector",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "input",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              3,
+              640,
+              640
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "output",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              20,
+              8400
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 15
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "rd64-uni-refined.pth",
+      "locator": {
+        "scope": "repository",
+        "path": "app/models/CLIP/rd64-uni-refined.pth"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 4720707,
+      "sha256": "a4956f9a7978a75630b08c9d6ec075b7c51cf43b4751b686e3a011d4012ddc9d",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "other",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "UNKNOWN",
+        "reason": "Not deserialized; pickle execution is forbidden during discovery"
+      }
+    },
+    {
+      "name": "CodeFormerv0.1.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": "app/models/CodeFormer/CodeFormerv0.1.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 376821951,
+      "sha256": "9aa48fc4b21224d85784c9a58885201284ec8e590b988126db2c07495b421d36",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "restorer",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "x",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              3,
+              512,
+              512
+            ]
+          },
+          {
+            "name": "w",
+            "dtype": "DOUBLE",
+            "shape": []
+          }
+        ],
+        "outputs": [
+          {
+            "name": "y",
+            "dtype": "FLOAT",
+            "shape": [
+              "Convy_dim_0",
+              3,
+              "Convy_dim_2",
+              "Convy_dim_3"
+            ]
+          },
+          {
+            "name": "logits",
+            "dtype": "FLOAT",
+            "shape": [
+              "Transposelogits_dim_0",
+              "Transposelogits_dim_1",
+              1024
+            ]
+          },
+          {
+            "name": "style_feat",
+            "dtype": "FLOAT",
+            "shape": [
+              "Convstyle_feat_dim_0",
+              256,
+              "Convy_dim_2",
+              "Convy_dim_3"
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 11
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "codeformer.fp16.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": "app/models/CodeFormer/codeformer.fp16.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 188576500,
+      "sha256": "5414b2c989eb93feb7b5bccd22a1a9f3842a127411932663d03884af140a48b6",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "restorer",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "x",
+            "dtype": "FLOAT16",
+            "shape": [
+              "batch",
+              3,
+              512,
+              512
+            ]
+          },
+          {
+            "name": "w",
+            "dtype": "DOUBLE",
+            "shape": []
+          }
+        ],
+        "outputs": [
+          {
+            "name": "y",
+            "dtype": "FLOAT16",
+            "shape": [
+              "batch",
+              3,
+              "Convy_dim_2",
+              "Convy_dim_3"
+            ]
+          },
+          {
+            "name": "logits",
+            "dtype": "FLOAT16",
+            "shape": [
+              "Transposelogits_dim_0",
+              "Transposelogits_dim_1",
+              1024
+            ]
+          },
+          {
+            "name": "style_feat",
+            "dtype": "FLOAT16",
+            "shape": [
+              "Convstyle_feat_dim_0",
+              256,
+              "Convy_dim_2",
+              "Convy_dim_3"
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 11
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "RealESRGAN_x4plus_anime_6B.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": "app/models/Frame/RealESRGAN_x4plus_anime_6B.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 17906556,
+      "sha256": "2648cab4c4343541c1aa291c6754e9e8edbe7a813fffc2a677423dd12cb6b7f7",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "other",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "image.1",
+            "dtype": "FLOAT",
+            "shape": [
+              "image.1_dim_0",
+              3,
+              "image.1_dim_2",
+              "image.1_dim_3"
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "image",
+            "dtype": "FLOAT",
+            "shape": [
+              "num_batch",
+              3,
+              "height",
+              "width"
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 13
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "clear_reality_x4.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": "app/models/Frame/clear_reality_x4.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 1718947,
+      "sha256": "bbce9d5a653281cfae07788d620bd4ec45712709bdf6349a06a893159efd97ce",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "other",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "input",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch_size",
+              3,
+              "height",
+              "width"
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "output",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch_size",
+              3,
+              "height",
+              "width"
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 17
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "deoldify_artistic.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": "app/models/Frame/deoldify_artistic.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 255024891,
+      "sha256": "be026e17c47c85527b3084cacad352f7ca0e021c33aa827062c5997ebe72c61f",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "other",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "input",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              3,
+              "height",
+              "width"
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "output",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              3,
+              "height",
+              "width"
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 12
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "deoldify_stable.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": "app/models/Frame/deoldify_stable.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 873359997,
+      "sha256": "98d69dbecde018fe3d630a35ac850ac590b23e359c8349d8404b467bbfe4a0b9",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "other",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "input",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              3,
+              "height",
+              "width"
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "output",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              3,
+              "height",
+              "width"
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 12
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "isnet-general-use.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": "app/models/Frame/isnet-general-use.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 178648008,
+      "sha256": "60920e99c45464f2ba57bee2ad08c919a52bbf852739e96947fbb4358c0d964a",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "other",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "input_image",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              3,
+              1024,
+              1024
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "output_image",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              1,
+              1024,
+              1024
+            ]
+          },
+          {
+            "name": "1890",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              1,
+              1024,
+              1024
+            ]
+          },
+          {
+            "name": "1891",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              1,
+              1024,
+              1024
+            ]
+          },
+          {
+            "name": "1892",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              1,
+              1024,
+              1024
+            ]
+          },
+          {
+            "name": "1893",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              1,
+              1024,
+              1024
+            ]
+          },
+          {
+            "name": "1894",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              1,
+              1024,
+              1024
+            ]
+          },
+          {
+            "name": "input.1252",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              64,
+              512,
+              512
+            ]
+          },
+          {
+            "name": "input.1088",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              64,
+              256,
+              256
+            ]
+          },
+          {
+            "name": "input.948",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              128,
+              128,
+              128
+            ]
+          },
+          {
+            "name": "input.832",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              256,
+              64,
+              64
+            ]
+          },
+          {
+            "name": "input.740",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              512,
+              32,
+              32
+            ]
+          },
+          {
+            "name": "input.656",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              512,
+              16,
+              16
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 13
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "lsdir_x4.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": "app/models/Frame/lsdir_x4.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 66938051,
+      "sha256": "2c0073607ab48e91a56a180f6928597362fef9f0924cc91325aab8ce8cf1032c",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "other",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "input",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch_size",
+              3,
+              "height",
+              "width"
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "output",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch_size",
+              "Convoutput_dim_1",
+              "height",
+              "width"
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 14
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "nomos8k_sc_x4.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": "app/models/Frame/nomos8k_sc_x4.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 66938051,
+      "sha256": "2331f1186d98b65564b84e0d84f1bf4b932db4071f1683311adcec4666e5046b",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "other",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "input",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch_size",
+              3,
+              "height",
+              "width"
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "output",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch_size",
+              "Convoutput_dim_1",
+              "height",
+              "width"
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 14
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "real_esrgan_x2.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": "app/models/Frame/real_esrgan_x2.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 69524246,
+      "sha256": "28e6925e46301ba7a4cbfeaae41cefe043dd5941423094a3db8b176d837bf1dd",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "other",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "input",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch_size",
+              3,
+              "height",
+              "width"
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "output",
+            "dtype": "FLOAT",
+            "shape": [
+              "Convoutput_dim_0",
+              3,
+              "Convoutput_dim_2",
+              "Convoutput_dim_3"
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 10
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "real_esrgan_x4.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": "app/models/Frame/real_esrgan_x4.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 69464831,
+      "sha256": "4139cc1585d04851ccd41570b0f76e775c96e064ca292d5372b6031704dda0d3",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "other",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "input",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch_size",
+              3,
+              "height",
+              "width"
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "output",
+            "dtype": "FLOAT",
+            "shape": [
+              "Convoutput_dim_0",
+              3,
+              "Convoutput_dim_2",
+              "Convoutput_dim_3"
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 10
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "realesr-general-x4v3.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": "app/models/Frame/realesr-general-x4v3.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 4871181,
+      "sha256": "09b757accd747d7e423c1d352b3e8f23e77cc5742d04bae958d4eb8082b76fa4",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "other",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "input",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch_size",
+              3,
+              "height",
+              "width"
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "output",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch_size",
+              3,
+              "height",
+              "width"
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 14
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "rife49_ensemble_True_scale_1_sim.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": "app/models/Frame/rife49_ensemble_True_scale_1_sim.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 21458882,
+      "sha256": "76e4cef9ab42fa7dd4e8f6e4aba47462051e3faa969e4bca6479784fbab0ac6f",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "other",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "img0",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              3,
+              "height",
+              "width"
+            ]
+          },
+          {
+            "name": "img1",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              3,
+              "height",
+              "width"
+            ]
+          },
+          {
+            "name": "timestep",
+            "dtype": "FLOAT",
+            "shape": [
+              1
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "output",
+            "dtype": "FLOAT",
+            "shape": [
+              "Sliceoutput_dim_0",
+              "Sliceoutput_dim_1",
+              "height",
+              "width"
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 19
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "span_kendata_x4.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": "app/models/Frame/span_kendata_x4.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 1718947,
+      "sha256": "7478c40953a5902efd785ef1fe8e07a8bb7e7ee9b1977273550813ceefae6348",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "other",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "input",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch_size",
+              3,
+              "width",
+              "height"
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "output",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch_size",
+              3,
+              "width",
+              "height"
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 17
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "ultra_sharp_2_x4.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": "app/models/Frame/ultra_sharp_2_x4.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 51800517,
+      "sha256": "6c0201e3403745f39a9aa5273c50ed084cf6c4af5a71a4654c30252cf19bf0a5",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "other",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "input",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch_size",
+              3,
+              "width",
+              "height"
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "output",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch_size",
+              3,
+              "width",
+              "height"
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 17
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "1k3d68.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": "app/models/buffalo_l/1k3d68.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 143607619,
+      "sha256": "df5c06b8a0c12e422b2ed8947b8869faa4105387f199c477af038aa01f9a45cc",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "other",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "data",
+            "dtype": "FLOAT",
+            "shape": [
+              "None",
+              3,
+              192,
+              192
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "fc1",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              3309
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 12
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "2d106det.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": "app/models/buffalo_l/2d106det.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 5030888,
+      "sha256": "f001b856447c413801ef5c42091ed0cd516fcd21f2d6b79635b1e733a7109dbf",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "other",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "data",
+            "dtype": "FLOAT",
+            "shape": [
+              "None",
+              3,
+              192,
+              192
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "fc1",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              212
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 12
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "det_10g.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": "app/models/buffalo_l/det_10g.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 16923827,
+      "sha256": "5838f7fe053675b1c7a08b633df49e7af5495cee0493c7dcf6697200b85b5b91",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "detector",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "input.1",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              3,
+              "?",
+              "?"
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "448",
+            "dtype": "FLOAT",
+            "shape": [
+              12800,
+              1
+            ]
+          },
+          {
+            "name": "471",
+            "dtype": "FLOAT",
+            "shape": [
+              3200,
+              1
+            ]
+          },
+          {
+            "name": "494",
+            "dtype": "FLOAT",
+            "shape": [
+              800,
+              1
+            ]
+          },
+          {
+            "name": "451",
+            "dtype": "FLOAT",
+            "shape": [
+              12800,
+              4
+            ]
+          },
+          {
+            "name": "474",
+            "dtype": "FLOAT",
+            "shape": [
+              3200,
+              4
+            ]
+          },
+          {
+            "name": "497",
+            "dtype": "FLOAT",
+            "shape": [
+              800,
+              4
+            ]
+          },
+          {
+            "name": "454",
+            "dtype": "FLOAT",
+            "shape": [
+              12800,
+              10
+            ]
+          },
+          {
+            "name": "477",
+            "dtype": "FLOAT",
+            "shape": [
+              3200,
+              10
+            ]
+          },
+          {
+            "name": "500",
+            "dtype": "FLOAT",
+            "shape": [
+              800,
+              10
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 11
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "genderage.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": "app/models/buffalo_l/genderage.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 1322532,
+      "sha256": "4fde69b1c810857b88c64a335084f1c3fe8f01246c9a191b48c7bb756d6652fb",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "other",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "data",
+            "dtype": "FLOAT",
+            "shape": [
+              "None",
+              3,
+              96,
+              96
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "fc1",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              3
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 12
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "w600k_r50.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": "app/models/buffalo_l/w600k_r50.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 174383860,
+      "sha256": "4c06341c33c2ca1f86781dab0e829f88ad5b64be9fba56e56bc9ebdefc619e43",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "recognizer",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "input.1",
+            "dtype": "FLOAT",
+            "shape": [
+              "None",
+              3,
+              112,
+              112
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "683",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              512
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 11
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "1k3d68_trt_precision_surgeon_v2_fp16.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": "app/models/trt_cache/surgical/1k3d68_trt_precision_surgeon_v2_fp16.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 108651744,
+      "sha256": "57b01f03442ad0793997f497f7c88b9f5a8911173ba229fa78be7d4ca6d76d12",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "other",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "data",
+            "dtype": "FLOAT",
+            "shape": [
+              "None",
+              3,
+              192,
+              192
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "fc1",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              3309
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 12
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "2d106det_surgical.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": "app/models/trt_cache/surgical/2d106det_surgical.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 3338656,
+      "sha256": "075e2a935dbfe397dffcfd42c1fbe1711089ddfe841b50e2d7389bb2b5116a90",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "other",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "data",
+            "dtype": "FLOAT",
+            "shape": [
+              "None",
+              3,
+              192,
+              192
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "fc1",
+            "dtype": "FLOAT16",
+            "shape": [
+              1,
+              212
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 12
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "2d106det_trt_precision_surgeon_v2_fp16.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": "app/models/trt_cache/surgical/2d106det_trt_precision_surgeon_v2_fp16.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 3338543,
+      "sha256": "e88eacf9a92e3b00656781613fb971b17ba55dae96529d8817c5345171676ccc",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "other",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "data",
+            "dtype": "FLOAT",
+            "shape": [
+              "None",
+              3,
+              192,
+              192
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "fc1",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              212
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 12
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "xseg_trt_precision_surgeon_v2_fp16.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": "app/models/trt_cache/surgical/xseg_trt_precision_surgeon_v2_fp16.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 35249619,
+      "sha256": "1b6017006f9433020a204cc1b467bef62c4dfa4384c5d5234adbeeb160657f03",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "parser",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "xseg_input:0",
+            "dtype": "FLOAT",
+            "shape": [
+              "unk__1491",
+              256,
+              256,
+              3
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "xseg_output:0",
+            "dtype": "FLOAT",
+            "shape": [
+              "unk__1492",
+              256,
+              256,
+              1
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 17
+          },
+          {
+            "domain": "ai.onnx.ml",
+            "version": 2
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "1k3d68.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": "models/buffalo_l/1k3d68.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 143607619,
+      "sha256": "df5c06b8a0c12e422b2ed8947b8869faa4105387f199c477af038aa01f9a45cc",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "other",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "data",
+            "dtype": "FLOAT",
+            "shape": [
+              "None",
+              3,
+              192,
+              192
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "fc1",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              3309
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 12
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "2d106det.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": "models/buffalo_l/2d106det.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 5030888,
+      "sha256": "f001b856447c413801ef5c42091ed0cd516fcd21f2d6b79635b1e733a7109dbf",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "other",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "data",
+            "dtype": "FLOAT",
+            "shape": [
+              "None",
+              3,
+              192,
+              192
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "fc1",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              212
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 12
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "det_10g.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": "models/buffalo_l/det_10g.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 16923827,
+      "sha256": "5838f7fe053675b1c7a08b633df49e7af5495cee0493c7dcf6697200b85b5b91",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "detector",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "input.1",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              3,
+              "?",
+              "?"
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "448",
+            "dtype": "FLOAT",
+            "shape": [
+              12800,
+              1
+            ]
+          },
+          {
+            "name": "471",
+            "dtype": "FLOAT",
+            "shape": [
+              3200,
+              1
+            ]
+          },
+          {
+            "name": "494",
+            "dtype": "FLOAT",
+            "shape": [
+              800,
+              1
+            ]
+          },
+          {
+            "name": "451",
+            "dtype": "FLOAT",
+            "shape": [
+              12800,
+              4
+            ]
+          },
+          {
+            "name": "474",
+            "dtype": "FLOAT",
+            "shape": [
+              3200,
+              4
+            ]
+          },
+          {
+            "name": "497",
+            "dtype": "FLOAT",
+            "shape": [
+              800,
+              4
+            ]
+          },
+          {
+            "name": "454",
+            "dtype": "FLOAT",
+            "shape": [
+              12800,
+              10
+            ]
+          },
+          {
+            "name": "477",
+            "dtype": "FLOAT",
+            "shape": [
+              3200,
+              10
+            ]
+          },
+          {
+            "name": "500",
+            "dtype": "FLOAT",
+            "shape": [
+              800,
+              10
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 11
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "genderage.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": "models/buffalo_l/genderage.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 1322532,
+      "sha256": "4fde69b1c810857b88c64a335084f1c3fe8f01246c9a191b48c7bb756d6652fb",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "other",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "data",
+            "dtype": "FLOAT",
+            "shape": [
+              "None",
+              3,
+              96,
+              96
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "fc1",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              3
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 12
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "w600k_r50.onnx",
+      "locator": {
+        "scope": "repository",
+        "path": "models/buffalo_l/w600k_r50.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 174383860,
+      "sha256": "4c06341c33c2ca1f86781dab0e829f88ad5b64be9fba56e56bc9ebdefc619e43",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "recognizer",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "input.1",
+            "dtype": "FLOAT",
+            "shape": [
+              "None",
+              3,
+              112,
+              112
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "683",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              512
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 11
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "ViT-B-16.pt",
+      "locator": {
+        "scope": "user_cache",
+        "path": "clip/ViT-B-16.pt"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 350837078,
+      "sha256": "5806e77cd80f8b59890b7e101eabd078d9fb84e6937f9e85e4ecb61988df416f",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "other",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "UNKNOWN",
+        "reason": "Not deserialized; pickle execution is forbidden during discovery"
+      }
+    },
+    {
+      "name": "hififace_unofficial_256.fp16.onnx",
+      "locator": {
+        "scope": "user_cache",
+        "path": "roop-ultimate/trt_cache/fp16_models/hififace_unofficial_256.fp16.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 101951610,
+      "sha256": "a8f0ae6c2d174beed5e182f1a6403ce335b86615c7d9893be63a35d90c437c9f",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "swapper",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "target",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch_size",
+              3,
+              256,
+              256
+            ]
+          },
+          {
+            "name": "source",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch_size",
+              512
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "output",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch_size",
+              3,
+              256,
+              256
+            ]
+          },
+          {
+            "name": "mask",
+            "dtype": "FLOAT",
+            "shape": [
+              "batch_size",
+              1,
+              256,
+              256
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 15
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "alexnet-owt-7be5be79.pth",
+      "locator": {
+        "scope": "user_cache",
+        "path": "torch/hub/checkpoints/alexnet-owt-7be5be79.pth"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 244408911,
+      "sha256": "7be5be791159472b1fbf3c69796f7cb30dca7ad8466c2df70058c37116cdee02",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "other",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "UNKNOWN",
+        "reason": "Not deserialized; pickle execution is forbidden during discovery"
+      }
+    },
+    {
+      "name": "1k3d68.onnx",
+      "locator": {
+        "scope": "insightface_cache",
+        "path": "models/buffalo_l/1k3d68.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 143607619,
+      "sha256": "df5c06b8a0c12e422b2ed8947b8869faa4105387f199c477af038aa01f9a45cc",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "other",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "data",
+            "dtype": "FLOAT",
+            "shape": [
+              "None",
+              3,
+              192,
+              192
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "fc1",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              3309
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 12
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "2d106det.onnx",
+      "locator": {
+        "scope": "insightface_cache",
+        "path": "models/buffalo_l/2d106det.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 5030888,
+      "sha256": "f001b856447c413801ef5c42091ed0cd516fcd21f2d6b79635b1e733a7109dbf",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "other",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "data",
+            "dtype": "FLOAT",
+            "shape": [
+              "None",
+              3,
+              192,
+              192
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "fc1",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              212
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 12
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "det_10g.onnx",
+      "locator": {
+        "scope": "insightface_cache",
+        "path": "models/buffalo_l/det_10g.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 16923827,
+      "sha256": "5838f7fe053675b1c7a08b633df49e7af5495cee0493c7dcf6697200b85b5b91",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "detector",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "input.1",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              3,
+              "?",
+              "?"
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "448",
+            "dtype": "FLOAT",
+            "shape": [
+              12800,
+              1
+            ]
+          },
+          {
+            "name": "471",
+            "dtype": "FLOAT",
+            "shape": [
+              3200,
+              1
+            ]
+          },
+          {
+            "name": "494",
+            "dtype": "FLOAT",
+            "shape": [
+              800,
+              1
+            ]
+          },
+          {
+            "name": "451",
+            "dtype": "FLOAT",
+            "shape": [
+              12800,
+              4
+            ]
+          },
+          {
+            "name": "474",
+            "dtype": "FLOAT",
+            "shape": [
+              3200,
+              4
+            ]
+          },
+          {
+            "name": "497",
+            "dtype": "FLOAT",
+            "shape": [
+              800,
+              4
+            ]
+          },
+          {
+            "name": "454",
+            "dtype": "FLOAT",
+            "shape": [
+              12800,
+              10
+            ]
+          },
+          {
+            "name": "477",
+            "dtype": "FLOAT",
+            "shape": [
+              3200,
+              10
+            ]
+          },
+          {
+            "name": "500",
+            "dtype": "FLOAT",
+            "shape": [
+              800,
+              10
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 11
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "genderage.onnx",
+      "locator": {
+        "scope": "insightface_cache",
+        "path": "models/buffalo_l/genderage.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 1322532,
+      "sha256": "4fde69b1c810857b88c64a335084f1c3fe8f01246c9a191b48c7bb756d6652fb",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "other",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "data",
+            "dtype": "FLOAT",
+            "shape": [
+              "None",
+              3,
+              96,
+              96
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "fc1",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              3
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 12
+          }
+        ],
+        "external_data": []
+      }
+    },
+    {
+      "name": "w600k_r50.onnx",
+      "locator": {
+        "scope": "insightface_cache",
+        "path": "models/buffalo_l/w600k_r50.onnx"
+      },
+      "state": "VERIFIED_LOCAL",
+      "size_bytes": 174383860,
+      "sha256": "4c06341c33c2ca1f86781dab0e829f88ad5b64be9fba56e56bc9ebdefc619e43",
+      "evidence": "Local file bytes read and SHA-256 computed; not a download checksum",
+      "family_hint": "recognizer",
+      "family_evidence": "Filename heuristic only",
+      "provenance_state": "UNKNOWN",
+      "license_state": "UNKNOWN",
+      "commercial_permission": "UNKNOWN",
+      "inference_state": "UNKNOWN",
+      "graph": {
+        "state": "VERIFIED_LOCAL",
+        "evidence": "ONNX graph metadata parsed locally; no inference",
+        "onnx_version": "1.16.0",
+        "inputs": [
+          {
+            "name": "input.1",
+            "dtype": "FLOAT",
+            "shape": [
+              "None",
+              3,
+              112,
+              112
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "name": "683",
+            "dtype": "FLOAT",
+            "shape": [
+              1,
+              512
+            ]
+          }
+        ],
+        "opsets": [
+          {
+            "domain": "",
+            "version": 11
+          }
+        ],
+        "external_data": []
+      }
+    }
+  ],
+  "family_counts": {
+    "animation": 11,
+    "detector": 11,
+    "other": 28,
+    "parser": 8,
+    "recognizer": 9,
+    "restorer": 13,
+    "swapper": 15
+  }
+}

@@ -1,0 +1,12 @@
+#!/bin/sh
+set -eu
+root="$(git rev-parse --show-toplevel)"
+if [ -x "$root/roop_3d/.venv/Scripts/python.exe" ]; then
+  py="$root/roop_3d/.venv/Scripts/python.exe"
+elif [ -x "$root/roop_3d/.venv/bin/python" ]; then
+  py="$root/roop_3d/.venv/bin/python"
+else
+  echo "Roop 3D: install the isolated .venv before committing." >&2
+  exit 1
+fi
+"$py" -B "$root/roop_3d/tools/git_guard.py" --staged --branch

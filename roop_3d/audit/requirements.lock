@@ -1,0 +1,6 @@
+# Optional ONNX metadata-inspection toolchain, observed on this host.
+# The isolation verifier itself requires only Python >=3.10 standard library.
+# No inference, CUDA, diffusion, or service dependency is installed by Stage 00.
+numpy==1.26.4
+onnx==1.16.0
+protobuf==7.36.2

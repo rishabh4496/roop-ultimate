@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools==80.9.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "roop-3d"
+version = "0.1.0"
+description = "Isolated local Roop 3D service"
+requires-python = ">=3.10,<3.13"
+dependencies = [
+  "fastapi==0.142.2", "uvicorn==0.54.0", "pydantic==2.10.6",
+  "av==17.1.0", "numpy==1.26.4", "opencv-python-headless==4.11.0.86",
+  "onnxruntime-gpu==1.23.2; platform_system != 'Darwin'",
+  "onnxruntime==1.23.2; platform_system == 'Darwin'",
+  "PyYAML==6.0.3", "httpx==0.28.1",
+]
+
+[project.optional-dependencies]
+test = ["pytest==9.1.1", "onnx==1.16.0"]
+diffusion = ["diffusers==0.30.2"]
+trt = ["tensorrt-cu12==10.9.0.34; platform_system != 'Darwin'"]
+flame = ["smplx==0.1.28"]
+
+[tool.setuptools]
+packages = ["roop_3d", "roop_3d.audit", "roop_3d.core", "roop_3d.server", "roop_3d.models", "roop_3d.faceset", "roop_3d.media", "roop_3d.engine", "roop_3d.engine.detection", "roop_3d.engine.volumetric", "roop_3d.engine.diffusion", "roop_3d.engine.audio_sync", "roop_3d.reconstruction", "roop_3d.compositor", "roop_3d.bridges", "roop_3d.jobs", "roop_3d.tools"]
+package-dir = {"roop_3d" = "."}
+
+[tool.setuptools.package-data]
+roop_3d = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+cache_dir = ".pytest_cache"
+addopts = "--import-mode=importlib --basetemp=roop_3d/.runtime/pytest"

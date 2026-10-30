@@ -1,0 +1,6 @@
+{
+  "base_commit": "8ffc2f95bcfd918f37035ca3ab95d79b75504973",
+  "branch_prefix": "roop3d/",
+  "allowed_paths": ["roop_3d/**", "roop_3d_ui/**", "start_roop3d.js"],
+  "policy": "Reject protected legacy source and generated artifacts in staged changes and branch pushes"
+}

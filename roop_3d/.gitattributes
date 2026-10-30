@@ -1,0 +1,2 @@
+# Keep portable Git hook interpreters executable after Windows checkouts.
+.githooks/* text eol=lf
