@@ -37,3 +37,8 @@ def test_lut_filter_only_when_baking(tmp_path, bake, expect):
     assert ("lut3d=" in joined) is expect
     if expect:
         assert "interp=tetrahedral" in joined
+
+
+def load_tests(loader, tests, pattern):
+    from tests.unittest_shim import load_tests_for
+    return load_tests_for(globals())
