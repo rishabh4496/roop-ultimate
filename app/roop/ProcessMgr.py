@@ -6735,7 +6735,21 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                                      + _ctx.astype(np.float32) * (1.0 - _cov)
                                      ).astype(np.uint8)
                     except Exception as e:
-                        bar_write(f"[ProcessMgr] enhancer re-align failed: {e}")
+                        # An InvalidAlignment here is the geometry guard doing its
+                        # job: the face is so turned that its 5 landmarks do not
+                        # fit the enhancer's (stricter) FFHQ template, though they
+                        # fit the swap template. The fallback below (enhance the
+                        # swap crop as-is) is the designed path, so it is counted
+                        # and announced once rather than once per face per frame.
+                        # Anything else is a real fault and still logs every time.
+                        from roop.alignment_safety import InvalidAlignment as _IA
+                        if isinstance(e, _IA):
+                            self._realign_skipped = getattr(self, '_realign_skipped', 0) + 1
+                            if self._realign_skipped == 1:
+                                bar_write(f"[ProcessMgr] enhancer re-align skipped on extreme-pose faces "
+                                          f"({e}); using the swap crop for those (further skips counted, not logged)")
+                        else:
+                            bar_write(f"[ProcessMgr] enhancer re-align failed: {e}")
                         _A, enh_input = None, fake_frame
 
                 # `self_excluding` means the processor routes every session
