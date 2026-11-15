@@ -589,7 +589,7 @@ class EnhancerStabilizer:
 
         matched = (best is not None
                    and (track_id is not None or best_d <= self.match_scale * size)
-                   and (t - best['last_t']) <= self.max_missing
+                   and 0 < (t - best['last_t']) <= self.max_missing
                    and best['prev'].shape == crop.shape)
         if matched:
             tr = best
@@ -604,6 +604,14 @@ class EnhancerStabilizer:
                 a = max(a, 0.5)
                 tr['age'] = 0
 
+            from roop.unified_matte import yaw_from_kps
+            yaw = yaw_from_kps(kps)
+            yaw_delta = abs(yaw - tr.get('yaw', yaw))
+            shape_motion = float(np.max(np.linalg.norm(
+                (kps-centroid) / size - tr.get('shape', (kps-centroid)/size), axis=1)))
+            a = max(a, min(1., yaw_delta / 8. + shape_motion * 5.))
+            tr['yaw'] = yaw
+            tr['shape'] = (kps-centroid)/size
             out = a * crop.astype(np.float32) + (1.0 - a) * tr['prev']
             tr['prev'] = out
             tr['centroid'] = centroid
@@ -611,8 +619,11 @@ class EnhancerStabilizer:
             self.tracks = [x for x in self.tracks if (t - x['last_t']) <= self.max_missing]
             return np.clip(out, 0, 255).astype(np.uint8)
         # new / unmatched track — pass through and seed.
+        from roop.unified_matte import yaw_from_kps
         self.tracks.append({'prev': crop.astype(np.float32), 'centroid': centroid, 'last_t': t,
-                            'track_id': track_id, 'age': 0})
+                            'track_id': track_id, 'age': 0,
+                            'yaw': yaw_from_kps(kps),
+                            'shape': (kps-centroid)/size})
         return crop
 
 
@@ -708,7 +719,7 @@ class MaskStabilizer(EnhancerStabilizer):
                       "flow warp declined for this face")
             return None
 
-    def apply(self, mask, kps, t, guide=None, track_id=None):
+    def apply(self, mask, kps, t, guide=None, track_id=None, stream_key=None):
         """`guide` is the aligned crop the mask was computed from (BGR, any
         size). Only read when `flow_warp` is on."""
         if mask is None:
@@ -722,7 +733,8 @@ class MaskStabilizer(EnhancerStabilizer):
         best, best_d = None, float('inf')
         if track_id is not None:
             for tr in self.tracks:
-                if (tr.get('track_id') == track_id
+                if (tr.get('stream_key') == stream_key
+                        and tr.get('track_id') == track_id
                         and (t - tr['last_t']) <= self.max_missing
                         and tr['prev'].shape == mask.shape):
                     best = tr
@@ -730,7 +742,7 @@ class MaskStabilizer(EnhancerStabilizer):
                     break
         else:
             for tr in self.tracks:
-                if tr.get('track_id') is not None:
+                if tr.get('track_id') is not None or tr.get('stream_key') != stream_key:
                     continue
                 d = float(np.linalg.norm(tr['centroid'] - centroid))
                 if d < best_d:
@@ -746,6 +758,10 @@ class MaskStabilizer(EnhancerStabilizer):
             motion = (best_d / t_e) / size
             cutoff = self.base_cutoff + self.motion_beta * motion
             a = _alpha(t_e, cutoff)
+            from roop.unified_matte import yaw_from_kps
+            yaw = yaw_from_kps(kps)
+            a = max(a, min(1., abs(yaw-tr.get('yaw',yaw))/6.))
+            tr['yaw'] = yaw
             current = mask.astype(np.float32)
             previous = tr['prev']
             gray = self._flow_gray(guide)
@@ -797,7 +813,9 @@ class MaskStabilizer(EnhancerStabilizer):
             tr['last_t'] = t
             self.tracks = [x for x in self.tracks if (t - x['last_t']) <= self.max_missing]
             return np.clip(out, 0.0, 1.0).astype(np.float32)
+        from roop.unified_matte import yaw_from_kps
         self.tracks.append({'prev': mask.astype(np.float32), 'centroid': centroid,
                             'last_t': t, 'gray': self._flow_gray(guide),
-                            'track_id': track_id})
+                            'track_id': track_id, 'stream_key': stream_key,
+                            'yaw': yaw_from_kps(kps)})
         return mask

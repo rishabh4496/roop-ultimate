@@ -321,8 +321,12 @@ class OnnxSpecSwapper(BaseFaceSwapper):
 
         if mode.startswith("converted_"):
             converted = self.converter.run(None, {self.converter_input: emb})[0].ravel()
+            converted = np.asarray(converted, dtype=np.float32)
+            if not np.isfinite(converted).all():
+                raise ValueError("identity converter returned nonfinite output")
             if mode == "converted_norm":
-                converted = converted / np.linalg.norm(converted)
+                from roop.alignment_safety import unit_latent
+                converted = unit_latent(converted)
             latent = np.ascontiguousarray(converted.reshape(1, -1).astype(np.float32))
             with self._latent_lock:
                 self._latent_cache[key] = latent
@@ -337,7 +341,8 @@ class OnnxSpecSwapper(BaseFaceSwapper):
         latent = emb / norm
         if mode == "normed_emap" and self.emap is not None:
             latent = np.dot(latent, self.emap)
-            latent /= np.linalg.norm(latent)
+            from roop.alignment_safety import unit_latent
+            latent = unit_latent(latent)
         latent_final = np.ascontiguousarray(latent.astype(np.float32))
         with self._latent_lock:
             self._latent_cache[key] = latent_final

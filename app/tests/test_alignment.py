@@ -68,6 +68,18 @@ class TestProfileAlignment(YawAlignCase):
         for yaw in (70, 75, 80, 85, 90):
             for pitch in (-30, 0, 30):
                 for roll in (-30, 0, 30):
+                    # Exact profile collapses the projected semantic eye/down
+                    # baselines. Reject it rather than assert an arbitrary fit
+                    # is safe merely because the solver returned finite values.
+                    points = project_kps(yaw, pitch, roll)
+                    eye = points[1] - points[0]
+                    down = points[3:].mean(0) - points[:2].mean(0)
+                    cross = eye[0]*down[1] - eye[1]*down[0]
+                    if cross <= .01 * np.linalg.norm(eye) * np.linalg.norm(down):
+                        from roop.alignment_safety import InvalidAlignment
+                        with self.assertRaises(InvalidAlignment):
+                            estimate_norm(points, 512, "arcface")
+                        continue
                     m = estimate_norm(project_kps(yaw, pitch, roll), 512, "arcface")
                     self.assertTrue(np.isfinite(m).all())
                     scale, _ = decompose(m)

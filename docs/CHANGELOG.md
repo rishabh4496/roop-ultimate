@@ -1,3 +1,9 @@
+## 2026-11-16 — audit geometry and single-alpha masking fixes (acceptance pending)
+
+Guarded live five-point fits and consecutive affine scales, unified roll estimation and initial turn confirmation, rejected invalid temporal anchors, and kept explicit frame IDs in worker output. Engine masks remain separate from aligned swap/enhancement content until a single premultiplied zero-border paste with inward feather, yaw-side erosion and strict current support. Color/CDF statistics use interior support; identity converters reject invalid latents. Existing P1 mask-offset/mode regressions pass. No provider, IOBinding, precision, public schema or per-machine config changes.
+
+Per-file record and limits: `.audit/05_changelog.md`. Synthetic footprint leak changed from 7,651 affected pixels to zero. Focused tests pass (123/123); seven light-suite failures reproduce on original HEAD. Real regression render, complete GPU suite, fidelity/performance A/B and 3060 validation remain pending. No throughput or production-readiness claim. Round-robin no-prepass continuity still uses its existing safe bypass.
+
 # Changelog and incident notes
 
 Dated notes on behaviour changes and the incidents behind them, in reverse order. The

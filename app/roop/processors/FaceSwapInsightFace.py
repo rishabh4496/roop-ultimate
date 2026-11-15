@@ -1089,9 +1089,9 @@ class FaceSwapInsightFace():
         for init in reversed(graph.initializer):
             arr = onnx.numpy_helper.to_array(init)
             if arr.ndim == 2 and arr.shape == (512, 512):
-                return arr
+                return arr.astype(np.float32)
         # Fallback: inswapper_128 stores emap as the last initializer.
-        return onnx.numpy_helper.to_array(graph.initializer[-1])
+        return onnx.numpy_helper.to_array(graph.initializer[-1]).astype(np.float32)
 
     def _compute_latent(self, source_face: Face) -> np.ndarray:
         """Prepare the (1, 512) identity vector per the loaded model's contract.
@@ -1117,8 +1117,12 @@ class FaceSwapInsightFace():
                 source_face.embedding, "source face for %s" % self.loaded_model_key)
             converted = self.converter.run(None, {self.converter_input: emb})[0]
             converted = converted.ravel()
+            converted = np.asarray(converted, dtype=np.float32)
+            if not np.isfinite(converted).all():
+                raise ValueError("identity converter returned nonfinite output")
             if mode == "converted_norm":
-                converted = converted / np.linalg.norm(converted)
+                from roop.alignment_safety import unit_latent
+                converted = unit_latent(converted)
             latent = converted.reshape(1, -1).astype(np.float32)
             try:
                 source_face[cache_key] = latent
@@ -1142,7 +1146,8 @@ class FaceSwapInsightFace():
             blob = blob.transpose(2, 0, 1)[None].astype(np.float32)
             def _emb(sess):
                 v = sess.run(None, {sess.get_inputs()[0].name: blob})[0].reshape(-1)
-                return v / (np.linalg.norm(v) or 1.0)
+                from roop.alignment_safety import unit_latent
+                return unit_latent(v)
             # Summed, and deliberately NOT re-normalized afterwards: the sum's
             # magnitude is what carries the appearance/identity balance CSCS was
             # trained with, and normalizing it away measurably flattens it.
@@ -1162,6 +1167,9 @@ class FaceSwapInsightFace():
         latent = get_hyperswap_source_cache().get_latent(
             source_face, model_key=self.loaded_model_key, embedding_mode="normed_emap", emap=self.emap
         )
+        if latent is not None:
+            from roop.alignment_safety import unit_latent
+            latent = unit_latent(latent).reshape(1, -1).astype(np.float32)
         return latent
 
     def _prepare_source_crop(self, source_face: Face) -> np.ndarray:

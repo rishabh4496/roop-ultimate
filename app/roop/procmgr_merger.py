@@ -177,7 +177,7 @@ def _cfg(name, default=0.0):
 
 class MergerMixin:
     # ── the chain ─────────────────────────────────────────────────────────
-    def apply_merger_post(self, face_img, orig_crop, appearance=None):
+    def apply_merger_post(self, face_img, orig_crop, appearance=None, mask=None):
         """Run the enabled merger ops, in DFL's order, on the merged crop.
 
         `face_img` = swapped (and possibly enhanced) crop, `orig_crop` = the
@@ -213,7 +213,7 @@ class MergerMixin:
                 sharp *= _gate
                 clarity *= _gate
             if abs(hist) > _EPS:
-                out = self.apply_hist_match(out, orig_crop, hist)
+                out = self.apply_hist_match(out, orig_crop, hist, mask=mask)
             if abs(degrade) > _EPS:
                 out = self.apply_degrade(out, degrade)
             # After degrade so it re-establishes micro-edges the downscale removed,
@@ -291,7 +291,7 @@ class MergerMixin:
         except cv2.error:
             return face_img
 
-    def apply_hist_match(self, face_img, orig_crop, strength):
+    def apply_hist_match(self, face_img, orig_crop, strength, mask=None):
         """Per-channel histogram (CDF) match toward the original crop.
 
         A 256-entry LUT per channel, so cost is independent of how different
@@ -304,11 +304,26 @@ class MergerMixin:
             return face_img
         s = min(1.0, max(0.0, s))
 
+        sample = ref_sample = None
+        if mask is not None:
+            from roop.unified_matte import interior_mask
+            sample = interior_mask(mask, face_img.shape)
+            ref_sample = interior_mask(mask, orig_crop.shape)
+            if sample.sum() < 32 or ref_sample.sum() < 32:
+                return face_img
+        elif hasattr(self, '_skin_region_mask'):
+            skin = self._skin_region_mask(orig_crop)
+            if skin is not None:
+                from roop.unified_matte import interior_mask
+                sample = interior_mask(skin, face_img.shape)
+                ref_sample = interior_mask(skin, orig_crop.shape)
+                if sample.sum() < 32 or ref_sample.sum() < 32:
+                    sample = ref_sample = None
         matched = np.empty_like(face_img)
         for c in range(3):
             src_c = face_img[:, :, c]
-            src_hist = np.bincount(src_c.ravel(), minlength=256).astype(np.float64)
-            ref_hist = np.bincount(orig_crop[:, :, c].ravel(), minlength=256).astype(np.float64)
+            src_hist = np.bincount(src_c.ravel() if sample is None else src_c[sample], minlength=256).astype(np.float64)
+            ref_hist = np.bincount(orig_crop[:, :, c].ravel() if ref_sample is None else orig_crop[:, :, c][ref_sample], minlength=256).astype(np.float64)
             src_total, ref_total = src_hist.sum(), ref_hist.sum()
             if src_total <= 0 or ref_total <= 0:
                 matched[:, :, c] = src_c

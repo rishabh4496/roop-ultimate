@@ -1613,6 +1613,7 @@ def _upright_remeasure(frame, faces):
             _unrotate_face_coords(c, w, h, angle)
             scored.append((c, tilt))
 
+        claimed = set()
         for i in idxs:
             orig = faces[i]
             ox = (float(orig.bbox[0]) + float(orig.bbox[2])) / 2.0
@@ -1622,6 +1623,8 @@ def _upright_remeasure(frame, faces):
             otilt = face_roll_tilt(orig)
             best, best_d = None, None
             for c, tilt in scored:
+                if id(c) in claimed:
+                    continue
                 cx = (float(c.bbox[0]) + float(c.bbox[2])) / 2.0
                 cy = (float(c.bbox[1]) + float(c.bbox[3])) / 2.0
                 d = float(np.hypot(cx - ox, cy - oy))
@@ -1642,6 +1645,7 @@ def _upright_remeasure(frame, faces):
             no = float(np.linalg.norm(emb_o)) if emb_o is not None else 0.0
             if nc > no + 2.0 or abs(tilt) < abs(otilt) - 5.0 or (abs(tilt) < 65.0 and nc >= no - 0.5):
                 _bp.count('aux.upright_remeasure.replaced')
+                claimed.add(id(cand))
                 faces[i] = cand
     return faces
 
@@ -2575,23 +2579,13 @@ def face_down_axis(face):
     engine emits (align_crop already depends on them) so this still works where
     the landmarks are unavailable.
     """
-    axis_kps = _axis_from_kps(face)
-    axis_68 = _axis_from_68(face)
-    if axis_kps is not None and axis_68 is not None:
-        tilt_kps = _tilt_from_axis(axis_kps)
-        tilt_68 = _tilt_from_axis(axis_68)
-        if tilt_kps is not None and tilt_68 is not None:
-            # If kps detects inverted face (|tilt_kps| > 90) but 68 reports upright (|tilt_68| < 50),
-            # 68 landmark model hallucinated upright landmarks on inverted crop -> trust kps!
-            if abs(tilt_kps) > 90.0 and abs(tilt_68) < 50.0:
-                return axis_kps
-            if abs(tilt_68) > 90.0 and abs(tilt_kps) < 50.0:
-                return axis_68
-            if abs((tilt_kps - tilt_68 + 180.0) % 360.0 - 180.0) > 90.0:
-                return axis_kps if abs(tilt_kps) > 90.0 else axis_68
-    if axis_68 is not None:
-        return axis_68
-    return axis_kps
+    from roop.orientation import roll_from_face
+    roll = roll_from_face(face)
+    if roll is None:
+        return None
+    radians = np.radians(roll)
+    return float(np.sin(radians)), float(np.cos(radians))
+
 
 
 def face_roll_tilt(face):
@@ -3475,7 +3469,8 @@ def swap_template_points(image_size, mode="arcface"):
 
 
 def estimate_norm(lmk, image_size=112, mode="arcface", sar=None):
-    assert lmk.shape == (5, 2)
+    from roop.alignment_safety import landmarks5, affine, InvalidAlignment
+    lmk = landmarks5(lmk)
 
     # Force SimilarityTransform (use_affine = False) for all faces.
     # AffineTransform introduces non-uniform scaling and shearing, which causes
@@ -3491,6 +3486,8 @@ def estimate_norm(lmk, image_size=112, mode="arcface", sar=None):
     except (TypeError, ValueError):
         sar_val = 1.0
 
+    if not np.isfinite(sar_val) or sar_val <= 0:
+        raise InvalidAlignment("invalid sample aspect ratio")
     dst = swap_template_points(image_size, mode)
     tform = trans.AffineTransform() if use_affine else trans.SimilarityTransform()
 
@@ -3500,16 +3497,20 @@ def estimate_norm(lmk, image_size=112, mode="arcface", sar=None):
         # Fit similarity transform in display space to match the square ArcFace template:
         lmk_display = lmk.copy()
         lmk_display[:, 0] *= sar_val
-        tform.estimate(lmk_display, dst)
+        ok = tform.estimate(lmk_display, dst)
+        if ok is False or tform.params is None:
+            raise InvalidAlignment("similarity transform estimation failed")
         M_display = tform.params[0:2, :]
         # Map back to pixel raster space so warpAffine can sample directly from the raster:
         # [x_dst, y_dst]^T = M_display * [x_pixel * sar_val, y_pixel, 1]^T
         M_pixel = M_display.copy()
         M_pixel[:, 0] *= sar_val
-        return M_pixel
+        return affine(M_pixel, lmk, dst, sar_val)
     else:
-        tform.estimate(lmk, dst)
-        return tform.params[0:2, :]
+        ok = tform.estimate(lmk, dst)
+        if ok is False or tform.params is None:
+            raise InvalidAlignment("similarity transform estimation failed")
+        return affine(tform.params[0:2, :], lmk, dst)
 
 
 

@@ -42,7 +42,7 @@ import numpy as np
 # Quarter turns only, matching what apply_rotation can actually do. Sharing the
 # thresholds with face_util would couple this to the estimator it exists to
 # work around, so they are stated here against the RESOLVED roll.
-ROLL_LOWER = 45.0        # below this, a similarity transform handles the tilt
+ROLL_LOWER = 54.5        # below this, a similarity transform handles the tilt
 ROLL_UPPER = 135.0       # above this, a half turn is nearer than a quarter
 
 # How far an observation may sit from the prediction and still be believed.
@@ -331,25 +331,17 @@ def resolve_track_rolls(faces_in_order):
         action = None
         if roll is not None:
             proposed = action_for_roll(roll, prev_action=current_action)
-            if current_action is None:
-                current_action = proposed
-                candidate_action = proposed
-                hold_count = 0
-            elif proposed != current_action:
-                if proposed == candidate_action:
+            if proposed != current_action:
+                if trusted and proposed == candidate_action:
                     hold_count += 1
-                    r_wrap = abs(wrap180(roll))
-                    clear_margin = (
-                        (proposed == "rotate_180" and r_wrap > 155.0) or
-                        (proposed is None and r_wrap < 25.0) or
-                        (proposed in ("rotate_clockwise", "rotate_anticlockwise") and 65.0 < r_wrap < 115.0)
-                    )
-                    if hold_count >= 4 or clear_margin:
-                        current_action = proposed
-                        hold_count = 0
                 else:
                     candidate_action = proposed
-                    hold_count = 1
+                    hold_count = 1 if trusted else 0
+                # Initial actions need the same evidence as later transitions.
+                # A single tilted/outlier frame never seeds a cardinal turn.
+                if hold_count >= 3:
+                    current_action = proposed
+                    hold_count = 0
             else:
                 candidate_action = proposed
                 hold_count = 0

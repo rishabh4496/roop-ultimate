@@ -1083,6 +1083,12 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         # and be read by nobody.
         self._reset_dispatch_tracker()
         self.options = options
+        if hasattr(options, 'swap_mode') and options.swap_mode is not None:
+            from roop.processing_request import normalize_swap_mode
+            try:
+                options.swap_mode = normalize_swap_mode(options.swap_mode)
+            except (KeyError, ValueError, TypeError, AttributeError):
+                pass
         import os
         self.identity_confidence_threshold = float(
             os.environ.get('ROOP_IDENTITY_CONFIDENCE_THRESHOLD',
@@ -1980,7 +1986,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 self._runtime_worker_exit(threadindex)
                 while True:
                     try:
-                        self.processed_queue[threadindex].put((True, resimg), timeout=0.5)
+                        self.processed_queue[threadindex].put((True, (frame_idx, resimg)), timeout=0.5)
                         break
                     except _QueueFull:
                         if not roop.globals.processing:
@@ -2006,9 +2012,12 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                             item = q.get_nowait()
                         except _QueueEmpty:
                             break
-                        if (isinstance(item, tuple) and len(item) > 1
-                                and item[1] is not None):
-                            pause_controller.pending_output(-1)
+                        if isinstance(item, tuple) and len(item) > 1:
+                            payload = item[1]
+                            if isinstance(payload, tuple) and len(payload) == 2:
+                                payload = payload[1]
+                            if payload is not None:
+                                pause_controller.pending_output(-1)
             except Exception as _degrade_error:
                 _swallowed("roop/ProcessMgr.py:1723", _degrade_error, "fallback continued")
                 pass
@@ -2032,6 +2041,12 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                         if not roop.globals.processing:
                             return
                 nextindex += 1
+                if isinstance(frame, tuple) and len(frame) == 2:
+                    emitted_index, frame = frame
+                    if emitted_index != nextindex - 1:
+                        if frame is not None:
+                            pause_controller.pending_output(-1)
+                        raise RuntimeError(f'frame queue metadata mismatch: expected {nextindex-1}, got {emitted_index}')
                 if frame is not None:
                     try:
                         with _prof('encode'):
@@ -3893,6 +3908,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         # up its precomputed full-frame mask for this frame from inside process_mask
         # (set here because every worker thread enters swap_faces once per frame).
         self._tls.frame_idx = frame_idx
+        self._tls.alignment_refusals = 0
         # The denominator for 'frames with no face detected at all'. Ticked here,
         # beside the only place that bucket can be hit, so both counts always
         # describe the same population of frames.
@@ -5188,6 +5204,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 del face
             faces.clear()
 
+        num_faces_found = max(0, num_faces_found - getattr(self._tls, 'alignment_refusals', 0))
         if roop.globals.vr_mode and num_faces_found % 2 > 0:
             num_faces_found = 0
             return num_faces_found, frame
@@ -5679,6 +5696,8 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         # observation so the later identity-detail pass cannot write source
         # marks through an occluder or a manually excluded region.
         _img_mask = None
+        _unified_keep = None
+        _skin_colour_mask = None
         # inputface is assigned after pose computation below (supports source bank)
         inputface = None
         # Cleared per face: the swap net's mask is stashed per THREAD, so without
@@ -5763,8 +5782,32 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             crop_dst = get_crop_buffer(subsample_size)
             # The composed paste affine includes inverse roll, so alpha blending
             # returns to original target coordinates without a second resample.
-            aligned_img, M, _alignment = canonicalize_face_alignment(
-                plate, target_face, subsample_size, swap_template, dst=crop_dst)
+            from roop.alignment_safety import InvalidAlignment, TrackGeometry
+            try:
+                # Worker-local state only; contiguous blocks smooth in sequence.
+                # The prepass already owns ordered smoothing across workers.
+                if (not hasattr(self._tls, 'geometry_guard') or
+                        getattr(self._tls, 'geometry_epoch', None) != getattr(self, '_dispatch_epoch', 0)):
+                    self._tls.geometry_guard = TrackGeometry()
+                    self._tls.geometry_epoch = getattr(self, '_dispatch_epoch', 0)
+                self._tls.geometry_guard.update(
+                    self._temporal_track_id(target_face),
+                    getattr(self._tls, 'frame_idx', None), target_face.kps,
+                    target_face.bbox, smooth=False,
+                    cut=(getattr(self._tls, 'frame_idx', None) in
+                         (getattr(self, '_shot_boundaries', None) or set())))
+                aligned_img, M, _alignment = canonicalize_face_alignment(
+                    plate, target_face, subsample_size, swap_template, dst=crop_dst,
+                    matrix_guard=lambda matrix: self._tls.geometry_guard.validate_matrix(
+                        self._temporal_track_id(target_face), getattr(self._tls, 'frame_idx', None),
+                        matrix, cut=(getattr(self._tls, 'frame_idx', None) in
+                                     (getattr(self, '_shot_boundaries', None) or set())),
+                        sar=float(getattr(roop.globals, 'video_sar', 1.) or 1.)))
+            except InvalidAlignment as exc:
+                _audit_hit('refused: invalid alignment')
+                self._tls.alignment_refusals = getattr(self._tls, 'alignment_refusals', 0) + 1
+                self.total_swaps = max(0, self.total_swaps - 1)
+                return frame
         fake_frame = aligned_img
         target_face.matrix = M
         _seg_id = getattr(getattr(roop.globals, '_segment_spec', None), 'index', 0) or 0
@@ -6010,6 +6053,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 inputface = fs.faces[best_idx]
 
         if inputface is None:
+            self.total_swaps = max(0, self.total_swaps - 1)
             return frame
 
         # Phase 13 pre-swap QC. This is intentionally made from state already
@@ -6481,15 +6525,6 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     except Exception as e:
                         bar_write(f"[ProcessMgr] swap mask reassembly failed: {e}")
                 
-                # Dynamic color tone correction: transfer target crop's skin tone
-                # and lighting highlights/shadows to the swapped face.
-                try:
-                    with _prof('lighting'):
-                        fake_frame = self.apply_color_transfer(
-                            fake_frame, aligned_img, appearance=_target_appearance)
-                except Exception as e:
-                    bar_write(f"[ProcessMgr] Face color transfer failed: {e}")
-                
                 scale_factor = 0.0
                 # ── Defrontalize after swap (Option 2) ────────────────────────
                 if M_frontal is not None:
@@ -6505,6 +6540,21 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                                 np.ascontiguousarray(_mm), M_frontal)
                     except Exception as e:
                         bar_write(f"[ProcessMgr] Defrontalization failed: {e}")
+                # Preserve pre-restoration tone matching. Before segmenters run,
+                # statistics are clipped to the conservative landmark interior
+                # intersected with current target skin evidence (no crop background).
+                try:
+                    _crop_kps = np.asarray(target_face.kps,np.float32) @ M[:,:2].T + M[:,2]
+                    _skin = self._skin_region_mask(aligned_img)
+                    _interior = np.zeros(aligned_img.shape[:2],np.uint8)
+                    cv2.fillConvexPoly(_interior, cv2.convexHull(_crop_kps.astype(np.int32)), 1)
+                    _skin = _interior.astype(np.float32) if _skin is None else _skin * _interior
+                    _skin_colour_mask = _skin
+                    with _prof('lighting'):
+                        fake_frame = self.apply_color_transfer(fake_frame, aligned_img,
+                            appearance=_target_appearance, mask=_skin)
+                except (ValueError, cv2.error) as exc:
+                    _swallowed('unified skin colour', exc, 'retained swap colour')
             elif p.type == 'mask':
                 if _raw_slot is not None:
                     # THE SEAM, before the first mask processor. Swap and enhance
@@ -6518,11 +6568,6 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                         'scale_factor': scale_factor,
                         'swap_model_mask': getattr(self._tls, 'swap_model_mask', None)})
                     _raw_slot = None
-                # Keep the pre-mask crops: if the temporal filter changes the
-                # weight field, rebuild the composite from the same raw inputs
-                # instead of filtering an already-composited result twice.
-                _pre_mask_fake = fake_frame
-                _pre_mask_enhanced = enhanced_frame
                 with _prof('mask'), _gpu_guard(pooled=getattr(p, 'pool', None) is not None, owner='mask'):  # mask: lock-free when pooled
                     # Defer both target composites until the mask stabilizer has
                     # finished. Otherwise the raw composites are immediately
@@ -6539,14 +6584,6 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                         # from is identical here, so recomputing it (engine call,
                         # landmark hull, mouth mask, blurs) would be pure waste.
                         enhanced_frame, _ = self.process_mask(p, aligned_img, enhanced_frame, orig_frame=plate, target_face=target_face, M=M, tgt_pitch_deg=tgt_pitch_deg, reuse_mask=_img_mask, region=region, defer_composite=True)
-                _ms = self._cur_mask_stab()
-                if (self._stab_active and _ms is not None and _img_mask is not None
-                        and rotation_action is None):
-                    with _prof('stabilize'):
-                        _img_mask = _ms.apply(
-                            _img_mask, target_face.kps, self._cur_stab_t(),
-                            guide=aligned_img,
-                            track_id=self._temporal_track_id(target_face))
                 # Stage 11 inclusion zones: where the user has drawn "swap here", the occluder mask
                 # (1 = restore the plate) is cancelled before it is composited. Frame-space geometry
                 # warped into this crop by the same affine the swap used; skipped under autorotate,
@@ -6568,15 +6605,14 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     except Exception as _degrade_error:
                         _swallowed("roop/ProcessMgr.py:roto_inclusion", _degrade_error,
                                    "inclusion zone skipped for this face")
-                # The mask calls above deliberately returned the raw targets.
-                # Composite exactly once per target, after optional temporal
-                # filtering, so no quality path observes the pre-filter mask.
+                # Intersect keep masks across engines; content remains raw through
+                # enhancement and temporal filters. The plate is sampled only once.
                 if _img_mask is not None:
-                    fake_frame = self._composite_mask(
-                        _img_mask, aligned_img, _pre_mask_fake)
-                    if _pre_mask_enhanced is not None:
-                        enhanced_frame = self._composite_mask(
-                            _img_mask, aligned_img, _pre_mask_enhanced)
+                    from roop.unified_matte import mask2d
+                    _keep = 1.0 - mask2d(_img_mask, aligned_img.shape)
+                    _unified_keep = (_keep if _unified_keep is None
+                                     else np.minimum(_unified_keep, _keep))
+                    _img_mask = 1.0 - _unified_keep
                     try:
                         from roop import watchdog
                         _cur_fidx = getattr(self._tls, 'frame_idx', None)
@@ -6913,6 +6949,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 with _prof('lighting'):
                     enhanced_frame = self.apply_color_transfer(
                         enhanced_frame, ref, appearance=_target_appearance,
+                        mask=(_unified_keep if _unified_keep is not None else _skin_colour_mask),
                         conditioned_strength=(float(getattr(
                             roop.globals, 'target_conditioned_appearance_strength',
                             0.75) or 0.75) * 0.50))
@@ -6946,10 +6983,10 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         try:
             if enhanced_frame is not None:
                 enhanced_frame = self.apply_merger_post(
-                    enhanced_frame, aligned_img, appearance=_target_appearance)
+                    enhanced_frame, aligned_img, appearance=_target_appearance, mask=(_unified_keep if _unified_keep is not None else _skin_colour_mask))
             else:
                 fake_frame = self.apply_merger_post(
-                    fake_frame, aligned_img, appearance=_target_appearance)
+                    fake_frame, aligned_img, appearance=_target_appearance, mask=(_unified_keep if _unified_keep is not None else _skin_colour_mask))
         except Exception as e:
             bar_write(f"[ProcessMgr] Merger post-op failed: {e}")
 
@@ -6995,20 +7032,9 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                         combined_can = combined_can * (1.0 - inc_can)
 
                     if np.any(combined_can > 0):
-                        c3 = combined_can[:, :, np.newaxis]
-                        fake_frame = (fake_frame.astype(np.float32) * (1.0 - c3) +
-                                      aligned_img.astype(np.float32) * c3).astype(np.uint8)
-                        if enhanced_frame is not None:
-                            eh, ew = enhanced_frame.shape[:2]
-                            if (eh, ew) != (subsample_size, subsample_size):
-                                c3e = cv2.resize(combined_can, (ew, eh),
-                                                 interpolation=cv2.INTER_LINEAR)[:, :, np.newaxis]
-                                orig_enh = cv2.resize(aligned_img, (ew, eh),
-                                                      interpolation=cv2.INTER_CUBIC)
-                            else:
-                                c3e, orig_enh = c3, aligned_img
-                            enhanced_frame = (enhanced_frame.astype(np.float32) * (1.0 - c3e) +
-                                              orig_enh.astype(np.float32) * c3e).astype(np.uint8)
+                        _manual_keep = 1.0 - combined_can
+                        _unified_keep = (_manual_keep if _unified_keep is None else
+                                         np.minimum(_unified_keep, _manual_keep))
                 except Exception as e:
                     bar_write(f"[ProcessMgr] Canonical mask application failed: {e}")
 
@@ -7044,20 +7070,9 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                         combined_can = combined_can * (1.0 - inc_can)
 
                     if np.any(combined_can > 0):
-                        c3 = combined_can[:, :, np.newaxis]
-                        fake_frame = (fake_frame.astype(np.float32) * (1.0 - c3) +
-                                      aligned_img.astype(np.float32) * c3).astype(np.uint8)
-                        if enhanced_frame is not None:
-                            eh, ew = enhanced_frame.shape[:2]
-                            if (eh, ew) != (subsample_size, subsample_size):
-                                c3e = cv2.resize(combined_can, (ew, eh),
-                                                 interpolation=cv2.INTER_LINEAR)[:, :, np.newaxis]
-                                orig_enh = cv2.resize(aligned_img, (ew, eh),
-                                                      interpolation=cv2.INTER_CUBIC)
-                            else:
-                                c3e, orig_enh = c3, aligned_img
-                            enhanced_frame = (enhanced_frame.astype(np.float32) * (1.0 - c3e) +
-                                              orig_enh.astype(np.float32) * c3e).astype(np.uint8)
+                        _manual_keep = 1.0 - combined_can
+                        _unified_keep = (_manual_keep if _unified_keep is None else
+                                         np.minimum(_unified_keep, _manual_keep))
                 except Exception as e:
                     bar_write(f"[ProcessMgr] Warp-based mask application failed: {e}")
 
@@ -7191,18 +7206,21 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                             _mask_p, aligned_img, fake_frame, orig_frame=plate,
                             target_face=target_face, M=M,
                             tgt_pitch_deg=tgt_pitch_deg,
-                            rotation_action=rotation_action, region=region)
+                            rotation_action=rotation_action, region=region, defer_composite=True)
                         if _rerun_mask is not None:
-                            _img_mask = _rerun_mask
+                            from roop.unified_matte import mask2d
+                            _keep = 1.0 - mask2d(_rerun_mask, aligned_img.shape)
+                            _unified_keep = (_keep if _unified_keep is None
+                                             else np.minimum(_unified_keep, _keep))
+                            _img_mask = 1.0 - _unified_keep
 
                 if 'reblend_previous_mask' in _corrections and _img_mask is not None:
                     _alpha = _quality_mgr.correct_mask(
                         _quality_tid, 1.0 - np.asarray(_img_mask, dtype=np.float32))
                     _img_mask = 1.0 - _alpha
-                    fake_frame = self._composite_mask(_img_mask, aligned_img, fake_frame)
-                    if enhanced_frame is not None:
-                        enhanced_frame = self._composite_mask(
-                            _img_mask, aligned_img, enhanced_frame)
+                    _keep = 1.0 - np.asarray(_img_mask, dtype=np.float32)
+                    _unified_keep = (_keep if _unified_keep is None
+                                     else np.minimum(_unified_keep, _keep))
 
                 if ('restore_stable_detail' in _corrections and _detail is not None
                         and _ids > 0.0):
@@ -7315,9 +7333,9 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         with _prof('blend'):
             if enhanced_frame is None:
                 scale_factor = int(upscale / orig_width)
-                result = self.paste_upscale(fake_frame, fake_frame, target_face.matrix, frame, scale_factor, mask_offsets, face_landmarks=face_lm, face_kps=face_kps, region=region, model_mask=model_mask, model_mask_weight=model_mask_weight, inplace=destination_is_private, target_face=target_face, appearance=_target_appearance, temporal_compositor=_compositor, track_id=_composite_tid, frame_index=_composite_frame_idx, occlusion_score=_composite_occlusion, motion=_composite_motion)
+                result = self.paste_upscale(fake_frame, fake_frame, target_face.matrix, frame, scale_factor, mask_offsets, face_landmarks=face_lm, face_kps=face_kps, region=region, model_mask=model_mask, model_mask_weight=model_mask_weight, inplace=destination_is_private, target_face=target_face, appearance=_target_appearance, temporal_compositor=_compositor, track_id=_composite_tid, frame_index=_composite_frame_idx, occlusion_score=_composite_occlusion, motion=_composite_motion, crop_alpha=_unified_keep)
             else:
-                result = self.paste_upscale(fake_frame, enhanced_frame, target_face.matrix, frame, scale_factor, mask_offsets, face_landmarks=face_lm, face_kps=face_kps, region=region, model_mask=model_mask, model_mask_weight=model_mask_weight, inplace=destination_is_private, target_face=target_face, appearance=_target_appearance, temporal_compositor=_compositor, track_id=_composite_tid, frame_index=_composite_frame_idx, occlusion_score=_composite_occlusion, motion=_composite_motion)
+                result = self.paste_upscale(fake_frame, enhanced_frame, target_face.matrix, frame, scale_factor, mask_offsets, face_landmarks=face_lm, face_kps=face_kps, region=region, model_mask=model_mask, model_mask_weight=model_mask_weight, inplace=destination_is_private, target_face=target_face, appearance=_target_appearance, temporal_compositor=_compositor, track_id=_composite_tid, frame_index=_composite_frame_idx, occlusion_score=_composite_occlusion, motion=_composite_motion, crop_alpha=_unified_keep)
         _dbg_rng = os.environ.get('ROOP_DEBUG_DUMP_RANGE')
         if _dbg_rng:
             try:

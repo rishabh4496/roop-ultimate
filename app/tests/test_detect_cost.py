@@ -266,7 +266,7 @@ class AxisHelpersStaySeparable(unittest.TestCase):
 
     def test_face_down_axis_still_prefers_68(self):
         body = _func('face_down_axis', _source(FACE_UTIL))
-        self.assertLess(body.index('_axis_from_68'), body.index('_axis_from_kps'))
+        self.assertIn('roll_from_face', body)  # one shared 68-first estimator
 
     def test_kps_axis_matches_the_documented_construction(self):
         import numpy as np

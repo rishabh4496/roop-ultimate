@@ -73,7 +73,7 @@ class ColorTransferMixin:
             soft = np.maximum(soft, prior.astype(np.float32) * 0.12)
         return np.clip(soft, 0.0, 1.0).astype(np.float32)
 
-    def _apply_skin_photometric_controls(self, source, target):
+    def _apply_skin_photometric_controls(self, source, target, support=None):
         """Apply bounded warmth and saturation matching in the face skin area."""
         try:
             warmth = float(getattr(roop.globals, 'skin_tone_warmth', 0.0) or 0.0)
@@ -94,6 +94,9 @@ class ColorTransferMixin:
             ref = cv2.resize(ref, (out.shape[1], out.shape[0]),
                              interpolation=cv2.INTER_AREA)
         mask = self._skin_region_mask(ref)
+        if support is not None and mask is not None:
+            from roop.unified_matte import mask2d
+            mask *= mask2d(support, ref.shape)
         if mask is None:
             return out
 
@@ -128,7 +131,7 @@ class ColorTransferMixin:
     def _apply_directional_and_specular_lighting(self, source, target,
                                                  specular_strength=None,
                                                  ambient_strength=None,
-                                                 subdermal_strength=None):
+                                                 subdermal_strength=None, support=None):
         """Directional Relighting, Specular Skin Highlight Recovery, and Sub-Dermal Warmth Matching.
 
         1. Specular Highlight Recovery (0%..100%): Extracts high-luminance specular peaks
@@ -179,6 +182,9 @@ class ColorTransferMixin:
             ref = cv2.resize(ref, (out.shape[1], out.shape[0]), interpolation=cv2.INTER_AREA)
 
         mask = self._skin_region_mask(ref)
+        if support is not None and mask is not None:
+            from roop.unified_matte import mask2d
+            mask *= mask2d(support, ref.shape)
         if mask is None:
             return out
 
@@ -329,7 +335,7 @@ class ColorTransferMixin:
         return np.clip(out, 0, 255).astype(np.uint8)
 
     def apply_color_transfer(self, source, target, appearance=None,
-                             conditioned_strength=None):
+                             conditioned_strength=None, mask=None):
         """Match the swapped crop's color/lighting to the original target crop.
 
         `source` = swapped face crop, `target` = original aligned crop (the
@@ -356,6 +362,13 @@ class ColorTransferMixin:
         if mode == 'none' and not controls_active:
             return source
 
+        if mask is not None:
+            from roop.unified_matte import interior_mask
+            sample_mask = interior_mask(mask, source.shape)
+            if np.count_nonzero(sample_mask) < 32:
+                return source
+        else:
+            sample_mask = None
         # If source is effectively grayscale (B&W media), skip color transfer.
         # Chrominance std ≈ 0 causes division explosion → blue artifact.
         # This guard runs for every face, including the common rct path. Keep
@@ -364,8 +377,9 @@ class ColorTransferMixin:
         if source.ndim == 3 and source.shape[2] >= 3:
             bg = cv2.absdiff(source[:, :, 0], source[:, :, 1])
             gr = cv2.absdiff(source[:, :, 1], source[:, :, 2])
-            if (float(cv2.mean(bg)[0]) < 5.0 and
-                    float(cv2.mean(gr)[0]) < 5.0 and
+            stats_mask = None if sample_mask is None else sample_mask.astype(np.uint8)
+            if (float(cv2.mean(bg, mask=stats_mask)[0]) < 5.0 and
+                    float(cv2.mean(gr, mask=stats_mask)[0]) < 5.0 and
                     not controls_active and
                     not (getattr(roop.globals, 'target_conditioned_appearance', False)
                          and appearance is not None)):
@@ -374,17 +388,17 @@ class ColorTransferMixin:
         if mode == 'none':
             out = source
         elif mode == 'lct':
-            out = self._color_transfer_lct(source, target)
+            out = self._color_transfer_lct(source, target, mask=sample_mask)
         elif mode == 'mkl':
-            out = self._color_transfer_mkl(source, target)
+            out = self._color_transfer_mkl(source, target, mask=sample_mask)
         elif mode == 'idt':
-            out = self._color_transfer_idt(source, target)
+            out = self._color_transfer_idt(source, target, mask=sample_mask)
         else:
             # Default: rct (LAB mean/std).
-            out = self._color_transfer_rct(source, target)
+            out = self._color_transfer_rct(source, target, mask=sample_mask)
 
-        out = self._apply_skin_photometric_controls(out, target)
-        out = self._apply_directional_and_specular_lighting(out, target)
+        out = self._apply_skin_photometric_controls(out, target, support=mask)
+        out = self._apply_directional_and_specular_lighting(out, target, support=mask)
 
         if (getattr(roop.globals, 'target_conditioned_appearance', False)
                 and appearance is not None):
@@ -392,16 +406,22 @@ class ColorTransferMixin:
                                  'target_conditioned_appearance_strength', 0.75)
                         if conditioned_strength is None else conditioned_strength)
             out = self._apply_target_conditioned_appearance(
-                out, target, appearance, strength)
+                out, target, appearance, strength, support=mask)
         return out
 
-    def _color_transfer_rct(self, source, target):
+    def _color_transfer_rct(self, source, target, mask=None):
         """Legacy LAB mean/std transfer kept as a named internal path."""
 
         source = cv2.cvtColor(source, cv2.COLOR_BGR2LAB).astype("float32")
         target = cv2.cvtColor(target, cv2.COLOR_BGR2LAB).astype("float32")
-        source_mean, source_std = cv2.meanStdDev(source)
-        target_mean, target_std = cv2.meanStdDev(target)
+        if mask is not None:
+            mask8 = (mask > 0.5).astype(np.uint8) if mask.dtype.kind == 'f' else mask.astype(np.uint8)
+            if cv2.countNonZero(mask8) < 32:
+                return cv2.cvtColor(np.clip(source, 0, 255).astype("uint8"), cv2.COLOR_LAB2BGR)
+        else:
+            mask8 = None
+        source_mean, source_std = cv2.meanStdDev(source, mask=mask8)
+        target_mean, target_std = cv2.meanStdDev(target, mask=mask8)
         source_mean = source_mean.reshape(1, 1, 3)
         source_std  = np.maximum(source_std.reshape(1, 1, 3), 1.0)  # guard near-zero
         target_mean = target_mean.reshape(1, 1, 3)
@@ -418,7 +438,7 @@ class ColorTransferMixin:
         return cv2.cvtColor(np.clip(source, 0, 255).astype("uint8"), cv2.COLOR_LAB2BGR)
 
     def _apply_target_conditioned_appearance(self, source, target,
-                                              appearance, strength):
+                                              appearance, strength, support=None):
         """Apply low-frequency target illumination and bounded target chroma.
 
         The target supplies only low-frequency lighting and robust skin-region
@@ -434,8 +454,13 @@ class ColorTransferMixin:
             if t_lab.shape[:2] != (h, w):
                 t_lab = cv2.resize(t_lab, (w, h), interpolation=cv2.INTER_AREA)
             mask = _soft_mask((h, w))
+            if support is not None:
+                from roop.unified_matte import mask2d
+                mask = mask * mask2d(support, (h,w))
             sample = mask > 0.35
             if int(sample.sum()) < 64:
+                if support is not None:
+                    return source
                 sample = np.ones((h, w), dtype=bool)
             s_l = s_lab[:, :, 0]
             t_l = t_lab[:, :, 0]
@@ -492,7 +517,7 @@ class ColorTransferMixin:
         except (cv2.error, TypeError, ValueError, FloatingPointError):
             return source
 
-    def _color_transfer_lct(self, source, target):
+    def _color_transfer_lct(self, source, target, mask=None):
         """Linear (covariance-whitening) color transfer in LAB. Whitens the
         swapped crop's color distribution and re-colors it with the target's
         mean+covariance — corrects hue casts a per-channel scale leaves behind.
@@ -521,8 +546,16 @@ class ColorTransferMixin:
         # original 16k design note, making this twice-per-face stage needlessly
         # expensive. The source keeps its whole LAB image for the final transform;
         # the target is only ever read at the sampled pixels.
-        s_sub = s_lab.reshape(-1, 3)[::16].astype(np.float32)
-        t_sub_bgr = np.ascontiguousarray(target.reshape(-1, 3)[::16]).reshape(-1, 1, 3)
+        if mask is None:
+            indices = np.arange(0, source.shape[0]*source.shape[1], 16)
+        else:
+            m = (mask > 0.5) if mask.dtype.kind == 'f' else mask
+            indices = np.flatnonzero(m.ravel())
+            indices = indices[::max(1, len(indices)//16384)]
+        if mask is not None and len(indices) < 32:
+            return source
+        s_sub = s_lab.reshape(-1, 3)[indices].astype(np.float32)
+        t_sub_bgr = np.ascontiguousarray(target.reshape(-1, 3)[indices]).reshape(-1, 1, 3)
         t_sub = cv2.cvtColor(t_sub_bgr, cv2.COLOR_BGR2LAB).reshape(-1, 3).astype(np.float32)
         s_mean, t_mean = s_sub.mean(0), t_sub.mean(0)
         eps = np.eye(3, dtype=np.float32) * 1e-4
@@ -552,12 +585,19 @@ class ColorTransferMixin:
         np.copyto(out_u8, out_f, casting='unsafe')          # truncation, as .astype(np.uint8)
         return cv2.cvtColor(out_u8, cv2.COLOR_LAB2BGR)
 
-    def _color_transfer_mkl(self, source, target):
+    def _color_transfer_mkl(self, source, target, mask=None):
         """Monge-Kantorovitch linear color transfer in BGR (Pitié & Kokaram).
         Maps the source's Gaussian color distribution onto the target's — a
         symmetric, artifact-resistant full second-order match."""
         s = source.astype(np.float32).reshape(-1, 3)
         t = target.astype(np.float32).reshape(-1, 3)
+        all_source = s
+        if mask is not None:
+            m = (mask > 0.5) if mask.dtype.kind == 'f' else mask
+            m_flat = m.ravel().astype(bool)
+            if np.count_nonzero(m_flat) < 32:
+                return source
+            s, t = s[m_flat], t[m_flat]
         s_mean, t_mean = s.mean(0), t.mean(0)
         eps = np.eye(3, dtype=np.float32) * 1e-4
         Cs = np.cov(s, rowvar=False).astype(np.float32) + eps
@@ -573,11 +613,11 @@ class ColorTransferMixin:
         M_half = (Vm * np.sqrt(wm)) @ Vm.T
         T = Cs_half_inv @ M_half @ Cs_half_inv   # MKL transport matrix
 
-        out = (s - s_mean) @ T.T + t_mean
+        out = (all_source - s_mean) @ T.T + t_mean
         out = np.clip(out, 0, 255).astype(np.uint8).reshape(source.shape)
         return out
 
-    def _color_transfer_idt(self, source, target, iterations=4, bins=256):
+    def _color_transfer_idt(self, source, target, iterations=4, bins=256, mask=None):
         """Iterative Distribution Transfer (Pitié, Kokaram & Dahyot).
 
         rct, lct and mkl all model colour as a Gaussian: they match means,
@@ -599,6 +639,12 @@ class ColorTransferMixin:
         shape = source.shape
         s = source.astype(np.float32).reshape(-1, 3)
         t = target.astype(np.float32).reshape(-1, 3)
+        m_flat = None
+        if mask is not None:
+            m = (mask > 0.5) if mask.dtype.kind == 'f' else mask
+            m_flat = m.ravel().astype(bool)
+            if np.count_nonzero(m_flat) < 32:
+                return source
         rng = np.random.default_rng(0)
 
         for _ in range(iterations):
@@ -608,12 +654,14 @@ class ColorTransferMixin:
             t_proj = t @ rot
             for c in range(3):
                 sc, tc = s_proj[:, c], t_proj[:, c]
-                lo = float(min(sc.min(), tc.min()))
-                hi = float(max(sc.max(), tc.max()))
+                stats_sc = sc if m_flat is None else sc[m_flat]
+                stats_tc = tc if m_flat is None else tc[m_flat]
+                lo = float(min(stats_sc.min(), stats_tc.min()))
+                hi = float(max(stats_sc.max(), stats_tc.max()))
                 if hi - lo < 1e-6:
                     continue
-                s_hist, _ = np.histogram(sc, bins, (lo, hi))
-                t_hist, _ = np.histogram(tc, bins, (lo, hi))
+                s_hist, _ = np.histogram(stats_sc, bins, (lo, hi))
+                t_hist, _ = np.histogram(stats_tc, bins, (lo, hi))
                 s_cdf = np.cumsum(s_hist).astype(np.float32)
                 t_cdf = np.cumsum(t_hist).astype(np.float32)
                 if s_cdf[-1] <= 0 or t_cdf[-1] <= 0:

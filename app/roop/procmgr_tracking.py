@@ -3233,6 +3233,12 @@ class TrackingMixin:
                             cand['kps'] = bridged[g][1].astype(np.float32)
                             cand['bbox'] = bridged[g][2].astype(np.float32)
                             cand['_flow_bridged'] = True
+                        from roop.alignment_safety import landmarks5, InvalidAlignment
+                        try:
+                            landmarks5(cand.get('kps'), cand.get('bbox'))
+                        except InvalidAlignment:
+                            self._interp_refused += 1
+                            continue
                         if self._interp_collides(cand, t['id'], g, other_real):
                             self._interp_refused += 1
                             continue
@@ -3287,6 +3293,18 @@ class TrackingMixin:
                           f"{len(too_big)} gap(s) over the {gap_max}-frame limit "
                           f"(missed frames: {sum(too_big)}, worst: {sorted(too_big, reverse=True)[:5]})")
 
+            from roop.alignment_safety import TrackGeometry, InvalidAlignment
+            raw_guard = TrackGeometry()
+            for _i in sorted(list(merged)):
+                _f = merged[_i]
+                _kps = _f.get('kps') if isinstance(_f, dict) else getattr(_f, 'kps', None)
+                _bbox = _f.get('bbox') if isinstance(_f, dict) else getattr(_f, 'bbox', None)
+                try:
+                    raw_guard.update(t['id'], _i, _kps, _bbox,
+                                     cut=(_i in cuts), smooth=False)
+                except InvalidAlignment:
+                    del merged[_i]
+
             if stab_on:
                 # Per-track sequential smoothing. Explicit local dictionaries keep
                 # each track's filter state cleanly isolated and resettable.
@@ -3294,7 +3312,12 @@ class TrackingMixin:
                 _filters = {}
                 _state = {}
                 if method == 'ema':
+                    _ema_geometry = TrackGeometry()
                     def _smooth(key, val, _t):
+                        if key == 'kps':
+                            cur_bbox = f.get('bbox') if isinstance(f, dict) else getattr(f, 'bbox', None)
+                            return _ema_geometry.update(t['id'], _t, val, cur_bbox,
+                                cut=(_t in cuts), smooth=True)
                         full_key = (_seg_id, t['id'], key)
                         prev_v = _state.get(full_key)
                         cur = val if prev_v is None else 0.3 * val + 0.7 * prev_v
@@ -3388,9 +3411,14 @@ class TrackingMixin:
                         raw_kps = np.asarray(kps, np.float64)
                         kps_s = kalman.apply(raw_kps, i)
                         f['kps'] = np.asarray(kps_s, np.float32)
+                        shift = np.asarray(kps_s, np.float64).mean(axis=0) - raw_kps.mean(axis=0)
                         if lm is not None:
-                            shift = np.asarray(kps_s, np.float64).mean(axis=0) - raw_kps.mean(axis=0)
                             f['landmark_2d_106'] = (np.asarray(lm, np.float64) + shift).astype(np.float32)
+                        lm68 = getattr(f, 'landmark_3d_68', None)
+                        if lm68 is not None:
+                            lm68_shifted = np.asarray(lm68, np.float64).copy()
+                            lm68_shifted[:, :2] += shift
+                            f['landmark_3d_68'] = lm68_shifted.astype(np.float32)
                     elif zp_out is not None and kps is not None:
                         n_ = zp_pos[i]
                         f['kps'] = zp_out['kps'][n_]
@@ -3403,14 +3431,29 @@ class TrackingMixin:
                         # (`for i in sorted(merged)` on one thread), which is
                         # the condition the smoother's frame-contiguity guard
                         # asks for -- so here it applies rather than declining.
+                        raw_kps = np.asarray(kps, np.float64)
                         kps_s, lm_s, _ = coupled.smooth(
                             kps, lm, track_id=t['id'], frame_index=i)
                         f['kps'] = np.asarray(kps_s, np.float32)
                         if lm is not None and lm_s is not None:
                             f['landmark_2d_106'] = np.asarray(lm_s, np.float32)
+                        lm68 = getattr(f, 'landmark_3d_68', None)
+                        if lm68 is not None:
+                            shift = np.asarray(kps_s, np.float64).mean(axis=0) - raw_kps.mean(axis=0)
+                            lm68_shifted = np.asarray(lm68, np.float64).copy()
+                            lm68_shifted[:, :2] += shift
+                            f['landmark_3d_68'] = lm68_shifted.astype(np.float32)
                     else:
                         if kps is not None:
-                            f['kps'] = _smooth('kps', np.asarray(kps, np.float64), i).astype(np.float32)
+                            raw_kps = np.asarray(kps, np.float64)
+                            kps_s = _smooth('kps', raw_kps, i).astype(np.float32)
+                            f['kps'] = kps_s
+                            lm68 = getattr(f, 'landmark_3d_68', None)
+                            if lm68 is not None:
+                                shift = np.asarray(kps_s, np.float64).mean(axis=0) - raw_kps.mean(axis=0)
+                                lm68_shifted = np.asarray(lm68, np.float64).copy()
+                                lm68_shifted[:, :2] += shift
+                                f['landmark_3d_68'] = lm68_shifted.astype(np.float32)
                         if lm is not None:
                             f['landmark_2d_106'] = _smooth('lm106', np.asarray(lm, np.float64), i).astype(np.float32)
                     bb = getattr(f, 'bbox', None)
@@ -3430,6 +3473,17 @@ class TrackingMixin:
             # once per worker (the problem nonfrontal.NonFrontalRouter had to
             # solve with an index-keyed event log). After the gap fill and the
             # smoothing, so it reads the same keypoints the swap will.
+            from roop.alignment_safety import TrackGeometry, InvalidAlignment
+            guard = TrackGeometry()
+            for _i in sorted(list(merged)):
+                _f = merged[_i]
+                _kps = _f.get('kps') if isinstance(_f, dict) else getattr(_f, 'kps', None)
+                _bbox = _f.get('bbox') if isinstance(_f, dict) else getattr(_f, 'bbox', None)
+                try:
+                    guard.update(t['id'], _i, _kps, _bbox,
+                                 cut=(_i in cuts), smooth=False)
+                except InvalidAlignment:
+                    del merged[_i]
             total_coasts += orientation.resolve_track_rolls(
                 [merged[i] for i in sorted(merged)])
 

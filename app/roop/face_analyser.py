@@ -111,12 +111,12 @@ def compute_canonical_roll_angle(landmarks: Any) -> Tuple[float, float]:
 def build_canonical_rotation_matrix(
     center: Tuple[float, float],
     theta_deg: float,
-    threshold_deg: float = 45.0
+    threshold_deg: float = 54.5
 ) -> Tuple[np.ndarray, np.ndarray, bool]:
     """Dynamically construct an affine rotation matrix R(theta, center) that maps
     the cropped face to an upright canonical orientation, along with its inverse inv(R).
 
-    If abs(theta) > 45 degrees, active rotation R is computed.
+    If abs(theta) > 54.5 degrees, active rotation R is computed.
     Otherwise, identity matrices are returned to preserve hot paths.
 
     Returns:
@@ -693,7 +693,7 @@ def adaptive_alignment_matrix(kps: np.ndarray, image_size: int, mode: str = "arc
 
 
 def canonicalize_face_alignment(image: Frame, face: Any, image_size: int, mode: str,
-                                dst: Optional[np.ndarray] = None):
+                                dst: Optional[np.ndarray] = None, matrix_guard=None):
     """Align once to the swap model's training template, at every head angle.
 
     A similarity fit already removes roll without squeezing either axis.
@@ -707,18 +707,27 @@ def canonicalize_face_alignment(image: Frame, face: Any, image_size: int, mode: 
     """
     def _value(name):
         return face.get(name) if isinstance(face, dict) else getattr(face, name, None)
-    kps = np.asarray(_value('kps'), dtype=np.float32).reshape(5, 2)
-    bbox = np.asarray(_value('bbox'), dtype=np.float32).reshape(4)
+    kps_val = _value('kps')
+    bbox_val = _value('bbox')
+    kps = np.asarray(kps_val, dtype=np.float32)
+    bbox = np.asarray(bbox_val, dtype=np.float32) if bbox_val is not None else None
+    from roop.alignment_safety import landmarks5
+    kps = landmarks5(kps, bbox)
     _, roll_deg = compute_canonical_roll_angle(kps)
-    center = ((float(bbox[0]) + float(bbox[2])) * 0.5,
-              (float(bbox[1]) + float(bbox[3])) * 0.5)
+    if bbox is not None and bbox.shape == (4,):
+        center = ((float(bbox[0]) + float(bbox[2])) * 0.5,
+                  (float(bbox[1]) + float(bbox[3])) * 0.5)
+    else:
+        center = (float(kps[:, 0].mean()), float(kps[:, 1].mean()))
 
     # Preserve the diagnostic rotation factors. They describe the equivalent
     # upright coordinate system; pixels are sampled only by paste_matrix below.
-    R, inv_R, applied = build_canonical_rotation_matrix(center, roll_deg, threshold_deg=45.0)
+    R, inv_R, applied = build_canonical_rotation_matrix(center, roll_deg, threshold_deg=54.5)
 
     yaw, pitch = face_yaw_pitch(face)
     paste_matrix = estimate_norm(kps, image_size, mode)
+    if matrix_guard is not None:
+        matrix_guard(paste_matrix)
     inv_paste = cv2.invertAffineTransform(paste_matrix)
 
     if dst is not None:
