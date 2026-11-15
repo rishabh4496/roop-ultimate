@@ -1,6 +1,17 @@
 """One crop-space alpha and a constant-border, premultiplied paste."""
+import os
+
 import cv2
 import numpy as np
+
+
+def _tune(name, default):
+    """Measurement hook: ROOP_MATTE_<name> overrides a calibration constant for an
+    A/B render. Unset (production) returns the shipped default."""
+    try:
+        return float(os.environ.get("ROOP_MATTE_" + name, default))
+    except ValueError:
+        return default
 
 
 def yaw_from_kps(kps):
@@ -48,11 +59,11 @@ def inward_alpha(mask, feather=8., yaw=0.):
     if abs(yaw) > 10.:
         lateral = np.arange(x0,x0+sw,dtype=np.float32)[None,:] / max(a.shape[1]-1,1)
         far = lateral if yaw > 0 else 1.-lateral
-        inset = min(a.shape)*.025*min(abs(yaw)/60.,1.)*far**2
+        inset = min(a.shape)*_tune('YAW_INSET',.025)*min(abs(yaw)/60.,1.)*far**2
         dist = np.maximum(dist-inset,0.)
     span = max(1,min(sw,sh))
-    w = max(min(float(feather),.18*span)*
-            (1.-.35*min(abs(yaw)/60.,1.)),1.)
+    w = max(min(float(feather),_tune('FEATHER_CAP',.18)*span)*
+            (1.-_tune('YAW_FEATHER',.35)*min(abs(yaw)/60.,1.)),1.)
     t = np.clip(dist/w,0.,1.)
     out[y0:y0+sh,x0:x0+sw] = local*t*t*(3.-2.*t)
     return out

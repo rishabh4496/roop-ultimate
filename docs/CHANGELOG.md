@@ -1,3 +1,14 @@
+## 2026-11-16 (later) — matte constants tuning on jennifer.mp4: MEASURED, NOT CHANGED
+
+Question: tune the yaw erosion inset (0.025), the yaw feather narrowing (0.35), the feather cap (0.18 x silhouette span) and the landmark EMA weight (0.65).
+
+- **EMA weight is inert in the live config.** `TrackGeometry.update(..., smooth=True)` runs only for `stabilize_method == 'ema'`; every other caller passes `smooth=False` and config.yaml uses `one_euro`. Not tuned. Landmark lag was NOT measured (the knobs there are `stabilize_min_cutoff`/`stabilize_beta`, hand-tuned look settings).
+- **The feather is not Gaussian**: `inward_alpha` is a distance-transform smoothstep.
+- **Harness**: `app/tests/tune_matte_scan.py` (yaw distribution), `app/tests/tune_matte_metrics.py` (seam excess + interior sharpness per yaw bin), env hooks `ROOP_MATTE_YAW_INSET`, `ROOP_MATTE_YAW_FEATHER`, `ROOP_MATTE_FEATHER_CAP` in `unified_matte.py` (defaults = shipped values).
+- **Run**: D:\jennifer.mp4 frames 300-899, mahek.fsz, live config.yaml (hyperswap, RealityUX, Restore Ultra), `--mode all`, threads 20, RTX 4070 only. 100 sampled frames: 44 frontal (<15), 13 mid, 34 at 35-50, 9 at >50. Each arm rendered twice (A-B then B-A) plus two baseline renders as the null control.
+- **Result**: the null control moved seam by up to 0.23 and sharpness by up to 6 per bin. Inset 0 / 0.05 / 0.08, yaw feather 0, and cap 0.30 all fall inside that spread: not measurable. Two arms are worse: cap 0.10 (seam +0.66 at profile >35, sharpness -14 at mid yaw) and yaw feather 0.6 (sharpness -27 at mid yaw, n=13). The shipped defaults sit on a flat region; **no constant was changed**.
+- **Limits**: one clip, one GPU (no RTX 3060 run), metrics are proxies (edge-energy excess, Laplacian variance), >50 deg bin has n=9, no perceptual review of frames. A real improvement smaller than the noise would need many more arms.
+
 ## 2026-11-16 — audit geometry and single-alpha masking fixes (acceptance pending)
 
 Guarded live five-point fits and consecutive affine scales, unified roll estimation and initial turn confirmation, rejected invalid temporal anchors, and kept explicit frame IDs in worker output. Engine masks remain separate from aligned swap/enhancement content until a single premultiplied zero-border paste with inward feather, yaw-side erosion and strict current support. Color/CDF statistics use interior support; identity converters reject invalid latents. Existing P1 mask-offset/mode regressions pass. No provider, IOBinding, precision, public schema or per-machine config changes.
