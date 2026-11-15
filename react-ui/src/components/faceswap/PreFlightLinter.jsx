@@ -18,6 +18,9 @@ export default function PreFlightLinter({
   onAutoFix = null,
   batchCount = 1,
   className = '',
+  // compact: for a pinned bar. Tighter padding, and "Details" opens as a popover over the page instead of
+  // growing the bar (a bar that grows by 200px when you open Details shoves everything under it down).
+  compact = false,
 }) {
   const [probeData, setProbeData] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -111,14 +114,14 @@ export default function PreFlightLinter({
       role="region"
       aria-label="Pre-flight render readiness diagnostics"
       data-testid="preflight-linter"
-      className={`rounded-xl border transition-all text-xs select-none backdrop-blur-md ${
+      className={`relative rounded-xl border transition-all text-xs select-none backdrop-blur-md ${
         isReady
           ? 'border-emerald-500/20 bg-emerald-950/15'
           : 'border-amber-500/30 bg-amber-950/20'
       } ${className}`}
     >
       {/* ── Summary Status Bar ── */}
-      <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
+      <div className={`flex flex-wrap items-center justify-between gap-x-2 ${compact ? 'gap-y-1 px-3 py-1.5' : 'gap-y-2 px-3 py-2'}`}>
         <div className="flex items-center gap-2.5 min-w-0">
           <span
             className={`h-2.5 w-2.5 shrink-0 rounded-full transition-transform ${
@@ -175,7 +178,7 @@ export default function PreFlightLinter({
 
       {/* ── Auto-Fix Quick Action Bar (when warnings exist) ── */}
       {isWarning && autoFixes.length > 0 && (
-        <div className="px-3 py-1.5 border-t border-amber-500/20 bg-amber-500/10 flex flex-wrap items-center gap-2">
+        <div className="px-3 py-1 border-t border-amber-500/20 bg-amber-500/10 flex flex-wrap items-center gap-2 rounded-b-xl">
           <span className="text-nano font-bold uppercase tracking-wider text-amber-300/80">
             1-Click Auto-Fix:
           </span>
@@ -195,7 +198,11 @@ export default function PreFlightLinter({
 
       {/* ── Expanded Diagnostic Report Cards ── */}
       {expanded && checks && (
-        <div className="px-3 pb-3 pt-2 border-t border-white/5 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-2 font-mono text-mini">
+        <div className={`px-3 pb-3 pt-2 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-2 font-mono text-mini ${
+          compact
+            ? 'absolute inset-x-0 top-full z-40 mt-1.5 rounded-xl border border-white/15 bg-[#0c0e14] shadow-2xl'
+            : 'border-t border-white/5'
+        }`}>
           {/* Check 1: Disk Space */}
           <div
             className={`p-2 rounded-lg border ${

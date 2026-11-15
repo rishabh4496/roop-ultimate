@@ -1745,3 +1745,9 @@ html[class*="theme-"][data-theme-mode="dark"] :is(.text-neutral-200, .text-neutr
 .bg-\[var\(--accent\)\]\/90 {
   background-color: oklch(from var(--accent) calc(l + clamp(0, (l - 0.565) * 1000, 1) * 0.07) c h / 0.9);
 }
+
+/* Face Swap: everything below the pinned stage deck keeps clear of the pinned header + run bar + deck when it is
+   focused or scrolled to. --ws-sticky-top is measured in FaceSwap.jsx (the band those three cover). */
+[data-after-deck] :is(input, select, textarea, button, a[href], [tabindex]) {
+  scroll-margin-top: var(--ws-sticky-top, 0px);
+}

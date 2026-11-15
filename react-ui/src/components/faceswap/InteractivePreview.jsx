@@ -29,7 +29,7 @@ import {
 } from '../monitor/referenceChannel';
 import {
   ZOOM_MIN, ZOOM_MAX, clampPan, panAnchoredAt, panCenteringAt,
-  transformFor, uiScale, wheelZoom, faceTrackingTarget, focusPanFor,
+  transformFor, uiScale, wheelZoomDelta, faceTrackingTarget, focusPanFor,
 } from './zoomPan';
 import FaceContextMenu from './FaceContextMenu';
 import { cropRectFor, faceBadgeText, warmthDeltaFor } from './faceContextModel';
@@ -152,6 +152,11 @@ export default function InteractivePreview({
   const [showBoxes, setShowBoxes] = useState(true);
   const [showDebug, setShowDebug] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  // The stage is often a small box (the centre column is ~420px wide at 1440px). Its two floating toolbars
+  // are ~150px tall when they wrap there - over half the picture. On a small stage the main toolbar stays
+  // on ONE row that scrolls sideways, and the zoom-preset pill (a duplicate of its -/FIT/+ buttons) shows
+  // on hover or keyboard focus only.
+  const [smallStage, setSmallStage] = useState(false);
   const [isPeekingOriginal, setIsPeekingOriginal] = useState(false);
   const [lockTargetFace, setLockTargetFace] = useState(false);
   const lockTargetFaceRef = useRef(false);
@@ -636,8 +641,8 @@ export default function InteractivePreview({
         return;
       }
 
-      // Smooth multiplicative cursor-centered zoom (0.1x to 16x)
-      const next = wheelZoom(e.deltaY, zoomRef.current, ZOOM_MAX, ZOOM_MIN, 0.15);
+      // Cursor-centred zoom (0.1x to 16x), proportional to how far the wheel turned and magnetic at fit.
+      const next = wheelZoomDelta(e.deltaY, e.deltaMode, zoomRef.current, ZOOM_MAX, ZOOM_MIN);
       // At either end of the range the stage has nothing to do with this event,
       // so it must NOT swallow it — otherwise scrolling the settings column
       // stops dead the moment the pointer crosses the preview.
@@ -658,7 +663,25 @@ export default function InteractivePreview({
     };
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
-  }, [maskBrushActive, updateViewport, stopInertia]);
+  }, [maskBrushActive, updateViewport, stopInertia, compare, compareMode]);
+
+  // The stage changes size without the user touching the zoom: the window, a panel toggle, the
+  // workspace layout, the timeline divider. The pan limit moves with it, so a pan that was legal a
+  // moment ago can leave the picture entirely outside the box. Re-clamp whenever the box resizes.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return undefined;
+    const ro = new ResizeObserver(() => {
+      const box = containerRef.current?.getBoundingClientRect();
+      if (box) setSmallStage(box.height < 300 || box.width < 560);
+      const z = zoomRef.current;
+      const cur = panRef.current;
+      const c = clampPan(cur, z, containerRef.current, imageRef.current);
+      if (c.x !== cur.x || c.y !== cur.y) updateViewport(z, c, false);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [updateViewport, compare, compareMode]);
 
   // ── Gesture Engine (@use-gesture/react) ──────────────────────────────────
   useGesture(
@@ -1213,7 +1236,7 @@ export default function InteractivePreview({
 
   // ── Bottom-Left Viewport HUD Floating Pill ────────────────────────────────
   const viewportPill = () => (
-    <div className="absolute bottom-3 left-3 z-50 flex items-center gap-1.5 px-2 py-1 rounded-xl bg-black/85 backdrop-blur-md border border-white/20 shadow-2xl pointer-events-auto select-none">
+    <div className={`flex flex-wrap max-w-full items-center gap-1.5 px-2 py-1 rounded-xl bg-black/85 backdrop-blur-md border border-white/20 shadow-2xl select-none transition-opacity ${smallStage ? 'opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto focus-within:opacity-100 focus-within:pointer-events-auto' : 'pointer-events-auto'}`}>
       <span
         ref={zoomReadoutRef}
         className="font-mono text-micro font-bold tabular-nums text-accent px-1.5 py-0.5 rounded bg-[var(--accent)]/15 border border-[var(--accent)]/30"
@@ -1226,7 +1249,7 @@ export default function InteractivePreview({
       <button
         type="button"
         onClick={handlePresetFit}
-        className="px-1.5 py-0.5 rounded text-nano font-mono font-bold bg-white/10 hover:bg-white/20 text-white/80 hover:text-white transition-colors"
+        className="px-1.5 py-0.5 rounded text-note font-mono font-bold bg-white/10 hover:bg-white/20 text-white/80 hover:text-white transition-colors"
         title="Fit whole frame to view (F)"
       >
         Fit (F)
@@ -1235,7 +1258,7 @@ export default function InteractivePreview({
       <button
         type="button"
         onClick={handlePresetFill}
-        className="px-1.5 py-0.5 rounded text-nano font-mono font-bold bg-white/10 hover:bg-white/20 text-white/80 hover:text-white transition-colors"
+        className="px-1.5 py-0.5 rounded text-note font-mono font-bold bg-white/10 hover:bg-white/20 text-white/80 hover:text-white transition-colors"
         title="Fill stage box"
       >
         Fill
@@ -1244,7 +1267,7 @@ export default function InteractivePreview({
       <button
         type="button"
         onClick={handlePreset1to1}
-        className="px-1.5 py-0.5 rounded text-nano font-mono font-bold bg-white/10 hover:bg-white/20 text-white/80 hover:text-white transition-colors"
+        className="px-1.5 py-0.5 rounded text-note font-mono font-bold bg-white/10 hover:bg-white/20 text-white/80 hover:text-white transition-colors"
         title="1:1 Native pixel resolution (Shift+1)"
         aria-label="1:1 Native pixel resolution (Shift+1)"
       >
@@ -1254,7 +1277,7 @@ export default function InteractivePreview({
       <button
         type="button"
         onClick={handlePreset200}
-        className="px-1.5 py-0.5 rounded text-nano font-mono font-bold bg-white/10 hover:bg-white/20 text-white/80 hover:text-white transition-colors"
+        className="px-1.5 py-0.5 rounded text-note font-mono font-bold bg-white/10 hover:bg-white/20 text-white/80 hover:text-white transition-colors"
         title="200% Zoom (Shift+2)"
         aria-label="200% Zoom (Shift+2)"
       >
@@ -1264,7 +1287,7 @@ export default function InteractivePreview({
       <button
         type="button"
         onClick={handlePreset400}
-        className="px-1.5 py-0.5 rounded text-nano font-mono font-bold bg-white/10 hover:bg-white/20 text-white/80 hover:text-white transition-colors"
+        className="px-1.5 py-0.5 rounded text-note font-mono font-bold bg-white/10 hover:bg-white/20 text-white/80 hover:text-white transition-colors"
         title="400% Zoom (Shift+4)"
         aria-label="400% Zoom (Shift+4)"
       >
@@ -1277,7 +1300,7 @@ export default function InteractivePreview({
       <button
         type="button"
         onClick={() => setLockTargetFace((v) => !v)}
-        className={`px-2 py-0.5 rounded text-nano font-bold flex items-center gap-1 transition-all ${
+        className={`px-2 py-0.5 rounded text-note font-bold flex items-center gap-1 transition-all ${
           lockTargetFace
             ? 'bg-emerald-500 text-black font-extrabold shadow-[0_0_8px_rgba(16,185,129,0.5)]'
             : 'bg-white/10 hover:bg-white/20 text-white/80 hover:text-white'
@@ -1290,10 +1313,19 @@ export default function InteractivePreview({
     </div>
   );
 
+  // The pill (zoom readout, presets) and the toolbar are one stack along the bottom edge. They were two
+  // independently positioned overlays, so on a stage wide enough to show both they drew over each other.
+  const hudStack = () => (
+    <div className="absolute inset-x-0 bottom-0 z-50 flex flex-col items-start gap-2 p-3 pointer-events-none">
+      {viewportPill()}
+      {hudBar()}
+    </div>
+  );
+
   // ── Main Preview Box Toolbar (HUD) ─────────────────────────────────────────
   const hudBar = () => (
-    <div className="absolute inset-x-0 bottom-0 z-50 flex justify-center p-3 pointer-events-none">
-      <div className="spring-cluster pointer-events-auto flex flex-wrap justify-center max-w-full items-center gap-0.5 rounded-xl hud-glass p-1 opacity-90 translate-y-0.5 group-hover:opacity-100 group-hover:translate-y-0 focus-within:opacity-100 focus-within:translate-y-0 transition-all duration-300 shadow-2xl border border-white/10">
+    <div className="flex w-full justify-center pointer-events-none">
+      <div className={`spring-cluster pointer-events-auto flex ${smallStage ? 'flex-nowrap justify-start overflow-x-auto' : 'flex-wrap justify-center'} max-w-full items-center gap-0.5 rounded-xl hud-glass p-1 opacity-90 translate-y-0.5 group-hover:opacity-100 group-hover:translate-y-0 focus-within:opacity-100 focus-within:translate-y-0 transition-all duration-300 shadow-2xl border border-white/10`}>
         <button
           type="button"
           onClick={() => zoomBy(1 / 1.4)}
@@ -1668,7 +1700,7 @@ export default function InteractivePreview({
     return (
       <div
         ref={containerRef}
-        className={`relative w-full max-h-[65vh] min-h-[260px] rounded-2xl overflow-hidden preview-stage group border border-white/10 shadow-2xl ${
+        className={`relative w-full max-h-[var(--stage-max-h,65vh)] min-h-[200px] rounded-2xl overflow-hidden preview-stage group border border-white/10 shadow-2xl ${
           isFullscreen ? 'h-screen w-screen max-h-none' : ''
         } aspect-video`}
         onDoubleClick={handleDoubleClick}
@@ -1722,8 +1754,7 @@ export default function InteractivePreview({
           ))}
         </div>
 
-        {viewportPill()}
-        {hudBar()}
+        {hudStack()}
       </div>
     );
   }
@@ -1741,7 +1772,7 @@ export default function InteractivePreview({
   return (
     <div
       ref={containerRef}
-      className={`relative w-full max-h-[65vh] min-h-[260px] rounded-2xl overflow-hidden preview-stage contain-panel select-none group border border-white/10 shadow-2xl ${
+      className={`relative w-full max-h-[var(--stage-max-h,65vh)] min-h-[200px] rounded-2xl overflow-hidden preview-stage contain-panel select-none group border border-white/10 shadow-2xl ${
         isFullscreen ? 'h-screen w-screen max-h-none' : ''
       } ${displayRatio ? '' : 'aspect-video'}`}
       onDoubleClick={handleDoubleClick}
@@ -1749,7 +1780,7 @@ export default function InteractivePreview({
         touchAction: 'none',
         ...(displayRatio && !isFullscreen ? {
           aspectRatio: `${displayRatio}`,
-          maxWidth: displayRatio < 1.0 ? `min(100%, calc(65vh * ${displayRatio}))` : '100%',
+          maxWidth: displayRatio < 1.0 ? `min(100%, calc(var(--stage-max-h, 65vh) * ${displayRatio}))` : '100%',
           margin: '0 auto',
         } : {})
       }}
@@ -2229,8 +2260,7 @@ export default function InteractivePreview({
       )}
 
       {/* ── Bottom Floating Pill & HUD ─────────────────────────────────────── */}
-      {viewportPill()}
-      {hudBar()}
+      {hudStack()}
     </div>
   );
 }

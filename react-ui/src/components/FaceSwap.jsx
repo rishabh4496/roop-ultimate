@@ -1,5 +1,5 @@
 import OutputVideoPlayer from './OutputVideoPlayer';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { API, timeoutFor } from '../api';
 import { useApi } from '../useApi';
@@ -3499,6 +3499,53 @@ export default function FaceSwap({
     : (calibEst?.source === 'global' ? 'text-amber-400 border-amber-500/30 bg-amber-500/10'
       : 'text-muted border-white/10 bg-white/5');
 
+  // The run bar and the preview/timeline deck are both sticky, and the deck sits UNDER the bar, so the
+  // deck's `top` has to be the bar's live height (it grows when Pre-Flight shows a warning and its
+  // 1-click fix row). Published as --ws-runbar-h next to --ws-header-h (useWorkspaceMetrics).
+  const runBarRef = useRef(null);
+  useLayoutEffect(() => {
+    const el = runBarRef.current;
+    const root = document.documentElement;
+    if (!el) return undefined;
+    const apply = () => root.style.setProperty('--ws-runbar-h', `${el.offsetHeight}px`);
+    apply();
+    if (typeof ResizeObserver === 'undefined') return undefined;
+    const ro = new ResizeObserver(apply);
+    ro.observe(el);
+    return () => { ro.disconnect(); root.style.removeProperty('--ws-runbar-h'); };
+  }, []);
+
+  // How much of the top of the window the pinned header + run bar + deck cover. Anything below the deck that
+  // is focused or scrolled to (Tab onto a slider, a scrollIntoView) is kept clear of that band with
+  // `scroll-margin-top` (index.css, [data-after-deck]); without it the browser scrolls the control "into
+  // view" to a spot that is still underneath the deck. The deck only sticks from lg up.
+  const deckRef = useRef(null);
+  const timelineResized = !!panelSizes?.bottomHeight && panelSizes.bottomHeight !== 280;
+  useLayoutEffect(() => {
+    const root = document.documentElement;
+    const bar = runBarRef.current;
+    const deck = deckRef.current;
+    if (!bar || !deck) return undefined;
+    const mq = window.matchMedia('(min-width: 1024px)');
+    const apply = () => {
+      const hdr = parseFloat(root.style.getPropertyValue('--ws-header-h')) || 56;
+      const covered = hdr + bar.offsetHeight + (mq.matches ? deck.offsetHeight : 0) + 8;
+      root.style.setProperty('--ws-sticky-top', `${covered}px`);
+    };
+    apply();
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(apply) : null;
+    ro?.observe(bar);
+    ro?.observe(deck);
+    mq.addEventListener?.('change', apply);
+    window.addEventListener('resize', apply);
+    return () => {
+      ro?.disconnect();
+      mq.removeEventListener?.('change', apply);
+      window.removeEventListener('resize', apply);
+      root.style.removeProperty('--ws-sticky-top');
+    };
+  }, []);
+
   return (
     // pb-28: the floating dock is fixed over the bottom ~80px of the viewport. Without
     // this room the last row of every column could be scrolled no higher than the
@@ -4442,42 +4489,50 @@ export default function FaceSwap({
         {/* COLUMN 3: Active Canvas, Timeline & Outputs */}
         <div className="flex-1 min-w-0 space-y-6">
           {/* run bar */}
-          <div className="sticky top-20 z-30 pb-3 bg-[#0c0e14]/90 backdrop-blur-md">
+          {/* Pinned directly under the header at its measured height (not a guessed `top-20`, which left a
+              strip of scrolling content showing between the two). */}
+          <div ref={runBarRef} data-testid="run-bar" className="sticky top-[var(--ws-header-h,56px)] z-30 pb-2 pt-1 bg-[#0c0e14]/90 backdrop-blur-md shadow-[0_10px_14px_-10px_rgba(0,0,0,0.7)]">
             {/* The run bar keeps its shape whether or not something is
                 rendering. A run has its own tab now, so this one no longer
                 turns into a progress panel — it just says a job is in flight,
                 and offers the way over to it. */}
-            <div className="w-full space-y-3">
+            {/* One row when the column is wide enough (controls left, Pre-Flight right), two when it is not:
+                the pinned bar costs vertical room on every screen, so it should not be two rows by default. */}
+            <div className="w-full flex flex-wrap items-start gap-2">
               <PreFlightLinter
                 target={targets[selTarget]}
                 targetFacesInfo={targetFacesInfo}
                 settings={settings}
                 onAutoFix={handlePreFlightAutoFix}
                 batchCount={1}
-                className="w-full"
+                className="order-2 flex-1 min-w-[17rem]"
+                compact
               />
-              <div className="rounded-2xl glass-panel p-3.5 sm:p-4 flex flex-col md:flex-row items-center justify-between gap-3 sm:gap-4 shadow-xl border border-white/5 w-full">
-                <div className="flex items-center gap-3 w-full md:w-auto">
+              {/* flex-wrap, not md:flex-row: the centre column is often under 500px wide, where the old
+                  column/row switch squeezed "Start Swapping" onto two lines. Buttons keep their text on one
+                  line and the status line wraps beneath them instead. */}
+              <div className="rounded-2xl glass-panel p-2.5 sm:p-3 order-1 grow flex flex-wrap items-center justify-between gap-x-4 gap-y-2 shadow-xl border border-white/5">
+                <div className="flex flex-wrap items-center gap-2.5">
                   {progress.processing ? (
-                    <Button variant="stop" size="lg" onClick={confirmStop} aria-describedby="run-status" className="w-full md:w-auto justify-center">■ Cancel render</Button>
+                    <Button variant="stop" size="md" onClick={confirmStop} aria-describedby="run-status" className="justify-center whitespace-nowrap !px-3">■ Cancel render</Button>
                   ) : (
-                    <Button variant="primary" size="lg" onClick={start} disabled={!!startBlockedReason} aria-describedby="run-status" className="w-full md:w-auto justify-center">▶ Start Swapping</Button>
+                    <Button variant="primary" size="md" onClick={start} disabled={!!startBlockedReason} aria-describedby="run-status" className="justify-center whitespace-nowrap !px-3">▶ Start Swapping</Button>
                   )}
                   {maxFrames > 1 && (
-                    <Button variant="secondary" size="lg" onClick={renderPreviewClip} disabled={!!startBlockedReason || isGeneratingPreviewClip || progress.processing} aria-describedby="run-status" className="!text-orange-400 border border-orange-500/20 hover:bg-orange-500/10 w-full md:w-auto justify-center">
+                    <Button variant="secondary" size="md" onClick={renderPreviewClip} disabled={!!startBlockedReason || isGeneratingPreviewClip || progress.processing} aria-describedby="run-status" className="!text-orange-400 border border-orange-500/20 hover:bg-orange-500/10 justify-center whitespace-nowrap !px-3">
                       Render 5s Preview
                     </Button>
                   )}
                   {progress.processing && (
-                    <Button variant="secondary" size="lg" onClick={onOpenProcessing} className="w-full md:w-auto justify-center">
+                    <Button variant="secondary" size="md" onClick={onOpenProcessing} className="justify-center whitespace-nowrap !px-3">
                       View progress →
                     </Button>
                   )}
                 </div>
-                <div className="flex items-center gap-4">
+                <div className="flex items-center gap-4 ml-auto">
                   {/* No `truncate`: this is where the user is told WHY Start is
                       unavailable, so it wraps rather than being cut to "No tar…". */}
-                  <div id="run-status" className="flex items-center gap-2.5 text-sm font-semibold text-[var(--text-muted)] max-w-sm text-right">
+                  <div id="run-status" className="flex items-center gap-2 text-xs sm:text-compact font-semibold text-[var(--text-muted)] max-w-sm text-right">
                     {progress.processing ? (
                       <>
                         <span className={`h-2.5 w-2.5 rounded-full ${progress.paused ? 'bg-amber-400' : 'bg-[var(--accent)] animate-pulse shadow-[0_0_8px_var(--accent-glow)]'}`} />
@@ -4500,7 +4555,7 @@ export default function FaceSwap({
                   </div>
                 </div>
               </div>
-              {progress.processing && <PipelinePill processing className="px-1" />}
+              {progress.processing && <PipelinePill processing className="order-3 w-full px-1" />}
             </div>
           </div>
 
@@ -4508,7 +4563,31 @@ export default function FaceSwap({
               nothing here should move under the cursor. This used to spell that
               out as three separate opt-outs, which is now just an elevation. */}
           <Section title="Preview" elevation="flat">
-            <div className="space-y-4">
+            {/* THE DECK: tabs, stage and timeline are one sticky unit, pinned under the run bar, so the
+                picture and the timeline that drives it are on screen together at every scroll position.
+                Everything that used to sit ABOVE the stage (the pipeline flow strip, the ~20-slider
+                tracker, the snapshot slots) now follows it and scrolls underneath. That tracker is a
+                single column of ~2000px in a centre column this narrow, and it was pushing the stage
+                2300px down the page, with the timeline below that.
+
+                --stage-max-h is the stage's height budget: a share of the window, never less than 220px,
+                so the timeline keeps its share. If the deck is still taller than the room (a comparison
+                grid, a tall timeline), it scrolls inside itself instead of becoming unreachable. */}
+            <div
+              ref={deckRef}
+              data-testid="stage-deck"
+              className="lg:sticky lg:top-[calc(var(--ws-header-h,56px)+var(--ws-runbar-h,0px))] z-20 -mx-1 px-1 pb-2 bg-[#0c0e14]/90 backdrop-blur-md lg:max-h-[calc(var(--deck-avail)*var(--deck-share))] lg:overflow-y-auto custom-scrollbar"
+              style={{
+                // The room under the header and run bar. The deck takes a SHARE of it and the rest is left for
+                // the sliders etc. that scroll underneath - a deck that took all of it would leave nothing to
+                // scroll them into, and they would sit behind the floating dock. Dragging the timeline divider
+                // (anything but its 280 default) asks for more, so the share grows with it.
+                '--deck-avail': 'calc(var(--ws-vh, 100vh) - var(--ws-header-h, 56px) - var(--ws-runbar-h, 0px))',
+                '--deck-share': timelineResized ? 0.8 : 0.62,
+                '--stage-max-h': 'clamp(150px, calc(var(--deck-avail) * 0.28), 640px)',
+              }}
+            >
+            <div className="space-y-3">
                 {/* Media Session Tab Bar for multi-file workspace */}
                 <MediaTabSessionBar
                   targets={targets}
@@ -4528,44 +4607,6 @@ export default function FaceSwap({
                     inputEl.click();
                   }}
                 />
-
-                {/* Modular Pipeline Flow Strip & 1-Click Buffer Soloing */}
-                {showFlowStrip && (
-                  <div className="pt-1">
-                    <div className="flex items-center justify-between mb-1 text-micro text-white/50 px-1">
-                      <span className="font-semibold uppercase tracking-wider text-mini text-white/70">Modular Pipeline Flow</span>
-                      <span className="text-micro">Alt+Click node to solo intermediate buffer &bull; ⏻ bypass</span>
-                    </div>
-                    <ModularPipelineFlowStrip
-                      soloStage={soloStage}
-                      onSoloStage={handleSoloStage}
-                      bypassedStages={bypassedStages}
-                      onToggleBypass={handleToggleBypass}
-                    />
-                  </div>
-                )}
-
-                {/* Live Slider Tracker Bar positioned directly above the preview box */}
-                <SliderTrackerBar
-                  params={p}
-                  onSetParam={(key, val) => {
-                    set(key, val);
-                  }}
-                  sliderEffectEnabled={sliderEffectEnabled}
-                  onToggleSliderEffect={toggleSliderEffect}
-                  onResetSliders={resetTrackerSliders}
-                  onRefreshPreview={() => refreshPreview({ force: true })}
-                />
-
-                {/* Stage 23: the four snapshot slots. Keys 1-4 over the stage do the same as these. */}
-                <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
-                  <SnapshotSlots api={slotBank} />
-                  {referenceId && !referenceFrame && (
-                    <span className="text-micro text-amber-300" role="status">
-                      Split-wipe reference Slot {referenceId} is of another frame, so the wipe shows the original.
-                    </span>
-                  )}
-                </div>
 
                 {previewSrc ? (
                   comparingEnhancers ? (
@@ -4753,7 +4794,14 @@ export default function FaceSwap({
                   title="Drag to resize Timeline deck (Double-click to reset)"
                   className="mb-2"
                 />
-              <div className="pt-4 border-t border-[var(--border-color)]">
+              {/* The divider above sets this height (it was saved to the workspace store but nothing read it, so
+                  dragging it did nothing). Capped to a share of the window so the stage above keeps its room;
+                  a taller timeline scrolls inside this box. */}
+              <div
+                data-testid="timeline-deck"
+                className="pt-3 border-t border-[var(--border-color)] overflow-y-auto custom-scrollbar"
+                style={{ maxHeight: `max(120px, min(${panelSizes?.bottomHeight || 280}px, calc(var(--deck-avail) * ${timelineResized ? 0.5 : 0.24})))` }}
+              >
                 <Timeline
                   audioTrack={{
                     offsetMs: clampOffset(p.audio_offset_ms),
@@ -4831,6 +4879,47 @@ export default function FaceSwap({
               </div>
             </div>
           )}
+            </div>{/* /stage-deck */}
+            <div data-after-deck className="space-y-3">
+
+            {/* Modular Pipeline Flow Strip & 1-Click Buffer Soloing */}
+            {showFlowStrip && (
+              <div className="pt-1">
+                <div className="flex items-center justify-between mb-1 text-micro text-white/50 px-1">
+                  <span className="font-semibold uppercase tracking-wider text-mini text-white/70">Modular Pipeline Flow</span>
+                  <span className="text-note">Alt+Click node to solo intermediate buffer &bull; ⏻ bypass</span>
+                </div>
+                <ModularPipelineFlowStrip
+                  soloStage={soloStage}
+                  onSoloStage={handleSoloStage}
+                  bypassedStages={bypassedStages}
+                  onToggleBypass={handleToggleBypass}
+                />
+              </div>
+            )}
+
+            {/* Live Slider Tracker Bar. It scrolls UNDER the pinned deck above, so a slider is dragged
+                with the picture it changes in view. */}
+            <SliderTrackerBar
+              params={p}
+              onSetParam={(key, val) => {
+                set(key, val);
+              }}
+              sliderEffectEnabled={sliderEffectEnabled}
+              onToggleSliderEffect={toggleSliderEffect}
+              onResetSliders={resetTrackerSliders}
+              onRefreshPreview={() => refreshPreview({ force: true })}
+            />
+
+            {/* Stage 23: the four snapshot slots. Keys 1-4 over the stage do the same as these. */}
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
+              <SnapshotSlots api={slotBank} />
+              {referenceId && !referenceFrame && (
+                <span className="text-micro text-amber-300" role="status">
+                  Split-wipe reference Slot {referenceId} is of another frame, so the wipe shows the original.
+                </span>
+              )}
+            </div>
 
             {/* A previous render sent from Outputs, wiped against the live preview. Renders nothing until one is sent. */}
             <ABReferencePanel previewSrc={previewSrc} frame={frame} fps={targets[selTarget]?.fps || 25} startFrame={startFrame} />
@@ -4889,6 +4978,7 @@ export default function FaceSwap({
               <Toggle label="Swapper Grid" checked={comparingSwappers} onChange={(v) => { setComparingSwappers(v); if (v) { setCompare(false); setComparingEnhancers(false); setComparingMasks(false); setComparingUpscalers(false); } }} />
               <Toggle label="Upscale Grid" checked={comparingUpscalers} onChange={(v) => { setComparingUpscalers(v); if (v) { setCompare(false); setComparingEnhancers(false); setComparingMasks(false); setComparingSwappers(false); } }} />
             </div>
+            </div>{/* /after-deck */}
           </Section>
 
           {/* Stage 24 3x3 Parameter Sweep Contact Sheet Modal */}

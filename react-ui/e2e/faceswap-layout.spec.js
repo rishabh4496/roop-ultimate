@@ -150,6 +150,15 @@ test('the floating dock covers no control once the page is scrolled to the end',
         if (!r.width || !r.height || getComputedStyle(el).visibility === 'hidden') return false;
         const cx = r.left + r.width / 2;
         const cy = r.top + r.height / 2;
+        // A control that sits below the visible edge of its OWN scroller (the timeline deck scrolls inside
+        // itself) is not on screen, so there is nothing for the dock to cover: its rectangle still reports
+        // coordinates, but the scroller clips it.
+        for (let a = el.parentElement; a && a !== document.body; a = a.parentElement) {
+          const cs = getComputedStyle(a);
+          if (cs.overflowY === 'visible' && cs.overflowX === 'visible') continue;
+          const ar = a.getBoundingClientRect();
+          if (cx < ar.left || cx > ar.right || cy < ar.top || cy > ar.bottom) return false;
+        }
         return cx >= d.left && cx <= d.right && cy >= d.top && cy <= d.bottom;
       })
       .map((el) => (el.getAttribute('aria-label') || el.textContent || el.tagName).trim().slice(0, 40));

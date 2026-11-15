@@ -125,8 +125,8 @@ export function ModularPipelineFlowStrip({
           return (
             <React.Fragment key={node.id}>
               <div
-                role="button"
-                tabIndex={0}
+                role="group"
+                aria-label={`${node.n}. ${node.label}`}
                 data-testid={`flow-node-${node.id}`}
                 data-solo={isSolo ? 'true' : 'false'}
                 data-bypassed={isBypassed ? 'true' : 'false'}
@@ -136,12 +136,9 @@ export function ModularPipelineFlowStrip({
                     onSoloStage(isSolo ? null : node.id);
                   }
                 }}
-                onKeyDown={(e) => {
-                  if ((e.key === 'Enter' || e.key === ' ') && onSoloStage) {
-                    e.preventDefault();
-                    onSoloStage(isSolo ? null : node.id);
-                  }
-                }}
+                // No role="button"/tabIndex/key handler here: the node holds two real buttons (bypass, solo), and
+                // an interactive element may not contain another (axe nested-interactive). Alt+click on the
+                // body stays as a mouse shortcut; the keyboard path is the solo button inside.
                 className={`group relative flex items-center gap-1.5 px-2 py-1 rounded-lg border transition-all ${
                   isSolo
                     ? 'border-amber-400 bg-amber-400/20 text-white shadow-[0_0_12px_rgba(251,191,36,0.35)] ring-1 ring-amber-400/50'

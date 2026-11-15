@@ -1,5 +1,6 @@
-import React from 'react';
+import React, { useRef } from 'react';
 import { Icon } from '../../icons';
+import { useWorkspaceMetrics } from './useWorkspaceMetrics';
 import LayoutSwitcher from './LayoutSwitcher';
 import TelemetryPill from './TelemetryPill';
 import HistoryPopover from './HistoryPopover';
@@ -21,8 +22,10 @@ export default function WorkstationHeader({
   profileName, onOpenProfiles, onOpenSnapshots, onOpenPalette, pipOn, onTogglePip,
 }) {
   const Ico = current?.icon;
+  const headerRef = useRef(null);
+  useWorkspaceMetrics(headerRef);
   return (
-    <header className="sticky top-0 z-30 flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-white/[0.07] bg-black/35 px-4 py-2 backdrop-blur-xl">
+    <header ref={headerRef} className="sticky top-0 z-30 flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-white/[0.07] bg-black/35 px-4 py-2 backdrop-blur-xl">
       <div className="flex min-w-0 items-center gap-3">
         <h1 className="flex items-center gap-2 text-lead font-bold tracking-tight text-white/95">
           {Ico && <Ico size={16} className="text-accent" />}

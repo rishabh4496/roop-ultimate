@@ -1,3 +1,16 @@
+## 2026-11-16 (UI) — Face Swap: pinned run bar, preview + timeline deck, proportional wheel zoom
+
+React UI only (`react-ui/`); no backend change.
+
+- **Run bar** is pinned at the header's measured height (`--ws-header-h`, `useWorkspaceMetrics.js`) instead of a guessed `top-20`, which left a strip of scrolling content between them. Pre-Flight shares its row on wide columns and its Details opens as a popover.
+- **Preview + timeline deck.** Tabs, stage and timeline are one sticky unit under the run bar, taking 62% of the room under header + run bar (80% once the timeline divider is dragged). The slider grid, flow strip and snapshot slots follow it and scroll underneath. The stage had been ~2300px down the page with the timeline below it. Controls below the deck keep clear of it via `scroll-margin-top` (`[data-after-deck]`).
+- **Timeline divider** now sets the timeline height (it saved `bottomHeight` and nothing read it).
+- **Wheel zoom** scales with the wheel (a 100px notch ~15%, a 3px trackpad tick ~0.4%, max 35% per event) and lands exactly on Fit when crossing 100%; pan re-clamps on stage resize. Presets are unchanged (still relative to Fit).
+- **Stage HUD**: zoom pill and toolbar are one stack (they overlapped); on a small stage the toolbar is one scrolling row and the pill shows on hover/focus.
+- **a11y**: pipeline flow nodes were `role="button"` containing buttons (axe `nested-interactive`, 6 nodes); now `role="group"`. Sub-12px HUD/flow-strip text raised to 12px (fixes the type-scale spec that failed at HEAD).
+- **Tests**: new `e2e/faceswap-deck.spec.js`; the dock-coverage spec now ignores controls clipped by their own scroller. Still failing at HEAD and unchanged by this: six `canvas-tools` specs, `contrast: processing`, `tab stops: faceswap` (261 at HEAD, 255 now; allowlist says 203).
+- **Not run**: the full e2e suite in one go (stopped part-way), a real-backend session, the RTX 3060 machine.
+
 ## 2026-11-16 (later) — matte constants tuning on jennifer.mp4: MEASURED, NOT CHANGED
 
 Question: tune the yaw erosion inset (0.025), the yaw feather narrowing (0.35), the feather cap (0.18 x silhouette span) and the landmark EMA weight (0.65).

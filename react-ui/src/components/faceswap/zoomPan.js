@@ -109,6 +109,25 @@ export function wheelZoom(deltaY, zoom, max = ZOOM_MAX, min = ZOOM_MIN, step = 0
   return Math.abs(next - zoom) < 1e-4 ? null : next;
 }
 
+/**
+ * One wheel EVENT, scaled by how far it actually turned (what pro viewers do), instead of a fixed
+ * step per event. A fixed 15% per event made a trackpad - which fires dozens of 1-4px events per
+ * swipe - fly from 1x to 16x in one gesture, while a mouse notch (deltaY 100) felt right. Here a
+ * 100px notch is still ~15%, a 4px trackpad tick is ~0.6%, and no single event moves more than 35%.
+ *
+ * Crossing 100% (fit) in either direction lands exactly ON fit first, so the picture is easy to
+ * return to without a pixel of drift; the next event continues past it.
+ *
+ * Returns null when the wheel cannot move the zoom any further.
+ */
+export function wheelZoomDelta(deltaY, deltaMode, zoom, max = ZOOM_MAX, min = ZOOM_MIN) {
+  const px = deltaMode === 1 ? deltaY * 16 : deltaMode === 2 ? deltaY * 400 : deltaY;
+  const factor = Math.min(1.35, Math.max(1 / 1.35, Math.exp(-px * 0.0014)));
+  let next = Math.min(Math.max(zoom * factor, min), max);
+  if ((zoom - 1) * (next - 1) < 0) next = 1;
+  return Math.abs(next - zoom) < 1e-4 ? null : next;
+}
+
 /** The transform string every zoom/pan stage renders with. */
 export function transformFor(zoom, pan) {
   return {
