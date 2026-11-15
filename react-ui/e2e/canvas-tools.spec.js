@@ -22,7 +22,7 @@ async function openStage(page) {
   return stage;
 }
 
-const brushCanvas = (stage) => stage.locator('canvas.cursor-crosshair');
+const brushCanvas = (stage) => stage.locator('canvas.cursor-none');
 
 /** Where an object-contain picture of w x h sits in the canvas's box (independent of the app code). */
 const contained = (box, w, h) => {
@@ -159,7 +159,7 @@ test('compare: the wipe shows the swap on one side of the divider and the raw fr
 // ── The 3.5x Lens ───────────────────────────────────────────────────────────
 test('lens: shows the picture at 3.5x, centred on the pixel under the pointer (100% and 2.5x stage zoom)', async ({ page }) => {
   const stage = await openStage(page);
-  const lensBtn = stage.getByRole('button', { name: 'Lens', exact: true });
+  const lensBtn = stage.getByRole('button', { name: /Loupe/ }).first();
   await lensBtn.click();
 
   const check = async (label) => {
@@ -169,10 +169,10 @@ test('lens: shows the picture at 3.5x, centred on the pixel under the pointer (1
     const at = { x: Math.min(pic.x + pic.width * 0.42, sb.x + sb.width * 0.7) + 0.31, y: Math.max(pic.y + pic.height * 0.55, sb.y + sb.height * 0.45) + 0.17 };
     await page.mouse.move(at.x - 20, at.y - 20);
     await page.mouse.move(at.x, at.y, { steps: 3 });
-    const img = stage.getByAltText('Magnifier lens view');
+    const img = stage.getByAltText('Swapped loupe detail');
     await expect(img, `${label}: the lens is up`).toBeVisible();
     const ib = await img.boundingBox();
-    const lens = await img.locator('xpath=..').boundingBox();
+    const lens = await img.locator('xpath=../../..').boundingBox();
     expect(ib.width / pic.width, `${label}: lens image width / picture width`).toBeGreaterThan(3.45);
     expect(ib.width / pic.width, `${label}: lens image width / picture width`).toBeLessThan(3.55);
     expect(ib.height / pic.height, `${label}: and the same for height`).toBeGreaterThan(3.45);

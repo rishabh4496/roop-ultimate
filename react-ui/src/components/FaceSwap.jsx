@@ -4583,8 +4583,13 @@ export default function FaceSwap({
                 // scroll them into, and they would sit behind the floating dock. Dragging the timeline divider
                 // (anything but its 280 default) asks for more, so the share grows with it.
                 '--deck-avail': 'calc(var(--ws-vh, 100vh) - var(--ws-header-h, 56px) - var(--ws-runbar-h, 0px))',
-                '--deck-share': timelineResized ? 0.8 : 0.62,
-                '--stage-max-h': 'clamp(150px, calc(var(--deck-avail) * 0.28), 640px)',
+                '--deck-share': timelineResized ? 0.85 : 0.8,
+                // The timeline's own height budget, shared with the timeline below so both agree.
+                '--tl-h': `max(120px, min(${panelSizes?.bottomHeight || 280}px, calc(var(--deck-avail) * ${timelineResized ? 0.5 : 0.2})))`,
+                // The stage gets whatever the deck's share leaves after the timeline and the tab bar /
+                // gaps (~90px), so the deck's contents always fit and it never scrolls internally (that
+                // internal scroll is what made the preview slide under the wheel).
+                '--stage-max-h': 'clamp(150px, calc(var(--deck-avail) * var(--deck-share) - var(--tl-h) - 96px), 1000px)',
               }}
             >
             <div className="space-y-3">
@@ -4800,7 +4805,7 @@ export default function FaceSwap({
               <div
                 data-testid="timeline-deck"
                 className="pt-3 border-t border-[var(--border-color)] overflow-y-auto custom-scrollbar"
-                style={{ maxHeight: `max(120px, min(${panelSizes?.bottomHeight || 280}px, calc(var(--deck-avail) * ${timelineResized ? 0.5 : 0.24})))` }}
+                style={{ maxHeight: 'var(--tl-h)' }}
               >
                 <Timeline
                   audioTrack={{

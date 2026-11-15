@@ -155,7 +155,7 @@ export default function InteractivePreview({
   // The stage is often a small box (the centre column is ~420px wide at 1440px). Its two floating toolbars
   // are ~150px tall when they wrap there - over half the picture. On a small stage the main toolbar stays
   // on ONE row that scrolls sideways, and the zoom-preset pill (a duplicate of its -/FIT/+ buttons) shows
-  // on hover or keyboard focus only.
+  // on keyboard focus only: revealing it on hover put it right over the face under the pointer.
   const [smallStage, setSmallStage] = useState(false);
   const [isPeekingOriginal, setIsPeekingOriginal] = useState(false);
   const [lockTargetFace, setLockTargetFace] = useState(false);
@@ -1137,6 +1137,7 @@ export default function InteractivePreview({
           </span>
           {roleLabel && (
             <span
+              data-face-role-label={i}
               className={`absolute -top-6 left-14 ${roleClass} text-white text-micro font-bold px-1.5 py-0.5 rounded whitespace-nowrap pointer-events-none`}
             >
               {roleLabel}
@@ -1160,6 +1161,8 @@ export default function InteractivePreview({
           {togglable && (
             <button
               type="button"
+              data-face-exclude={i}
+              aria-pressed={!!info.excluded}
               className="absolute left-1 -bottom-6 bg-black/80 backdrop-blur text-white text-nano font-bold px-1.5 py-0.5 rounded whitespace-nowrap pointer-events-auto cursor-pointer hover:bg-[var(--accent)]"
               onPointerDown={(e) => e.stopPropagation()}
               onClick={(e) => { e.stopPropagation(); onToggleExclude(i); }}
@@ -1236,7 +1239,7 @@ export default function InteractivePreview({
 
   // ── Bottom-Left Viewport HUD Floating Pill ────────────────────────────────
   const viewportPill = () => (
-    <div className={`flex flex-wrap max-w-full items-center gap-1.5 px-2 py-1 rounded-xl bg-black/85 backdrop-blur-md border border-white/20 shadow-2xl select-none transition-opacity ${smallStage ? 'opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto focus-within:opacity-100 focus-within:pointer-events-auto' : 'pointer-events-auto'}`}>
+    <div className={`flex flex-wrap max-w-full items-center gap-1.5 px-2 py-1 rounded-xl bg-black/85 backdrop-blur-md border border-white/20 shadow-2xl select-none transition-opacity ${smallStage ? 'opacity-0 pointer-events-none focus-within:opacity-100 focus-within:pointer-events-auto' : 'pointer-events-auto'}`}>
       <span
         ref={zoomReadoutRef}
         className="font-mono text-micro font-bold tabular-nums text-accent px-1.5 py-0.5 rounded bg-[var(--accent)]/15 border border-[var(--accent)]/30"
@@ -1700,7 +1703,7 @@ export default function InteractivePreview({
     return (
       <div
         ref={containerRef}
-        className={`relative w-full max-h-[var(--stage-max-h,65vh)] min-h-[200px] rounded-2xl overflow-hidden preview-stage group border border-white/10 shadow-2xl ${
+        className={`relative w-full max-h-[var(--stage-max-h,65vh)] min-h-[150px] rounded-2xl overflow-hidden preview-stage group border border-white/10 shadow-2xl ${
           isFullscreen ? 'h-screen w-screen max-h-none' : ''
         } aspect-video`}
         onDoubleClick={handleDoubleClick}
@@ -1772,7 +1775,7 @@ export default function InteractivePreview({
   return (
     <div
       ref={containerRef}
-      className={`relative w-full max-h-[var(--stage-max-h,65vh)] min-h-[200px] rounded-2xl overflow-hidden preview-stage contain-panel select-none group border border-white/10 shadow-2xl ${
+      className={`relative w-full max-h-[var(--stage-max-h,65vh)] min-h-[150px] rounded-2xl overflow-hidden preview-stage contain-panel select-none group border border-white/10 shadow-2xl ${
         isFullscreen ? 'h-screen w-screen max-h-none' : ''
       } ${displayRatio ? '' : 'aspect-video'}`}
       onDoubleClick={handleDoubleClick}
@@ -1922,6 +1925,8 @@ export default function InteractivePreview({
                 <button
                   key={pct}
                   type="button"
+                  aria-label={`Move the compare split to ${pct}%`}
+                  aria-pressed={sliderPosition === pct}
                   onClick={() => {
                     sliderPosRef.current = pct;
                     setSliderPosition(pct);

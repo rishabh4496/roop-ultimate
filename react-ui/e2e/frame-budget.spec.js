@@ -178,7 +178,7 @@ test('pointer flood: control (no tool active)', async ({ page }) => {
 
 test('pointer flood: 3.5x Lens hover', async ({ page }) => {
   const stage = await openStage(page);
-  await stage.getByRole('button', { name: /Magnifier|Lens/i }).first().click();
+  await stage.getByRole('button', { name: /Loupe|Magnifier|Lens/i }).first().click();
   expectWithin(await measure(page, 'lens hover, 600 pointermoves', () => flood(page, stage)), BUDGET.lens);
 });
 

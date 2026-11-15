@@ -50,7 +50,7 @@ for (const [w, h] of [[1440, 900], [1920, 1080], [1280, 720]]) {
       expect(stage.top, 'stage below the pinned bars').toBeGreaterThanOrEqual(deck.top - 1);
       expect(tl.bottom, 'timeline inside the window').toBeLessThanOrEqual(h);
       expect(stage.bottom, 'stage above the timeline').toBeLessThanOrEqual(tl.top + 1);
-      expect(h - deck.bottom, 'at least 150px is left under the deck for the controls that scroll beneath it').toBeGreaterThanOrEqual(150);
+      expect(h - deck.bottom, 'at least 100px is left under the deck for the controls that scroll beneath it').toBeGreaterThanOrEqual(100);
     }
   });
 }

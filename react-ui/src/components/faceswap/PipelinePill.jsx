@@ -124,6 +124,7 @@ export function ModularPipelineFlowStrip({
 
           return (
             <React.Fragment key={node.id}>
+              {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-noninteractive-element-interactions -- Alt+click is a mouse-only shortcut; the keyboard path is the solo button inside (see comment below) */}
               <div
                 role="group"
                 aria-label={`${node.n}. ${node.label}`}
