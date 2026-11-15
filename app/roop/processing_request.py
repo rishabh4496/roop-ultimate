@@ -16,6 +16,7 @@ from roop.target_selection import normalize_target_selection
 
 
 SWAP_MODE_LABELS = {
+    "All faces": "all",
     "Selected face": "selected",
     "Selected people": "selected_multi",
     "First found": "first",
@@ -24,9 +25,44 @@ SWAP_MODE_LABELS = {
     "All male": "all_male",
 }
 
+#: The values `ProcessMgr.swap_faces` actually branches on. A caller that already
+#: holds one of these (a script, a saved job) must get it back unchanged.
+SWAP_MODES = frozenset(SWAP_MODE_LABELS.values())
+
+_SWAP_MODE_LOOKUP = {
+    **{label.casefold(): mode for label, mode in SWAP_MODE_LABELS.items()},
+    **{mode: mode for mode in SWAP_MODES},
+}
+
+
+class UnknownSwapMode(ValueError):
+    """The request named a face-selection mode this app does not have."""
+
+    def __init__(self, label):
+        self.label = label
+        super().__init__(
+            "unknown face selection mode %r; expected one of %s"
+            % (label, ", ".join(sorted(SWAP_MODE_LABELS))))
+
 
 def normalize_swap_mode(label):
-    return SWAP_MODE_LABELS.get(label, "all")
+    """UI label or canonical value -> canonical value.
+
+    An absent value (None or blank) means the default, "all". Anything else that
+    is not a known label or canonical value raises `UnknownSwapMode`. It used to
+    fall back to "all" silently, so a typo, a renamed label, or a client sending
+    "first" swapped EVERY face in the frame, bystanders included, with no error.
+    """
+    if label is None:
+        return "all"
+    if isinstance(label, str):
+        key = label.strip().casefold()
+        if not key:
+            return "all"
+        mode = _SWAP_MODE_LOOKUP.get(key)
+        if mode is not None:
+            return mode
+    raise UnknownSwapMode(label)
 
 
 def _optional_int(value, default=None):

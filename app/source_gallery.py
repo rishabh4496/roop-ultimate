@@ -34,18 +34,16 @@ API_TEMP = None
 
 
 def _mask_offsets_from_cfg():
-    c = roop_globals.CFG
-    # Faceset uploads can arrive while the API is still publishing its runtime
-    # configuration.  Source ingestion only needs a valid mask-offset tuple at
-    # this point; the configured values are applied on the next update once CFG
-    # is ready.  Do not turn that startup race into a request hang or a 500.
-    if c is None:
-        return [0.0, 0.0, 0.0, 0.0,
-                12.0, 10.0, 1.0, 1.0, 1.0, 1.0]
-    return [c.mask_top, c.mask_bottom, c.mask_left, c.mask_right,
-            c.face_mask_blend, c.mouth_mask_blend,
-            c.mouth_top_scale, c.mouth_bottom_scale,
-            c.mouth_left_scale, c.mouth_right_scale]
+    """The ten paste-mask offsets from the live settings.
+
+    Ingest no longer stamps these onto faces: a snapshot taken at upload time
+    went stale the moment a slider moved, and the paste read a different face
+    than the one the sliders updated. `roop.mask_offsets.resolve` reads them
+    when they are USED. This stays for the harnesses that pin an explicit
+    per-face override, and keeps its safe before-CFG-is-ready answer.
+    """
+    from roop import mask_offsets
+    return mask_offsets.from_cfg(roop_globals.CFG)
 
 def estimate_face_pose_from_kps(kps):
     try:
@@ -211,8 +209,6 @@ def add_reference_folder(paths, min_cosine=0.65):
     face_set = FaceSet()
     face_set.faces = [face for face, _, _, _ in accepted]
     face_set.ref_images = [frame for _, frame, _, _ in accepted]
-    for face in face_set.faces:
-        face.mask_offsets = _mask_offsets_from_cfg()
     face_set.face_poses = cluster.poses
     face_set.reference_embeddings = cluster.embeddings
     face_set.reference_weights = [sample.weight for sample in cluster.samples]
@@ -244,7 +240,6 @@ def _ingest_faceset(path):
     def append_face(fd, frame):
         nonlocal best_score, best_crop
         face = fd[0]
-        face.mask_offsets = _mask_offsets_from_cfg()
         face_set.faces.append(face)
         face_set.ref_images.append(frame)
         # Use the most frontal face as the gallery thumbnail, not just the first

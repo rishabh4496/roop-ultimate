@@ -69,6 +69,7 @@ from roop import terminal_dashboard as _terminal_dashboard
 from roop import procmgr_runtime as _procmgr_runtime
 from roop import runtime_state as _runtime_state
 from roop.processing_request import (
+    UnknownSwapMode,
     normalize_processing_request,
     normalize_source_index_mapping,
     normalize_swap_mode,
@@ -120,6 +121,13 @@ app.add_middleware(
 # share mode a non-loopback caller without the launch token gets 401. Covers
 # every /api and /ws route, the telemetry WebSocket included. See api_access.
 app.add_middleware(_api_access.AccessControlMiddleware)
+
+
+@app.exception_handler(UnknownSwapMode)
+async def _unknown_swap_mode(request, exc):
+    """A face-selection mode that does not exist is refused, never guessed as "all"."""
+    return JSONResponse(status_code=400, content={"error": "unknown_swap_mode",
+                                                  "message": str(exc)})
 
 
 @app.exception_handler(_safe_paths.UploadRejected)
@@ -1107,52 +1115,26 @@ def _update_mask_offsets_from_payload(payload: dict):
             "face_mask_blend", "mouth_mask_blend",
             "mouth_top_scale", "mouth_bottom_scale", "mouth_left_scale", "mouth_right_scale"]
     
-    # Update CFG so they are persisted. Only hit the disk when a value actually
-    # changed — /api/preview calls this on every scrub/slider debounce.
+    # The settings are the ONE home of these values: `roop.mask_offsets.resolve`
+    # reads them when the paste needs them. They used to be copied onto
+    # `faces[0]` of the selected faceset as well, which is not the face the swap
+    # reads (B-01 / B-02, .audit/04_all_swap_bugs.md), so that copy is gone.
+    #
+    # Only hit the disk when a value actually changed — /api/preview calls this
+    # on every scrub/slider debounce.
     if roop_globals.CFG:
         cfg_changed = False
         for k in keys:
             if k in payload and payload[k] is not None:
-                if getattr(roop_globals.CFG, k, None) != payload[k]:
-                    setattr(roop_globals.CFG, k, payload[k])
+                try:
+                    value = float(payload[k])
+                except (ValueError, TypeError):
+                    continue            # a non-number must not reach the paste arithmetic
+                if getattr(roop_globals.CFG, k, None) != value:
+                    setattr(roop_globals.CFG, k, value)
                     cfg_changed = True
         if cfg_changed:
             roop_globals.CFG.save()
-
-    # Update current faceset face offsets
-    face_index = state.selected_input_face_index
-    if len(roop_globals.INPUT_FACESETS) > face_index:
-        faceset = roop_globals.INPUT_FACESETS[face_index]
-        if faceset.faces:
-            face = faceset.faces[0]
-            if not hasattr(face, "mask_offsets") or face.mask_offsets is None:
-                face.mask_offsets = _mask_offsets_from_cfg()
-            offs = list(face.mask_offsets)
-            while len(offs) < 10:
-                offs.append(1.0)
-            
-            mapping = {
-                "mask_top": 0,
-                "mask_bottom": 1,
-                "mask_left": 2,
-                "mask_right": 3,
-                "face_mask_blend": 4,
-                "mouth_mask_blend": 5,
-                "mouth_top_scale": 6,
-                "mouth_bottom_scale": 7,
-                "mouth_left_scale": 8,
-                "mouth_right_scale": 9
-            }
-            updated = False
-            for k, idx in mapping.items():
-                if k in payload and payload[k] is not None:
-                    try:
-                        offs[idx] = float(payload[k])
-                        updated = True
-                    except (ValueError, TypeError):
-                        pass
-            if updated:
-                face.mask_offsets = offs
 
 
 def translate_swap_mode(text):
@@ -1515,6 +1497,27 @@ def _validate_settings_payload(values: dict):
     return None
 
 
+def _provider_restart_needed(requested) -> bool:
+    """True when `requested` names a provider other than the one the loaded sessions run on.
+
+    `roop.globals.execution_providers` is decided once at startup and every processor keeps the
+    session it built from it, so saving a different provider changes the config file, not the
+    render, until the next launch (B-04, .audit/04_all_swap_bugs.md). "auto" cannot be compared
+    here, so it is not reported as a change.
+    """
+    wanted = str(requested or "").strip().lower()
+    if not wanted or wanted == "auto":
+        return False
+    active = getattr(roop_globals, "execution_providers", None) or []
+    if not active:
+        return False
+    first = active[0]
+    first = first[0] if isinstance(first, (tuple, list)) else first
+    running = str(first).replace("ExecutionProvider", "").strip().lower()
+    aliases = {"dml": "directml"}
+    return aliases.get(wanted, wanted) != aliases.get(running, running)
+
+
 @app.post("/api/settings")
 def save_settings(settings: dict = Body(...)):
     validation_error = _validate_settings_payload(settings)
@@ -1559,7 +1562,14 @@ def save_settings(settings: dict = Body(...)):
         except Exception as _degrade_error:
             _swallowed("api.py:save_settings live env", _degrade_error,
                        "live flags apply after restart")
-    return {"status": "success"}
+    result = {"status": "success"}
+    if "provider" in settings and _provider_restart_needed(settings.get("provider")):
+        result["restart_required"] = ["provider"]
+        print("[Settings] provider saved as %r but the loaded sessions run on %r; "
+              "the change applies after a restart." % (
+                  settings.get("provider"),
+                  (getattr(roop_globals, "execution_providers", None) or ["?"])[0]), flush=True)
+    return result
 
 
 # ── Hardware benchmark ───────────────────────────────────────────────────────
@@ -2136,7 +2146,6 @@ def source_add(files: list[UploadFile] = File(...)):
                     fs._source_path = os.path.abspath(path)
                     fs._source_id = f"{os.path.abspath(path)}#face-{face_index}"
                     face = fd[0]
-                    face.mask_offsets = _mask_offsets_from_cfg()
                     fs.faces.append(face)
                     _sources_append(fs, util.convert_to_gradio(fd[1]))
             else:

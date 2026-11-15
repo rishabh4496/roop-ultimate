@@ -1457,9 +1457,14 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             try:
                 import json as _json, base64 as _b64
                 raw = _json.loads(mask_src)
+                # Through the resolver, not by indexing the face's own attribute: a
+                # faceset built outside the ingest path has no such attribute, and
+                # `Face.__getattr__` answers None -- `None[4]` raised here and
+                # the painted mask was dropped as "failed to parse".
+                from roop.mask_offsets import resolve as _resolve_mask_offsets
                 blend_amount = 20.0
                 if self.input_face_datas and len(self.input_face_datas[0].faces) > 0:
-                    blend_amount = self.input_face_datas[0].faces[0].mask_offsets[4]
+                    blend_amount = _resolve_mask_offsets(self.input_face_datas[0].faces[0])[4]
 
                 def _decode_mask(data_url):
                     if not data_url:
@@ -3962,6 +3967,9 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             if not (0 <= self.options.selected_index < len(self.input_face_datas)):
                 _audit_hit('refused: no valid selected source')
                 return num_faces_found, frame
+            if not self._source_has_faces(self.options.selected_index):
+                _audit_hit('refused: source faceset has no faces')
+                return num_faces_found, frame
             if _tfaces:
                 face = min(_tfaces, key=lambda f: f.bbox[0])
             else:
@@ -5127,6 +5135,20 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 if _suppressed:
                     pending = [p for idx, p in enumerate(pending) if idx not in _suppressed]
 
+            # What gets painted is what `pending` holds NOW, so that is what is
+            # counted. `num_faces_found` was bumped as each face was matched --
+            # including a face the nth-face mode then refused for want of a
+            # source, a face the overlap pass suppressed, and a face whose source
+            # faceset is empty (process_face returns the frame untouched for that
+            # one) -- so a frame in which nothing was painted read as swapped to
+            # the no-face policy and to the audit. B-07, .audit/04_all_swap_bugs.md.
+            _paintable = [p for p in pending if self._source_has_faces(p[0])]
+            if len(_paintable) != len(pending):
+                _audit_hit('refused: source faceset has no faces',
+                           len(pending) - len(_paintable))
+                pending = _paintable
+            num_faces_found = len(pending)
+
             # Apply precomputed or stabilized kps ONLY to faces actually being swapped
             if precomp:
                 for _, f in pending:
@@ -5200,6 +5222,14 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
 
         return num_faces_found, temp_frame
 
+
+    def _source_has_faces(self, index):
+        """True when source faceset `index` exists and holds at least one face to swap in."""
+        try:
+            return (0 <= index < len(self.input_face_datas)
+                    and len(getattr(self.input_face_datas[index], 'faces', None) or ()) > 0)
+        except (TypeError, ValueError):
+            return False
 
     def _composite_faces(self, pending, plate, temp_frame, bystanders=None):
         """Swap and paste every matched face of one frame.
@@ -7222,9 +7252,11 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             # interpolation must be a keyword — positionally it lands in `dst`
             # and is silently ignored (resize falls back to INTER_LINEAR).
             fake_frame = cv2.resize(fake_frame, (upscale, upscale), interpolation=cv2.INTER_CUBIC)
-        mask_offsets = getattr(inputface, 'mask_offsets', None) if inputface is not None else None
-        if mask_offsets is None:
-            mask_offsets = [0, 0, 0, 0, 20.0, 10.0]
+        # Live settings unless a face pins its own (roop.mask_offsets). Read here,
+        # at the point of use, so it is the face the swap actually used and the
+        # value the sliders last set.
+        from roop.mask_offsets import resolve as _resolve_mask_offsets
+        mask_offsets = _resolve_mask_offsets(inputface)
 
         face_lm = target_face.landmark_2d_106 if hasattr(target_face, 'landmark_2d_106') and target_face.landmark_2d_106 is not None else None
         # kps gives create_landmark_mask the head's up-axis, so the forehead

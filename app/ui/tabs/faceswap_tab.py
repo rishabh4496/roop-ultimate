@@ -499,13 +499,13 @@ def on_mouth_right_scale_changed(value):
 def set_mask_offset(index, mask_offset):
     global SELECTED_INPUT_FACE_INDEX
 
-    if len(roop.globals.INPUT_FACESETS) > SELECTED_INPUT_FACE_INDEX:
-        offs = roop.globals.INPUT_FACESETS[SELECTED_INPUT_FACE_INDEX].faces[0].mask_offsets
-        # Indices 6-9 are mouth scales with a default of 1.0 — pad correctly.
-        while len(offs) < 10:
-            offs.append(1.0)
-        offs[index] = mask_offset
-        roop.globals.INPUT_FACESETS[SELECTED_INPUT_FACE_INDEX].faces[0].mask_offsets = offs
+    # The offsets live in the settings now (roop.mask_offsets.resolve reads them when the
+    # paste needs them); faces no longer carry a copy. See .audit/04_all_swap_bugs.md B-01/B-02.
+    names = ('mask_top', 'mask_bottom', 'mask_left', 'mask_right', 'face_mask_blend',
+             'mouth_mask_blend', 'mouth_top_scale', 'mouth_bottom_scale',
+             'mouth_left_scale', 'mouth_right_scale')
+    if roop.globals.CFG is not None and 0 <= index < len(names):
+        setattr(roop.globals.CFG, names[index], float(mask_offset))
 
 def on_use_source_bank_changed(value):
     roop.globals.CFG.use_source_bank = value
