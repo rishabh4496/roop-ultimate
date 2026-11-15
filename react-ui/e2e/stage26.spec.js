@@ -371,6 +371,9 @@ async function openFaceSwapWithPictures(page) {
 }
 
 const pip = (page) => page.getByTestId('pip-window');
+// The stage is pinned in a sticky deck on Face Swap, so it only leaves the window once the page is scrolled
+// past the end of its Preview section: the bottom of the page.
+const scrollPastStage = (page) => page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
 const gotoTab = async (page, id) => {
   await page.goto(`/#/${id}`);
   await page.locator('nav[aria-label="Main"] button[aria-current="page"]').waitFor();
@@ -385,14 +388,14 @@ test.describe('floating preview (PiP)', () => {
   test('it is off until switched on; on Face Swap it shows only while the stage is scrolled out of view', async ({ page }) => {
     await openFaceSwapWithPictures(page);
     const stage = page.locator('.preview-stage').first();
-    await stage.scrollIntoViewIfNeeded();                  // in this layout the stage starts well below the fold
+    await expect(stage).toBeInViewport();                  // pinned: the stage is on screen at the top of the page
     await expect(pip(page)).toHaveCount(0);
     await expect(page.getByTestId('pip-toggle')).toHaveAttribute('aria-pressed', 'false');
     await page.getByTestId('pip-toggle').click();
     await expect(page.getByTestId('pip-toggle')).toHaveAttribute('aria-pressed', 'true');
     await page.waitForTimeout(400);
     await expect(pip(page), 'the stage is on screen, so no second copy').toHaveCount(0);
-    await page.evaluate(() => window.scrollTo(0, 0));
+    await scrollPastStage(page);
     await expect(pip(page), 'scrolled away from the stage: the corner copy appears').toBeVisible();
     await expect.poll(() => pipCentre(page)).toEqual([200, 40, 40]);
     await stage.scrollIntoViewIfNeeded();
@@ -568,7 +571,10 @@ test.describe('floating preview (PiP)', () => {
     await gotoTab(page, 'facemgr');
     await page.getByTestId('pip-return').click();
     await expect(page).toHaveURL(/#\/faceswap$/);
-    // back on Face Swap at the top of the page the stage is still below the fold, so the window stays - until asked
+    // back on Face Swap the stage is pinned in view at the top of the page, so there is no second copy ...
+    await expect(pip(page)).toHaveCount(0);
+    // ... until the page is scrolled past it; then the same button brings the stage back into view
+    await scrollPastStage(page);
     await expect(pip(page)).toBeVisible();
     await page.getByTestId('pip-return').click();
     await expect(pip(page), 'the stage is in view, so the corner copy goes').toHaveCount(0);
