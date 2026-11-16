@@ -231,11 +231,11 @@ class ProjectStageCache:
         entry = self.usable().get("trajectory")
         if not entry:
             return None
-        from roop.trajectory_cache import TrajectoryCache
+        from roop.trajectory_cache import TrajectoryPlan
         path = _pc.stage_sidecar_path(self.project_id, "trajectory")
         try:
             meta = {k: v for k, v in entry.items() if k not in ("sidecar", "written_at")}
-            cache = TrajectoryCache.open(path, meta=meta)
+            cache = TrajectoryPlan.open(path, meta=meta)
             window = cache.window_for(faces_by_frame, frame_start=frame_start)
         except Exception as exc:
             _swallowed("stage_checkpoint.py:restore_trajectory", exc, "the trajectory is rebuilt from the faces")

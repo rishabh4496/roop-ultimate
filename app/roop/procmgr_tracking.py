@@ -2588,6 +2588,7 @@ class TrackingMixin:
         re-detecting — the swap pass stays fully multi-threaded and per-frame
         detection cost leaves the hot loop entirely. The scan also fills
         self._track_assignments, so identity locking rides along for free."""
+        self._trajectory_source_video = source_video
         try:
             gap_max = int(os.environ.get('ROOP_TEMPORAL_GAP', '10') or '10')
         except ValueError:
@@ -2779,6 +2780,7 @@ class TrackingMixin:
         import time as _time
         from roop import trajectory_cache as _tc
         self._trajectory = None
+        self._trajectory_plan = None
         try:
             faces = getattr(self, '_temporal_faces', None)
             if not faces:
@@ -2792,10 +2794,20 @@ class TrackingMixin:
                 cache = stage_cache.restore_trajectory(faces, frame_start=origin)
                 source = 'mapped from the project checkpoint' if cache is not None else 'built'
             if cache is None:
-                cache = _tc.TrajectoryCache.build(
+                _swap_proc = next((proc for proc in getattr(self, 'processors', [])
+                                   if getattr(proc, 'type', None) == 'swap'), None)
+                cache = _tc.TrajectoryPlan.build(
                     faces, frame_start=origin, sar=float(getattr(roop.globals, 'video_sar', 1.0) or 1.0),
-                    fps=getattr(self, '_video_fps', None), total_frames=frame_count)
+                    fps=getattr(self, '_video_fps', None), total_frames=frame_count,
+                    source_video=getattr(self, '_trajectory_source_video', None),
+                    frame_shape=getattr(self, '_temporal_frame_shape', None),
+                    cuts=set(getattr(self, '_shot_boundaries', None) or ()),
+                    mode=getattr(_swap_proc, 'model_template', 'arcface'),
+                    min_cutoff=float(getattr(self.options, 'stabilize_min_cutoff', 0.05)),
+                    beta=float(getattr(self.options, 'stabilize_beta', 0.25)),
+                    d_cutoff=8.0)
             self._trajectory = cache
+            self._trajectory_plan = cache
             _tc.set_active(cache, getattr(stage_cache, 'project_id', None))
             if cache is not None:
                 assert 0 in cache, f'Canonical frame 0 must be in trajectory cache {cache.frame_range}'
@@ -2805,12 +2817,14 @@ class TrackingMixin:
                     )
             meta = cache.meta
             print(f'[Trajectory] {len(cache)} face(s) on {meta.get("frames", 0)} frame(s), '
-                  f'{meta.get("tracks", 0)} track(s): smoothed alignment M / M_inv and head pose yaw/pitch/roll '
+                  f'{meta.get("tracks", 0)} track(s): forward/backward-smoothed landmarks, pose-warped templates, '
+                  f'and exact PTS index '
                   f'{source} in {(_time.perf_counter() - t0) * 1000.0:.0f} ms ({cache.nbytes / 1048576.0:.1f} MB).',
                   flush=True)
             return cache
         except Exception as _degrade_error:
             self._trajectory = None
+            self._trajectory_plan = None
             _tc.clear_active()
             _swallowed("roop/procmgr_tracking.py:trajectory", _degrade_error,
                        "the trajectory cache was skipped; the pre-pass result is unaffected")

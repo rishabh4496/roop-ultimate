@@ -864,6 +864,8 @@ class BatchProcessingMixin:
         from roop import trajectory_cache as _trajectory_cache
         _trajectory_cache.clear_active()
         self._trajectory = None
+        self._trajectory_plan = None
+        self._trajectory_source_video = source_video
         # What the pre-pass reports about itself is this job's, never the previous job's.
         self._prepass_schedule = {}
         self._flow_backend_name = None

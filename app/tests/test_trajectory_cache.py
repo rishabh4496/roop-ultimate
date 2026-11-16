@@ -6,8 +6,8 @@ computes would be a different face warped, so the first block pins them against 
 (template, scale, SAR branch and all; to its own float32 noise, ~2e-5 px: it differs by that much between a float32
 and a float64 call of the SAME keypoints) and `cv2.invertAffineTransform` (the paste-back inverse).
 
-What the cache does NOT do is pinned too: nothing in the swap path reads its matrices (`test_stage3_does_not_read_it`),
-because Stage 3's alignment depends on a crop size, template and SAR one 112-px matrix cannot stand in for.
+The render path consumes `TrajectoryPlan` landmarks and its crop-size warped template. Its legacy 112-pixel matrices
+remain diagnostic data because Stage 3's alignment depends on crop size, template and SAR.
 """
 import os
 import shutil
@@ -418,11 +418,14 @@ def test_the_prepass_seals_the_trajectory_and_the_batch_runner_records_it():
     assert '_trajectory_cache.clear_active()' in batch                 # a new job drops the old job's heads
 
 
-def test_stage3_does_not_read_it():
-    """The honest limit: nothing on the swap path takes a matrix from this cache (see the module docstring)."""
-    for rel in ('roop/ProcessMgr.py', 'roop/face_util.py', 'roop/processors/frame/face_swapper.py',
-                'roop/processors/frame/onnx_swappers.py', 'roop/procmgr_masking.py'):
-        assert 'trajectory_cache' not in _src(rel), rel
+def test_stage3_consumes_frame_indexed_plan_geometry():
+    """Render workers consume indexed Plan rows and pass their selected template to alignment."""
+    process_mgr = _src('roop/ProcessMgr.py')
+    face_analyser = _src('roop/face_analyser.py')
+    assert 'faces_for_frame(' in process_mgr
+    assert 'pose_template_from_row(' in process_mgr
+    assert 'pose_template=_pose_template' in process_mgr
+    assert "'yaw_warped_template'" in face_analyser
 
 
 def test_the_route_is_registered_and_reads_the_active_cache():

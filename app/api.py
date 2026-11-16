@@ -5007,6 +5007,7 @@ def _apply_parser_region_settings(payload):
 
 # ── Live preview swap ────────────────────────────────────────────────────────
 @app.post("/api/preview")
+@app.post("/api/preview/frame")
 def preview(payload: dict = Body(...)):
     """Render the selected target frame, optionally with a live face swap."""
     if not _configuration_ready():
@@ -5330,7 +5331,8 @@ def preview(payload: dict = Body(...)):
                 # Swap + enhancer, no photometric relighting
                 roop_globals.light_harmonizer = False
 
-            swapped = live_swap(current_frame, options, input_facesets=mapped)
+            swapped = live_swap(current_frame, options, input_facesets=mapped,
+                                frame_idx=max(0, frame - 1), source_video=filename)
             audit_after = _procmgr_runtime._audit
             swap_audit = {key: int(audit_after[key] - audit_before.get(key, 0))
                           for key in list(audit_after.keys())

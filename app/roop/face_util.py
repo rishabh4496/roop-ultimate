@@ -3468,7 +3468,7 @@ def swap_template_points(image_size, mode="arcface"):
     return dst
 
 
-def estimate_norm(lmk, image_size=112, mode="arcface", sar=None):
+def estimate_norm(lmk, image_size=112, mode="arcface", sar=None, template_points=None):
     from roop.alignment_safety import landmarks5, affine, InvalidAlignment
     lmk = landmarks5(lmk)
 
@@ -3488,7 +3488,10 @@ def estimate_norm(lmk, image_size=112, mode="arcface", sar=None):
 
     if not np.isfinite(sar_val) or sar_val <= 0:
         raise InvalidAlignment("invalid sample aspect ratio")
-    dst = swap_template_points(image_size, mode)
+    dst = (swap_template_points(image_size, mode) if template_points is None
+           else np.asarray(template_points, dtype=np.float32).reshape(5, 2))
+    if not np.isfinite(dst).all():
+        raise InvalidAlignment("template points must be finite")
     tform = trans.AffineTransform() if use_affine else trans.SimilarityTransform()
 
     if abs(sar_val - 1.0) > 0.005:

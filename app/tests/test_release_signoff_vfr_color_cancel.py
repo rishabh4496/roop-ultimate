@@ -547,9 +547,12 @@ class CooperativeCancel(unittest.TestCase):
 
     def test_stop_with_swap_batches_in_flight_exits_without_an_access_violation(self):
         """Stage 3 running its GPU workers (TensorRT batches in flight, whether or not a frame was written yet)."""
-        rc, res, tail = _scenario(os.path.join(self.tmp, 'inflight'), 'inflight', 15, 'faces')
+        # The 180-frame fixture completed Stage 3 in 14.5s on the 4070, just
+        # before a 15s trigger. Cancel at 8s so the scenario reliably reaches
+        # the in-flight GPU teardown path on both faster and slower profiles.
+        rc, res, tail = _scenario(os.path.join(self.tmp, 'inflight'), 'inflight', 8, 'faces')
         self._ok_exit(rc, tail)
-        self.assertTrue(res['asked'], 'Stage 3 never ran for 15 s')
+        self.assertTrue(res['asked'], 'Stage 3 never ran for 8 s')
         self.assertFalse(res['alive_after_join'], 'the render thread did not stop')
         self.assertIsNone(res['error'])
         self.assertLessEqual(res['cuda_allocated_mb'], 16.0)

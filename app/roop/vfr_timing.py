@@ -129,6 +129,16 @@ def seek_time(video_path: str, frame: int) -> Optional[float]:
     ``frame / constant_fps`` is wrong on VFR: with the clip's average rate (800/27 = 29.63 fps) a seek to frame 67 aimed
     at 2.244 s, past that frame's 2.233 s, and the whole trimmed render started one frame late (frame 68; measured by
     stamping each frame with its number). A constant-rate clip of the same length starts on frame 67."""
+    try:
+        from roop.trajectory_cache import active
+        plan = active()
+        if plan is not None and hasattr(plan, "seek_time"):
+            planned = plan.seek_time(video_path, int(frame))
+            if planned is not None:
+                return planned
+    except Exception as exc:
+        _swallowed("roop/vfr_timing.py:trajectory_seek", exc,
+                   "ffprobe timestamps remain the fallback")
     timing = probe_source_timing(video_path)
     if timing is None or not timing.is_vfr:
         return None

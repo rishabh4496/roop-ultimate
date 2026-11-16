@@ -784,6 +784,9 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         # cache is only authoritative below this index.
         self._temporal_mode = False
         self._temporal_faces = None
+        self._trajectory = None
+        self._trajectory_plan = None
+        self._trajectory_source_video = None
         self.stage2_frame_plan = {}
         self._temporal_covered = 0
         self._track_scanned = 0
@@ -3455,7 +3458,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             self._tls.stage_count_off = False
 
     @pause_aware
-    def process_frame(self, frame:Frame, frame_idx=None):
+    def process_frame(self, frame:Frame, frame_idx=None, frame_absolute=False, source_video=None):
         """Process one frame inside the shared pause-safe work boundary."""
         if getattr(roop.globals, 'throttle_mode', False):
             import time as _t_time
@@ -3509,7 +3512,11 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         # Fast-path: avoid frame.copy() before face detection & target matching
         self._count_stage3('gpu_frames')
         self._tls.roto_faces = []
-        num_swapped, resimg = self.swap_faces(frame, None, stabilize=True, frame_idx=frame_idx)
+        if source_video:
+            self._trajectory_source_video = source_video
+        num_swapped, resimg = self.swap_faces(
+            frame, None, stabilize=True, frame_idx=frame_idx,
+            frame_absolute=frame_absolute)
         try:
             from roop import watchdog
             _exp_faces = len(self._temporal_faces.get(frame_idx, [])) if (getattr(self, '_temporal_faces', None) is not None and frame_idx is not None) else 0
@@ -3897,7 +3904,8 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         stats = getattr(self, '_angle_route_stats', None)
         return stats.snapshot() if stats is not None else {}
 
-    def swap_faces(self, frame, temp_frame=None, stabilize=False, frame_idx=None):
+    def swap_faces(self, frame, temp_frame=None, stabilize=False, frame_idx=None,
+                   frame_absolute=False):
         num_faces_found = 0
         # Used only by retry_rotated() as a conservative admission hint. None
         # means the detector did not provide a usable list; that case must keep
@@ -3908,6 +3916,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         # up its precomputed full-frame mask for this frame from inside process_mask
         # (set here because every worker thread enters swap_faces once per frame).
         self._tls.frame_idx = frame_idx
+        self._tls.frame_absolute = bool(frame_absolute)
         self._tls.alignment_refusals = 0
         # The denominator for 'frames with no face detected at all'. Ticked here,
         # beside the only place that bucket can be hit, so both counts always
@@ -3965,6 +3974,37 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         # of re-detecting (already gap-filled + smoothed; keeps workers parallel
         # and detection out of the hot loop). None → normal per-frame detection.
         _tfaces = None
+        _trajectory_plan = getattr(self, '_trajectory_plan', None)
+        _plan_from_active = _trajectory_plan is None
+        if _trajectory_plan is None:
+            try:
+                from roop.trajectory_cache import active as _active_trajectory
+                _trajectory_plan = _active_trajectory()
+            except Exception:
+                _trajectory_plan = None
+        _source_video = (getattr(self, '_trajectory_source_video', None)
+                         or getattr(roop.globals, 'target_path', None))
+        if (_plan_from_active and _trajectory_plan is not None and _source_video
+                and _trajectory_plan.meta.get('source_path')
+                and not _trajectory_plan.matches_source(_source_video)):
+            _trajectory_plan = None
+        _plan_has_frame = False
+        if _trajectory_plan is not None and frame_idx is not None:
+            _plan_has_frame = bool(len(_trajectory_plan.at(
+                frame_idx, absolute=bool(frame_absolute))))
+        if _plan_has_frame:
+            # The plan already contains the final offline-smoothed landmarks;
+            # per-worker stabilizers and the legacy parallel lookup must not
+            # overwrite them after indexed dispatch.
+            precomp = False
+            do_kps_stab = False
+
+        def _apply_trajectory(items):
+            if (_trajectory_plan is None or frame_idx is None or not items):
+                return items
+            return _trajectory_plan.faces_for_frame(
+                frame_idx, list(items), absolute=bool(frame_absolute))
+
         if self._temporal_mode and frame_idx is not None and self._temporal_faces is not None:
             # Only trust the cache for frames the pre-pass actually scanned. Inside
             # that range a missing entry legitimately means "nobody was there";
@@ -3978,6 +4018,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     self._tls.last_found_bboxes = None
                     _audit_hit('frames with no face detected at all')
                     return num_faces_found, frame
+                _tfaces = _apply_trajectory(_tfaces)
 
         if self.options.swap_mode == "first":
             if not (0 <= self.options.selected_index < len(self.input_face_datas)):
@@ -3993,6 +4034,8 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     face = get_first_face(frame)
                     if face is None and _last_bboxes is not None:
                         face = _detect_face_in_roi(frame, _last_bboxes[0])
+                if face is not None:
+                    face = _apply_trajectory([face])[0]
             self._tls.retry_detected_faces = [face] if face is not None else None
             if face is None:
                 return num_faces_found, frame
@@ -4082,6 +4125,8 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 faces.sort(key=lambda detected: int(
                     detected.get('_track_id', 2 ** 31 - 1)
                     if isinstance(detected, dict) else 2 ** 31 - 1))
+            if not _tfaces:
+                faces = _apply_trajectory(faces)
             if not faces:
                 # Counted, because a frame where the detector found NOTHING is
                 # the other half of the flicker and is invisible from the
@@ -5798,11 +5843,46 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                          (getattr(self, '_shot_boundaries', None) or set())))
                 _affine_override = (target_face.get('_stabilized_affine')
                                     if hasattr(target_face, 'get') else None)
+                _pose_template = None
+                _plan_row = (target_face.get('_trajectory_plan_row')
+                             if hasattr(target_face, 'get') else None)
+                if _plan_row is not None:
+                    from roop.trajectory_cache import pose_template_from_row
+                    _pose_template = pose_template_from_row(
+                        _plan_row, subsample_size, swap_template)
+                else:
+                    from roop.pose_template import source_silhouette_anchors, warp_template
+                    _face_get = (target_face.get if hasattr(target_face, 'get')
+                                 else lambda _key, _default=None: getattr(target_face, _key, _default))
+                    _pose = _face_get('_pose_pnp')
+                    if _pose is None:
+                        _pose = (_face_get('_adaptive_yaw', 0.0),
+                                 _face_get('_adaptive_pitch', 0.0),
+                                 _face_get('_adaptive_roll', 0.0))
+                    _pose_template = warp_template(
+                        _pose, subsample_size, swap_template,
+                        source_anchors=source_silhouette_anchors(
+                            target_face, float(_pose[0])))
+                if _plan_row is not None or (_pose_template is not None
+                                              and abs(float(_pose_template.yaw)) >= 1.0):
+                    # This matrix was made for the frontal template in the
+                    # causal stabilizer. The pose plan owns this crop's fit.
+                    _affine_override = None
                 # The prepass matrix is in the unrotated frame coordinate
                 # system. Rotation recovery creates a new local coordinate
                 # system, so use the ordinary fit for those rare frames.
                 if rotation_action is not None:
                     _affine_override = None
+                    _plan_row = None
+                    from roop.pose_template import source_silhouette_anchors, warp_template
+                    _face_get = (target_face.get if hasattr(target_face, 'get')
+                                 else lambda _key, _default=None: getattr(target_face, _key, _default))
+                    _rot_pose = (float(_face_get('_adaptive_yaw', 0.0)),
+                                 float(_face_get('_adaptive_pitch', 0.0)),
+                                 float(_face_get('_adaptive_roll', 0.0)))
+                    _pose_template = warp_template(
+                        _rot_pose, subsample_size, swap_template,
+                        source_anchors=source_silhouette_anchors(target_face, _rot_pose[0]))
                 aligned_img, M, _alignment = canonicalize_face_alignment(
                     plate, target_face, subsample_size, swap_template, dst=crop_dst,
                     matrix_guard=lambda matrix: self._tls.geometry_guard.validate_matrix(
@@ -5812,7 +5892,8 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                         sar=float(getattr(roop.globals, 'video_sar', 1.) or 1.)),
                     matrix_override=_affine_override,
                     matrix_override_size=int(target_face.get('_stabilized_affine_size', 112)
-                                              if hasattr(target_face, 'get') else 112))
+                                              if hasattr(target_face, 'get') else 112),
+                    pose_template=_pose_template)
             except InvalidAlignment as exc:
                 _audit_hit('refused: invalid alignment')
                 self._tls.alignment_refusals = getattr(self._tls, 'alignment_refusals', 0) + 1
@@ -5883,13 +5964,19 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         import math as _math
         tgt_yaw_deg   = 0.0
         tgt_pitch_deg = 0.0
-        _pose5 = solve_pose_5pt(getattr(target_face, 'kps', None))
-        if _pose5 is not None:
-            tgt_yaw_deg, tgt_pitch_deg = float(_pose5[0]), float(_pose5[1])
+        if _plan_row is not None:
+            _planned_pose = np.asarray(_plan_row['pose'], dtype=np.float32).reshape(3)
+            tgt_yaw_deg, tgt_pitch_deg = float(_planned_pose[0]), float(_planned_pose[1])
+            _planned_roll = float(_planned_pose[2])
+        else:
+            _pose5 = solve_pose_5pt(getattr(target_face, 'kps', None))
+            if _pose5 is not None:
+                tgt_yaw_deg, tgt_pitch_deg = float(_pose5[0]), float(_pose5[1])
+            _planned_roll = float(_alignment['roll'])
         try:
             target_face['_adaptive_yaw'] = tgt_yaw_deg
             target_face['_adaptive_pitch'] = tgt_pitch_deg
-            target_face['_adaptive_roll'] = float(_alignment['roll'])
+            target_face['_adaptive_roll'] = _planned_roll
         except Exception as _degrade_error:
             _swallowed("roop/ProcessMgr.py:5415", _degrade_error, "fallback continued")
             pass
@@ -7730,6 +7817,9 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         self.last_swapped_frame = None
         self.face_masks = {}
         self._temporal_faces = None
+        self._trajectory = None
+        self._trajectory_plan = None
+        self._trajectory_source_video = None
         self.stage2_frame_plan = {}
         self._stage0 = None
         self._reset_dispatch_tracker()

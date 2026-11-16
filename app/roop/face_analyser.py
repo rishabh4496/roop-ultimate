@@ -695,7 +695,8 @@ def adaptive_alignment_matrix(kps: np.ndarray, image_size: int, mode: str = "arc
 def canonicalize_face_alignment(image: Frame, face: Any, image_size: int, mode: str,
                                 dst: Optional[np.ndarray] = None, matrix_guard=None,
                                 matrix_override: Optional[np.ndarray] = None,
-                                matrix_override_size: int = 112):
+                                matrix_override_size: int = 112,
+                                pose_template: Any = None):
     """Align once to the swap model's training template, at every head angle.
 
     A similarity fit already removes roll without squeezing either axis.
@@ -727,7 +728,12 @@ def canonicalize_face_alignment(image: Frame, face: Any, image_size: int, mode: 
     R, inv_R, applied = build_canonical_rotation_matrix(center, roll_deg, threshold_deg=54.5)
 
     yaw, pitch = face_yaw_pitch(face)
-    if matrix_override is not None:
+    use_pose_template = (pose_template is not None
+                         and (matrix_override is None or abs(float(pose_template.yaw)) >= 1.0))
+    if use_pose_template:
+        paste_matrix = pose_template.alignment_matrix(
+            kps, sar=float(getattr(roop.globals, 'video_sar', 1.0) or 1.0))
+    elif matrix_override is not None:
         paste_matrix = np.asarray(matrix_override, dtype=np.float32).reshape(2, 3).copy()
         base_size = max(1.0, float(matrix_override_size))
         paste_matrix *= float(image_size) / base_size
@@ -747,7 +753,8 @@ def canonicalize_face_alignment(image: Frame, face: Any, image_size: int, mode: 
     return aligned, paste_matrix, {
         'yaw': yaw, 'pitch': pitch, 'roll': roll_deg, 'pre_rotation': R,
         'inverse_pre_rotation': inv_R, 'applied_roll_prerotation': applied,
-        'alignment_kind': 'five_point', 'inv_paste_matrix': inv_paste,
+        'alignment_kind': ('yaw_warped_template' if use_pose_template else 'five_point'),
+        'inv_paste_matrix': inv_paste,
     }
 
 

@@ -70,6 +70,44 @@ class OneEuroFilter:
         return float(result) if scalar else result.copy()
 
 
+def forward_backward_one_euro(values: Any, timestamps: Any, *, min_cutoff: float = 0.05,
+                              beta: float = 0.25, d_cutoff: float = 8.0) -> np.ndarray:
+    """Smooth a complete ordered sequence without leaving causal filter state in workers.
+
+    The first pass runs in presentation order. The second pass runs over the first
+    pass's output in reverse presentation order, with increasing synthetic times
+    whose intervals match the source PTS intervals. This is an offline operation:
+    callers must finish it during pre-scan and publish the returned array before
+    any render worker starts.
+    """
+    data = np.asarray(values, dtype=np.float64)
+    times = np.asarray(timestamps, dtype=np.float64).reshape(-1)
+    if data.ndim < 1 or len(data) != len(times):
+        raise ValueError("values and timestamps must have the same non-zero leading dimension")
+    if len(data) == 0:
+        return data.copy()
+    if not np.isfinite(data).all() or not np.isfinite(times).all():
+        return data.copy()
+    if len(times) > 1 and np.any(np.diff(times) <= 0.0):
+        raise ValueError("timestamps must be strictly increasing")
+
+    forward = np.empty_like(data)
+    filt = OneEuroFilter(min_cutoff=min_cutoff, beta=beta, d_cutoff=d_cutoff)
+    for i, (value, timestamp) in enumerate(zip(data, times)):
+        forward[i] = filt(value, float(timestamp))
+
+    reverse_times = np.zeros(len(times), dtype=np.float64)
+    if len(times) > 1:
+        reverse_times[1:] = np.cumsum(np.diff(times)[::-1])
+    backward_reversed = np.empty_like(data)
+    filt.reset()
+    for i, (value, timestamp) in enumerate(zip(forward[::-1], reverse_times)):
+        backward_reversed[i] = filt(value, float(timestamp))
+    original = np.asarray(values)
+    result = backward_reversed[::-1]
+    return result.astype(original.dtype, copy=False) if np.issubdtype(original.dtype, np.floating) else result
+
+
 def _get(face: Any, key: str, default=None):
     if isinstance(face, dict):
         return face.get(key, default)
@@ -324,4 +362,4 @@ class FaceTrackStabilizer:
                 "affine": state.last_affine, "predicted": True}
 
 
-__all__ = ["OneEuroFilter", "FaceTrackStabilizer"]
+__all__ = ["OneEuroFilter", "FaceTrackStabilizer", "forward_backward_one_euro"]

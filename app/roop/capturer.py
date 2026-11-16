@@ -643,6 +643,21 @@ def get_video_frame(video_path: str, frame_number: int = 0,
             return None
         target = max(0, min(total - 1, frame_number - 1))
 
+        # Variable-frame-rate media must use the same exact PTS -> frame index
+        # table that the render plan stores. OpenCV's frame seek is approximate
+        # for these files and can return a neighbouring presentation timestamp.
+        try:
+            from roop.vfr_timing import probe_source_timing
+            timing = probe_source_timing(video_path)
+            if timing is not None and timing.is_vfr:
+                if current_capture is not None:
+                    current_capture.release()
+                    current_capture = None
+                _pipe_needed.add(video_path)
+        except Exception as exc:
+            _swallowed("roop/capturer.py:vfr_preview", exc,
+                       "the existing preview decoder remains available")
+
         # Known-bad file: go straight to the pipe, either because cv2 already
         # failed to read here or because this codec/pixel-format combination is
         # one where cv2 silently returns the WRONG frame (see _needs_pipe).

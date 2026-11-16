@@ -1294,7 +1294,7 @@ def fast_path_bypass(frame, target_faces=None, threshold=None):
     return should_bypass
 
 
-def live_swap(frame, options, input_facesets=None):
+def live_swap(frame, options, input_facesets=None, *, frame_idx=None, source_video=None):
     """Swap a single frame. `input_facesets` overrides the loaded source
     facesets (the API passes a person-ordered remap); None = use them as-is."""
     global _preview_process_mgr
@@ -1318,7 +1318,8 @@ def live_swap(frame, options, input_facesets=None):
             _preview_process_mgr.is_preview = True
 
         _preview_process_mgr.initialize(facesets, roop.globals.TARGET_FACES, options)
-        newframe = _preview_process_mgr.process_frame(frame)
+        newframe = _preview_process_mgr.process_frame(
+            frame, frame_idx=frame_idx, frame_absolute=True, source_video=source_video)
     if newframe is None:
         return frame
     return newframe
