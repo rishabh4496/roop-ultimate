@@ -66,10 +66,9 @@ from roop.procmgr_runtime import (_DEBUG_MATCH, _TRACK_EMB_MAX, _TRACK_ASSIGN_MA
                                   _INTERP_MAX_TRAVEL, _INTERP_MAX_SCALE,
                                   _INTERP_COLLIDE_FRAC,
                                   _COAST_FRAMES, _COAST_LOST_FRAMES,
-                                  _COAST_MIN_HITS, _TRACK_COST,
+                                  _COAST_MIN_HITS,
                                   _FLOW_COAST, _FLOW_MAX_GAP, _FLOW_ALIGN,
                                   _BYSTANDER_VETO, _BYSTANDER_MIN_OBS)
-from roop.association_cost import composite_cost, legacy_cost, propagate_kps
 from roop.flow_coast import (FlowCoaster, bridge_gap, spread_residual, chain_policy,
                              SUBSTITUTE, REFRESH, CONTINUE, REANCHOR)
 from roop.bystander_bank import TargetBank, bystanders_from_tracks
@@ -555,16 +554,16 @@ class TrackingMixin:
                 # call is exactly what it always was. ROI crops skip the rescue ladder
                 # across all tiers; full-frame fallback below covers a miss.
                 _hint = {'rotation_action': rotation_action} if rotation_action else {}
-                faces = get_all_faces_in_roi(fr, crop_bbox, rescue=False, **_hint)
+                faces = get_all_faces_in_roi(fr, crop_bbox, rescue=False, det_thresh=.20, **_hint)
                 if faces:
                     return _DetectionResult(_cache_identity_embeddings(faces), mode='roi')
             _stamp = None
             if rescue_backoff is not None:
-                faces = get_all_faces(fr, expected_count=expected_count,
+                faces = get_all_faces(fr, expected_count=expected_count, det_thresh=.20,
                                       **({} if rescue_ok else {'rescue': False})) or []
                 _stamp = (rescue_ok, last_rescue_outcome())
             else:
-                faces = get_all_faces(fr, expected_count=expected_count) or []
+                faces = get_all_faces(fr, expected_count=expected_count, det_thresh=.20) or []
             if HIRES_MISS and expected_count and len(faces) < expected_count:
                 hi_faces = get_all_faces_hires(fr, HIRES_DET_SIZE)
                 # MERGE, do not replace: the already-found face(s) keep the
@@ -735,6 +734,11 @@ class TrackingMixin:
             if detect_k > 1 and r.bbox is not None:
                 t['flow_bbox'] = (f_idx, np.asarray(r.bbox, np.float32).copy())
 
+        from roop.multi_face_tracker import MultiFaceTracker
+        from roop.tracker import _face_field
+        byte_tracker = MultiFaceTracker(max_age=STALE)
+        byte_to_track = {}
+
         no_embedding = [0]      # detections left out of tracking for want of an embedding
 
         def _consume(f_idx, faces):
@@ -765,6 +769,8 @@ class TrackingMixin:
             # means anything across a boundary. What is refused is inheriting a
             # track on position alone.
             if f_idx in shot_boundaries:
+                byte_tracker.reset()
+                byte_to_track.clear()
                 flush_pipeline_temporal_buffers(self)
                 if active:
                     retired.extend(active)
@@ -784,54 +790,34 @@ class TrackingMixin:
                     (fresh if t['last_seen'] >= f_idx - STALE else retired).append(t)
                 active = fresh
             entries, used = [], set()
-            # Global Hungarian matching (Linear Sum Assignment) for detected faces to active tracks
-            best_assignments = {}
-            if active and faces:
-                from scipy.optimize import linear_sum_assignment
-                cost_matrix = np.full((len(faces), len(active)), 1e5, dtype=np.float32)
-                for fi, face in enumerate(faces):
-                    bb = np.asarray(face.bbox, dtype=np.float32)
-                    e = np.asarray(face.embedding, dtype=np.float32)
-                    is_dirty = face_contact.unreliable(face)
-                    _fkps = getattr(face, 'kps', None)
-                    _fpose = getattr(face, 'pose', None)
-                    try:
-                        _fcon = float(face.get('_emb_contam', 0.0) or 0.0)
-                    except (AttributeError, TypeError, ValueError):   # a test double with no .get
-                        _fcon = 0.0
-                    for ti, t in enumerate(active):
-                        pred_bb = _predict_bbox(t, f_idx)
-                        iou = self._bbox_iou(bb, pred_bb)
-                        if iou < IOU_MIN:
-                            continue
-                        cos_dist = compute_cosine_distance(t['emb_mean'], e)
-                        if _TRACK_COST == 'legacy':
-                            cost = legacy_cost(iou, cos_dist, is_dirty, IOU_MIN, EMB_MAX)
-                        else:
-                            # Stage 16 composite: identity + GIoU + keypoint +
-                            # pose against the track's PROPAGATED prior. The
-                            # keypoint term is what separates two faces whose
-                            # boxes overlap in contact (see association_cost).
-                            cost = composite_cost(
-                                bb, _fkps, _fpose, cos_dist, _fcon, is_dirty,
-                                pred_bb,
-                                propagate_kps(t.get('kps'), t.get('kps_box'), pred_bb),
-                                t.get('pose'), IOU_MIN, EMB_MAX)
-                        if cost is not None:
-                            cost_matrix[fi, ti] = cost
-                row_ind, col_ind = linear_sum_assignment(cost_matrix)
-                for r, c in zip(row_ind, col_ind):
-                    if cost_matrix[r, c] < 1e4:
-                        best_assignments[r] = active[c]
+            # Ordered pre-pass consumer owns Kalman state, even when detectors
+            # finish out of order. Legacy tracklets still own the clip archive,
+            # reference/manual source assignment and guarded cross-shot re-ID.
+            associated = byte_tracker.update(faces, f_idx)
+            for expired in set(byte_to_track) - byte_tracker.tracks.keys():
+                del byte_to_track[expired]
+            active_by_id = {t['id']: t for t in active}
+            best_assignments = {
+                id(face): active_by_id.get(byte_to_track.get(_face_field(face, '_track_id')))
+                for face in associated}
+            # Reserve the whole Hungarian solution BEFORE fallback re-ID. An
+            # unmatched face visited first must not claim the track already
+            # assigned to a later detection in this same frame.
+            used.update(t['id'] for t in best_assignments.values() if t is not None)
 
             for face_idx, face in enumerate(faces):
                 bbox = np.asarray(face.bbox, dtype=np.float32)
                 emb = np.asarray(face.embedding, dtype=np.float32)
                 ada_emb = (_ada.face_embedding(face) if _ada.ready() else None)
-                dirty = face_contact.unreliable(face)
+                dirty = (face_contact.unreliable(face)
+                         or float(getattr(face, 'det_score', 1.) or 0.) < .55)
                 if dirty:
                     contam_seen += 1
-                best = best_assignments.get(face_idx)
+                best = best_assignments.get(id(face))
+                # ByteTrack stage B only rescues an existing body. Weak
+                # observations must never seed/re-ID a new source identity.
+                if float(getattr(face, 'det_score', 1.) or 0.) < .55 and best is None:
+                    continue
                 if best is not None:
                     used.add(best['id'])
 
@@ -1066,6 +1052,12 @@ class TrackingMixin:
                     best['identity_embedding'] = np.asarray(
                         best.get('emb_mean', emb), dtype=np.float32).copy()
 
+                byte_id = _face_field(face, '_track_id')
+                if byte_id is not None:
+                    for previous in [key for key, value in byte_to_track.items()
+                                     if value == best['id'] and key != byte_id]:
+                        del byte_to_track[previous]
+                    byte_to_track[byte_id] = best['id']
                 used.add(best['id'])
                 if align_on:
                     _occ_observe(best, face, f_idx)
@@ -1561,8 +1553,9 @@ class TrackingMixin:
         # _build_temporal_faces) instead of re-deriving the association by
         # nearest-centroid every frame. See the exact-match fast path in
         # ProcessMgr.py's identity-lock branch for why this exists.
-        self._track_source_map = {tid: (track_src.get(tid), track_map[tid]['emb_mean'])
-                                   for tid in track_map}
+        from types import MappingProxyType
+        self._track_source_map = MappingProxyType({
+            tid: (track_src.get(tid), track_map[tid]['emb_mean']) for tid in track_map})
         # V2 source-pose hysteresis is track-local and must survive the
         # ordered per-track replay below. Reinitialize for each pre-pass so a
         # new video cannot inherit a source index from an earlier one.

@@ -104,6 +104,11 @@ def flush_pipeline_temporal_buffers(mgr: Optional[Any] = None) -> Dict[str, bool
             except Exception as _exc:
                 _swallowed("scene_detector.py:flush_target_appearance", _exc, "fallback continued")
 
+        masker = getattr(mgr, '_interaction_masker', None)
+        if masker is not None:
+            masker.reset()
+            flushed['occlusion_mask'] = True
+
         temporal_color = getattr(mgr, '_temporal_color', None)
         if temporal_color is not None and hasattr(temporal_color, 'reset'):
             try:

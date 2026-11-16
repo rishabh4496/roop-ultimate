@@ -1,0 +1,22 @@
+{
+  "head": {
+    "d2_bar": 1.9297508974559605,
+    "frames": 30
+  },
+  "final": {
+    "d2_bar": 1.9995902333009457,
+    "frames": 30
+  },
+  "metadata": {
+    "purpose": "30-frame failure reproduction; not a counterbalanced acceptance A/B or neutrality claim",
+    "original_commit": "eb5d231",
+    "swap_model": "realswap",
+    "mask_engine": "RealityUX",
+    "enhancer": "None",
+    "provider": "tensorrt",
+    "threads": 20,
+    "stab_chunk_mb": 256,
+    "flicker_ratchet_max": 1.6,
+    "input_sha256": "32a2cf96c037e5bc65dc617efa05b7b73dc859a7b15be63ef592e1d4ee21df1a"
+  }
+}

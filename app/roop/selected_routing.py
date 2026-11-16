@@ -154,6 +154,7 @@ def compute_selected_assignment(
     unreliable: Callable[[Any], bool],
     track_binding: Optional[Callable[[Any], Optional[int]]] = None,
     hold_threshold: Optional[float] = None,
+    locked_bindings: bool = False,
 ) -> SelectedAssignment:
     """Pure Selected-Face routing.
 
@@ -194,8 +195,17 @@ def compute_selected_assignment(
 
     candidates: List[Tuple[float, int, int]] = []
     held: List[Tuple[float, int, int]] = []
+    locked: List[Tuple[float, int, int]] = []
     contaminated: set = set()
     for fidx, face in enumerate(faces):
+        bound = track_binding(face) if track_binding is not None else None
+        if locked_bindings and bound is not None and 0 <= bound < num_sources:
+            owners = [g for g, source in source_of.items() if source == bound]
+            if owners:
+                # A frozen ByteTrack binding owns identity for its lifespan.
+                # Do not ask a partial/contaminated crop to choose it again.
+                locked.append((0., owners[0], fidx))
+                continue
         if unreliable(face):
             contaminated.add(fidx)
             result.distances.append(CandidateDistance(
@@ -253,7 +263,8 @@ def compute_selected_assignment(
     # Tier order, not one merged sort: a face the gate CONFIRMED must never lose
     # a contested person to one that is only being held, however the two
     # distances compare -- a held face is by construction the further away.
-    for tier, reason in ((candidates, SWAPPED), (held, SWAPPED_TRACK_HOLD)):
+    for tier, reason in ((locked, SWAPPED_TRACK_HOLD),
+                         (candidates, SWAPPED), (held, SWAPPED_TRACK_HOLD)):
         for d, g, fidx in tier:
             if fidx in claimed_faces or g in claimed_persons:
                 continue

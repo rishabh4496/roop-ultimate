@@ -64,6 +64,7 @@ def _temporal_prepass_features(pm: Any) -> Dict[str, Any]:
     options = getattr(pm, "options", None)
     strength = float(getattr(options, "stabilization_strength", 0.5) or 0.0)
     return {
+        "association_policy": "bytetrack-v1",
         "active": bool((getattr(options, "stabilize_face", False) and strength > 0.0)
                        or getattr(options, "pose_adaptive_faceset", False)),
         "stabilize_face": bool(getattr(options, "stabilize_face", False)),
@@ -559,6 +560,7 @@ def write_stage2(path: str, pm: Any, *, frame_start: int, frame_count: int,
         raise Unserializable("the pre-pass covered %d of %d frames (stopped or short)" % (covered, frame_count))
     assignments = getattr(pm, "_track_assignments", None) or {}
     source_map = getattr(pm, "_track_source_map", None) or {}
+    from types import MappingProxyType
     shots = getattr(pm, "_shot_boundaries", None)
     reg = _Arrays()
     with SidecarWriter(path) as w:
@@ -577,6 +579,7 @@ def write_stage2(path: str, pm: Any, *, frame_start: int, frame_count: int,
             "covered_abs": int(frame_start) + covered,
             "ranges_abs": None if ranges_abs is None else [[int(a), int(b)] for a, b in ranges_abs],
             "faces": block, "assignments": assign_enc, "source_map": smap_enc,
+            "source_bindings_locked": isinstance(source_map, MappingProxyType),
             "arrays": reg.group_names(), "shots": shots_enc,
             "plan": serialize_plan(plan, frame_start),
             "temporal_prepass_features": _temporal_prepass_features(pm),
@@ -642,7 +645,9 @@ def restore_stage2(path: str, pm: Any, *, new_start: int, new_count: int,
         pm._temporal_covered = min(int(new_count), b_end - int(new_start))
         pm._track_scanned = pm._temporal_covered
         pm._track_assignments = assignments
-        pm._track_source_map = source_map
+        from types import MappingProxyType
+        pm._track_source_map = (MappingProxyType(source_map)
+                                if meta.get("source_bindings_locked", False) else source_map)
         pm._track_pose_source_map = {}
         pm._shot_boundaries = shots
         pm.stage2_frame_plan = plan

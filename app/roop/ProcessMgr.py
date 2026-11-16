@@ -747,6 +747,8 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         self._temporal_identity = TemporalIdentityStabilizer.from_env()
         from roop.temporal_occlusion import TemporalOcclusionEngine
         self._temporal_occlusion = TemporalOcclusionEngine.from_env()
+        from roop.occlusion_masker import OcclusionMasker
+        self._interaction_masker = OcclusionMasker()
         from roop.temporal_expression import TemporalExpressionEngine
         self._temporal_expression = TemporalExpressionEngine.from_env()
         # Boundary/texture stability (roop/temporal_smoother.py). Both are
@@ -1101,6 +1103,8 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         self._temporal_identity = TemporalIdentityStabilizer.from_env()
         from roop.temporal_occlusion import TemporalOcclusionEngine
         self._temporal_occlusion = TemporalOcclusionEngine.from_env()
+        from roop.occlusion_masker import OcclusionMasker
+        self._interaction_masker = OcclusionMasker()
         from roop.temporal_expression import TemporalExpressionEngine
         self._temporal_expression = TemporalExpressionEngine.from_env()
         self._temporal_compositing = TemporalCompositeController.from_config(
@@ -3100,7 +3104,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     # dict would still thrash a track's entry between two frame
                     # indices, and the HF filter would additionally share cv2
                     # DIS handles across threads (silent buffer corruption).
-                    for _tname in ('temporal_identity', 'temporal_occlusion',
+                    for _tname in ('interaction_masker', 'temporal_identity', 'temporal_occlusion',
                                    'target_appearance', 'temporal_compositing',
                                    'temporal_quality', 'landmark_smoother',
                                    'hf_stabilizer'):
@@ -3497,7 +3501,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         # silently degrading them here.
         _ordered = (not getattr(self, '_parallel_stab', False)) or bool(
             getattr(self._tls, 'temporal_block', False))
-        for _tname in ('temporal_identity', 'temporal_occlusion',
+        for _tname in ('interaction_masker', 'temporal_identity', 'temporal_occlusion',
                        'temporal_expression', 'target_appearance',
                        'temporal_compositing', 'temporal_quality'):
             _engine = self._temporal_engine(_tname)
@@ -4393,6 +4397,19 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     # rejected / RECODE_STATUS.md for the four detection-side
                     # attempts this supersedes, not adds to.
                     tid = face.get('_track_id') if isinstance(face, dict) else None
+                    from roop.multi_face_tracker import locked_source
+                    locked = locked_source(track_source_map, face, allowed_source_indices)
+                    if locked is not None:
+                        if tid in claimed_track_ids or locked in claimed_sources_in_frame:
+                            _audit_hit('refused: locked track/source already claimed')
+                            continue
+                        claimed_track_ids.add(tid)
+                        claimed_sources_in_frame.add(locked)
+                        pending.append((locked, face))
+                        _audit_hit('swapped (identity lock)')
+                        _audit_swapped_gapfill(face)
+                        num_faces_found += 1
+                        continue
                     exact = (track_source_index(track_source_map.get(tid))
                              if tid is not None else None)
                     if exact not in allowed_source_indices:
@@ -4907,6 +4924,8 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 # empty, and this is None for every face, when the pre-pass did
                 # not run -- then nothing below changes.
                 _tsm = getattr(self, '_track_source_map', None) or {}
+                from types import MappingProxyType
+                from roop.multi_face_tracker import locked_source
                 _groups = self.target_face_groups
                 _rank_all = ({g: r for r, g in enumerate(sorted(set(_groups)))}
                              if _groups else {})
@@ -4939,6 +4958,8 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     # seeing, not a swap to silently stop holding.
                     if not _tsm or not _sel_sources or not isinstance(face, dict):
                         return None
+                    if isinstance(_tsm, MappingProxyType):
+                        return locked_source(_tsm, face, _sel_sources)
                     tid = face.get('_track_id')
                     if tid is None:
                         return None
@@ -5002,6 +5023,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     unreliable=face_contact.unreliable,
                     track_binding=_bound_source,
                     hold_threshold=_hold_threshold,
+                    locked_bindings=isinstance(_tsm, MappingProxyType),
                 )
 
                 if _DEBUG_MATCH:
@@ -5052,7 +5074,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     pending.append((src_index, faces[fidx]))
                     num_faces_found += 1
                     _audit_hit(selected_routing.SWAPPED_TRACK_HOLD
-                               if fidx in _held_faces
+                               if _assign.reasons[fidx] == selected_routing.SWAPPED_TRACK_HOLD
                                else selected_routing.SWAPPED)
                     _audit_swapped_gapfill(faces[fidx])
 
@@ -5307,13 +5329,12 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         line rather than a band of each smeared over the other. Costs two
         bounding-box tests when nobody overlaps.
 
-        Order — faces are pasted far-to-near (smallest on screen first), not in
+        Order — faces are pasted far-to-near by area/chin/visibility score, not in
         match order. Whoever paints last wins the contested pixels, and match
         order is not stable frame to frame: in identity-lock mode the faces are
         re-sorted by identity distance every frame, so a pair standing close
         together would hand the join back and forth between them and flicker.
-        On-screen size is a proxy for depth that moves smoothly, so the nearer
-        face stays on top for as long as it is nearer.
+        Quantized depth and stable track IDs resist detection-order jitter.
 
         Every face reads from `plate` (the untouched frame) and writes into the
         running composite, so the result no longer depends on paste order except
@@ -5322,25 +5343,9 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         if not pending:
             return temp_frame
 
-        def _depth(face):
-            """Sort key, far to near. Bigger on screen = nearer the camera.
-
-            The size is quantised to ~4 % steps and ties broken on horizontal
-            position, because a raw area comparison between two faces that are
-            near enough the same size flips on detection noise alone — and an
-            order that flips is the thing this ordering exists to stop.
-            """
-            try:
-                x0, y0, x1, y1 = (float(v) for v in face.bbox)
-                w, h = max(0.0, x1 - x0), max(0.0, y1 - y0)
-                area = w * h
-                step = round(np.log2(area) * 8.0) if area > 1.0 else -1e3
-                return (step, x0 + w * 0.5)
-            except Exception as _degrade_error:
-                _swallowed("roop/ProcessMgr.py:5022", _degrade_error, "fallback continued")
-                return (-1e3, 0.0)
-
-        order = sorted(range(len(pending)), key=lambda k: _depth(pending[k][1]))
+        from roop.face_z_order import depth_order
+        claimants = [f for _, f in pending] + list(bystanders or ())
+        order = [i for i in depth_order(claimants, plate.shape) if i < len(pending)]
         # Per-thread tally of faces painted, read back by `update_progress` as the
         # delta over one finished frame (the pipeline monitor's faces/frame).
         _tls = getattr(self, '_tls', None)
@@ -5348,8 +5353,10 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             _tls.faces_painted = getattr(_tls, 'faces_painted', 0) + len(order)
         # Painted faces first, so `order` and the region keys stay indices into
         # `pending`; the bystanders sit past the end and are claimants only.
-        claimants = [f for _, f in pending] + list(bystanders or ())
         regions = build_face_regions(claimants, plate.shape, order)
+        from roop.face_z_order import semantic_depth_regions
+        regions = semantic_depth_regions(claimants, plate, order,
+                                         self._semantic_parse, regions)
         if os.environ.get('ROOP_DEBUG_REGIONS') == '1':
             bar_write(f"[Regions] n_pending={len(pending)} n_bystanders={len(bystanders or ())} "
                       f"order={list(order)} regions={'None' if regions is None else sorted(regions.keys())} "
@@ -7475,9 +7482,9 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         with _prof('blend'):
             if enhanced_frame is None:
                 scale_factor = int(upscale / orig_width)
-                result = self.paste_upscale(fake_frame, fake_frame, target_face.matrix, frame, scale_factor, mask_offsets, face_landmarks=face_lm, face_kps=face_kps, region=region, model_mask=model_mask, model_mask_weight=model_mask_weight, inplace=destination_is_private, target_face=target_face, appearance=_target_appearance, temporal_compositor=_compositor, track_id=_composite_tid, frame_index=_composite_frame_idx, occlusion_score=_composite_occlusion, motion=_composite_motion, crop_alpha=_unified_keep, semantic_parse=_sem_parse)
+                result = self.paste_upscale(fake_frame, fake_frame, target_face.matrix, frame, scale_factor, mask_offsets, face_landmarks=face_lm, face_kps=face_kps, region=region, model_mask=model_mask, model_mask_weight=model_mask_weight, inplace=destination_is_private, target_face=target_face, appearance=_target_appearance, temporal_compositor=_compositor, track_id=_composite_tid, frame_index=_composite_frame_idx, occlusion_score=_composite_occlusion, motion=_composite_motion, crop_alpha=_unified_keep, semantic_parse=_sem_parse, target_crop=aligned_img)
             else:
-                result = self.paste_upscale(fake_frame, enhanced_frame, target_face.matrix, frame, scale_factor, mask_offsets, face_landmarks=face_lm, face_kps=face_kps, region=region, model_mask=model_mask, model_mask_weight=model_mask_weight, inplace=destination_is_private, target_face=target_face, appearance=_target_appearance, temporal_compositor=_compositor, track_id=_composite_tid, frame_index=_composite_frame_idx, occlusion_score=_composite_occlusion, motion=_composite_motion, crop_alpha=_unified_keep, semantic_parse=_sem_parse)
+                result = self.paste_upscale(fake_frame, enhanced_frame, target_face.matrix, frame, scale_factor, mask_offsets, face_landmarks=face_lm, face_kps=face_kps, region=region, model_mask=model_mask, model_mask_weight=model_mask_weight, inplace=destination_is_private, target_face=target_face, appearance=_target_appearance, temporal_compositor=_compositor, track_id=_composite_tid, frame_index=_composite_frame_idx, occlusion_score=_composite_occlusion, motion=_composite_motion, crop_alpha=_unified_keep, semantic_parse=_sem_parse, target_crop=aligned_img)
         _dbg_rng = os.environ.get('ROOP_DEBUG_DUMP_RANGE')
         if _dbg_rng:
             try:
@@ -7829,6 +7836,8 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         self._reset_dispatch_tracker()
         if getattr(self, '_temporal_identity', None) is not None:
             self._temporal_identity.reset()
+        if getattr(self, '_interaction_masker', None) is not None:
+            self._interaction_masker.reset()
         if getattr(self, '_temporal_occlusion', None) is not None:
             self._temporal_occlusion.reset()
         if getattr(self, '_temporal_expression', None) is not None:

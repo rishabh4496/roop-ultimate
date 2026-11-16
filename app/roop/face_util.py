@@ -858,7 +858,7 @@ def _roi_faces_derotated(crop, rotation_action):
 
 
 def get_all_faces_in_roi(frame, bbox, pad_ratio=1.0, min_crop=160, rescue=True,
-                         rotation_action=None):
+                         rotation_action=None, det_thresh=None):
     """Detect faces within a padded crop around `bbox` (a tracked face's
     previous/predicted location) instead of the full frame. The detector's
     input canvas size is unchanged, so a small tracked face fills far more of
@@ -879,7 +879,9 @@ def get_all_faces_in_roi(frame, bbox, pad_ratio=1.0, min_crop=160, rescue=True,
             for face in hinted:
                 _offset_face_coords(face, cx1, cy1)
             return hinted
-    faces = (get_all_faces(crop, expected_count=1) if rescue else get_all_faces(crop, rescue=False)) or []
+    extra = {} if det_thresh is None else {'det_thresh': det_thresh}
+    faces = (get_all_faces(crop, expected_count=1, **extra) if rescue else
+             get_all_faces(crop, rescue=False, **extra)) or []
     for face in faces:
         _offset_face_coords(face, cx1, cy1)
     return faces
@@ -1888,7 +1890,7 @@ class RescueBackoff:
             self.skipped += 1
 
 
-def _detect_faces(frame, expected_count=None, rescue=True):
+def _detect_faces(frame, expected_count=None, rescue=True, det_thresh=None):
     """Run the selected detector engine and return raw Face objects (unsorted).
     Applies small-face (upscale), close-up scale (downscale), clipped boundary
     (padded), rotated face, and dark/backlit lighting (CLAHE) rescues.
@@ -1903,7 +1905,8 @@ def _detect_faces(frame, expected_count=None, rescue=True):
             if ifs and len(ifs) > 1:
                 expected_count = len(ifs)
 
-    faces = _detect_faces_raw(frame) or []
+    faces = (_detect_faces_raw(frame) if det_thresh is None else
+             _detect_faces_raw(frame, det_thresh=det_thresh)) or []
     raw_n = len(faces)
     attempted = False
     _bp.count('detect.calls' if rescue else 'detect.calls_norescue')
@@ -2088,11 +2091,13 @@ def reset_detector_failures():
 
 
 def get_all_faces(frame: Frame, expected_count: Optional[int] = None,
-                  rescue: bool = True) -> Any:
+                  rescue: bool = True, det_thresh: Optional[float] = None) -> Any:
     try:
         # `rescue` is only forwarded when it is False, so every existing caller
         # (and every test double with the narrower signature) is untouched.
         extra = {} if rescue else {'rescue': False}
+        if det_thresh is not None:
+            extra['det_thresh'] = det_thresh
         if expected_count is not None:
             try:
                 faces = _detect_faces(frame, expected_count=expected_count, **extra)

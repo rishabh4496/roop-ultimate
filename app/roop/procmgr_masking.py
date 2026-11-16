@@ -671,7 +671,7 @@ class MaskingMixin:
                        % (type(exc).__name__, str(exc)[:160]))
             return None
 
-    def paste_upscale(self, fake_face, upsk_face, M, target_img, scale_factor, mask_offsets, face_landmarks=None, face_kps=None, region=None, model_mask=None, model_mask_weight=0.0, inplace=False, target_face=None, appearance=None, temporal_compositor=None, track_id=None, frame_index=None, occlusion_score=0.0, motion=0.0, crop_alpha=None, semantic_parse=None):
+    def paste_upscale(self, fake_face, upsk_face, M, target_img, scale_factor, mask_offsets, face_landmarks=None, face_kps=None, region=None, model_mask=None, model_mask_weight=0.0, inplace=False, target_face=None, appearance=None, temporal_compositor=None, track_id=None, frame_index=None, occlusion_score=0.0, motion=0.0, crop_alpha=None, semantic_parse=None, target_crop=None):
         from roop.unified_matte import mask2d, inward_alpha, yaw_from_kps, warp_premultiplied
         M_scale = np.asarray(M, dtype=np.float64) * float(scale_factor)
         if (M_scale.shape != (2,3) or not np.isfinite(M_scale).all()
@@ -769,6 +769,20 @@ class MaskingMixin:
                 publish_debug(debug_channels(np.clip(upsk_face, 0, 255).astype(np.uint8), _parse, _sem_alpha))
             except Exception as exc:
                 _swallowed("roop/procmgr_masking.py:mask_debug", exc, "debug channels skipped")
+        if target_crop is not None:
+            # All signals operate on the ORIGINAL target, under the actual
+            # silhouette. The strict-support clamp below prevents temporal
+            # matte smoothing from painting an object back in afterwards.
+            with _prof('interaction_occlusion'):
+                _masker = self._temporal_engine('interaction_masker')
+                if frame_index in (getattr(self, '_shot_boundaries', None) or ()):
+                    _masker.reset()
+                _occluder = _masker.compute(
+                    cv2.resize(target_crop, (w, h)), fake_face, alpha,
+                    labels=(_parse.labels if _parse is not None and _parse.is_semantic else None),
+                    preserve_glasses=bool(getattr(roop.globals.CFG, 'glasses_frame_protect', True)),
+                    track_id=track_id, frame_index=frame_index)
+            alpha = alpha * (1. - _occluder)
         # Crop support is strict, including frame-edge cutoffs.
         alpha[[0,-1],:] = 0.; alpha[:,[0,-1]] = 0.
         mox = moy = 0
