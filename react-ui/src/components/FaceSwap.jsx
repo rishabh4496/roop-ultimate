@@ -35,6 +35,9 @@ import ComparisonGridPanel from './faceswap/ComparisonGridPanel';
 import ABReferencePanel from './faceswap/ABReferencePanel';
 import ParserRegions from './faceswap/ParserRegions';
 import InteractivePreview from './faceswap/InteractivePreview';
+import PreviewViewport from './faceswap/PreviewViewport';
+import NleTimeline from './faceswap/NleTimeline';
+import useWorkstationShortcuts from './faceswap/useWorkstationShortcuts';
 import useQueue, {
   ACTIVE_STATES, QUEUE_STATE_CLASS, QUEUE_STATE_LABEL, RETRYABLE_STATES, jobState,
 } from './faceswap/useQueue';
@@ -2549,6 +2552,49 @@ export default function FaceSwap({
     notify,
   });
 
+  // ── Workstation Shortcuts, Pro Studio Mode, & Parity Wiring ───────────────
+  const [isPeekingOriginal, setIsPeekingOriginal] = useState(false);
+  const [useProStudioView, setUseProStudioView] = useState(false);
+
+  const workstationShortcuts = useWorkstationShortcuts({
+    frame,
+    setFrame,
+    maxFrames,
+    startFrame,
+    endFrame,
+    isPlaying,
+    setIsPlaying,
+    fps: targets[selTarget]?.fps || 25,
+    setPlaybackRate,
+    videoRef,
+    trimIn: startFrame,
+    trimOut: endFrame,
+    onUpdateTrim: (inF, outF) => {
+      setFrameMarkerVal('start', inF);
+      setFrameMarkerVal('end', outF);
+    },
+    setFrameMarkerVal,
+    targetKey: activeTargetMediaId || targets[selTarget]?.name || String(selTarget),
+    isPeekingOriginal,
+    setIsPeekingOriginal,
+    selectedTrackId: runBarSync.selectedTrackId,
+    selectedFaceIndex: selectedDetectedFaceIndex,
+    onSelectTrack: runBarSync.handleSelectTrack,
+    onSelectFace: selectDetectedFace,
+    onToggleCompare: () => {
+      setCompare((c) => {
+        const nextVal = !c;
+        if (nextVal) { setComparingEnhancers(false); setComparingMasks(false); setComparingSwappers(false); setComparingUpscalers(false); }
+        return nextVal;
+      });
+    },
+    attachListener: false,
+    enabled: true,
+  });
+
+  const workstationShortcutsRef = useRef(workstationShortcuts);
+  workstationShortcutsRef.current = workstationShortcuts;
+
   // Hide the previous "Latest output" while a job is running so a new upload +
   // run never shows a stale result. The poll keeps reporting the old _last_output
   // until the new job finishes, so we gate on `processing` rather than clearing
@@ -3058,6 +3104,9 @@ export default function FaceSwap({
       // so playback/timeline hotkeys don't fire on the page behind it.
       if (document.querySelector('[role="dialog"]')) return;
 
+      // Pro workstation shortcuts delegation (Space play/pause, J/K/L shuttle, Left/Right stepping, I/O trim, M marker, '\' peek)
+      if (workstationShortcutsRef.current?.handleKeyDown(e)) return;
+
       // The keys below are actions, not literals: shortcuts/actions.js holds the defaults and Settings -> Keyboard
       // Shortcuts remaps them, so each test is eventMatches(e, '<action>'). The shortcut sheet itself (? / Ctrl+/) is
       // App's `app.help`; this panel used to carry a second, hand-typed copy of it that answered to `?` and `h` as well,
@@ -3165,6 +3214,10 @@ export default function FaceSwap({
       }
     };
 
+    const handleKeyUp = (e) => {
+      if (workstationShortcutsRef.current?.handleKeyUp(e)) return;
+    };
+
     const handleEsc = (e) => {
       if (e.key === 'Escape') {
         setPastedFiles(null);
@@ -3172,9 +3225,11 @@ export default function FaceSwap({
     };
 
     window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
     window.addEventListener('keydown', handleEsc);
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
       window.removeEventListener('keydown', handleEsc);
     };
   }, [
@@ -4677,6 +4732,20 @@ export default function FaceSwap({
                       Staged: {runBarSync.stagedJobs.length}
                     </span>
                   )}
+                  <button
+                    type="button"
+                    data-testid="pro-studio-toggle"
+                    onClick={() => setUseProStudioView((prev) => !prev)}
+                    className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full border text-micro font-sans font-semibold transition-all ${
+                      useProStudioView
+                        ? 'border-cyan-400 bg-cyan-500/20 text-cyan-200 shadow-[0_0_8px_rgba(6,182,212,0.3)]'
+                        : 'border-white/10 bg-white/[0.03] text-white/70 hover:border-white/20'
+                    }`}
+                    title="Toggle Pro Studio NLE View & Viewport"
+                  >
+                    <span>{useProStudioView ? '★' : '☆'}</span>
+                    <span>Pro Studio</span>
+                  </button>
                 </div>
               </div>
               {progress.processing && <PipelinePill processing onStepClick={runBarSync.handleStepClick} className="order-4 w-full px-1" />}
@@ -4802,60 +4871,109 @@ export default function FaceSwap({
                       every drag. Passed only while the scrub hook is the one
                       that fetched the frame: during playback the buffered
                       player owns it and supplies a url instead. */}
-                  <InteractivePreview
-                    soloStage={soloStage}
-                    onSoloStage={handleSoloStage}
-                    beforeSrc={rawUrl}
-                    afterSrc={stageAfterSrc}
-                    beforeFrame={rawFrameBitmap && loadedRawUrl === rawUrl ? rawFrameBitmap : null}
-                    playbackSource={playbackSource}
-                    afterFrame={heldFrame || (scrubbingNow && !isPlaying
-                      && stageAfterSrc === rawUrl
-                      && loadedRawUrl === rawUrl ? rawFrameBitmap : null)}
-                    referenceFrame={referenceFrame}
-                    referenceLabel={referenceId ? `Slot ${referenceId}` : ''}
-                    liveLabel={heldFrame ? `Slot ${heldSlot.id}` : 'Live result'}
-                    onSlotHotkey={(n) => slotBank.activate(SLOT_IDS[n - 1])}
-                    scrubbing={scrubbingNow}
-                    onMaskChange={applyManualMask}
-                    maskApplied={!!manualMask}
-                    faces={previewFaces}
-                    kps={previewKps}
-                    pose={previewPose}
-                    personIds={previewPersonIds}
-                    selectedFaceIndex={selectedDetectedFaceIndex}
-                    onSelectFace={onFaceBoxClick}
-                    faceRoles={previewFaceRoles}
-                    onToggleExclude={onToggleFaceExclusion}
-                    rotoZones={rotoZones}
-                    onRotoZones={setRotoZones}
-                    rotoSelectedId={rotoSelectedId}
-                    onRotoSelect={setRotoSelectedId}
-                    faceAnchors={faceAnchors}
-                    faceSources={faceSources}
-                    pins={identityPins}
-                    onPinIdentity={onPinIdentity}
-                    onUnpinIdentity={onUnpinIdentity}
-                    faceMenu={faceMenu}
-                    notify={notify}
-                    splitView={splitView}
-                    compare={compare}
-                    onToggleCompare={() => setCompare((v) => { const n = !v; if (n) { setComparingEnhancers(false); setComparingMasks(false); setComparingSwappers(false); setComparingUpscalers(false); } return n; })}
-                    sliderEffectEnabled={sliderEffectEnabled}
-                    onToggleSliderEffect={toggleSliderEffect}
-                    frame={frame}
-                    setFrame={setFrame}
-                    maxFrames={maxFrames}
-                    isPlaying={isPlaying}
-                    previewing={previewing}
-                    previewSecs={previewSecs}
-                    setIsPlaying={setIsPlaying}
-                    frameUnavailable={frameUnavailable}
-                    onRetryFrame={retryRawFrame}
-                    sarVal={previewSar}
-                    darVal={previewDar}
-                    colorBadge={previewColorBadge || targets[selTarget]?.color_badge || ''}
-                  />
+                  {useProStudioView ? (
+                    <PreviewViewport
+                      videoRef={videoRef}
+                      canvasRef={previewCanvasRef}
+                      maskCanvasRef={previewMaskCanvasRef}
+                      maskExportRef={previewMaskExportRef}
+                      videoSrc={targets[selTarget]?.url || ''}
+                      beforeSrc={rawUrl}
+                      afterSrc={isPeekingOriginal ? rawUrl : stageAfterSrc}
+                      playbackSource={playbackSource}
+                      frame={frame}
+                      setFrame={setFrame}
+                      maxFrames={maxFrames}
+                      isPlaying={isPlaying}
+                      setIsPlaying={setIsPlaying}
+                      fps={targets[selTarget]?.fps || 25}
+                      faces={previewFaces}
+                      kps={previewKps}
+                      pose={previewPose}
+                      personIds={previewPersonIds}
+                      selectedFaceIndex={selectedDetectedFaceIndex}
+                      selectedTrackId={runBarSync.selectedTrackId}
+                      onSelectFace={(idx, face) => {
+                        onFaceBoxClick(idx);
+                        if (face?.track_id != null) {
+                          runBarSync.handleSelectTrack(Number(face.track_id));
+                        }
+                      }}
+                      onSelectTrack={(trackId) => runBarSync.handleSelectTrack(Number(trackId))}
+                      faceRoles={previewFaceRoles}
+                      faceSources={faceSources}
+                      pins={identityPins}
+                      onPinIdentity={onPinIdentity}
+                      onUnpinIdentity={onUnpinIdentity}
+                      onToggleExclude={onToggleFaceExclusion}
+                      onMaskChange={applyManualMask}
+                      maskApplied={!!manualMask}
+                      parityState={runBarSync.parityState}
+                      tracksSource={runBarSync.parityState.tracksSource}
+                      trajectoryPlanActive={runBarSync.parityState.trajectoryPlanActive}
+                      compare={compare}
+                      compareMode={splitView ? 'split' : 'slider'}
+                      onToggleCompare={() => setCompare((v) => { const n = !v; if (n) { setComparingEnhancers(false); setComparingMasks(false); setComparingSwappers(false); setComparingUpscalers(false); } return n; })}
+                      isPeekingOriginal={isPeekingOriginal}
+                      soloStage={soloStage}
+                      onSoloStage={handleSoloStage}
+                    />
+                  ) : (
+                    <InteractivePreview
+                      soloStage={soloStage}
+                      onSoloStage={handleSoloStage}
+                      beforeSrc={rawUrl}
+                      afterSrc={stageAfterSrc}
+                      beforeFrame={rawFrameBitmap && loadedRawUrl === rawUrl ? rawFrameBitmap : null}
+                      playbackSource={playbackSource}
+                      afterFrame={heldFrame || (scrubbingNow && !isPlaying
+                        && stageAfterSrc === rawUrl
+                        && loadedRawUrl === rawUrl ? rawFrameBitmap : null)}
+                      referenceFrame={referenceFrame}
+                      referenceLabel={referenceId ? `Slot ${referenceId}` : ''}
+                      liveLabel={heldFrame ? `Slot ${heldSlot.id}` : 'Live result'}
+                      onSlotHotkey={(n) => slotBank.activate(SLOT_IDS[n - 1])}
+                      scrubbing={scrubbingNow}
+                      onMaskChange={applyManualMask}
+                      maskApplied={!!manualMask}
+                      faces={previewFaces}
+                      kps={previewKps}
+                      pose={previewPose}
+                      personIds={previewPersonIds}
+                      selectedFaceIndex={selectedDetectedFaceIndex}
+                      onSelectFace={onFaceBoxClick}
+                      faceRoles={previewFaceRoles}
+                      onToggleExclude={onToggleFaceExclusion}
+                      rotoZones={rotoZones}
+                      onRotoZones={setRotoZones}
+                      rotoSelectedId={rotoSelectedId}
+                      onRotoSelect={setRotoSelectedId}
+                      faceAnchors={faceAnchors}
+                      faceSources={faceSources}
+                      pins={identityPins}
+                      onPinIdentity={onPinIdentity}
+                      onUnpinIdentity={onUnpinIdentity}
+                      faceMenu={faceMenu}
+                      notify={notify}
+                      splitView={splitView}
+                      compare={compare}
+                      onToggleCompare={() => setCompare((v) => { const n = !v; if (n) { setComparingEnhancers(false); setComparingMasks(false); setComparingSwappers(false); setComparingUpscalers(false); } return n; })}
+                      sliderEffectEnabled={sliderEffectEnabled}
+                      onToggleSliderEffect={toggleSliderEffect}
+                      frame={frame}
+                      setFrame={setFrame}
+                      maxFrames={maxFrames}
+                      isPlaying={isPlaying}
+                      previewing={previewing}
+                      previewSecs={previewSecs}
+                      setIsPlaying={setIsPlaying}
+                      frameUnavailable={frameUnavailable}
+                      onRetryFrame={retryRawFrame}
+                      sarVal={previewSar}
+                      darVal={previewDar}
+                      colorBadge={previewColorBadge || targets[selTarget]?.color_badge || ''}
+                    />
+                  )}
                 </div>
               )
             ) : (
@@ -4931,64 +5049,95 @@ export default function FaceSwap({
                 className="pt-3 border-t border-[var(--border-color)] overflow-y-auto custom-scrollbar"
                 style={{ maxHeight: 'var(--tl-h)' }}
               >
-                <Timeline
-                  audioTrack={{
-                    offsetMs: clampOffset(p.audio_offset_ms),
-                    onOffsetChange: (ms) => set('audio_offset_ms', clampOffset(ms)),
-                    trackPath: requestFields(p).override_audio_path,
-                    hasTargetAudio: targetHasAudio,
-                  }}
-                  fps={targets[selTarget]?.fps || 25}
-                  maxFrames={maxFrames}
-                  frame={frame}
-                  setFrame={setFrame}
-                  startFrame={startFrame}
-                  endFrame={endFrame}
-                  setFrameMarkerVal={setFrameMarkerVal}
-                  timelineRef={timelineRef}
-                  onPointerDown={handleTimelinePointerDown}
-                  onPointerMove={handleTimelinePointerMove}
-                  onPointerLeave={handleTimelinePointerLeave}
-                  hoverFrame={hoverFrame}
-                  isScrubbing={isScrubbing}
-                  view={view}
-                  setView={setView}
-                  isPlaying={isPlaying}
-                  setIsPlaying={setIsPlaying}
-                  buffering={playStalled}
-                  isLooping={isLooping}
-                  setIsLooping={setIsLooping}
-                  playbackRate={playbackRate}
-                  setPlaybackRate={setPlaybackRate}
-                  thumbUrl={(f) => `${API}/api/target/preview?index=${selTarget}&frame=${f}&width=384`}
-                  targetKey={activeTargetMediaId || targets[selTarget]?.name || String(selTarget)}
-                  segments={segments.segments}
-                  onSegmentClick={jumpToSegment}
-                  sceneCuts={sceneCuts}
-                  targetIndex={selTarget}
-                  matchThreshold={num(p.max_face_distance, 0.75)}
-                  running={!!progress.processing}
-                  renderLog={renderLog.log}
-                  fpPieces={timelinePieces}
-                  liveRange={liveRange}
-                  sceneOverrides={sceneOverrides}
-                  identityKeys={identityTrack}
-                  curveEditor={curveEditor}
-                  sceneApiRef={sceneApiRef}
-                  swapModels={meta.swap_models}
-                  detectionMode={p.face_detection_mode}
-                  baseValues={{
-                    mask_erosion: num(p.mask_erode_dilate_radius, 0),
-                    mask_feather: num(p.face_mask_blend, 20),
-                    restore_blend: num(p.restore_ultra_detail_weight, 0.75),
-                    swapper: p.swap_model,
-                  }}
-                  onPresenceSelect={selectPresencePerson}
-                  onRenderRange={start}
-                  onRenderOverrides={() => queueOverridePieces()}
-                  renderBlockedReason={startBlockedReason}
-                  playheadApiRef={playheadApiRef}
-                />
+                {useProStudioView || runBarSync.trackLanes.length > 0 ? (
+                  <NleTimeline
+                    frame={frame}
+                    maxFrames={maxFrames}
+                    fps={targets[selTarget]?.fps || 25}
+                    isPlaying={isPlaying}
+                    targetIndex={selTarget}
+                    mediaId={activeTargetMediaId}
+                    targetKey={activeTargetMediaId || targets[selTarget]?.name || String(selTarget)}
+                    trackLanes={runBarSync.trackLanes}
+                    warningTicks={runBarSync.warningTicks}
+                    suggestedAssignments={runBarSync.suggestedAssignments}
+                    rangeLockIntervals={runBarSync.activeIntervals}
+                    selectedTrackId={runBarSync.selectedTrackId}
+                    trimIn={startFrame}
+                    trimOut={endFrame}
+                    onSeek={(f) => setFrame(f)}
+                    onSelectTrack={(trackId) => runBarSync.handleSelectTrack(trackId)}
+                    onToggleTrackActive={(trackId, active) => runBarSync.handleToggleTrackActive(trackId, active)}
+                    onUpdateRangeLockIntervals={(intervals) => runBarSync.handleUpdateIntervals(intervals)}
+                    onUpdateTrim={(inF, outF) => {
+                      setFrameMarkerVal('start', inF);
+                      setFrameMarkerVal('end', outF);
+                    }}
+                    onPreScanClick={runBarSync.handlePreScan}
+                    isPreScanActive={runBarSync.isPreScanning}
+                    isRangeLockActive={runBarSync.activeStep === 2}
+                    isRenderActive={!!progress.processing}
+                  />
+                ) : (
+                  <Timeline
+                    audioTrack={{
+                      offsetMs: clampOffset(p.audio_offset_ms),
+                      onOffsetChange: (ms) => set('audio_offset_ms', clampOffset(ms)),
+                      trackPath: requestFields(p).override_audio_path,
+                      hasTargetAudio: targetHasAudio,
+                    }}
+                    fps={targets[selTarget]?.fps || 25}
+                    maxFrames={maxFrames}
+                    frame={frame}
+                    setFrame={setFrame}
+                    startFrame={startFrame}
+                    endFrame={endFrame}
+                    setFrameMarkerVal={setFrameMarkerVal}
+                    timelineRef={timelineRef}
+                    onPointerDown={handleTimelinePointerDown}
+                    onPointerMove={handleTimelinePointerMove}
+                    onPointerLeave={handleTimelinePointerLeave}
+                    hoverFrame={hoverFrame}
+                    isScrubbing={isScrubbing}
+                    view={view}
+                    setView={setView}
+                    isPlaying={isPlaying}
+                    setIsPlaying={setIsPlaying}
+                    buffering={playStalled}
+                    isLooping={isLooping}
+                    setIsLooping={setIsLooping}
+                    playbackRate={playbackRate}
+                    setPlaybackRate={setPlaybackRate}
+                    thumbUrl={(f) => `${API}/api/target/preview?index=${selTarget}&frame=${f}&width=384`}
+                    targetKey={activeTargetMediaId || targets[selTarget]?.name || String(selTarget)}
+                    segments={segments.segments}
+                    onSegmentClick={jumpToSegment}
+                    sceneCuts={sceneCuts}
+                    targetIndex={selTarget}
+                    matchThreshold={num(p.max_face_distance, 0.75)}
+                    running={!!progress.processing}
+                    renderLog={renderLog.log}
+                    fpPieces={timelinePieces}
+                    liveRange={liveRange}
+                    sceneOverrides={sceneOverrides}
+                    identityKeys={identityTrack}
+                    curveEditor={curveEditor}
+                    sceneApiRef={sceneApiRef}
+                    swapModels={meta.swap_models}
+                    detectionMode={p.face_detection_mode}
+                    baseValues={{
+                      mask_erosion: num(p.mask_erode_dilate_radius, 0),
+                      mask_feather: num(p.face_mask_blend, 20),
+                      restore_blend: num(p.restore_ultra_detail_weight, 0.75),
+                      swapper: p.swap_model,
+                    }}
+                    onPresenceSelect={selectPresencePerson}
+                    onRenderRange={start}
+                    onRenderOverrides={() => queueOverridePieces()}
+                    renderBlockedReason={startBlockedReason}
+                    playheadApiRef={playheadApiRef}
+                  />
+                )}
                 <SegmentBar
                   segments={segments.segments}
                   fps={targets[selTarget]?.fps || 25}
