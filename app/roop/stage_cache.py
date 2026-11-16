@@ -560,6 +560,7 @@ def write_stage2(path: str, pm: Any, *, frame_start: int, frame_count: int,
         raise Unserializable("the pre-pass covered %d of %d frames (stopped or short)" % (covered, frame_count))
     assignments = getattr(pm, "_track_assignments", None) or {}
     source_map = getattr(pm, "_track_source_map", None) or {}
+    from roop import timeline_state as _timeline_state
     from types import MappingProxyType
     shots = getattr(pm, "_shot_boundaries", None)
     reg = _Arrays()
@@ -583,6 +584,7 @@ def write_stage2(path: str, pm: Any, *, frame_start: int, frame_count: int,
             "arrays": reg.group_names(), "shots": shots_enc,
             "plan": serialize_plan(plan, frame_start),
             "temporal_prepass_features": _temporal_prepass_features(pm),
+            "timeline_bindings": _timeline_state.bindings_fingerprint(),
         }
         w.json(META_MEMBER, meta)
     digest, size = file_digest(path)
@@ -631,6 +633,12 @@ def restore_stage2(path: str, pm: Any, *, new_start: int, new_count: int,
         source_map = {}
         for k, v in meta["source_map"]:
             source_map[_dec(k, arrays)] = _dec(v, arrays)
+        # Timeline track bindings decide which source a track gets, and the assignments, source map and plan in this
+        # cache follow from them. Sealed with other bindings (or none) means the cache is not this run's: the pre-pass
+        # reruns and applies the current bindings consistently.
+        from roop import timeline_state as _timeline_state
+        if (meta.get("timeline_bindings") or []) != _timeline_state.bindings_fingerprint():
+            raise Unserializable("the timeline's track bindings differ from the ones this cache was sealed with")
         shots = None
         if meta["shots"] is not None:
             frames = [s - new_start for s in meta["shots"]["frames"] if first <= s < last]

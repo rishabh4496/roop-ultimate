@@ -20,6 +20,7 @@ import numpy as np
 import roop.globals
 from roop import mask_roi
 from roop import grain_match
+from roop import timeline_state as _timeline_state
 from roop.typing import Frame, Face
 from roop.face_util import clamp_cut_values, kps_pose_ratios
 from roop.nonfrontal import nonfrontal_score
@@ -569,6 +570,74 @@ class MaskingMixin:
     # region, a swap model's own mask, other faces to protect, the overlay, and the distance-transform edge mode.
     _MATTE_ROI_GUARD = 4
 
+    def _timeline_absolute_frame(self, frame_index):
+        """The 0-based ABSOLUTE decoder frame a worker-local ``frame_index`` stands for, or None.
+
+        ``live_swap`` (the preview) hands in an absolute index and says so (``frame_absolute``); a render hands in
+        a clip-relative one and ``roto_frame_base`` (``frame_start + 1``) is where the clip starts."""
+        if frame_index is None:
+            return None
+        if getattr(self._tls, 'frame_absolute', False):
+            return int(frame_index)
+        return int(frame_index) + max(0, int(getattr(roop.globals, 'roto_frame_base', 1) or 1) - 1)
+
+    def _timeline_params(self, frame_index):
+        """Keyframed overrides for this frame (``{}`` when the run has no timeline - the common, free case)."""
+        return _timeline_state.params_at(self._timeline_absolute_frame(frame_index))
+
+    def _timeline_gate(self, pending, frame_idx):
+        """``pending`` without the (source, face) pairs whose bound track is outside its ``active_ranges`` here.
+        Covers every swap mode that builds ``pending`` (all / selected / all_input / ...); the single-face
+        ``first`` mode swaps one face directly and is not gated."""
+        if _timeline_state.active() is None:
+            return pending
+        absolute = self._timeline_absolute_frame(frame_idx)
+        if absolute is None:
+            return pending
+        kept, dropped = _timeline_state.gate_pending(pending, absolute)
+        if dropped:
+            # A plain counter (a benign race between workers can only under-count): tests and the job report read
+            # it to prove the gate ran, not just that it was defined.
+            self.timeline_gated_faces = getattr(self, 'timeline_gated_faces', 0) + len(dropped)
+        return kept
+
+    def _report_paste_for_preview(self, IM, target_img, target_face, track_id, parse, sem, occluder, occ_pct,
+                                  target_crop, crop_hw):
+        """What THIS paste actually saw, for ``/api/preview/frame`` telemetry and its mask views. Only ever called
+        while a preview is collecting (``timeline_state.begin_report``); the frame-space planes are built only when
+        the preview asked for that view, because each is a full-frame warp."""
+        try:
+            h, w = crop_hw
+            bbox = None
+            if target_face is not None:
+                raw = target_face.get('bbox') if isinstance(target_face, dict) else getattr(target_face, 'bbox', None)
+                bbox = None if raw is None else [float(v) for v in np.asarray(raw).ravel()[:4]]
+            get = (target_face.get if isinstance(target_face, dict) else (lambda k, d=None: getattr(target_face, k, d)))
+            _timeline_state.report_face(
+                bbox=bbox, track_id=track_id,
+                pose_bucket_used=get('_pose_routed_bucket', None),
+                pose_source_indices=[int(i) for i in (get('_pose_routed_source_indices', None) or ())],
+                parse_source=(None if sem is None else sem.source),
+                parse_cover=(None if sem is None else float(sem.parse_cover)),
+                occlusion_coverage_pct=occ_pct)
+            fh, fw = target_img.shape[:2]
+            if occluder is not None and _timeline_state.wants('occlusion'):
+                _timeline_state.report_channel('occlusion', cv2.warpAffine(
+                    np.asarray(occluder, np.float32), IM, (fw, fh), flags=cv2.INTER_LINEAR,
+                    borderMode=cv2.BORDER_CONSTANT, borderValue=0.))
+            if parse is not None and target_crop is not None and _timeline_state.wants('bisenet'):
+                from roop import face_parser as _fp
+                crop = cv2.resize(np.asarray(target_crop), (w, h))
+                shown = _fp.overlay(crop, _fp.resize_labels(parse.labels, (h, w)), 0.9)
+                valid = cv2.warpAffine(np.ones((h, w), np.float32), IM, (fw, fh), flags=cv2.INTER_NEAREST,
+                                       borderMode=cv2.BORDER_CONSTANT, borderValue=0.)
+                warped = cv2.warpAffine(shown.astype(np.float32), IM, (fw, fh), flags=cv2.INTER_LINEAR,
+                                        borderMode=cv2.BORDER_CONSTANT, borderValue=0.)
+                plane = np.dstack([warped * valid[..., None], valid]).astype(np.float32)
+                _timeline_state.report_channel('bisenet', plane)
+        except Exception as exc:
+            _swallowed("roop/procmgr_masking.py:preview_report", exc, "preview telemetry for this face skipped")
+
     def _matte_roi_eligible(self, region, mm_matte, temporal_compositor, target_face):
         if os.environ.get('ROOP_BLEND_ROI_MATTE', '1').strip().lower() in ('0', 'false', 'no', 'off'):
             return False
@@ -693,6 +762,12 @@ class MaskingMixin:
         h = img_matte.shape[0]
         if mask_offsets is None:
             mask_offsets = [0, 0, 0, 0, 20.0, 10.0]
+        # Timeline automation (roop/timeline_state.py): the keyed values for THIS frame, read once. Empty when the
+        # run has no keyframes, in which case nothing below changes.
+        _tl = self._timeline_params(frame_index)
+        if 'mask_feather' in _tl:
+            mask_offsets = list(mask_offsets)
+            mask_offsets[4] = float(_tl['mask_feather'])
         top = int(mask_offsets[0] * h)
         bottom = int(h - (mask_offsets[1] * h))
         left = int(mask_offsets[2] * w)
@@ -752,8 +827,13 @@ class MaskingMixin:
                         if _parser.available():
                             with _gpu_guard(pooled=False, owner='mask'):
                                 _swap_parse = _parser.parse(upsk_face)
-                    _sem = MaskComposer().compose((h, w), _parse, swap=_swap_parse, hull=crop_hull_f,
-                                                  base_alpha=alpha, yaw=yaw, feather=_feather)
+                    _composer = MaskComposer()
+                    if 'yaw_erosion_bias' in _tl:
+                        # factor = 1 + bias on the far-side inset; bias 0 is the shipped composer untouched.
+                        _composer.far_inset_frac = max(
+                            0.0, _composer.far_inset_frac * (1.0 + float(_tl['yaw_erosion_bias'])))
+                    _sem = _composer.compose((h, w), _parse, swap=_swap_parse, hull=crop_hull_f,
+                                             base_alpha=alpha, yaw=yaw, feather=_feather)
                     _sem_alpha = _sem
                     alpha = _sem.alpha
             except Exception as exc:
@@ -769,6 +849,12 @@ class MaskingMixin:
                 publish_debug(debug_channels(np.clip(upsk_face, 0, 255).astype(np.uint8), _parse, _sem_alpha))
             except Exception as exc:
                 _swallowed("roop/procmgr_masking.py:mask_debug", exc, "debug channels skipped")
+        if 'swap_opacity' in _tl and float(_tl['swap_opacity']) < 1.0:
+            # Keyframed opacity of the swapped face over the plate: scaled on the crop-space alpha, so every later
+            # clamp (strict support, temporal refinement) sees the scaled matte. 0 pastes nothing.
+            alpha = alpha * float(_tl['swap_opacity'])
+        _occ_pct = None
+        _occluder = None
         if target_crop is not None:
             # All signals operate on the ORIGINAL target, under the actual
             # silhouette. The strict-support clamp below prevents temporal
@@ -777,12 +863,22 @@ class MaskingMixin:
                 _masker = self._temporal_engine('interaction_masker')
                 if frame_index in (getattr(self, '_shot_boundaries', None) or ()):
                     _masker.reset()
+                _occ_kwargs = {}
+                if 'occlusion_sensitivity' in _tl:
+                    _occ_kwargs['sensitivity'] = float(_tl['occlusion_sensitivity'])
                 _occluder = _masker.compute(
                     cv2.resize(target_crop, (w, h)), fake_face, alpha,
                     labels=(_parse.labels if _parse is not None and _parse.is_semantic else None),
                     preserve_glasses=bool(getattr(roop.globals.CFG, 'glasses_frame_protect', True)),
-                    track_id=track_id, frame_index=frame_index)
+                    track_id=track_id, frame_index=frame_index, **_occ_kwargs)
+            if _timeline_state.reporting():          # preview telemetry only: a render pays nothing for it
+                _support = alpha > 0.01
+                _occ_pct = (100.0 * float(np.sum(_occluder[_support])) / float(np.count_nonzero(_support))
+                            if _support.any() else 0.0)
             alpha = alpha * (1. - _occluder)
+        if _timeline_state.reporting():
+            self._report_paste_for_preview(IM, target_img, target_face, track_id, _parse, _sem_alpha,
+                                           _occluder, _occ_pct, target_crop, (h, w))
         # Crop support is strict, including frame-edge cutoffs.
         alpha[[0,-1],:] = 0.; alpha[:,[0,-1]] = 0.
         mox = moy = 0
@@ -923,6 +1019,8 @@ class MaskingMixin:
         # them and are not recoloured), swapped crop vs the plate under it. The two are pixel-aligned by
         # the same affine, so one skin mask indexes both. Needs a real parse: a hull has no skin class.
         _lab = float(getattr(roop.globals, 'skin_lab_match', 1.0) or 0.0)
+        if 'color_match_strength' in _tl:
+            _lab = float(_tl['color_match_strength'])      # keyframed: replaces the run's own setting
         if _lab > 0.0 and _parse is not None and _parse.is_semantic:
             try:
                 from roop import blender as _bl

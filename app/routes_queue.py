@@ -303,7 +303,27 @@ def _find(job_id):
 # ── Mutations ────────────────────────────────────────────────────────────────
 @router.get("/api/queue")
 def queue_list():
-    return _snapshot()
+    """The queue, plus (additive) the state of every segment on disk.
+
+    ``segment_groups``   split-render groups (Batch Matrix slices): one row per slice with its file, size and job
+                         state, and whether the verified join exists - the same rows as ``/api/queue/segments``.
+    ``render_segments``  the job that is rendering NOW: its rotating parts (``parts``) and what the last merge did
+                         with them (``retention.state``: merging / verified / retained_failed / retained_unverified
+                         - the parts are deleted only after ``verified``)."""
+    snap = _snapshot()
+    try:
+        snap["segment_groups"] = _segment_groups_snapshot()
+    except Exception as exc:
+        _swallowed("routes_queue.py:queue_list_segment_groups", exc, "segment groups omitted from /api/queue")
+        snap["segment_groups"] = []
+    try:
+        from roop import segment_writer
+        snap["render_segments"] = {"parts": segment_writer.parts_snapshot(),
+                                   "retention": segment_writer.retention_snapshot()}
+    except Exception as exc:
+        _swallowed("routes_queue.py:queue_list_render_segments", exc, "render segments omitted from /api/queue")
+        snap["render_segments"] = {"parts": [], "retention": {"state": "idle"}}
+    return snap
 
 
 def _job_selection(payload: dict) -> dict:

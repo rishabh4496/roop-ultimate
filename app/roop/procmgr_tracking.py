@@ -1543,6 +1543,7 @@ class TrackingMixin:
         track_map = {t['id']: t for t in tracks}
         track_src, assign_max, refused_margin, inherited = (
             self._assign_track_sources(tracks, per_frame))
+        track_src = self._apply_timeline_bindings(track_src, track_map)
 
         self._track_assignments = {
             f: [(c, track_src.get(tid), track_map[tid]['emb_mean']) for (c, tid) in lst] for f, lst in per_frame.items()
@@ -2823,6 +2824,33 @@ class TrackingMixin:
             _swallowed("roop/procmgr_tracking.py:trajectory", _degrade_error,
                        "the trajectory cache was skipped; the pre-pass result is unaffected")
             return None
+
+    def _apply_timeline_bindings(self, track_src, track_map):
+        """The timeline's explicit track -> faceset bindings, applied to the pre-pass's ``{track: source}`` BEFORE
+        the assignments, the source map and the Stage 2 plan are built from it (so all three agree).
+
+        ``roop.batch_matrix.plan_track_facesets`` resolved explicit bindings but nothing in a render ever consumed
+        them; this is the consumer. Returns ``track_src`` unchanged when the run has no bindings."""
+        from roop import timeline_state as _ts
+        state = _ts.active()
+        if state is None or not state.bindings:
+            self._timeline_binding_report = []
+            return track_src
+        from roop import batch_matrix as _bm
+        entries = _bm.gallery_entries(getattr(self, 'input_face_datas', None) or [])
+        merged, report = _ts.apply_bindings_to_source_map(
+            {tid: (track_src.get(tid), None) for tid in track_map}, state, entries)
+        out = dict(track_src)
+        for row in report:
+            if row['applied']:
+                out[row['track_id']] = row['source_index']
+        self._timeline_binding_report = report
+        applied = [r for r in report if r['applied']]
+        print('[Timeline] %d binding(s): %d applied (%d changed the matcher\'s choice), %d not applied%s.' % (
+            len(report), len(applied), sum(1 for r in applied if r['changed']), len(report) - len(applied),
+            ''.join('; track %s: %s' % (r['track_id'], r['reason']) for r in report if not r['applied'])[:300]),
+            flush=True)
+        return out
 
     def _publish_track_bindings(self, cache, project_id=None):
         """Which faceset each track of the sealed plan is bound to, and the Range Lock spans, published for

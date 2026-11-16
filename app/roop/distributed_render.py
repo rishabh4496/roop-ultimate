@@ -235,6 +235,14 @@ def _project_for_chunk(document: dict, project_path: str, source: str,
     for name in ("keyframes", "fidelity_ramps", "mask_parameters"):
         if item["automation"].get(name):
             raise ValueError(f"distributed render does not support {name} automation")
+    # The timeline (roop/timeline_state.py) lives in the project's settings, not under `automation`, and is the same
+    # kind of thing: keyframes and binding ranges are ABSOLUTE frames of the whole clip, and a track id means
+    # nothing to a chunk's own independent pre-pass. Refuse it for the same reason, rather than apply slice-relative
+    # frame numbers without a word.
+    from roop import timeline_state
+    _timeline = timeline_state.TimelineState.from_payload(item.get("settings") or {})
+    if _timeline is not None and not _timeline.empty:
+        raise ValueError("distributed render does not support timeline automation (keyframes / track bindings)")
     item["checkpoint"] = {"sequence": 0, "safe_frame": 0, "next_frame": 0, "segments": []}
     item["render"] = {"directory": str(Path(output).parent), "filename": Path(output).name}
     item["settings"] = copy.deepcopy(item.get("settings") or {})

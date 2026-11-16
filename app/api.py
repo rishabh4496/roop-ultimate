@@ -17,6 +17,7 @@ import hashlib
 from collections import OrderedDict
 from collections.abc import Mapping
 import sys
+import base64
 import json
 import shutil
 import subprocess
@@ -29,7 +30,7 @@ import traceback
 import cv2
 import numpy as np
 import uvicorn
-from fastapi import FastAPI, UploadFile, File, Body, Request, HTTPException
+from fastapi import FastAPI, UploadFile, File, Body, Request, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse, Response
 
@@ -60,6 +61,8 @@ from roop import capture_seed
 from roop import segment_writer
 from roop import segment_output as _segment_output
 from roop import timeline_tracks as _timeline_tracks
+from roop import timeline_state as _timeline_state
+from roop import trajectory_cache as _trajectory_cache
 from roop import live_preview
 from roop import stage_telemetry as _stage_telemetry
 from roop import render_policy as _render_policy
@@ -115,7 +118,9 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*", "Range", "range", "Accept-Ranges", "Content-Range", "Content-Length"],
-    expose_headers=["Content-Range", "Accept-Ranges", "Content-Length", "Content-Type"],
+    expose_headers=["Content-Range", "Accept-Ranges", "Content-Length", "Content-Type",
+                    # /api/preview/frame: a cross-origin client (the Vite dev server) can only read these if listed
+                    "X-Frame-Index", "X-Render-Ms", "X-Render-Mode", "X-Telemetry", "X-Telemetry-Encoding"],
 )
 # Outermost: a foreign Origin is refused (403) before any handler runs, and in
 # share mode a non-loopback caller without the launch token gets 401. Covers
@@ -3144,6 +3149,53 @@ def audio_waveform(path: str = "", t0: float = 0.0, t1: float = -1.0, bins: int 
             "bins": int(len(peaks)), "peaks": _timeline_tracks.peaks_b64(peaks)}
 
 
+@app.get("/api/media/waveform")
+def media_waveform(index: int = None, media_id: str = None, path: str = "", buckets: int = 2000,
+                   t0: float = 0.0, t1: float = -1.0, wait: float = 0.0):
+    """Downsampled audio peak envelope as a plain JSON array, for a timeline that draws its own waveform.
+
+    The audio is decoded once per file by a background ffmpeg PCM pipe (``roop/timeline_tracks.py``, shared with
+    ``/api/target/waveform``) and cached; ``[t0, t1]`` seconds (``t1 < 0`` = to the end) are max-pooled to ``buckets``
+    values (default 2000, 1..20000), each a uint8 amplitude 0-255 on a square-root scale (speech is not a flat line).
+
+    Pick the media with ``index`` / ``media_id`` (a loaded target; default = the selected one), or ``path`` for an
+    uploaded dub track (confined to the upload directory, like ``/api/audio/waveform``).
+
+    ``state`` is ``ready`` | ``building`` | ``none`` (no audio track) | ``error``. A first ask for a long file answers
+    ``building`` at once - ask again, or pass ``wait`` (seconds, max 30) to hold the request until it is ready.
+    """
+    if not 1 <= int(buckets) <= 20000:
+        return JSONResponse(status_code=422, content={"message": "buckets must be within 1..20000"})
+    resolved_id = None
+    if path:
+        media = _safe_paths.confine_file(path, [API_TEMP])
+        if not media:
+            return JSONResponse(status_code=404, content={"message": "no such uploaded audio track"})
+    else:
+        target_index, resolved_id = _target_index_for_ref(index=index, media_id=media_id)
+        if target_index is None or target_index < 0 or target_index >= len(list_files_process):
+            return JSONResponse(status_code=404, content={"message": "no target"})
+        media = list_files_process[target_index].filename
+        if not util.is_video(media):
+            return {"target_media_id": resolved_id, "ready": True, "state": "none", "duration": 0.0,
+                    "buckets": 0, "peaks": []}
+    deadline = time.monotonic() + max(0.0, min(30.0, float(wait)))
+    state_name, env = _timeline_tracks.envelope_state(media)
+    while state_name == "building" and time.monotonic() < deadline:
+        time.sleep(0.1)
+        state_name, env = _timeline_tracks.envelope_state(media)
+    if state_name != "ready" or env is None:
+        return {"target_media_id": resolved_id, "ready": state_name == "none", "state": state_name,
+                "duration": 0.0, "buckets": 0, "peaks": []}
+    duration = len(env) / float(_timeline_tracks.ENVELOPE_HZ)
+    lo = max(0.0, float(t0))
+    hi = duration if t1 < 0 else min(float(t1), duration)
+    peaks = _timeline_tracks.slice_peaks(env, lo, hi, int(buckets))
+    return {"target_media_id": resolved_id, "ready": True, "state": "ready", "duration": duration,
+            "t0": lo, "t1": hi, "buckets": int(len(peaks)), "scale": "uint8, sqrt of peak/32767",
+            "peaks": [int(v) for v in peaks]}
+
+
 @app.get("/api/target/preview_seq")
 def target_preview_seq(index: int = 0, start: int = 1, count: int = 16,
                        width: int = 0, quality: int = 82):
@@ -4940,6 +4992,28 @@ def _normalize_mouth_custody(payload):
     return None
 
 
+# ── Timeline: keyframes + track bindings (roop/timeline_state.py) ────────────
+def _preview_request_error(payload):
+    """422 for a timeline or ``frame_idx`` the server cannot use, else None. Run before any state is touched, so a bad
+    request starts nothing and changes nothing."""
+    try:
+        _timeline_state.TimelineState.from_payload(payload)
+    except _timeline_state.TimelineError as error:
+        return JSONResponse(status_code=422, content={"message": f"invalid timeline: {error}"})
+    raw = payload.get("frame_idx")
+    if raw is not None and (isinstance(raw, bool) or not isinstance(raw, int) or raw < 0):
+        return JSONResponse(status_code=422, content={
+            "message": "frame_idx must be an integer >= 0 (a 0-based absolute frame; the older `frame` field is 1-based)"})
+    return None
+
+
+def _apply_timeline_settings(payload):
+    """Make this request's timeline THE active one for the work that follows (no timeline in the request clears it:
+    a preview or a run must never inherit the previous request's keyframes). Preview and render both call this, so
+    both evaluate ``roop.timeline_state.evaluate_keyframes`` on the same numbers."""
+    _timeline_state.set_active(_timeline_state.TimelineState.from_payload(payload))
+
+
 def _apply_lipsync_settings(payload):
     """Lip-sync (Wav2Lip / MuseTalk) toggle, model, co-articulation mode,
     oral cavity restoration, onto roop.globals.
@@ -5034,7 +5108,6 @@ def _mask_debug_fields(payload):
 
 
 @app.post("/api/preview")
-@app.post("/api/preview/frame")
 def preview(payload: dict = Body(...)):
     """Render the selected target frame, optionally with a live face swap."""
     if not _configuration_ready():
@@ -5051,6 +5124,9 @@ def preview(payload: dict = Body(...)):
     _mouth_error = _normalize_mouth_custody(payload)
     if _mouth_error is not None:
         return _mouth_error
+    _timeline_error = _preview_request_error(payload)
+    if _timeline_error is not None:
+        return _timeline_error
     _preview_request_lock.acquire()
     target_context_lock_held = False
     try:
@@ -5073,7 +5149,9 @@ def preview(payload: dict = Body(...)):
         payload["target_index"] = idx
         payload["target_media_id"] = media_id
         _save_target_mapping_from_payload(payload)
-        frame = int(payload.get("frame", 1))
+        # `frame_idx` (0-based absolute, the /api/preview/frame contract) wins over the legacy 1-based `frame`.
+        frame = (int(payload["frame_idx"]) + 1 if payload.get("frame_idx") is not None
+                 else int(payload.get("frame", 1)))
         fake = bool(payload.get("fake_preview", False))
         processing_request = _canonical_processing_request(
             payload, target_media_index=idx, target_media_id=media_id)
@@ -5103,6 +5181,7 @@ def preview(payload: dict = Body(...)):
         if current_frame is None:
             return JSONResponse(status_code=404, content={"message": "no frame", **echo})
 
+        _register_preview_tracks(filename, frame - 1)
         sar_fields = {
             "sar": target_info.get("sar", "1:1") if target_info else "1:1",
             "sar_val": float(target_info.get("sar_val", 1.0)) if target_info else 1.0,
@@ -5157,6 +5236,7 @@ def preview(payload: dict = Body(...)):
         _apply_merger_settings(payload)
         _apply_eye_restore_settings(payload)
         _apply_stage11_settings(payload, preview_frame=frame)
+        _apply_timeline_settings(payload)
         _apply_surgical_settings(payload)
         _apply_parser_region_settings(payload)
         _apply_enhancer_settings(payload)
@@ -5218,6 +5298,8 @@ def preview(payload: dict = Body(...)):
         try:
             from roop.face_util import solve_pose_5pt
             faces = _faces_in_target_selection_order(current_frame)
+            if getattr(_preview_capture, "faces", None) is not None:
+                _preview_capture.faces = list(faces or [])        # /api/preview/frame reads contours off these
             if faces:
                 for f in faces:
                     bbox = f["bbox"].astype(int).tolist()
@@ -5389,6 +5471,7 @@ def preview(payload: dict = Body(...)):
             })
     finally:
         roop_globals.is_preview = False
+        _timeline_state.clear_active()      # a preview never leaves its keyframes behind
         try:
             import torch
             if torch.cuda.is_available():
@@ -5400,6 +5483,316 @@ def preview(payload: dict = Body(...)):
             _target_context_lock.release()
         _preview_request_lock.release()
 
+
+
+# ── Frame-accurate preview contract: POST /api/preview/frame and /ws/preview ─────────────────────────────────
+#
+# One request -> one frame (an image, binary) + the telemetry that explains it. The swap itself is `preview()` above,
+# called unchanged, so a scrubbed frame goes through exactly the path the old `/api/preview` and the render use; this
+# layer only chooses what to SHOW (`render_mode`), encodes it, and reports what the paste saw.
+#
+# Compatibility: a body with none of `_FRAME_CONTRACT_KEYS` is answered by `preview()` exactly as before (JSON with a
+# data-URL image), which is what `/api/preview/frame` used to alias. Frame numbers here are 0-based and absolute
+# (`frame_idx`); the legacy `frame` field stays 1-based.
+_PREVIEW_MODES = ("composite", "original", "diff", "bisenet_mask", "occlusion_mask")
+_FRAME_CONTRACT_KEYS = ("frame_idx", "render_mode", "keyframes", "track_bindings", "timeline", "landmarks",
+                        "image_format", "image_quality", "diff_gain", "seq")
+_EXPOSED_FRAME_HEADERS = ["X-Frame-Index", "X-Render-Ms", "X-Render-Mode", "X-Telemetry", "X-Telemetry-Encoding"]
+_HEADER_TELEMETRY_BUDGET = 12000          # bytes of base64 JSON; uvicorn's h11 caps the whole header block near 16 KB
+_preview_frame_lock = threading.Lock()    # one frame's begin/end of the paste report at a time
+_preview_capture = threading.local()
+
+
+def _capturing_dataurl(image, *args, **kwargs):
+    """``_bgr_to_preview_dataurl`` that also hands the raw array to a caller that is collecting them (the frame
+    endpoint wants the pixels, not a JPEG-in-base64 it would have to decode and re-encode)."""
+    sink = getattr(_preview_capture, "arrays", None)
+    if sink is not None:
+        sink.append(image)
+    return _bgr_to_preview_dataurl_encode(image, *args, **kwargs)
+
+
+_bgr_to_preview_dataurl_encode = _bgr_to_preview_dataurl
+_bgr_to_preview_dataurl = _capturing_dataurl
+
+
+def _register_preview_tracks(filename, frame_idx):
+    """Give a one-frame preview the track ids a render would have: the sealed trajectory plan's rows for this frame,
+    when the plan belongs to THIS file. The rows let bindings gate by track and let the telemetry name each face's
+    track; with no matching plan there are no tracks and nothing is invented."""
+    rows = []
+    try:
+        plan = _trajectory_cache.active()
+        if (plan is not None and util.is_video(filename) and hasattr(plan, "matches_source")
+                and plan.matches_source(filename)):
+            rows = [([float(v) for v in r["bbox"]], int(r["track"])) for r in plan.at(int(frame_idx), absolute=True)]
+    except Exception as exc:
+        _swallowed("api.py:register_preview_tracks", exc, "preview faces carry no track ids")
+        rows = []
+    _timeline_state.set_preview_tracks(rows)
+    if getattr(_preview_capture, "rows", None) is not None:
+        _preview_capture.rows = rows
+
+
+def _frame_error(status, message, **extra):
+    return JSONResponse(status_code=status, content={"message": message, **extra})
+
+
+def _best_overlap(box, candidates, key):
+    """The candidate whose ``key(c)`` box overlaps ``box`` most (IoU >= 0.3), or None."""
+    best, best_iou = None, 0.3
+    for c in candidates:
+        value = _timeline_state._iou(box, key(c))
+        if value > best_iou:
+            best, best_iou = c, value
+    return best
+
+
+def _contour_points(face):
+    for key in ("landmark_2d_106", "landmark_106"):
+        pts = face.get(key) if isinstance(face, dict) else getattr(face, key, None)
+        if pts is not None:
+            arr = np.asarray(pts, dtype=np.float32)
+            if arr.ndim == 2 and arr.shape[1] >= 2:
+                return arr[:, :2]
+    return None
+
+
+def _original_frame_for(result, frame_idx):
+    idx = result.get("target_index")
+    if idx is None or not (0 <= int(idx) < len(list_files_process)):
+        return None
+    filename = list_files_process[int(idx)].filename
+    if util.is_video(filename) or filename.lower().endswith("gif") or util.is_animated_webp(filename):
+        return _preview_frames.get_frame(filename, int(frame_idx) + 1)
+    return get_image_frame(filename)
+
+
+def _compose_mode_image(mode, img, original, report, diff_gain):
+    """``(image, extra_telemetry)`` for the requested view."""
+    if mode in ("composite", "original"):
+        return img, {}
+    if original is None or original.shape[:2] != img.shape[:2]:
+        return img, {"mask_available": False, "reason": "the original frame could not be read for comparison"}
+    if mode == "diff":
+        delta = cv2.absdiff(img, original).max(axis=2).astype(np.float32)
+        heat = cv2.applyColorMap(np.clip(delta * diff_gain, 0, 255).astype(np.uint8), cv2.COLORMAP_INFERNO)
+        return heat, {"diff": {"gain": diff_gain, "mean": round(float(delta.mean()), 4), "max": float(delta.max()),
+                               "changed_pct": round(100.0 * float((delta > 0).mean()), 3)}}
+    channel = "bisenet" if mode == "bisenet_mask" else "occlusion"
+    plane = report["channels"].get(channel)
+    if plane is None:
+        return original, {"mask_available": False,
+                          "reason": "no face was pasted on this frame, so there was no mask to draw (is a source "
+                                    "face selected and does the frame contain a swappable face?)"}
+    base = original.astype(np.float32)
+    if channel == "bisenet":
+        alpha = plane[..., 3:4]
+        out = base * (1.0 - alpha) + plane[..., :3]
+    else:
+        a = (0.65 * np.clip(plane, 0.0, 1.0))[..., None]
+        out = base * (1.0 - a) + np.array([0.0, 0.0, 255.0], np.float32) * a
+    return np.clip(out, 0, 255).astype(np.uint8), {"mask_available": True}
+
+
+def _frame_telemetry(payload, mode, frame_idx, result, shown, report, plan_rows, face_objects, landmarks, extra):
+    from roop.pose_router import pose_bucket
+    height, width = shown.shape[:2]
+    state_ = _timeline_state.TimelineState.from_payload(payload)
+    faces_px = result.get("faces") or []
+    kps = result.get("kps") or []
+    poses = result.get("pose") or []
+    person_ids = result.get("person_ids") or []
+    reported = list(report.get("faces") or [])
+    faces = []
+    for i, box in enumerate(faces_px):
+        box = [float(v) for v in box]
+        pose = poses[i] if i < len(poses) else None
+        paste = _best_overlap(box, [r for r in reported if r.get("bbox")], lambda r: r["bbox"])
+        plan = _best_overlap(box, plan_rows, lambda r: r[0])
+        track_id = plan[1] if plan is not None else (paste.get("track_id") if paste else None)
+        entry = {
+            "index": i, "track_id": None if track_id is None else int(track_id),
+            "bbox": [round(box[0] / width, 5), round(box[1] / height, 5),
+                     round(box[2] / width, 5), round(box[3] / height, 5)],
+            "bbox_px": [int(round(v)) for v in box],
+            "pose": None if pose is None else {"yaw": pose[0], "pitch": pose[1], "roll": pose[2]},
+            "pose_bucket": None if pose is None else pose_bucket(pose[0], pose[1]),
+            "pose_bucket_used": paste.get("pose_bucket_used") if paste else None,
+            "pose_source_indices": (paste or {}).get("pose_source_indices") or [],
+            "occlusion_coverage_pct": None if not paste or paste.get("occlusion_coverage_pct") is None
+            else round(float(paste["occlusion_coverage_pct"]), 2),
+            "parse_source": paste.get("parse_source") if paste else None,
+            "person_id": person_ids[i] if i < len(person_ids) else None,
+            "pasted": paste is not None,
+        }
+        contour = _contour_points(face_objects[i]) if landmarks == "contour" and i < len(face_objects) else None
+        if contour is not None:
+            entry["landmarks"] = {"kind": "contour106", "points": [[round(float(x) / width, 5), round(float(y) / height, 5)]
+                                                                   for x, y in contour]}
+        elif i < len(kps) and kps[i]:
+            entry["landmarks"] = {"kind": "kps5", "points": [[round(float(x) / width, 5), round(float(y) / height, 5)]
+                                                              for x, y in kps[i]]}
+        else:
+            entry["landmarks"] = None
+        faces.append(entry)
+    present = {f["track_id"] for f in faces if f["track_id"] is not None}
+    timeline = {"keyframes": len(state_.keyframes) if state_ else 0,
+                "parameters": (_timeline_state.KeyframeCurves(state_.keyframes).evaluate(frame_idx) if state_ else {}),
+                "bindings": [{"track_id": b.track_id, "label": b.label, "faceset_path": b.faceset_path,
+                              "locked": b.locked, "active": b.is_active(frame_idx), "present": b.track_id in present}
+                             for b in (state_.bindings if state_ else ())]}
+    return {"frame_idx": int(frame_idx), "frame_base": 0, "render_mode": mode, "width": width, "height": height,
+            "swapped": bool(reported), "faces": faces, "timeline": timeline,
+            "tracks_source": "trajectory_plan" if plan_rows else "none",
+            "swap_audit": result.get("swap_audit") or {},
+            "selection_diagnostic": result.get("selection_diagnostic"), "message": result.get("message"),
+            **extra}
+
+
+def _render_preview_frame(payload):
+    """``(telemetry, body, mime, render_ms)`` for one frame, or a ``JSONResponse`` (busy / bad request / failure)."""
+    t0 = time.perf_counter()
+    payload = dict(payload or {})
+    bad = _preview_request_error(payload)
+    if bad is not None:
+        return bad
+    mode = payload.get("render_mode", "composite")
+    if mode not in _PREVIEW_MODES:
+        return _frame_error(422, f"render_mode must be one of {', '.join(_PREVIEW_MODES)}", render_mode=mode)
+    fmt = str(payload.get("image_format", "jpeg")).lower()
+    if fmt not in ("jpeg", "webp"):
+        return _frame_error(422, "image_format must be jpeg or webp")
+    landmarks = payload.get("landmarks", "kps")
+    if landmarks not in ("kps", "contour"):
+        return _frame_error(422, "landmarks must be kps or contour")
+    try:
+        quality = int(payload.get("image_quality", 85))
+        diff_gain = float(payload.get("diff_gain", 4.0))
+    except (TypeError, ValueError):
+        return _frame_error(422, "image_quality must be an integer and diff_gain a number")
+    if not (1 <= quality <= 100) or not (0.0 < diff_gain <= 64.0):
+        return _frame_error(422, "image_quality must be 1..100 and diff_gain within (0, 64]")
+    frame_idx = payload.get("frame_idx")
+    if frame_idx is None:
+        frame_idx = max(0, int(payload.get("frame", 1)) - 1)
+    payload["frame_idx"] = int(frame_idx)
+    payload["fake_preview"] = mode != "original"
+    channels = {"bisenet_mask": ("bisenet",), "occlusion_mask": ("occlusion",)}.get(mode, ())
+    with _preview_frame_lock:
+        _preview_capture.arrays, _preview_capture.faces, _preview_capture.rows = [], None, []
+        _timeline_state.begin_report(frame_channels=channels)
+        try:
+            result = preview(payload)
+        finally:
+            arrays, face_objects, plan_rows = (_preview_capture.arrays or [], _preview_capture.faces or [],
+                                               _preview_capture.rows or [])
+            _preview_capture.arrays = _preview_capture.faces = _preview_capture.rows = None
+            report = _timeline_state.end_report()
+    if not isinstance(result, dict):
+        return result                       # busy / timeout / render-active / 404: the legacy answer, status intact
+    if not arrays:
+        return _frame_error(500, "the preview produced no image", **{k: result.get(k) for k in ("message", "error")})
+    img = arrays[-1]
+    original = None
+    if mode in ("diff", "bisenet_mask", "occlusion_mask"):
+        try:
+            original = _original_frame_for(result, frame_idx)
+        except _preview_provider.PreviewTimeout as exc:
+            return _preview_timeout_response(exc)
+    shown, extra = _compose_mode_image(mode, img, original, report, diff_gain)
+    ok, encoded = cv2.imencode(
+        ".webp" if fmt == "webp" else ".jpg", shown,
+        [cv2.IMWRITE_WEBP_QUALITY if fmt == "webp" else cv2.IMWRITE_JPEG_QUALITY, quality])
+    if not ok:
+        return _frame_error(500, "the frame could not be encoded")
+    telemetry = _frame_telemetry(payload, mode, frame_idx, result, shown, report, plan_rows, face_objects, landmarks, extra)
+    if payload.get("seq") is not None:
+        telemetry["seq"] = payload["seq"]
+    render_ms = round((time.perf_counter() - t0) * 1000.0, 1)
+    telemetry["render_ms"] = render_ms
+    return telemetry, encoded.tobytes(), ("image/webp" if fmt == "webp" else "image/jpeg"), render_ms
+
+
+def _telemetry_header(telemetry):
+    """Base64url JSON for ``X-Telemetry``. Over budget, contour points go first, then every face's landmarks; the
+    header says so (``truncated``) and the WebSocket / ``?``-less JSON route carries the full record."""
+    def encode(obj):
+        return base64.urlsafe_b64encode(json.dumps(obj, separators=(",", ":")).encode("utf-8")).decode("ascii")
+    text = encode(telemetry)
+    if len(text) <= _HEADER_TELEMETRY_BUDGET:
+        return text
+    slim = dict(telemetry, truncated="contour_landmarks", faces=[
+        dict(f, landmarks=(f["landmarks"] if f.get("landmarks") and f["landmarks"]["kind"] == "kps5" else None))
+        for f in telemetry["faces"]])
+    text = encode(slim)
+    if len(text) <= _HEADER_TELEMETRY_BUDGET:
+        return text
+    return encode(dict(slim, truncated="landmarks", faces=[dict(f, landmarks=None) for f in slim["faces"]]))
+
+
+@app.post("/api/preview/frame")
+def preview_frame(payload: dict = Body(...)):
+    """One frame, frame-accurately: the image as BINARY plus lightweight telemetry.
+
+    Request (all optional except what you want to change): ``frame_idx`` (0-based absolute; default = the 1-based
+    ``frame`` - 1), ``render_mode`` (composite | original | diff | bisenet_mask | occlusion_mask), ``keyframes`` and
+    ``track_bindings`` (or one ``timeline`` object) - see ``roop/timeline_state.py`` - ``landmarks`` (kps | contour),
+    ``image_format`` (jpeg | webp), ``image_quality``, ``diff_gain``, plus every field ``/api/preview`` accepts.
+
+    Response: the image bytes; headers ``X-Frame-Index``, ``X-Render-Ms``, ``X-Render-Mode``, ``X-Telemetry``
+    (base64url JSON, see ``X-Telemetry-Encoding``). Telemetry: ``faces[]`` with normalised ``bbox``, ``track_id``
+    (from the sealed trajectory plan when it matches this file, else null), ``pose`` (yaw, pitch, roll), the
+    ``pose_bucket`` the head falls in and the ``pose_bucket_used`` the source router actually served,
+    ``occlusion_coverage_pct`` and ``landmarks`` in 0..1 media coordinates; ``timeline`` (the evaluated keyframe
+    parameters and each binding's state at this frame). A body with none of the fields above keeps the legacy
+    JSON answer of ``/api/preview``. Busy / timeout / failure answers are the same JSON as ``/api/preview``'s.
+
+    Binding limits in a PREVIEW: ``active_ranges`` gating applies (it needs only the track id the plan gives each
+    face); the ``faceset_path`` source override is a render-time decision made by the pre-pass over the whole clip
+    and is NOT applied to a one-frame preview, which uses the current face mapping.
+    """
+    if not any(k in payload for k in _FRAME_CONTRACT_KEYS):
+        return preview(payload)
+    out = _render_preview_frame(payload)
+    if isinstance(out, JSONResponse):
+        return out
+    telemetry, body, mime, render_ms = out
+    return Response(content=body, media_type=mime, headers={
+        "X-Frame-Index": str(telemetry["frame_idx"]), "X-Render-Ms": f"{render_ms:.1f}",
+        "X-Render-Mode": telemetry["render_mode"], "X-Telemetry": _telemetry_header(telemetry),
+        "X-Telemetry-Encoding": "base64url-json", "Cache-Control": "no-store"})
+
+
+@app.websocket("/ws/preview")
+async def ws_preview(websocket: WebSocket):
+    """Push channel for scrubbing: send the ``/api/preview/frame`` body as a JSON text message, get back a JSON
+    ``{"event":"frame", "telemetry": {...full, uncapped...}, "mime", "bytes"}`` message followed by ONE binary
+    message holding the image. A refused / busy / failed frame is ``{"event":"error","status","body"}`` with no
+    binary message. Echo ``seq`` (any JSON value you put in the request) lets a client drop stale replies. Requests
+    on one socket are answered in order; the render lock still serialises them with every other preview."""
+    from starlette.concurrency import run_in_threadpool
+    await websocket.accept()
+    try:
+        while True:
+            try:
+                message = await websocket.receive_json()
+            except ValueError:
+                await websocket.send_json({"event": "error", "status": 422, "body": {"message": "not valid JSON"}})
+                continue
+            if not isinstance(message, dict):
+                await websocket.send_json({"event": "error", "status": 422, "body": {"message": "send a JSON object"}})
+                continue
+            out = await run_in_threadpool(_render_preview_frame, message)
+            if isinstance(out, JSONResponse):
+                await websocket.send_json({"event": "error", "status": out.status_code,
+                                           "seq": message.get("seq"), "body": json.loads(out.body)})
+                continue
+            telemetry, body, mime, _render_ms = out
+            await websocket.send_json({"event": "frame", "mime": mime, "bytes": len(body), "telemetry": telemetry})
+            await websocket.send_bytes(body)
+    except WebSocketDisconnect:
+        return
 
 
 @app.post("/api/preview/sweep")
@@ -5675,6 +6068,9 @@ def trigger_swap(payload: dict = Body(...)):
     _mouth_error = _normalize_mouth_custody(payload)
     if _mouth_error is not None:
         return _mouth_error
+    _timeline_error = _preview_request_error(payload)
+    if _timeline_error is not None:
+        return _timeline_error
     target_media_index, target_media_id, target_error = _activate_target_from_payload(
         payload, index=payload.get("target_index", state.selected_target_index), refresh=False)
     if target_error:
@@ -5998,6 +6394,7 @@ def _run_swap(payload):
         _apply_merger_settings(payload)
         _apply_eye_restore_settings(payload)
         _apply_stage11_settings(payload)
+        _apply_timeline_settings(payload)
         _apply_surgical_settings(payload)
         _apply_parser_region_settings(payload)
         _apply_enhancer_settings(payload)
@@ -6283,6 +6680,7 @@ def _run_swap(payload):
                 _swallowed("api.py:project_autosave_stop", _degrade_error, "fallback continued")
             _project_autosave = None
         _active_project_id = ""
+        _timeline_state.clear_active()
         if target_context_lock_held:
             _target_context_lock.release()
 

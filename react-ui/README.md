@@ -290,10 +290,13 @@ Frames for the stage, the scrubber and the compare views.
 | Method | Path | Called from |
 | --- | --- | --- |
 | POST | `/api/preview` | FaceSwap, useGridPreviewLoader |
+| POST | `/api/preview/frame` | (backend contract for the NLE scrubber; no UI caller yet) |
 | POST | `/api/preview/sweep` | ParameterSweepModal |
 | POST | `/api/preview_upscale` | FaceSwap |
 | GET | `/api/target/preview` | BatchSwap, FaceSwap |
 | GET | `/api/target/preview_seq` | usePlaybackBuffer |
+
+**`POST /api/preview/frame` (frame-accurate scrubbing).** Body: `frame_idx` (**0-based absolute** frame; the legacy `frame` is 1-based), `render_mode` (`composite` / `original` / `diff` / `bisenet_mask` / `occlusion_mask`), `keyframes` + `track_bindings` (or one `timeline` object - schema and frame convention in `app/roop/timeline_state.py`), `landmarks` (`kps` / `contour`), `image_format` (`jpeg` / `webp`), `image_quality`, `diff_gain`, plus every `/api/preview` field. Response: the image bytes with `X-Frame-Index`, `X-Render-Ms`, `X-Render-Mode` and `X-Telemetry` (base64url JSON: per face the normalised `bbox`, `track_id`, `pose`, `pose_bucket` / `pose_bucket_used`, `occlusion_coverage_pct`, `landmarks` in 0..1; plus the keyframe parameters evaluated at that frame). A body with none of those fields gets the legacy JSON answer. `/ws/preview` takes the same JSON and answers with a JSON `frame` message (full telemetry, echoing `seq`) then the image as one binary message. `GET /api/media/waveform?buckets=2000` returns the audio peak envelope as a JSON array. `GET /api/queue` additionally carries `segment_groups` and `render_segments.retention`.
 
 ### State & settings
 
@@ -347,6 +350,7 @@ Target media, the people found in it and their captured angles.
 | GET | `/api/target/scene_cuts` | FaceSwap |
 | GET | `/api/target/timeline_tracks` | Timeline |
 | GET | `/api/target/waveform` | Timeline |
+| GET | `/api/media/waveform` | (backend contract for the NLE timeline; no UI caller yet) |
 | GET | /api/audio/waveform | FaceSwap, Extras |
 | POST | `/api/target/remove` | BatchSwap, FaceSwap |
 | POST | `/api/target/remove_face` | PersonGroups |
@@ -514,5 +518,6 @@ Telemetry and frame streaming.
 | --- | --- | --- |
 | WS | `/ws/enhancer/telemetry` | EnhancerSettings |
 | WS | `/ws/frames` | frameSocket |
+| WS | `/ws/preview` | (backend contract for the NLE scrubber; no UI caller yet) |
 | WS | `/ws/telemetry` | useTelemetrySocket |
 | WS | `/ws/v1/pipeline/status` | pipelineStatus |

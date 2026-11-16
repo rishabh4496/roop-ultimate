@@ -32,8 +32,13 @@ class OcclusionMasker:
             self._state.clear()
 
     def compute(self, target, swap, silhouette, *, labels=None,
-                preserve_glasses=True, track_id=None, frame_index=None):
-        """Return float32 M_occluder, in the aligned target crop's coordinates."""
+                preserve_glasses=True, track_id=None, frame_index=None, sensitivity=1.0):
+        """Return float32 M_occluder, in the aligned target crop's coordinates.
+
+        ``sensitivity`` scales the RESIDUAL detector's two thresholds (Mahalanobis 9 and structural 12, divided by it):
+        1.0 is exactly the shipped behaviour, larger finds more, 0 turns the residual detector off. Label-based
+        occluders (hair, hat, cloth from the parse) are authoritative and are not scaled."""
+        sensitivity = max(0.0, float(sensitivity))
         h, w = target.shape[:2]
         # Bounded CPU flow/covariance work even for 1024/2048 enhancers. The
         # resulting probability is resampled once into the paste coordinates.
@@ -44,7 +49,7 @@ class OcclusionMasker:
                                   cv2.resize(swap, small, interpolation=cv2.INTER_AREA),
                                   cv2.resize(np.asarray(silhouette, np.float32), small),
                                   labels=labels, preserve_glasses=preserve_glasses,
-                                  track_id=track_id, frame_index=frame_index)
+                                  track_id=track_id, frame_index=frame_index, sensitivity=sensitivity)
             return cv2.resize(result, (w, h), interpolation=cv2.INTER_LINEAR)
         support = cv2.resize(np.asarray(silhouette, np.float32), (w, h)) > .01
         swap = cv2.resize(swap, (w, h))
@@ -62,7 +67,7 @@ class OcclusionMasker:
             skin &= labels == 1
         residual = np.zeros((h, w), np.float32)
         samples = lab[skin]
-        if len(samples) >= 32:
+        if len(samples) >= 32 and sensitivity > 0.0:
             median = np.median(samples, axis=0)
             # Trim the cluster so an intruding object does not train itself in.
             dist = np.linalg.norm(samples - median, axis=1)
@@ -73,7 +78,8 @@ class OcclusionMasker:
             structural = cv2.absdiff(gray, other).astype(np.float32)
             edges = cv2.Canny(gray, 35, 90)
             edges = cv2.dilate(edges, np.ones((5, 5), np.uint8)) > 0
-            candidate = ((mahal > 9) & (structural > 12) & support & ~protected).astype(np.uint8)
+            candidate = ((mahal > 9.0 / sensitivity) & (structural > 12.0 / sensitivity)
+                         & support & ~protected).astype(np.uint8)
             candidate = cv2.morphologyEx(candidate, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
             # Large connected intrusions with a structural boundary only. Small
             # enclosed features (nostrils, beard texture) do not punch holes.

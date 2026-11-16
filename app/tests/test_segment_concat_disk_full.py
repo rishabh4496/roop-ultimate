@@ -32,6 +32,9 @@ def _writer(directory, sizes):
     w._cur_seg_file = None
     w._cur_frames = 0
     w._checkpoint_callback = None
+    # close() reads the run identity for the frame-count parity check; this helper never set it, so every test in
+    # this file failed at clean HEAD with AttributeError before it reached the merge it is about.
+    w._identity = {"frame_start": 0, "frame_end": 0}
     import threading
     w._write_lock = threading.RLock()
     w.segments = []
@@ -93,11 +96,14 @@ class SegmentConcatDiskFull(unittest.TestCase):
                 fh.write(b"\0" * 8192)
             return mock.Mock(returncode=0, stderr=b"")
 
-        with mock.patch.object(segment_writer.subprocess, "run", side_effect=_ok):
+        # The join is measured before the parts are deleted: two parts of 10 frames must probe as 20.
+        probe = {"video": {"frames": 20, "duration_s": None, "fps": None}}
+        with mock.patch.object(segment_writer.subprocess, "run", side_effect=_ok),                 mock.patch("roop.finalize_output.probe_container", return_value=probe):
             w.close()
         self.assertTrue(os.path.exists(w.target_video))
         self.assertFalse(any(os.path.exists(os.path.join(self.dir, f)) for f in files))
         self.assertFalse(os.path.exists(manifest_path(w.target_video)))
+        self.assertEqual(segment_writer.retention_snapshot()["state"], "verified")
 
     def test_single_part_promotion_needs_no_free_space(self):
         # A rename on the same drive allocates nothing; it must not be refused.

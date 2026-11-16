@@ -5232,6 +5232,10 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             # a frame or two. The face then alternates between defending itself
             # and being smeared, which is a flicker on BOTH faces, and it happens
             # precisely when two people are close enough to interact.
+            if pending:
+                # Timeline bindings: a track bound with `active_ranges` is swapped only inside them. A gated face
+                # stays in `faces` (it still owns its pixels), exactly like any other face that is not swapped.
+                pending = self._timeline_gate(pending, frame_idx)
             if not pending:
                 for face in faces:
                     del face

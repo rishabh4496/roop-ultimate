@@ -92,6 +92,34 @@ def test_chunk_project_is_local_and_audio_disabled(tmp_path):
     assert dist.project_io.resolve_media(saved["media"]["sources"][0], str(project)) == str(asset)
 
 
+@pytest.mark.parametrize("settings", [
+    {"timeline": {"keyframes": [{"frame": 40, "swap_opacity": 0.5}]}},
+    {"timeline": {"bindings": [{"track_id": 3, "faceset_path": "a.fsz"}]}},
+    {"keyframes": [{"frame": 40, "swap_opacity": 0.5}]},          # the flat form /api/swap also accepts
+    {"track_bindings": [{"track_id": 3}]},
+])
+def test_chunks_refuse_timeline_automation_like_every_other_absolute_frame_automation(tmp_path, settings):
+    """Keyframes and binding ranges are frames of the WHOLE clip and a track id is per pre-pass: a chunk that is its own
+    clip would apply them at the wrong frames without a word, so the chunk project is refused, as `automation.*` is."""
+    doc = {"format": "roop-session", "project_version": 1, "media": {"target": {}, "sources": []},
+           "timeline": {"frame_start": 20, "frame_end": 30}, "settings": settings, "automation": {}}
+    chunk = dist.Chunk(0, 20, 30, Fraction(1), Fraction(3, 2))
+    with pytest.raises(ValueError, match="timeline automation"):
+        dist._project_for_chunk(doc, str(tmp_path / "job.roop"), str(tmp_path / "slice.mp4"),
+                                chunk, str(tmp_path / "out.mp4"), str(tmp_path / "worker.roop"))
+    assert not (tmp_path / "worker.roop").exists()
+
+
+def test_an_empty_timeline_does_not_block_a_chunk(tmp_path):
+    doc = {"format": "roop-session", "project_version": 1, "media": {"target": {}, "sources": []},
+           "timeline": {"frame_start": 20, "frame_end": 30}, "settings": {"timeline": {"keyframes": [], "bindings": []}},
+           "automation": {}}
+    chunk = dist.Chunk(0, 20, 30, Fraction(1), Fraction(3, 2))
+    dist._project_for_chunk(doc, str(tmp_path / "job.roop"), str(tmp_path / "slice.mp4"),
+                            chunk, str(tmp_path / "out.mp4"), str(tmp_path / "worker.roop"))
+    assert (tmp_path / "worker.roop").exists()
+
+
 # --- multi-GPU worker isolation (Stage 5) -----------------------------------
 # One GPU is all this rig has, so the orchestration is exercised with stubs; what is
 # asserted is the contract that makes the CUDA-stream work safe across workers: each

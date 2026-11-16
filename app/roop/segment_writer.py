@@ -64,6 +64,27 @@ _parts = []          # finalized, oldest first
 _current = None      # the part being written, or None between/after segments
 _active_writer = None
 
+# What happened to the parts at the end of the run, for /api/queue. The parts are the only copy of the render
+# until the join is verified, so "kept, and why" is a fact the UI must be able to show.
+#   idle              no merge has run in this process
+#   merging           concat running
+#   verified          joined file matched the parts; parts removed
+#   retained_failed   the join did not match (or ffmpeg failed); parts + manifest kept, bad output removed
+#   retained_unverified  ffprobe could not measure the join; parts + manifest kept
+_retention_lock = threading.Lock()
+_retention = {"state": "idle"}
+
+
+def _set_retention(**fields):
+    with _retention_lock:
+        _retention.clear()
+        _retention.update(fields)
+
+
+def retention_snapshot():
+    with _retention_lock:
+        return dict(_retention)
+
 
 def get_active_writer():
     """Return the active SegmentedVideoWriter instance, or None if idle."""
@@ -538,8 +559,31 @@ class SegmentedVideoWriter:
         # retain concat for multi-part files and ROOP_RESUME_KEEP=1.
         promote = len(self.segments) == 1 and not preserve_parts
         if not promote:
-            self._require_concat_space()
+            try:
+                self._require_concat_space()
+            except OSError as exc:
+                _set_retention(state="retained_failed", dir=self._dir, parts=len(self.segments),
+                               reason=str(exc).split(". The parts")[0][:200])
+                raise
+            _set_retention(state="merging", dir=self._dir, parts=len(self.segments),
+                           expected_frames=sum(int(s.get("frames", 0) or 0) for s in self.segments))
         ok = self._promote_single() if promote else self._concat()
+        keep_parts = False
+        if not ok and not promote:
+            _set_retention(state="retained_failed", dir=self._dir, parts=len(self.segments),
+                           reason="the ffmpeg concat failed")
+        if ok and not promote:
+            # ffmpeg exiting 0 is not a verified join: a stream-copy concat of mixed-encoder parts has exited 0
+            # and written 120 of 180 frames. Measure the output BEFORE the only copy of the render is deleted.
+            verdict = self._verify_merge()
+            _set_retention(dir=self._dir, parts=len(self.segments), **verdict)
+            if verdict["state"] == "retained_failed":
+                ok = False
+            elif verdict["state"] == "retained_unverified":
+                keep_parts = True
+                bar_write(f"[Resume] merged {len(self.segments)} segment(s) into "
+                          f"{os.path.basename(self.target_video)} but could not verify the join "
+                          f"({verdict['reason']}); the parts and manifest are kept in {self._dir}.")
         if not ok:
             # A failed merge used to fall through: close() returned normally,
             # the render logged "Done", and downstream picked up a truncated
@@ -551,9 +595,11 @@ class SegmentedVideoWriter:
                 os.remove(self.target_video)
             except OSError:
                 pass
+            _why = retention_snapshot().get("reason")
             raise IOError(
                 f"could not merge {len(self.segments)} rendered part(s) into "
-                f"{os.path.basename(self.target_video)}; the parts and "
+                f"{os.path.basename(self.target_video)}"
+                f"{' (' + _why + ')' if _why else ''}; the parts and "
                 f"{os.path.basename(manifest_path(self.target_video))} are kept "
                 f"in {self._dir} -- run again with the same settings to finish "
                 f"the merge without re-rendering")
@@ -567,8 +613,10 @@ class SegmentedVideoWriter:
                 bar_write(f"[Resume] stopped — merged {n} segment(s) into "
                       f"{os.path.basename(self.target_video)} and removed the parts "
                       f"(set ROOP_RESUME_KEEP=1 to keep them for resuming).")
-        if ok and (completed or not keep_after_stop):
+        if ok and (completed or not keep_after_stop) and not keep_parts:
             self.cleanup()
+            if promote:
+                _set_retention(state="verified", dir=self._dir, parts=1, reason="single part promoted in place")
 
     def _require_concat_space(self):
         """Refuse the merge up front when the output drive cannot hold it.
@@ -600,6 +648,40 @@ class SegmentedVideoWriter:
                 f"{os.path.basename(manifest_path(self.target_video))} are kept "
                 f"in {self._dir}; free space and run again with the same "
                 f"settings to finish the merge without re-rendering")
+
+    def _verify_merge(self) -> dict:
+        """Measure the joined file against the parts it was built from.
+
+        ``{"state": "verified" | "retained_failed" | "retained_unverified", "reason", "expected_frames",
+        "joined_frames"}``. The header frame count (``nb_frames``) is exact for mp4/mov and is compared for
+        equality; without it the duration at the stream's rate is compared with a 1.5-frame tolerance; with neither
+        the join is UNVERIFIED and the parts are kept - a join nobody could measure is not a join anyone checked."""
+        expected = sum(int(s.get("frames", 0) or 0) for s in self.segments)
+        base = {"expected_frames": expected, "joined_frames": None}
+        try:
+            from roop.finalize_output import probe_container
+            video = (probe_container(self.target_video) or {}).get("video")
+        except Exception as exc:
+            _swallowed("roop/segment_writer.py:verify_merge", exc, "the join could not be measured; parts are kept")
+            return {**base, "state": "retained_unverified", "reason": f"ffprobe failed: {type(exc).__name__}"}
+        if not video:
+            return {**base, "state": "retained_unverified", "reason": "ffprobe could not read the joined file"}
+        frames = video.get("frames")
+        if frames is not None:
+            base["joined_frames"] = int(frames)
+            if int(frames) == expected:
+                return {**base, "state": "verified", "reason": "header frame count matches the parts"}
+            return {**base, "state": "retained_failed",
+                    "reason": f"joined file has {int(frames)} frames, the parts hold {expected}"}
+        dur, fps = video.get("duration_s"), video.get("fps")
+        if dur and fps:
+            estimate = float(dur) * float(fps)
+            base["joined_frames"] = int(round(estimate))
+            if abs(estimate - expected) <= 1.5:
+                return {**base, "state": "verified", "reason": "duration matches the parts"}
+            return {**base, "state": "retained_failed",
+                    "reason": f"joined file lasts {float(dur):.2f}s (~{estimate:.0f} frames), the parts hold {expected}"}
+        return {**base, "state": "retained_unverified", "reason": "the joined file reports neither frames nor duration"}
 
     def _promote_single(self) -> bool:
         try:
