@@ -212,6 +212,15 @@ merger_motion_blur = 0.0
 merger_grain_match = 0.0
 merger_degrade = 0.0
 merger_clarity = 0.0
+# Realism stages between the enhancer and the paste (roop/enhancer_stabilizer.py, roop/realism_matcher.py). Neutral
+# here like every merger knob: `Settings` carries the shipped defaults (0.20 / 1.0 / 0.35) and
+# `api._apply_merger_settings` copies them onto these before a render or a preview.
+#   temporal_enhancer_blend 0..0.9  flow-registered EMA of the enhanced crop; resets on a shot cut / heavy occlusion
+#   velocity_motion_blur    0..1    blur along the head's plan velocity once it exceeds 3 px/frame
+#   grain_match_strength    0..1    add the plate's own skin grain, only as much as the swap lacks
+temporal_enhancer_blend = 0.0
+velocity_motion_blur = 0.0
+grain_match_strength = 0.0
 # Plate-adaptive limit on sharpen + clarity; see roop/procmgr_merger.plate_sharpness_gate.
 merger_match_sharpness = True
 merger_sharpness_headroom = 0.7

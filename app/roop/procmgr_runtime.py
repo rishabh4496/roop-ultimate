@@ -1322,6 +1322,9 @@ def _audit_report():
     from roop import grain_match as _grain_match
     for _line in _grain_match.summary_lines():
         print(f"  {_line}", flush=True)
+    from roop import realism_matcher as _realism_matcher
+    for _line in _realism_matcher.summary_lines():
+        print(f"  {_line}", flush=True)
     # The outcome check pastes the plate back over a swap it has already
     # counted, so a discarded face is a face that reached the output UNSWAPPED
     # and was being reported as swapped. Measured on the reported clip, one

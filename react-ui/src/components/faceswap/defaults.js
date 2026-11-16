@@ -159,6 +159,10 @@ export const FACESWAP_DEFAULTS = {
   stabilize_landmarks: true,
   stabilize_hf_texture: true,
   stabilize_hf_texture_weight: 0.15,
+  // roop/enhancer_stabilizer.py + roop/realism_matcher.py; same values as the backend defaults (0.20, 1.0, 0.35).
+  temporal_enhancer_blend: 0.2,
+  velocity_motion_blur: 1,
+  grain_match_strength: 0.35,
 
   // System options
   autorotate_faces: true,

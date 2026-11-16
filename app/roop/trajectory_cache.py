@@ -386,6 +386,30 @@ class TrajectoryCache:
                 "pitch": [_num(v) for v in sub["pose"][:, 1]],
                 "roll": [_num(v) for v in sub["pose"][:, 2]]}
 
+    def track_spans(self, max_gap: int = 1, relative: bool = False) -> List[Dict[str, Any]]:
+        """Each track's active frame ranges, ascending by track id: ``[{track, first, last, frames, ranges}]``.
+
+        ``ranges`` are inclusive ``[start, end]`` runs of frames that hold a row for the track; a hole of more than
+        ``max_gap`` MISSING frames (a track that left and came back) starts a new run. These are the Step 2 "Range Lock"
+        spans: the frames the swap pass will find this person on, straight from the rows the pre-pass sealed.
+        ``relative=True`` counts from the job's first frame (what ``/api/progress`` calls ``current_frame``);
+        otherwise they are decoder frame numbers, like ``frame`` in the rows."""
+        if not len(self.rows):
+            return []
+        off = int(self.meta.get("frame_start", 0) or 0) if relative else 0
+        frames = np.asarray(self.rows["frame"], dtype=np.int64)
+        tracks = np.asarray(self.rows["track"], dtype=np.int64)
+        out: List[Dict[str, Any]] = []
+        for tid in np.unique(tracks):
+            f = np.unique(frames[tracks == tid])
+            cut = np.flatnonzero(np.diff(f) - 1 > max(0, int(max_gap)))      # frames MISSING between two rows
+            starts = np.concatenate(([0], cut + 1))
+            ends = np.concatenate((cut, [len(f) - 1]))
+            ranges = [[int(f[s]) - off, int(f[e]) - off] for s, e in zip(starts, ends)]
+            out.append({"track": int(tid), "first": ranges[0][0], "last": ranges[-1][1],
+                        "frames": int(len(f)), "ranges": ranges})
+        return out
+
     def identify_delta_skips(
         self,
         cuts: Optional[set[int]] = None,

@@ -60,7 +60,8 @@ class StabilizationSchedulingMixin:
                                            getattr(self, '_temporal_compositing', None),
                                            getattr(self, '_temporal_quality', None),
                                            getattr(self, '_landmark_smoother', None),
-                                           getattr(self, '_hf_stabilizer', None))
+                                           getattr(self, '_hf_stabilizer', None),
+                                           getattr(self, '_temporal_enhancer', None))
                      if engine is not None and getattr(engine, 'enabled', False)]
         # TEXTURE and MASK filters (enhancer, mask, HF carry) are given a looser seed bound than the geometric ones.
         # A wrong seed in a geometric filter (kps, landmarks, the temporal engines) is a POSITION OFFSET that survives
@@ -76,7 +77,8 @@ class StabilizationSchedulingMixin:
         except ValueError:
             tex_eps = _STAB_TEXTURE_EPS
         tex_eps = min(1.0, max(float(eps), tex_eps))
-        _texture_like = {id(self.enh_stabilizer), id(self.mask_stabilizer), id(getattr(self, '_hf_stabilizer', None))}
+        _texture_like = {id(self.enh_stabilizer), id(self.mask_stabilizer), id(getattr(self, '_hf_stabilizer', None)),
+                         id(getattr(self, '_temporal_enhancer', None))}
         for stab in (self.kps_stabilizer, self.enh_stabilizer,
                      self.mask_stabilizer, *_temporal):
             fn = getattr(stab, 'warmup_frames', None)

@@ -96,6 +96,14 @@ def flush_pipeline_temporal_buffers(mgr: Optional[Any] = None) -> Dict[str, bool
             except Exception as _exc:
                 _swallowed("scene_detector.py:flush_hf_stabilizer", _exc, "fallback continued")
 
+        temporal_enhancer = getattr(mgr, '_temporal_enhancer', None)
+        if temporal_enhancer is not None and hasattr(temporal_enhancer, 'flush'):
+            try:
+                temporal_enhancer.flush()          # histories only: a cut must not zero the end-of-run counters
+                flushed['temporal_enhancer'] = True
+            except Exception as _exc:
+                _swallowed("scene_detector.py:flush_temporal_enhancer", _exc, "fallback continued")
+
         target_app = getattr(mgr, '_target_appearance', None)
         if target_app is not None and hasattr(target_app, 'reset'):
             try:

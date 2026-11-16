@@ -2802,6 +2802,7 @@ class TrackingMixin:
             self._trajectory = cache
             self._trajectory_plan = cache
             _tc.set_active(cache, getattr(stage_cache, 'project_id', None))
+            self._publish_track_bindings(cache, getattr(stage_cache, 'project_id', None))
             if cache is not None:
                 assert 0 in cache, f'Canonical frame 0 must be in trajectory cache {cache.frame_range}'
                 if frame_count is not None and frame_count > 0:
@@ -2822,6 +2823,43 @@ class TrackingMixin:
             _swallowed("roop/procmgr_tracking.py:trajectory", _degrade_error,
                        "the trajectory cache was skipped; the pre-pass result is unaffected")
             return None
+
+    def _publish_track_bindings(self, cache, project_id=None):
+        """Which faceset each track of the sealed plan is bound to, and the Range Lock spans, published for
+        ``GET /api/trajectory/spans`` and the Stage 2 report (``roop.batch_matrix``). The binding is read off the
+        pre-pass's own ``_track_source_map`` and the run's own faceset list, so it is what the swap pass will do, not a
+        second opinion. Never raises: it is a record, and a failure here must not cost the render."""
+        from roop import batch_matrix as _bm
+        try:
+            entries = _bm.gallery_entries(getattr(self, 'input_face_datas', None) or [])
+            binds = _bm.resolve_track_facesets(getattr(self, '_track_source_map', None) or {}, entries)
+            _bm.set_active(binds, project_id)
+            spans = cache.track_spans(relative=True) if cache is not None else []
+            self._track_spans = spans
+            try:
+                from roop import timeline_tracks as _timeline_tracks
+                _timeline_tracks.publish_track_spans(
+                    [dict(s, **({k: v for k, v in binds[s['track']].as_dict().items()
+                                 if k in ('source_index', 'faceset_id', 'faceset_path', 'via', 'reason')}
+                                if s['track'] in binds else {})) for s in spans])
+            except Exception as _exc:
+                _swallowed('roop/procmgr_tracking.py:timeline_track_spans', _exc,
+                           'track spans not shown on the timeline')
+            assigned = [b for b in binds.values() if b.source_index is not None]
+            named = [b for b in assigned if b.faceset_id]
+            if spans or binds:
+                shown = ', '.join('%d->%s' % (b.track_id, (b.faceset_path or b.faceset_id).replace('\\', '/').rsplit('/', 1)[-1])
+                                  for b in sorted(named, key=lambda x: x.track_id)[:6])
+                print('[Bindings] %d track(s) over %d range(s): %d assigned a source (%d with a faceset id or path%s), '
+                      '%d unassigned.' % (
+                          len(spans), sum(len(s['ranges']) for s in spans), len(assigned), len(named),
+                          (': ' + shown + (', ...' if len(named) > 6 else '')) if shown else '',
+                          max(0, len(spans) - len([s for s in spans if s['track'] in binds
+                                                   and binds[s['track']].source_index is not None]))),
+                      flush=True)
+        except Exception as _degrade_error:
+            _swallowed("roop/procmgr_tracking.py:track_bindings", _degrade_error,
+                       "track bindings were not recorded; the swap itself is unaffected")
 
     @staticmethod
     def _bridgeable(a, b, span):

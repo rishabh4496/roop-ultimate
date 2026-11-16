@@ -763,6 +763,11 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                                             HighFrequencyFlowStabilizer)
         self._landmark_smoother = AdaptiveLandmarkSmoother.from_env(enabled=False)
         self._hf_stabilizer = HighFrequencyFlowStabilizer.from_env(enabled=False)
+        # Whole-crop flow-registered EMA of the enhanced crop (roop/enhancer_stabilizer.py). Same lifecycle and the
+        # same contiguity guard as the HF carry: constructed disabled, switched on by `initialize()` once an enhancer
+        # is known to be in the chain.
+        from roop.enhancer_stabilizer import TemporalEnhancerBlend
+        self._temporal_enhancer = TemporalEnhancerBlend(enabled=False)
         # Target-conditioned appearance is a separate, lightweight ordered
         # recurrence. It shares the existing contiguous-block lifecycle, but it
         # never enables temporal identity output or changes the user's custom
@@ -1295,6 +1300,17 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             pass
         self._landmark_smoother.reset()
         self._hf_stabilizer.reset()
+        # Decided like the HF carry: requested here, switched on at `processors-ready` once an enhancer is known to
+        # have survived the small-card policy.
+        self._temporal_enhancer.enabled = False
+        try:
+            self._temporal_enhancer.blend = float(getattr(roop.globals, 'temporal_enhancer_blend', 0.0) or 0.0)
+        except (TypeError, ValueError):
+            self._temporal_enhancer.blend = 0.0
+        self._want_temporal_enhancer = self._temporal_enhancer.blend > 0.0
+        self._temporal_enhancer.reset()
+        from roop import realism_matcher as _realism_matcher
+        _realism_matcher.reset()
 
         self._stab_active = False
         self._stab_t = 0
@@ -1458,6 +1474,26 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 print('[HFStabilize] note: enhancer and mask smoothing are off, so frames are not processed in runs '
                       'and this filter will only reach a small share of faces (the end-of-run line reports the '
                       'real figure). Turn on enhancer smoothing for it to apply to ~85-90%.', flush=True)
+
+        if getattr(self, '_want_temporal_enhancer', False):
+            _has_enhancer = any(getattr(p, 'type', None) == 'enhance' for p in newprocessors)
+            self._temporal_enhancer.enabled = _has_enhancer
+            print('[EnhancerBlend] request=%.2f enhancer_processors=%s active=%s' % (
+                      self._temporal_enhancer.blend,
+                      [getattr(p, 'processorname', type(p).__name__)
+                       for p in newprocessors if getattr(p, 'type', None) == 'enhance'],
+                      bool(self._temporal_enhancer.enabled)), flush=True)
+            if not _has_enhancer:
+                print('[EnhancerBlend] temporal_enhancer_blend is on but no enhancer is in the chain; there is no '
+                      'restorer texture to damp and the blend stays off.', flush=True)
+            elif not (getattr(self.options, 'stabilize_enhancer', False)
+                      or getattr(self.options, 'stabilize_mask', False)):
+                # Same constraint as the HF carry above: it blends with the previous frame of the SAME track, and
+                # without enhancer/mask smoothing frames are dealt to workers round-robin, so a worker rarely holds
+                # two consecutive frames. The end-of-run line reports the real share.
+                print('[EnhancerBlend] note: enhancer and mask smoothing are off, so frames are not processed in '
+                      'runs and the blend will only reach a small share of faces (the end-of-run line reports the '
+                      'real figure).', flush=True)
 
         # ── Parse manual mask JSON (written by the canvas masking modal) ──────
         # New format: {"0": {"exclude": "data:...", "canonical": true}, "1": {...}}
@@ -2248,7 +2284,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             _line = _ms.flow_summary_line()
             if _line:
                 print(_line, flush=True)
-        for name in ('_landmark_smoother', '_hf_stabilizer'):
+        for name in ('_landmark_smoother', '_hf_stabilizer', '_temporal_enhancer'):
             engine = getattr(self, name, None)
             if engine is None or not getattr(engine, 'enabled', False):
                 continue
@@ -3107,7 +3143,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     for _tname in ('interaction_masker', 'temporal_identity', 'temporal_occlusion',
                                    'target_appearance', 'temporal_compositing',
                                    'temporal_quality', 'landmark_smoother',
-                                   'hf_stabilizer'):
+                                   'hf_stabilizer', 'temporal_enhancer'):
                         _shared = getattr(self, '_' + _tname, None)
                         setattr(self._tls, _tname,
                                 _shared.clone_for_block()
@@ -3798,6 +3834,18 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
 
     def _cur_stab_t(self):
         return getattr(self._tls, 't', 0) if self._parallel_stab else self._stab_t
+
+    def _plan_velocity(self, face):
+        """Head velocity ``(vx, vy)`` in frame px/frame for ``face`` at the frame this worker is on, from THIS job's
+        trajectory plan; None without one. The global active plan is deliberately not consulted: it may belong to
+        another clip, and a velocity read from the wrong video is worse than none."""
+        plan = getattr(self, '_trajectory_plan', None)
+        track = self._temporal_track_id(face)
+        frame = getattr(self._tls, 'frame_idx', None)
+        if plan is None or track is None or frame is None:
+            return None
+        from roop.realism_matcher import plan_velocity
+        return plan_velocity(plan, track, frame, absolute=bool(getattr(self._tls, 'frame_absolute', False)))
 
     @staticmethod
     def _temporal_track_id(face):
@@ -7014,6 +7062,38 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     track_id=self._temporal_track_id(target_face),
                     frame_index=getattr(self._tls, 'frame_idx', None))
 
+        # ── Anti-flicker, whole crop, flow-registered ─────────────────────────
+        # The two filters above either blend whole crops without registering them (`_es`) or register but carry only
+        # the HIGH band (`_hf`). This registers the whole previous output with Farneback flow and blends it in at
+        # `temporal_enhancer_blend`, gated per pixel by how well the warp explains the current crop, and DROPS its
+        # history on a shot cut or when most of the face interior is the plate's (roop/enhancer_stabilizer.py). Same rotation
+        # guard, same contiguity guard, same per-block clone as `_hf`. `_unified_keep` is 1 where the SWAP is kept
+        # (it is `1 - mask`, mask 1 = restore the plate), so the occlusion the blend reads is its complement.
+        #
+        # Occlusion is read INSIDE the landmark hull, not over the whole crop: the rest of an aligned crop is neck,
+        # hair and background that the paste restores from the plate by design (the first regression render read the
+        # whole crop and reset the blend on 299 of 312 faces).
+        _te = self._temporal_engine('temporal_enhancer')
+        if (_te is not None and _te.enabled and enhanced_frame is not None
+                and rotation_action is None):
+            _occ_keep, _occ_region = None, None
+            if _unified_keep is not None:
+                _occ_keep = 1.0 - np.asarray(_unified_keep, dtype=np.float32)
+                try:
+                    _okp = np.asarray(target_face.kps, np.float32) @ M[:, :2].T + M[:, 2]
+                    _osc = _occ_keep.shape[1] / float(aligned_img.shape[1])
+                    _occ_region = np.zeros(_occ_keep.shape[:2], np.uint8)
+                    cv2.fillConvexPoly(_occ_region, cv2.convexHull((_okp * _osc).astype(np.int32)), 1)
+                except (ValueError, cv2.error, NameError):
+                    _occ_region = None
+            with _prof('stabilize'):
+                enhanced_frame = _te.blend_crop(
+                    enhanced_frame,
+                    track_id=self._temporal_track_id(target_face),
+                    frame_index=getattr(self._tls, 'frame_idx', None),
+                    keep=_occ_keep, region=_occ_region,
+                    cut=getattr(self._tls, 'frame_idx', None) in (getattr(self, '_shot_boundaries', None) or ()))
+
         # ── Expression restore ────────────────────────────────────────────────
         # Put the target's own expression back on the swapped face. Runs AFTER
         # the enhancer and its flicker stabiliser deliberately: the stabiliser
@@ -7117,6 +7197,28 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             except Exception as e:
                 bar_write(f"[ProcessMgr] Light harmonization failed: {e}")
 
+        # ── Trajectory-velocity motion blur ───────────────────────────────────
+        # A pin-sharp face on a head the plan says is moving fast is a tell. The blur follows the head's own velocity
+        # (the Stage 2 plan's smoothed landmarks), only above 3 px/frame, and before the merger ops so their
+        # sharpen / grain are not blurred. It stands down when `merger_motion_blur` is on (they must not stack).
+        # No plan (preview, per-frame detection) or a rotated crop space -> nothing, counted.
+        _vb = float(getattr(roop.globals, 'velocity_motion_blur', 0.0) or 0.0)
+        if _vb > 0.0 and rotation_action is None:
+            try:
+                from roop import realism_matcher as _rm
+                _vcrop = enhanced_frame if enhanced_frame is not None else fake_frame
+                with _prof('realism'):
+                    _vcrop, _ = _rm.velocity_blur(
+                        _vcrop, self._plan_velocity(target_face), M, strength=_vb,
+                        plate_width=aligned_img.shape[1],
+                        defer_to_plate_blur=float(getattr(roop.globals, 'merger_motion_blur', 0.0) or 0.0) > 0.0)
+                if enhanced_frame is not None:
+                    enhanced_frame = _vcrop
+                else:
+                    fake_frame = _vcrop
+            except Exception as e:
+                bar_write(f"[ProcessMgr] Velocity motion blur failed: {e}")
+
         # ── DFL merger post-ops ───────────────────────────────────────────────
         # Histogram match, sharpen/soften, motion blur, grain match, degrade —
         # the cheap half of DeepFaceLab's merger, applied to the crop that is
@@ -7134,6 +7236,25 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     fake_frame, aligned_img, appearance=_target_appearance, mask=(_unified_keep if _unified_keep is not None else _skin_colour_mask))
         except Exception as e:
             bar_write(f"[ProcessMgr] Merger post-op failed: {e}")
+
+        # ── Skin grain transfer ───────────────────────────────────────────────
+        # After the merger ops on purpose: it measures the swap as it now is (their grain included, so the two
+        # compose instead of stacking) and sensor grain must not be blurred or sharpened. Adds only the noise the
+        # swap lacks versus the plate's eroded skin (roop/realism_matcher.py); a counted no-op on a swap that is
+        # already as noisy as the plate.
+        _gs = float(getattr(roop.globals, 'grain_match_strength', 0.0) or 0.0)
+        if _gs > 0.0 and _skin_colour_mask is not None:
+            try:
+                from roop import realism_matcher as _rm
+                _gcrop = enhanced_frame if enhanced_frame is not None else fake_frame
+                with _prof('realism'):
+                    _gcrop, _ = _rm.grain_transfer(_gcrop, aligned_img, _skin_colour_mask, strength=_gs)
+                if enhanced_frame is not None:
+                    enhanced_frame = _gcrop
+                else:
+                    fake_frame = _gcrop
+            except Exception as e:
+                bar_write(f"[ProcessMgr] Skin grain transfer failed: {e}")
 
         # ── Apply manual mask in canonical face-crop space ────────────────────
         # combined=1 → keep original pixels (aligned_img)   [exclude / red paint]

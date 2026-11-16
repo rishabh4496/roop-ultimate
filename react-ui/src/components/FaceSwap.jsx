@@ -1400,6 +1400,9 @@ export default function FaceSwap({
       merger_grain_match: num(activeParams.merger_grain_match, 0),
       merger_degrade: num(activeParams.merger_degrade, 0),
       merger_clarity: num(activeParams.merger_clarity, 0),
+      temporal_enhancer_blend: num(activeParams.temporal_enhancer_blend, FACESWAP_DEFAULTS.temporal_enhancer_blend),
+      velocity_motion_blur: num(activeParams.velocity_motion_blur, FACESWAP_DEFAULTS.velocity_motion_blur),
+      grain_match_strength: num(activeParams.grain_match_strength, FACESWAP_DEFAULTS.grain_match_strength),
       merger_match_sharpness: activeParams.merger_match_sharpness !== false,
       merger_sharpness_headroom: num(activeParams.merger_sharpness_headroom, 0.7),
       output_face_scale: num(activeParams.output_face_scale, 0),
@@ -3975,6 +3978,9 @@ export default function FaceSwap({
             {p.stabilize_hf_texture && (
               <Slider label="Texture carry amount" info="Fraction of the previous frame's detail retained. 0.15 gives the pore field about a 6-frame memory while leaving 85% of the current frame, so genuinely new texture — a turn revealing a new cheek — is not held back." min={0} max={0.9} step={0.05} value={num(p.stabilize_hf_texture_weight, 0.15)} onChange={(v) => set('stabilize_hf_texture_weight', v)} defaultValue={FACESWAP_DEFAULTS.stabilize_hf_texture_weight} />
             )}
+            <Slider label="Enhanced-face temporal blend" info="Requires an enhancer. Registers the previous enhanced face to this one with optical flow and blends it in at this weight (0.20 = about a 5-frame memory), so a moving head is averaged without ghosting. It drops its history on a shot cut or when most of the face is covered by the original footage. 0 = off." min={0} max={0.9} step={0.05} value={num(p.temporal_enhancer_blend, FACESWAP_DEFAULTS.temporal_enhancer_blend)} onChange={(v) => set('temporal_enhancer_blend', v)} defaultValue={FACESWAP_DEFAULTS.temporal_enhancer_blend} />
+            <Slider label="Head-velocity motion blur" info="When the tracked head moves faster than 3 px/frame, blurs the swapped face along that movement by about half a frame of travel, so a fast turn is not a pin-sharp sticker. Needs the tracking pre-pass (temporal detection); a preview has no motion to read. Stands down while the plate-based Motion blur slider is above 0. 0 = off." min={0} max={1} step={0.05} value={num(p.velocity_motion_blur, FACESWAP_DEFAULTS.velocity_motion_blur)} onChange={(v) => set('velocity_motion_blur', v)} defaultValue={FACESWAP_DEFAULTS.velocity_motion_blur} />
+            <Slider label="Skin grain match" info="Copies the footage's own skin grain onto the swapped skin, but only as much as the swap is missing: a swap already as noisy as the footage gets none. Runs after the Texture & Grain controls so it sees their result. 0 = off." min={0} max={1} step={0.05} value={num(p.grain_match_strength, FACESWAP_DEFAULTS.grain_match_strength)} onChange={(v) => set('grain_match_strength', v)} defaultValue={FACESWAP_DEFAULTS.grain_match_strength} />
           </TemporalModeControl>
         </InspectorGroup>
 

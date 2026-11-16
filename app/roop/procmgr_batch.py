@@ -862,7 +862,10 @@ class BatchProcessingMixin:
             _swallowed('roop/procmgr_batch.py:timeline_begin', _exc, 'timeline maps not recorded for this run')
         # The head-pose HUD reads the ACTIVE trajectory: the previous job's heads must not outlive its job.
         from roop import trajectory_cache as _trajectory_cache
+        from roop import batch_matrix as _batch_matrix
         _trajectory_cache.clear_active()
+        _batch_matrix.clear_active()
+        self._track_spans = None
         self._trajectory = None
         self._trajectory_plan = None
         self._trajectory_source_video = source_video
@@ -1072,7 +1075,12 @@ class BatchProcessingMixin:
                     coast_frames=_sched.get('coast'),
                     flow_backend=None if _stage2_restored else getattr(self, '_flow_backend_name', None),
                     landmark_filter=None if _stage2_restored else getattr(self, '_prepass_filter', None),
-                    trajectory_faces=len(getattr(self, '_trajectory', None) or ()) or None)
+                    trajectory_faces=len(getattr(self, '_trajectory', None) or ()) or None,
+                    # Step 2 "Range Lock": each track's active ranges, from the sealed plan ([track, first, last,
+                    # frames]), and how many of them the pre-pass assigned a source (roop.batch_matrix).
+                    track_spans=[[s['track'], s['first'], s['last'], s['frames']]
+                                 for s in (getattr(self, '_track_spans', None) or [])] or None,
+                    tracks_bound=sum(1 for b in _batch_matrix.active().values() if b.source_index is not None) or None)
             if _stage2_restored and not _prepass_failed:
                 _st.restored(_st.STAGE_2_ACTIVE_PREPASS)
             else:

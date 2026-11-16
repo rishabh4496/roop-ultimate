@@ -142,7 +142,7 @@ def begin_run(video: Optional[str], frame_start: int, frame_count: int) -> None:
     with _maps_lock:
         _maps.clear()
         _maps.update(video=os.path.abspath(str(video)) if video else None, frame_start=int(frame_start or 0),
-                     frame_count=int(frame_count or 0), active=None, reuse=[], ts=time.time())
+                     frame_count=int(frame_count or 0), active=None, reuse=[], tracks=[], ts=time.time())
 
 
 def publish_active_ranges(active: Optional[Iterable[Sequence[int]]]) -> None:
@@ -176,12 +176,30 @@ def publish_reuse_frames(frames: Iterable[int]) -> None:
         _maps["reuse"] = frames_to_ranges(frames)
 
 
+def publish_track_spans(spans: Iterable[Dict[str, Any]]) -> None:
+    """Stage 2's Range Lock: every track of the sealed ``TrajectoryPlan`` with its clip-relative active ranges
+    (``TrajectoryCache.track_spans(relative=True)``) and the faceset the pre-pass bound it to
+    (``roop.batch_matrix``: ``faceset_id`` / ``faceset_path`` / ``via`` / ``reason``, None when unbound).
+
+    These are the plan's own rows, so the spans are exactly the frames the swap pass will find the person on."""
+    with _maps_lock:
+        if not _maps:
+            return
+        _maps["tracks"] = [
+            {"track": int(s["track"]), "frames": int(s.get("frames") or 0),
+             "ranges": [(int(a), int(b)) for a, b in s.get("ranges") or ()],
+             "source_index": s.get("source_index"),
+             "faceset_id": s.get("faceset_id"), "faceset_path": s.get("faceset_path"),
+             "via": s.get("via"), "reason": s.get("reason")}
+            for s in spans]
+
+
 def render_maps(video: Optional[str]) -> Dict[str, Any]:
     """The last run's maps in UI numbering, and whether they belong to ``video``."""
     with _maps_lock:
         snap = dict(_maps)
     out: Dict[str, Any] = {"video_matches": False, "range": None, "face_free": [], "reuse": [],
-                           "stage1_ran": False}
+                           "tracks": [], "stage1_ran": False}
     if not snap or not snap.get("video") or not video:
         return out
     if os.path.normcase(snap["video"]) != os.path.normcase(os.path.abspath(str(video))):
@@ -195,6 +213,7 @@ def render_maps(video: Optional[str]) -> Dict[str, Any]:
         out["stage1_ran"] = True
         out["face_free"] = ui_ranges(complement_ranges(snap["active"], 0, count - 1), start)
     out["reuse"] = ui_ranges(snap.get("reuse") or [], start)
+    out["tracks"] = [dict(t, ranges=ui_ranges(t["ranges"], start)) for t in snap.get("tracks") or []]
     return out
 
 

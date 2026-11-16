@@ -1201,6 +1201,12 @@ class Settings:
         # lock on by default while retaining an explicit persisted opt-out.
         self.stabilize_hf_texture = self.default_get(data, 'stabilize_hf_texture', True)
         self.stabilize_hf_texture_weight = self.default_get(data, 'stabilize_hf_texture_weight', 0.15)
+        # roop/enhancer_stabilizer.py: whole-crop Farneback-registered EMA of the enhanced crop (resets on a shot cut
+        # or heavy occlusion). 0 disables it. roop/realism_matcher.py: head-velocity motion blur (above 3 px/frame,
+        # 0 disables) and skin grain transfer (adds only the noise the swap lacks versus the plate; 0 disables).
+        self.temporal_enhancer_blend = self.default_get(data, 'temporal_enhancer_blend', 0.20)
+        self.velocity_motion_blur = self.default_get(data, 'velocity_motion_blur', 1.0)
+        self.grain_match_strength = self.default_get(data, 'grain_match_strength', 0.35)
         self.hf_flow_backend = self.default_get(data, 'hf_flow_backend', 'auto')
         self.hf_flow_vram = self.default_get(data, 'hf_flow_vram', 'auto')
         self.hf_flow_weights = self.default_get(data, 'hf_flow_weights', '')
@@ -1630,6 +1636,9 @@ class Settings:
             'stabilize_landmarks': self.stabilize_landmarks,
             'stabilize_hf_texture': self.stabilize_hf_texture,
             'stabilize_hf_texture_weight': self.stabilize_hf_texture_weight,
+            'temporal_enhancer_blend': self.temporal_enhancer_blend,
+            'velocity_motion_blur': self.velocity_motion_blur,
+            'grain_match_strength': self.grain_match_strength,
             'hf_flow_backend': self.hf_flow_backend,
             'hf_flow_vram': self.hf_flow_vram,
             'hf_flow_weights': self.hf_flow_weights,

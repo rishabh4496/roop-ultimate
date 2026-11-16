@@ -105,7 +105,8 @@ SIGNATURE_KEYS = (
     "stabilize_mask_strength", "stabilize_landmarks", "stabilize_hf_texture",
     "stabilize_hf_texture_weight", "merger_hist_match", "merger_sharpen",
     "merger_motion_blur", "merger_grain_match", "merger_degrade",
-    "merger_clarity", "eyes_blend_amount", "eyes_feather_blend",
+    "merger_clarity", "temporal_enhancer_blend", "velocity_motion_blur",
+    "grain_match_strength", "eyes_blend_amount", "eyes_feather_blend",
     "output_video_codec", "video_quality", "track_identities",
     "temporal_detection", "autorotate_faces",
 )

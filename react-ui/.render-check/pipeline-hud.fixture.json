@@ -57,7 +57,7 @@
      },
      "restore": null,
      "blend": {
-      "ms": 4.001,
+      "ms": 4.002,
       "calls": 5,
       "backend": "cv2 (CPU)",
       "timing": "host wall (blocking call)"
@@ -136,6 +136,8 @@
     "flow_backend": null,
     "landmark_filter": null,
     "trajectory_faces": null,
+    "track_spans": null,
+    "tracks_bound": null,
     "neural_detected_frames": 25,
     "flow_tracked_frames": 75,
     "flow_ratio_pct": 75.0,
@@ -180,7 +182,7 @@
      },
      "restore": null,
      "blend": {
-      "ms": 4.001,
+      "ms": 4.002,
       "calls": 5,
       "backend": "cv2 (CPU)",
       "timing": "host wall (blocking call)"

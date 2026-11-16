@@ -3,6 +3,8 @@
     GET /api/trajectory/summary                       what is cached: faces, frames, tracks, first/last frame
     GET /api/trajectory/pose?frame=N[&absolute=1]     every face at (or near) frame N: yaw / pitch / roll
     GET /api/trajectory/series?track=T[&points=600]   one track's yaw/pitch/roll against frame (a sparkline)
+    GET /api/trajectory/spans[?relative=1&max_gap=1]  every track's active frame ranges (Step 2 "Range Lock"), each with
+                                                      the faceset the pre-pass bound it to (`roop.batch_matrix`)
 
 Everything is read from `roop.trajectory_cache`'s active cache, the Stage 2 pre-pass's own SMOOTHED keypoints and
 the head pose solved from them - the numbers the swap aligns with, not a second estimate. `frame` counts from the
@@ -16,6 +18,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Query
 
+from roop import batch_matrix as _bm
 from roop import trajectory_cache as _tc
 
 router = APIRouter()
@@ -50,4 +53,33 @@ def trajectory_series(track: int = Query(..., ge=0), points: int = Query(600, ge
     out = cache.series(track, max_points=points)
     out["available"] = True
     out["track"] = int(track)
+    return out
+
+
+def spans_payload(cache, bindings, relative: bool = True, max_gap: int = 1) -> dict:
+    """The Range Lock spans of ``cache`` joined with ``bindings`` ({track: TrackBinding}). A track with no binding
+    is listed with ``source_index`` / ``faceset_id`` None and the reason, so an unbound track is visible rather than
+    missing."""
+    tracks = []
+    for span in cache.track_spans(max_gap=max_gap, relative=relative):
+        b = bindings.get(span["track"])
+        span["source_index"] = b.source_index if b else None
+        span["faceset_id"] = b.faceset_id if b else None
+        span["faceset_path"] = b.faceset_path if b else None
+        span["via"] = b.via if b else "none"
+        span["reason"] = (b.reason if b else "the pre-pass has not bound this track yet")
+        tracks.append(span)
+    return {"available": True, "relative": bool(relative), "tracks": tracks,
+            # assigned = the pre-pass gave the track a source; named = that source also has an id or path
+            "assigned": sum(1 for t in tracks if t["source_index"] is not None),
+            "named": sum(1 for t in tracks if t["faceset_id"])}
+
+
+@router.get("/api/trajectory/spans")
+def trajectory_spans(relative: bool = True, max_gap: int = Query(1, ge=0, le=300)):
+    cache = _tc.active()
+    if cache is None:
+        return _unavailable()
+    out = spans_payload(cache, _bm.active(), relative=relative, max_gap=max_gap)
+    out["project_id"] = _tc.active_project()
     return out

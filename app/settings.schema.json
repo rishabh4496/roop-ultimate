@@ -777,6 +777,18 @@
       "default": 0.15,
       "type": "float"
     },
+    "temporal_enhancer_blend": {
+      "default": 0.2,
+      "type": "float"
+    },
+    "velocity_motion_blur": {
+      "default": 1.0,
+      "type": "float"
+    },
+    "grain_match_strength": {
+      "default": 0.35,
+      "type": "float"
+    },
     "hf_flow_backend": {
       "default": "auto",
       "type": "str",

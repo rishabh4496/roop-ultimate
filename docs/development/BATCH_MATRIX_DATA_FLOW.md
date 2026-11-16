@@ -351,3 +351,39 @@ Not fixed here:
   `'Selected face'`, which requires the target to have a captured person; a
   fresh multi-file batch with no captures fails every job at dispatch with
   "target person 0 was removed". `All faces` / `First found` do not.
+
+## 9. Which faceset does a track get? (`roop/batch_matrix.py`)
+
+Added 2026-11-17. Sections 1-8 trace what the strategies stage; this one pins what the pre-pass does with it, per
+**track** (the ByteTrack-style ids of `roop/multi_face_tracker.py`, the same ids the `TrajectoryPlan` rows carry).
+
+**The four strategies resolve identically.** `one_to_many`, `grouped`, per-file `matrix` (and the UI's `recipes`, which
+stages `one_to_many` / `matrix` jobs) all produce the payload of section 3. The strategy is not an input to the
+decision; `face_mapping` / `source_mapping_ids` / `source_mapping_names` are. `batch_matrix.plan_track_facesets(payload,
+gallery, {track: person rank})` applies the priority `processing_request` already uses (stable id, then name, then raw
+index) and returns one `TrackBinding` per track in ascending track order. A fourth shape, `batch_strategy: "tracks"` with
+`track_bindings: {track: faceset id | path | name}`, binds a track directly; it refuses a bare gallery position (not
+stable under reorder or removal) and an ambiguous file name, and says why in `reason`.
+
+**What it guarantees** (`app/tests/test_enhancer_and_realism.py::TrackFacesetResolutionTests`): the same payload gives the
+same bindings under all four strategy labels; the answer does not depend on dict insertion order or on the order tracks
+are listed; a reordered gallery changes nothing when ids are present; a track with no person, a skipped person, a person
+with no mapping or a missing faceset is `faceset_id: None` with a reason and is never faceset 0.
+
+**What it records, after Stage 2.** `ProcessMgr._publish_track_bindings` (called from `_seal_trajectory`, so for a fresh
+and a restored Stage 2) runs `resolve_track_facesets(_track_source_map, run faceset list)`, which reads the pre-pass's own
+`track -> (source, embedding)` map, not a second opinion, and publishes:
+
+* `GET /api/trajectory/spans[?relative=1&max_gap=1]`: every track's active ranges (`TrajectoryCache.track_spans`) joined
+  with the faceset it was bound to (`faceset_id`, `faceset_path`, `via`, `reason`). An unbound track is listed with its reason.
+* `GET /api/target/timeline_tracks` -> `render.tracks`: the same, in UI numbering, for the timeline lanes (published through
+  `timeline_tracks.publish_track_spans`, forgotten on `begin_run`).
+* the Stage 2 report: `track_spans` (`[track, first, last, frames]`) and `tracks_bound`.
+* a `[Bindings]` line in the log.
+
+**What it does not do.** There is no `.fsz` format that carries per-track bindings; `.fsz` stays a faceset. The `tracks`
+strategy binds by faceset id or path, and `plan_track_facesets` is a pure planning/verification function: nothing feeds
+`track_bindings` into the pre-pass yet (the pre-pass assigns sources by embedding match and by identity pins,
+`roop.globals.identity_pins`). Wiring an explicit binding into `_assign_track_sources` would change which face is swapped
+and needs its own measurement, so it was left out. Which person rank a track belongs to is the caller's input
+(`track_person`); the API does not compute it.

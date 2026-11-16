@@ -625,6 +625,9 @@ def build_summary(ok: bool = True, now: Optional[float] = None) -> Dict[str, Any
                   "scan_frames": c2.get("scan_frames"), "coast_frames": c2.get("coast_frames"),
                   "flow_backend": c2.get("flow_backend"), "landmark_filter": c2.get("landmark_filter"),
                   "trajectory_faces": c2.get("trajectory_faces"),
+                  # Range Lock: [track, first, last, frames] per track of the sealed plan (clip-relative), and how
+                  # many of those tracks the pre-pass assigned a source (roop.batch_matrix).
+                  "track_spans": c2.get("track_spans"), "tracks_bound": c2.get("tracks_bound"),
                   # Neural = frames the detector actually ran on; flow = frames it was skipped on and the previous
                   # result was carried by the tracker (`coast`). The ratio is flow / (flow + neural).
                   "neural_detected_frames": c2.get("detector_calls"),
