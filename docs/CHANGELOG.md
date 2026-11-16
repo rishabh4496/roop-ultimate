@@ -1,3 +1,11 @@
+## 2026-11-16 — temporal landmark stabilization and pose-adaptive facesets (acceptance pending)
+
+Added per-track NumPy One Euro filtering for five-point and dense landmarks, similarity-parameter affine smoothing, bounded Kalman dropout prediction, canonical solvePnP head pose, and optional pose-weighted .fsz embeddings with per-track EMA. Wired the annotations through the ordered tracking prepass and swapper input; exposed the strength, prediction cap, and faceset routing options through the API and React controls. No dependency or network changes; ONNX/TensorRT inference paths are unchanged.
+
+Post-fix focused backend checks passed (119 tests, 348 subtests); the React production build passed. The completed full pytest run reported 87 failed, 7,899 passed, 31 skipped, 4 deselected, 11 xfailed, and 30 errors in 2,765.68 seconds. It exposed preset/settings, source-input compatibility, and broad-handler failures; these were fixed and the affected tests passed in the focused rerun. A second full run reached 99% but was stopped after more than 95 minutes in the GPU-heavy `face_engine/tests/test_ultra_quality.py` latency cases.
+
+The required 300-frame regression render ran with the live config and 20 threads. It recorded a baseline under the corrected signature (including the three new options), with 300/300 frames decided and changed. It reported zero `enhance` stage calls and no face/frame quality metrics, so this is incomplete acceptance evidence, not a quality or performance claim. A 600-frame counterbalanced A/B, fidelity A/B, and RTX 3060 validation remain pending.
+
 ## 2026-11-16 (UI) — Face Swap: pinned run bar, preview + timeline deck, proportional wheel zoom
 
 React UI only (`react-ui/`); no backend change.

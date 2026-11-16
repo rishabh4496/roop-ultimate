@@ -60,6 +60,23 @@ class Unserializable(Exception):
     """A value the cache cannot restore exactly. The cache is not written."""
 
 
+def _temporal_prepass_features(pm: Any) -> Dict[str, Any]:
+    options = getattr(pm, "options", None)
+    strength = float(getattr(options, "stabilization_strength", 0.5) or 0.0)
+    return {
+        "active": bool((getattr(options, "stabilize_face", False) and strength > 0.0)
+                       or getattr(options, "pose_adaptive_faceset", False)),
+        "stabilize_face": bool(getattr(options, "stabilize_face", False)),
+        "stabilize_method": str(getattr(options, "stabilize_method", "one_euro")),
+        "stabilize_min_cutoff": float(getattr(options, "stabilize_min_cutoff", 0.05)),
+        "stabilize_beta": float(getattr(options, "stabilize_beta", 0.02)),
+        "stabilize_landmarks": bool(getattr(options, "stabilize_landmarks", True)),
+        "stabilization_strength": strength,
+        "dropout_prediction_frames": int(getattr(options, "dropout_prediction_frames", 8)),
+        "pose_adaptive_faceset": bool(getattr(options, "pose_adaptive_faceset", False)),
+    }
+
+
 # ── tagged JSON values ───────────────────────────────────────────────────────────────────────────────
 # JSON natively round-trips None, bool, int, str, list and finite python floats EXACTLY (floats are
 # written with repr, which is the shortest string that parses back to the same double). Everything else
@@ -562,6 +579,7 @@ def write_stage2(path: str, pm: Any, *, frame_start: int, frame_count: int,
             "faces": block, "assignments": assign_enc, "source_map": smap_enc,
             "arrays": reg.group_names(), "shots": shots_enc,
             "plan": serialize_plan(plan, frame_start),
+            "temporal_prepass_features": _temporal_prepass_features(pm),
         }
         w.json(META_MEMBER, meta)
     digest, size = file_digest(path)
@@ -591,6 +609,12 @@ def restore_stage2(path: str, pm: Any, *, new_start: int, new_count: int,
         if ((saved_ranges is None) != (current_ranges_abs is None)
                 or window_ranges(saved_ranges, first, last) != window_ranges(current_ranges_abs, first, last)):
             raise Unserializable("Stage 1 ranges differ from the ones Stage 2 was computed against")
+        expected_features = _temporal_prepass_features(pm)
+        saved_features = meta.get("temporal_prepass_features")
+        if saved_features is None and expected_features["active"]:
+            raise Unserializable("Stage 2 cache predates the requested temporal stabilizer/router")
+        if saved_features is not None and saved_features != expected_features:
+            raise Unserializable("temporal stabilizer/router settings differ from the Stage 2 cache")
         faces = read_faces(r, meta["faces"], first, last, new_start)
         if not faces:
             # A pre-pass that finds no face turns itself OFF and hands the clip to per-frame detection

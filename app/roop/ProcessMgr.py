@@ -5796,13 +5796,23 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     target_face.bbox, smooth=False,
                     cut=(getattr(self._tls, 'frame_idx', None) in
                          (getattr(self, '_shot_boundaries', None) or set())))
+                _affine_override = (target_face.get('_stabilized_affine')
+                                    if hasattr(target_face, 'get') else None)
+                # The prepass matrix is in the unrotated frame coordinate
+                # system. Rotation recovery creates a new local coordinate
+                # system, so use the ordinary fit for those rare frames.
+                if rotation_action is not None:
+                    _affine_override = None
                 aligned_img, M, _alignment = canonicalize_face_alignment(
                     plate, target_face, subsample_size, swap_template, dst=crop_dst,
                     matrix_guard=lambda matrix: self._tls.geometry_guard.validate_matrix(
                         self._temporal_track_id(target_face), getattr(self._tls, 'frame_idx', None),
                         matrix, cut=(getattr(self._tls, 'frame_idx', None) in
                                      (getattr(self, '_shot_boundaries', None) or set())),
-                        sar=float(getattr(roop.globals, 'video_sar', 1.) or 1.)))
+                        sar=float(getattr(roop.globals, 'video_sar', 1.) or 1.)),
+                    matrix_override=_affine_override,
+                    matrix_override_size=int(target_face.get('_stabilized_affine_size', 112)
+                                              if hasattr(target_face, 'get') else 112))
             except InvalidAlignment as exc:
                 _audit_hit('refused: invalid alignment')
                 self._tls.alignment_refusals = getattr(self._tls, 'alignment_refusals', 0) + 1
@@ -6051,6 +6061,33 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     best_idx = int(temporal_index)
                 selected_src_idx = best_idx
                 inputface = fs.faces[best_idx]
+
+        if (getattr(self.options, 'pose_adaptive_faceset', False)
+                and source_faceset is not None
+                and target_face.get('_pose_routed_embedding') is None):
+            # Still-image/preview path. Video renders prepare and cache this
+            # value in _build_temporal_faces so worker threads never mutate
+            # route history; a one-frame preview has no history to race.
+            try:
+                from roop.pose_router import PoseRouter, estimate_head_pose
+                _pnp = target_face.get('_pose_pnp')
+                if _pnp is None:
+                    _pnp = estimate_head_pose(
+                        getattr(target_face, 'kps', None), frame_shape=plate.shape)
+                if _pnp is not None:
+                    _route = PoseRouter(alpha=1.0, top_k=3).route(
+                        source_faceset, _pnp[0], _pnp[1],
+                        track_id=self._temporal_track_id(target_face),
+                        frame_index=getattr(self._tls, 'frame_idx', None))
+                    if _route is not None:
+                        target_face['_pose_pnp'] = tuple(float(v) for v in _pnp)
+                        target_face['_pose_routed_embedding'] = _route.embedding
+                        target_face['_pose_routed_bucket'] = _route.bucket
+                        target_face['_pose_routed_source_indices'] = _route.source_indices
+                        target_face['_pose_routed_weights'] = _route.weights
+            except Exception as _route_error:
+                _swallowed("roop/ProcessMgr.py:pose_adaptive_fallback", _route_error,
+                           "canonical source embedding retained")
 
         if inputface is None:
             self.total_swaps = max(0, self.total_swaps - 1)

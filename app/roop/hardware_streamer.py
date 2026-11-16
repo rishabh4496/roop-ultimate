@@ -441,11 +441,13 @@ class FrameMetadataTracker:
         self.threshold = max(0.0, float(threshold))
         self.sample_width = max(16, int(sample_width))
         self._previous: Optional[NDArray[np.float32]] = None
+        self._previous_index: Optional[int] = None
 
     def reset(self) -> None:
         """Forget the previous frame signature."""
 
         self._previous = None
+        self._previous_index = None
 
     def _signature(self, frame: UInt8Array) -> NDArray[np.float32]:
         """Compute a small, allocation-bounded RGB mean signature."""
@@ -457,17 +459,29 @@ class FrameMetadataTracker:
         scales = sampled.reshape(-1, sampled.shape[-1]).std(axis=0)
         return np.ascontiguousarray(np.concatenate((means, scales)), dtype=np.float32)
 
-    def observe(self, frame: UInt8Array) -> bool:
-        """Return true when the frame differs materially from its predecessor."""
+    def observe(self, frame: UInt8Array, frame_index: Optional[int] = None) -> bool:
+        """Return true on a shot cut or frame-index discontinuity.
+
+        A seek/jump invalidates temporal state just like a scene cut. Omitting
+        ``frame_index`` preserves the older signature-tracker behavior.
+        """
+
+        discontinuity = False
+        if frame_index is not None and self._previous_index is not None:
+            discontinuity = int(frame_index) != self._previous_index + 1
+        if discontinuity:
+            self._previous = None
+        if frame_index is not None:
+            self._previous_index = int(frame_index)
 
         signature = self._signature(frame)
         previous = self._previous
         self._previous = signature
         if previous is None:
-            return False
+            return discontinuity
         scale = np.maximum(previous[3:], 8.0)
         distance = float(np.mean(np.abs(signature[:3] - previous[:3]) / scale))
-        return bool(math.isfinite(distance) and distance > self.threshold)
+        return bool(discontinuity or (math.isfinite(distance) and distance > self.threshold))
 
 
 def _probe_video(path: str, ffprobe: Optional[str] = None) -> Tuple[int, int, float]:
@@ -847,7 +861,7 @@ class RingFrameProducer:
                 decode_seconds += time.perf_counter() - decode_started
                 if frame is None:
                     break
-                scene_cut = self.tracker.observe(frame)
+                scene_cut = self.tracker.observe(frame, frame_index)
                 fps = max(1.0, float(getattr(self.source, "fps", 30.0)))
                 metadata = FrameMetadata(
                     frame_index=frame_index,

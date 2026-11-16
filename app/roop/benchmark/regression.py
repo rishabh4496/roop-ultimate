@@ -99,6 +99,8 @@ SIGNATURE_KEYS = (
     "detector_engine", "face_detector_size", "face_detector_threshold",
     "face_detector_nms", "subsample_upscale", "stabilize_face",
     "stabilize_method", "stabilize_min_cutoff", "stabilize_beta",
+    "stabilization_strength", "pose_adaptive_faceset",
+    "dropout_prediction_frames",
     "stabilize_enhancer", "stabilize_enhancer_strength", "stabilize_mask",
     "stabilize_mask_strength", "stabilize_landmarks", "stabilize_hf_texture",
     "stabilize_hf_texture_weight", "merger_hist_match", "merger_sharpen",

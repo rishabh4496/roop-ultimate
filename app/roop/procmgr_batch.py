@@ -234,7 +234,12 @@ class BatchProcessingMixin:
         self._temporal_mode = bool(
             getattr(roop.globals, 'temporal_detection', False)
             or _temporal_state_enabled or _temporal_compositing_enabled
-            or _temporal_quality_enabled)
+            or _temporal_quality_enabled
+            # Track-scoped affine filtering and the pose router need ordered
+            # per-face frame annotations before the parallel swap workers.
+            or (bool(getattr(self.options, 'stabilize_face', False))
+                and float(getattr(self.options, 'stabilization_strength', 0.5) or 0.0) > 0.0)
+            or bool(getattr(self.options, 'pose_adaptive_faceset', False)))
         self._temporal_faces = None
         self.stage2_frame_plan = {}
         self._temporal_covered = 0

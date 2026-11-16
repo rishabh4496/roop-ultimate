@@ -1194,12 +1194,45 @@ class FaceSwapInsightFace():
             pass
         return blob
 
-    def _compute_source_input(self, source_face: Face):
+    def _compute_source_input(self, source_face: Face, target_face: Face = None):
         """Return whatever the loaded model feeds into its source input: an
-        image blob for image-source models, else the identity latent vector."""
+        image blob for image-source models, else the identity latent vector.
+
+        Pose-routed .fsz vectors are frame annotations prepared in the ordered
+        tracking prepass. Only the two compatible normalized-embedding model
+        contracts consume them; image-source and converter-specific models keep
+        their established source path.
+        """
         if self.embedding_mode == "image":
             return self._prepare_source_crop(source_face)
+        routed = (target_face.get('_pose_routed_embedding')
+                  if hasattr(target_face, 'get') else None)
+        if routed is not None and self.embedding_mode in ('normed', 'normed_emap'):
+            try:
+                from roop.alignment_safety import unit_latent
+                vector = unit_latent(np.asarray(routed, dtype=np.float32).reshape(-1))
+                if self.embedding_mode == 'normed_emap':
+                    if getattr(self, 'emap', None) is None:
+                        return self._compute_latent(source_face)
+                    vector = unit_latent(np.asarray(vector, dtype=np.float32) @ self.emap)
+                if vector is not None and np.isfinite(vector).all():
+                    return np.asarray(vector, dtype=np.float32).reshape(1, -1)
+            except (TypeError, ValueError, np.linalg.LinAlgError):
+                pass
         return self._compute_latent(source_face)
+
+    def _compute_source_input_for_target(self, source_face: Face, target_face: Face):
+        """Keep the source-only call contract unless pose routing is active.
+
+        A few integrations override `_compute_source_input(source_face)` and
+        do not accept target annotations. Passing the target is only necessary
+        when the ordered tracking prepass attached a routed embedding.
+        """
+        routed = (target_face.get('_pose_routed_embedding')
+                  if hasattr(target_face, 'get') else None)
+        if routed is not None:
+            return self._compute_source_input(source_face, target_face)
+        return self._compute_source_input(source_face)
 
     @staticmethod
     def _is_trt(p):
@@ -2315,11 +2348,11 @@ class FaceSwapInsightFace():
         # share ROOP_PROFILE prints for this stage is not a budget: it is thread
         # time summed across workers, most of it spent queueing.
         #
-        # This replaced a pose ROUTER that ran one net per face, picked by yaw.
-        # The router is measured and rejected, not merely superseded: on real
-        # contact footage it cost 0.26 of faceset identity for no gain in
-        # sharpness. Do not reach for it again.
-        latent = self._compute_source_input(source_face)
+        # Historical per-yaw model switching was measured and rejected: on real
+        # contact footage it cost identity for no gain in sharpness. Pose-bucketed
+        # .fsz routing now selects an embedding before this call while keeping the
+        # same active model and single inference path.
+        latent = self._compute_source_input_for_target(source_face, target_face)
         if latent is None:
             # Image-source model but no source crop available → return the target
             # crop unchanged (no swap) rather than crashing.
@@ -2424,7 +2457,8 @@ class FaceSwapInsightFace():
                 not SWAP_MODELS.get(self.loaded_model_key, {}).get(
                     "batch_capable", True)):
             return self._sequential_fallback(requests)
-        latents = [self._compute_source_input(src) for src, _tgt, _blob in requests]
+        latents = [self._compute_source_input_for_target(src, tgt)
+                   for src, tgt, _blob in requests]
         if any(l is None for l in latents):
             # Image-source model with a crop-less source → no-op passthrough.
             return [r[2][0] for r in requests]

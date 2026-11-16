@@ -5264,6 +5264,9 @@ def preview(payload: dict = Body(...)):
                 swap_model=swap_model,
                 stabilize_method=payload.get("stabilize_method", "one_euro"),
                 stabilize_face=bool(payload.get("stabilize_face", False)),
+                stabilization_strength=float(payload.get("stabilization_strength", roop_globals.CFG.stabilization_strength)),
+                pose_adaptive_faceset=bool(payload.get("pose_adaptive_faceset", roop_globals.CFG.pose_adaptive_faceset)),
+                dropout_prediction_frames=int(payload.get("dropout_prediction_frames", roop_globals.CFG.dropout_prediction_frames)),
                 selection_state=selection_state,
                 processing_request=processing_request)
 
@@ -6070,6 +6073,9 @@ def _run_swap(payload):
             stabilize_method=payload.get("stabilize_method", roop_globals.CFG.stabilize_method),
             stabilize_min_cutoff=float(payload.get("stabilize_min_cutoff", roop_globals.CFG.stabilize_min_cutoff)),
             stabilize_beta=float(payload.get("stabilize_beta", roop_globals.CFG.stabilize_beta)),
+            stabilization_strength=float(payload.get("stabilization_strength", roop_globals.CFG.stabilization_strength)),
+            pose_adaptive_faceset=bool(payload.get("pose_adaptive_faceset", roop_globals.CFG.pose_adaptive_faceset)),
+            dropout_prediction_frames=int(payload.get("dropout_prediction_frames", roop_globals.CFG.dropout_prediction_frames)),
             stabilize_enhancer=bool(payload.get("stabilize_enhancer", roop_globals.CFG.stabilize_enhancer)),
             stabilize_enhancer_strength=float(payload.get("stabilize_enhancer_strength", roop_globals.CFG.stabilize_enhancer_strength)),
             stabilize_mask=bool(payload.get("stabilize_mask", roop_globals.CFG.stabilize_mask)),

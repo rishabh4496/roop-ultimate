@@ -697,6 +697,18 @@
       "default": 0.1,
       "type": "float"
     },
+    "stabilization_strength": {
+      "default": 0.5,
+      "type": "float"
+    },
+    "pose_adaptive_faceset": {
+      "default": false,
+      "type": "bool"
+    },
+    "dropout_prediction_frames": {
+      "default": 8,
+      "type": "int"
+    },
     "stabilize_enhancer": {
       "default": true,
       "type": "bool"

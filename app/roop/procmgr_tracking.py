@@ -3000,6 +3000,14 @@ class TrackingMixin:
                             _COAST_FRAMES)
         except ValueError:
             max_coast = _COAST_FRAMES
+        try:
+            # The face-track predictor is intentionally bounded to the
+            # requested eight-frame ceiling even when the legacy coast policy
+            # allows a longer synthetic swap run.
+            max_coast = min(max_coast, max(0, min(8, int(getattr(
+                self.options, 'dropout_prediction_frames', 8)))))
+        except (TypeError, ValueError):
+            max_coast = min(max_coast, 8)
         if max_coast <= 0 or len(idxs) < 2:
             return 0, 0
 
@@ -3134,7 +3142,9 @@ class TrackingMixin:
         temporal_enabled = (identity_enabled or occlusion_enabled
                             or expression_enabled)
         pose_annotation_enabled = bool(
-            getattr(self.options, 'use_source_bank', False) or temporal_enabled)
+            getattr(self.options, 'use_source_bank', False)
+            or getattr(self.options, 'pose_adaptive_faceset', False)
+            or temporal_enabled)
         # Frame indices where the picture cuts, recorded by the tracking scan.
         # Empty when tracking ran without a scene tracker (stills, symbolic
         # test frames), in which case every test below is a no-op and the
@@ -3172,6 +3182,10 @@ class TrackingMixin:
                     bbox = face.get('bbox')
                 if bbox is not None:
                     other_real.setdefault(f_idx, []).append((t['id'], bbox))
+        pose_router_shared = None
+        if bool(getattr(self.options, 'pose_adaptive_faceset', False)):
+            from roop.pose_router import PoseRouter
+            pose_router_shared = PoseRouter(alpha=0.25, top_k=3)
         for t in tracks:
             obs = t.pop('obs', None) or {}
             if not obs:
@@ -3464,6 +3478,100 @@ class TrackingMixin:
                     if line:
                         self._landmark_smooth_lines.append(
                             'track %s %s' % (t['id'], line))
+            if stab_on and float(getattr(self.options, 'stabilization_strength', 0.5) or 0.0) > 0.0:
+                # This pass runs in the same ordered, per-track prepass as the
+                # legacy landmark smoother. Swap workers only consume its
+                # immutable frame annotations; they never share filter state.
+                from roop.temporal_stabilizer import FaceTrackStabilizer
+                from roop.pose_router import estimate_head_pose
+                from roop.face_util import estimate_norm
+                _strength = float(np.clip(getattr(
+                    self.options, 'stabilization_strength', 0.5), 0.0, 1.0))
+                _fps = max(1.0, float(getattr(self, '_video_fps', None) or 30.0))
+                _max_drop = int(np.clip(getattr(
+                    self.options, 'dropout_prediction_frames', 8), 0, 8))
+                _swap_proc = next((proc for proc in getattr(self, 'processors', [])
+                                   if getattr(proc, 'type', None) == 'swap'), None)
+                _template = getattr(_swap_proc, 'model_template', 'arcface')
+                _stabilizer = FaceTrackStabilizer(
+                    strength=_strength,
+                    min_cutoff=max(0.005, 0.5 - 0.45 * _strength),
+                    beta=0.5, d_cutoff=8.0,
+                    dropout_prediction_frames=_max_drop, fps=_fps)
+                for _i in sorted(merged):
+                    _f = merged[_i]
+                    _kps = getattr(_f, 'kps', None)
+                    _bbox = getattr(_f, 'bbox', None)
+                    if _kps is None or _bbox is None:
+                        continue
+                    _kps_raw = np.asarray(_kps, dtype=np.float32)
+                    _pose = estimate_head_pose(
+                        _kps_raw, frame_shape=getattr(self, '_temporal_frame_shape', None))
+                    _affine = None
+                    try:
+                        _affine = estimate_norm(_kps_raw, 112, _template)
+                    except Exception as _affine_error:
+                        _swallowed("roop/procmgr_tracking.py:stabilized_affine",
+                                   _affine_error, "raw affine retained")
+                    _dense = getattr(_f, 'landmark_2d_106', None)
+                    _is_coasted = bool(_f.get('_coasted', False)) if isinstance(_f, dict) else False
+                    _result = _stabilizer.update(
+                        t['id'], frame_index=_i, landmarks=_kps_raw,
+                        dense_landmarks=_dense, bbox=_bbox, pose=_pose,
+                        affine=_affine, scene_cut=(_i in cuts),
+                        detected=not _is_coasted)
+                    if (_result.get('predicted')
+                            and self._interp_collides(
+                                {'bbox': _result.get('bbox')}, t['id'], _i, other_real)):
+                        # Recheck the revised Kalman box against the same real
+                        # neighbor detections used by the original coast guard.
+                        _stabilizer.reset_track(t['id'])
+                        continue
+                    if _result.get('landmarks') is not None:
+                        _f['kps'] = np.asarray(_result['landmarks'], dtype=np.float32)
+                    if _result.get('bbox') is not None:
+                        _f['bbox'] = np.asarray(_result['bbox'], dtype=np.float32)
+                    if _result.get('dense_landmarks') is not None:
+                        _dense_out = np.asarray(_result['dense_landmarks'], dtype=np.float32)
+                        _f['landmark_2d_106'] = _dense_out
+                    elif _result.get('predicted') and _dense is not None:
+                        _dense_out = np.asarray(_dense, dtype=np.float32).copy()
+                        _old_box = np.asarray(_bbox, dtype=np.float32).reshape(4)
+                        _new_box = np.asarray(_result['bbox'], dtype=np.float32).reshape(4)
+                        _old_center = (_old_box[:2] + _old_box[2:]) * 0.5
+                        _new_center = (_new_box[:2] + _new_box[2:]) * 0.5
+                        _old_scale = max(1.0, float(np.sqrt(
+                            max(1.0, (_old_box[2] - _old_box[0])
+                                 * (_old_box[3] - _old_box[1])))))
+                        _new_scale = max(1.0, float(np.sqrt(
+                            max(1.0, (_new_box[2] - _new_box[0])
+                                 * (_new_box[3] - _new_box[1])))))
+                        _scale_ratio = _new_scale / _old_scale
+                        _dense_out[:, :2] = (
+                            (_dense_out[:, :2] - _old_center) * _scale_ratio + _new_center)
+                        _f['landmark_2d_106'] = _dense_out
+                    if _result.get('predicted'):
+                        _lm68 = getattr(_f, 'landmark_3d_68', None)
+                        if _lm68 is not None:
+                            _lm68_out = np.asarray(_lm68, dtype=np.float32).copy()
+                            _old_box = np.asarray(_bbox, dtype=np.float32).reshape(4)
+                            _new_box = np.asarray(_result['bbox'], dtype=np.float32).reshape(4)
+                            _old_center = (_old_box[:2] + _old_box[2:]) * 0.5
+                            _new_center = (_new_box[:2] + _new_box[2:]) * 0.5
+                            _old_scale = max(1.0, float(np.sqrt(max(1.0,
+                                (_old_box[2] - _old_box[0]) * (_old_box[3] - _old_box[1])))))
+                            _new_scale = max(1.0, float(np.sqrt(max(1.0,
+                                (_new_box[2] - _new_box[0]) * (_new_box[3] - _new_box[1])))))
+                            _lm68_out[:, :2] = (
+                                (_lm68_out[:, :2] - _old_center)
+                                * (_new_scale / _old_scale) + _new_center)
+                            _f['landmark_3d_68'] = _lm68_out
+                    _f['_pose_pnp'] = (tuple(float(v) for v in _result['pose'])
+                                       if _result.get('pose') is not None else None)
+                    if _result.get('affine') is not None:
+                        _f['_stabilized_affine'] = np.asarray(
+                            _result['affine'], dtype=np.float32)
+                        _f['_stabilized_affine_size'] = 112
             # Resolve this track's in-plane roll along its own timeline, and
             # stamp it on each face for ProcessMgr.rotation_action.
             #
@@ -3523,6 +3631,7 @@ class TrackingMixin:
             input_face_datas = getattr(self, 'input_face_datas', None) or []
             pose_annotation_enabled = bool(
                 getattr(self.options, 'use_source_bank', False) or temporal_enabled
+                or getattr(self.options, 'pose_adaptive_faceset', False)
                 or any(len(getattr(fs, 'faces', [])) > 1 for fs in input_face_datas))
             pose_source_fs = None
             candidate_multi_fs = None
@@ -3549,11 +3658,13 @@ class TrackingMixin:
                 self, '_track_pose_source_map', {}).get(t['id'])
             v1_candidate_source_index = None
             v1_source_hold_count = 0
+            pose_router = pose_router_shared
             if pose_annotation_enabled:
                 from roop.pose_source_selector import annotate_face_pose
                 from roop.head_pose import normalize_pose_tuple
 
-            for i, f in merged.items():
+            for i in sorted(merged):
+                f = merged[i]
                 temporal_state = None
                 if identity_enabled:
                     try:
@@ -3637,6 +3748,25 @@ class TrackingMixin:
                     try:
                         pose = annotate_face_pose(
                             f, frame_shape=getattr(self, '_temporal_frame_shape', None))
+                        route_source_fs = pose_source_fs or candidate_multi_fs
+                        if pose_router is not None and route_source_fs is not None:
+                            from roop.pose_router import estimate_head_pose
+                            pnp_pose = f.get('_pose_pnp')
+                            if pnp_pose is None:
+                                pnp_pose = estimate_head_pose(
+                                    getattr(f, 'kps', None),
+                                    frame_shape=getattr(self, '_temporal_frame_shape', None))
+                            if pnp_pose is not None:
+                                f['_pose_pnp'] = tuple(float(v) for v in pnp_pose)
+                                routed = pose_router.route(
+                                    route_source_fs, pnp_pose[0], pnp_pose[1],
+                                    track_id=t['id'], frame_index=i,
+                                    scene_cut=(i in cuts))
+                                if routed is not None:
+                                    f['_pose_routed_embedding'] = routed.embedding
+                                    f['_pose_routed_bucket'] = routed.bucket
+                                    f['_pose_routed_source_indices'] = routed.source_indices
+                                    f['_pose_routed_weights'] = routed.weights
                         if identity_enabled:
                             temporal_state = temporal_identity.update_pose(t['id'], pose)
                             if (temporal_state is not None

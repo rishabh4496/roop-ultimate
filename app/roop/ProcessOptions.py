@@ -20,6 +20,8 @@ class ProcessOptions:
     def __init__(self, processordefines:dict, face_distance,  blend_ratio, swap_mode, selected_index, masking_text, imagemask, num_steps, subsample_size, show_face_area, restore_original_mouth, show_mask=False, use_3d_recon=False,
                  use_source_bank=False, use_frontalization=False, frontalization_threshold=25.0, swap_model='inswapper',
                  stabilize_face=False, stabilize_method='one_euro', stabilize_min_cutoff=0.05, stabilize_beta=0.02,
+                 stabilization_strength=0.5, pose_adaptive_faceset=False,
+                 dropout_prediction_frames=8,
                  stabilize_enhancer=False, stabilize_enhancer_strength=0.5,
                  stabilize_mask=False, stabilize_mask_strength=0.5,
                  stabilize_landmarks=True, stabilize_hf_texture=True,
@@ -80,6 +82,9 @@ class ProcessOptions:
         self.stabilize_method = stabilize_method
         self.stabilize_min_cutoff = stabilize_min_cutoff
         self.stabilize_beta = stabilize_beta
+        self.stabilization_strength = float(max(0.0, min(1.0, float(stabilization_strength))))
+        self.pose_adaptive_faceset = bool(pose_adaptive_faceset)
+        self.dropout_prediction_frames = int(max(0, min(8, int(dropout_prediction_frames))))
         # One Euro temporal smoothing of the enhancer output (anti-flicker)
         self.stabilize_enhancer = stabilize_enhancer
         self.stabilize_enhancer_strength = stabilize_enhancer_strength

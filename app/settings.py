@@ -1171,6 +1171,9 @@ class Settings:
         self.stabilize_method = self.default_get(data, 'stabilize_method', 'one_euro')
         self.stabilize_min_cutoff = self.default_get(data, 'stabilize_min_cutoff', 0.1)
         self.stabilize_beta = self.default_get(data, 'stabilize_beta', 0.1)
+        self.stabilization_strength = self.default_get(data, 'stabilization_strength', 0.5)
+        self.pose_adaptive_faceset = self.default_get(data, 'pose_adaptive_faceset', False)
+        self.dropout_prediction_frames = self.default_get(data, 'dropout_prediction_frames', 8)
         self.stabilize_enhancer = self.default_get(data, 'stabilize_enhancer', True)
         self.stabilize_enhancer_strength = self.default_get(data, 'stabilize_enhancer_strength', 0.25)
         self.stabilize_mask = self.default_get(data, 'stabilize_mask', True)
@@ -1601,6 +1604,9 @@ class Settings:
             'stabilize_method': self.stabilize_method,
             'stabilize_min_cutoff': self.stabilize_min_cutoff,
             'stabilize_beta': self.stabilize_beta,
+            'stabilization_strength': self.stabilization_strength,
+            'pose_adaptive_faceset': self.pose_adaptive_faceset,
+            'dropout_prediction_frames': self.dropout_prediction_frames,
             'stabilize_enhancer': self.stabilize_enhancer,
             'stabilize_enhancer_strength': self.stabilize_enhancer_strength,
             'stabilize_mask': self.stabilize_mask,

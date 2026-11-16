@@ -203,9 +203,20 @@ def _landmarks_3d(face):
     return None
 
 
-def _pose(face, landmarks_2d):
+def _pose(face, landmarks_2d, frame_shape=None):
     """Return canonical (yaw, pitch, roll) degrees when available."""
     if landmarks_2d is not None and landmarks_2d.shape == (5, 2):
+        try:
+            # New .fsz entries use the same solvePnP geometry as runtime pose
+            # routing. Keeping its camera image size beside the points makes
+            # the stored source pose reproducible without an external model.
+            from roop.pose_router import estimate_head_pose
+            value = estimate_head_pose(landmarks_2d, frame_shape=frame_shape)
+            if value is not None:
+                return tuple(float(v) for v in value)
+        except Exception as _degrade_error:
+            _swallowed("roop/faceset_v2.py:pnp_pose", _degrade_error, "legacy pose fallback")
+            pass
         try:
             # This is the project's canonical solver. Import lazily so metadata
             # validation and legacy archives work without importing detector code.
@@ -518,7 +529,21 @@ def _entry(face, image, source_index):
     lm2d = _landmarks_2d(face)
     lm68 = _landmarks_68(face)
     lm3d = _landmarks_3d(face)
-    pose = _pose(face, _array(_get(face, "kps")))
+    pose_points = _array(_get(face, "kps"))
+    frame_shape = image.shape[:2] if image is not None else None
+    pose = None
+    pose_method = "legacy"
+    if pose_points is not None and pose_points.shape == (5, 2):
+        try:
+            from roop.pose_router import estimate_head_pose
+            pose = estimate_head_pose(pose_points, frame_shape=frame_shape)
+            if pose is not None:
+                pose_method = "solvePnP/canonical5"
+        except Exception as _degrade_error:
+            _swallowed("roop/faceset_v2.py:entry_pnp", _degrade_error,
+                       "legacy pose fallback")
+    if pose is None:
+        pose = _pose(face, pose_points, frame_shape=frame_shape)
     raw_embedding = _array(_get(face, "embedding"))
     normalized = _normalised(_get(face, "normed_embedding"))
     if normalized is None:
@@ -562,15 +587,19 @@ def _entry(face, image, source_index):
         },
         "geometry": {
             "bbox": _json_array(bbox),
+            "landmarks_5": _json_array(_array(_get(face, "kps"))),
             "landmarks_68": _json_array(lm68),
             "landmarks_68_3d": _json_array(lm3d),
             "landmarks_2d": _json_array(lm2d),
             "yaw": _json_float(pose[0]) if pose else None,
             "pitch": _json_float(pose[1]) if pose else None,
             "roll": _json_float(pose[2]) if pose else None,
+            "pose_method": pose_method if pose is not None else None,
             "face_scale": {"pixels": round(face_px, 5),
                             "relative_height": round(face_px / max(1.0, float(image.shape[0])) if image is not None else 0.0, 6),
                             "relative_width": round(face_px / max(1.0, float(image.shape[1])) if image is not None else 0.0, 6)},
+            "camera_size": ([int(image.shape[1]), int(image.shape[0])]
+                            if image is not None else None),
             "facial_proportions": _proportions(lm68, bbox),
         },
         "quality": {**{key: round(float(value), 6) for key, value in quality_parts.items()},

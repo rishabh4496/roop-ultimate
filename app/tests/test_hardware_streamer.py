@@ -8,6 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from roop.hardware_streamer import (
     FrameMetadata,
+    FrameMetadataTracker,
     RingStats,
     SharedMemoryFrameRing,
 )
@@ -51,6 +52,15 @@ def test_shared_memory_frame_ring_write_and_read():
         assert stats.dropped == 0
     finally:
         ring.close(unlink=True)
+
+
+def test_frame_metadata_tracker_marks_seek_jump_as_reset_boundary():
+    tracker = FrameMetadataTracker()
+    frame = np.zeros((24, 24, 3), dtype=np.uint8)
+    assert tracker.observe(frame, 10) is False
+    assert tracker.observe(frame, 11) is False
+    assert tracker.observe(frame, 40) is True
+    assert tracker.observe(frame, 41) is False
 
 
 def test_shared_memory_frame_ring_attach():

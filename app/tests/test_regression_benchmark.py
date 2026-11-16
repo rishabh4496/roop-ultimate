@@ -84,6 +84,18 @@ class SignatureTests(unittest.TestCase):
         self.assertNotEqual(rg.signature_hash(rg.config_signature(a)),
                             rg.signature_hash(rg.config_signature(b)))
 
+    def test_temporal_pose_options_change_the_key(self):
+        for key, value in (
+            ("stabilization_strength", 0.75),
+            ("pose_adaptive_faceset", True),
+            ("dropout_prediction_frames", 4),
+        ):
+            with self.subTest(key=key):
+                a = SimpleNamespace(swap_model="realswap", **{key: value})
+                b = SimpleNamespace(swap_model="realswap", **{key: None})
+                self.assertNotEqual(rg.signature_hash(rg.config_signature(a)),
+                                    rg.signature_hash(rg.config_signature(b)))
+
 
 class VerdictTests(unittest.TestCase):
     T = rg.DEFAULT_THRESHOLDS

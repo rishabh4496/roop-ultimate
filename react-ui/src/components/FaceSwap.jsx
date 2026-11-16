@@ -1369,6 +1369,9 @@ export default function FaceSwap({
       show_mask_offsets: activeParams.show_mask_offsets, restore_original_mouth: activeParams.restore_original_mouth,
       num_swap_steps: num(activeParams.num_swap_steps, 1), upscale: activeParams.subsample_upscale,
       use_3d_recon: activeParams.use_3d_recon, use_source_bank: activeParams.use_source_bank,
+      pose_adaptive_faceset: activeParams.pose_adaptive_faceset,
+      stabilization_strength: num(activeParams.stabilization_strength, 0.5),
+      dropout_prediction_frames: num(activeParams.dropout_prediction_frames, 8),
       use_frontalization: activeParams.use_frontalization, frontalization_threshold: num(activeParams.frontalization_threshold, 30),
       jaw_reshape: activeParams.jaw_reshape, jaw_reshape_strength: num(activeParams.jaw_reshape_strength, 0.5),
       detail_transfer_strength: num(activeParams.detail_transfer_strength, 0),
@@ -3945,6 +3948,8 @@ export default function FaceSwap({
             <Toggle label="Stabilize face (video)" info="Temporal keypoint smoothing — reduces swap wobble. Runs at Max Threads (2-pass) unless Enhancer Flicker is on." checked={!!p.stabilize_face} onChange={(v) => set('stabilize_face', v)} />
             {p.stabilize_face && (
               <>
+                <Slider label="Stabilization strength" info="Higher values suppress stationary landmark jitter while preserving fast, coherent head motion." min={0} max={1} step={0.05} value={num(p.stabilization_strength, 0.5)} onChange={(v) => set('stabilization_strength', v)} defaultValue={FACESWAP_DEFAULTS.stabilization_strength} />
+                <Slider label="Dropout prediction frames" info="Maximum consecutive missed detections covered by the per-face motion predictor (capped at 8)." min={0} max={8} step={1} value={num(p.dropout_prediction_frames, 8)} onChange={(v) => set('dropout_prediction_frames', v)} defaultValue={FACESWAP_DEFAULTS.dropout_prediction_frames} />
                 <Select label="Smoothing method" info="One Euro = adaptive (default). Kalman = removes more high-frequency jitter on a still head (about 80% against 51%) with no lag on steady motion; measured no better on footage where the head moves and talks. EMA = simpler fixed smoothing." value={p.stabilize_method || 'one_euro'} onChange={(v) => set('stabilize_method', v)} options={['one_euro', 'kalman', 'ema']} />
                 {(p.stabilize_method || 'one_euro') === 'one_euro' && (
                   <>
@@ -4053,6 +4058,7 @@ export default function FaceSwap({
         <InspectorGroup id="pose" title="Pose, angle & system" icon={Icon.tune}>
           <Toggle label="3D source pose matching" info="Only affects image-source swappers (BlendSwap / UniFace) — feeds them a pose-matched source crop. Has NO effect on inswapper/ghost/hyperswap/simswap (their identity vector is pose-invariant, so warping the source would only degrade it)." checked={!!p.use_3d_recon} onChange={(v) => set('use_3d_recon', v)} />
           <Toggle label="Multi-angle source bank" info="auto-pick best source per frame" checked={!!p.use_source_bank} onChange={(v) => set('use_source_bank', v)} />
+          <Toggle label="Pose-adaptive source embedding" info="Interpolates embeddings from the loaded .fsz source photos by 3D yaw and pitch. Uses the selected swap model and remains off unless enabled." checked={!!p.pose_adaptive_faceset} onChange={(v) => set('pose_adaptive_faceset', v)} />
           <Toggle label="↔️ Frontalize angled faces" info="Un-rotates steep profile/side (lateral) faces before swapping, then restores the original angle. WARNING, measured 2026-09-25 (hyperswap, angle clips, 218 frames). Until that date it swapped the face upside down and lost the swap entirely; that is fixed, but a flat 2D warp cannot really turn a head, so it still costs identity at every angle: identity to the source 0.53 → 0.37 at 45-60°, 0.52 → 0.22 at 60-75°, 0.35 → 0.18 at 75-90°, with a visible seam on the far cheek. It does place the eyes, nose and mouth more accurately past 75°. Keep off unless you have checked the result on your footage." checked={!!p.use_frontalization} onChange={(v) => set('use_frontalization', v)} />
           {p.use_frontalization && (
             <Slider label="Frontalize above angle (°)" info="Frontalization kicks in when the face yaw/pitch exceeds this. Lower = frontalize more; higher = only the steepest." min={10} max={60} step={5} value={num(p.frontalization_threshold, 30)} onChange={(v) => set('frontalization_threshold', v)} defaultValue={FACESWAP_DEFAULTS.frontalization_threshold} />
