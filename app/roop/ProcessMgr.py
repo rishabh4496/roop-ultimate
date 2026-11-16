@@ -7468,12 +7468,16 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             except Exception as _exc:
                 _swallowed('roop/ProcessMgr.py:smart_skip_cache', _exc, 'patch cache update skipped')
 
+        # BiSeNet parse of the aligned target crop for the semantic paste matte. A label-cache hit on the
+        # frontal path (RealityUX parsed this crop); a real inference on non-frontal faces, which the mask
+        # engine parses from the unwarped box instead. See MaskingMixin._semantic_parse.
+        _sem_parse = self._semantic_parse(aligned_img)
         with _prof('blend'):
             if enhanced_frame is None:
                 scale_factor = int(upscale / orig_width)
-                result = self.paste_upscale(fake_frame, fake_frame, target_face.matrix, frame, scale_factor, mask_offsets, face_landmarks=face_lm, face_kps=face_kps, region=region, model_mask=model_mask, model_mask_weight=model_mask_weight, inplace=destination_is_private, target_face=target_face, appearance=_target_appearance, temporal_compositor=_compositor, track_id=_composite_tid, frame_index=_composite_frame_idx, occlusion_score=_composite_occlusion, motion=_composite_motion, crop_alpha=_unified_keep)
+                result = self.paste_upscale(fake_frame, fake_frame, target_face.matrix, frame, scale_factor, mask_offsets, face_landmarks=face_lm, face_kps=face_kps, region=region, model_mask=model_mask, model_mask_weight=model_mask_weight, inplace=destination_is_private, target_face=target_face, appearance=_target_appearance, temporal_compositor=_compositor, track_id=_composite_tid, frame_index=_composite_frame_idx, occlusion_score=_composite_occlusion, motion=_composite_motion, crop_alpha=_unified_keep, semantic_parse=_sem_parse)
             else:
-                result = self.paste_upscale(fake_frame, enhanced_frame, target_face.matrix, frame, scale_factor, mask_offsets, face_landmarks=face_lm, face_kps=face_kps, region=region, model_mask=model_mask, model_mask_weight=model_mask_weight, inplace=destination_is_private, target_face=target_face, appearance=_target_appearance, temporal_compositor=_compositor, track_id=_composite_tid, frame_index=_composite_frame_idx, occlusion_score=_composite_occlusion, motion=_composite_motion, crop_alpha=_unified_keep)
+                result = self.paste_upscale(fake_frame, enhanced_frame, target_face.matrix, frame, scale_factor, mask_offsets, face_landmarks=face_lm, face_kps=face_kps, region=region, model_mask=model_mask, model_mask_weight=model_mask_weight, inplace=destination_is_private, target_face=target_face, appearance=_target_appearance, temporal_compositor=_compositor, track_id=_composite_tid, frame_index=_composite_frame_idx, occlusion_score=_composite_occlusion, motion=_composite_motion, crop_alpha=_unified_keep, semantic_parse=_sem_parse)
         _dbg_rng = os.environ.get('ROOP_DEBUG_DUMP_RANGE')
         if _dbg_rng:
             try:

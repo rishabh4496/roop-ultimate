@@ -5006,6 +5006,30 @@ def _apply_parser_region_settings(payload):
 
 
 # ── Live preview swap ────────────────────────────────────────────────────────
+def _mask_debug_fields(payload):
+    """``{"mask_debug": {name: dataurl}}`` for a preview that asked for
+    ``debug_mask_channels`` (parsing_overlay, final_alpha_mask), else ``{}``.
+
+    The channels are those of the LAST face pasted by this preview; a frame with
+    several faces reports the final one. The store is always drained so a stale
+    face from an earlier request can never leak into a later reply."""
+    try:
+        from roop.mask_composer import take_debug
+        channels = take_debug()
+    except Exception as exc:
+        _swallowed("api.py:mask_debug_fields", exc, "preview reply carries no mask_debug")
+        return {}
+    if not channels or not bool(payload.get("debug_mask_channels", False)):
+        return {}
+    out = {}
+    for name, img in channels.items():
+        img = np.asarray(img)
+        if img.ndim == 2:
+            img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+        out[name] = _bgr_to_preview_dataurl(img)
+    return {"mask_debug": out}
+
+
 @app.post("/api/preview")
 @app.post("/api/preview/frame")
 def preview(payload: dict = Body(...)):
@@ -5115,6 +5139,10 @@ def preview(payload: dict = Body(...)):
             "mask_erode_dilate_radius",
             getattr(roop_globals.CFG, "mask_erode_dilate_radius", 0)))
         roop_globals.boundary_illumination_strength = float(payload.get("boundary_illumination_strength", getattr(roop_globals.CFG, "boundary_illumination_strength", 0.0)))
+        roop_globals.blend_mode = str(payload.get("blend_mode", getattr(roop_globals.CFG, "blend_mode", "laplacian")))
+        roop_globals.semantic_paste_mask = bool(payload.get("semantic_paste_mask", getattr(roop_globals.CFG, "semantic_paste_mask", True)))
+        roop_globals.skin_lab_match = float(payload.get("skin_lab_match", getattr(roop_globals.CFG, "skin_lab_match", 1.0)))
+        roop_globals.debug_mask_channels = bool(payload.get("debug_mask_channels", False))
         roop_globals.identity_detail_strength = float(payload.get("identity_detail_strength", getattr(roop_globals.CFG, "identity_detail_strength", 0.0)))
         roop_globals.expression_restore_strength = float(payload.get("expression_restore_strength", getattr(roop_globals.CFG, "expression_restore_strength", 0.0)))
         roop_globals.expression_restore_region = payload.get("expression_restore_region", getattr(roop_globals.CFG, "expression_restore_region", "all"))
@@ -5340,7 +5368,7 @@ def preview(payload: dict = Body(...)):
             print(f"[Preview] request={processing_request['request_id']} swap_audit={swap_audit}", flush=True)
             if swapped is None:
                 return {"image": _bgr_to_preview_dataurl(current_frame), "faces": faces_list, "person_ids": person_ids, "kps": kps_list, "anchors": anchors_list, "pose": pose_list, "face_index_order": _TARGET_FACE_INDEX_ORDER, "solo_stage": solo_stage, **echo, **sar_fields, "swap_audit": swap_audit, "target_index": idx, "target_media_id": media_id}
-            return {"image": _bgr_to_preview_dataurl(swapped), "faces": faces_list, "person_ids": person_ids, "kps": kps_list, "anchors": anchors_list, "pose": pose_list, "face_index_order": _TARGET_FACE_INDEX_ORDER, "solo_stage": solo_stage, **echo, **sar_fields, "swap_audit": swap_audit, "target_index": idx, "target_media_id": media_id}
+            return {"image": _bgr_to_preview_dataurl(swapped), "faces": faces_list, "person_ids": person_ids, "kps": kps_list, "anchors": anchors_list, "pose": pose_list, "face_index_order": _TARGET_FACE_INDEX_ORDER, "solo_stage": solo_stage, **echo, **sar_fields, "swap_audit": swap_audit, "target_index": idx, "target_media_id": media_id, **_mask_debug_fields(payload)}
         except Exception:
             traceback.print_exc()
             return JSONResponse(status_code=500, content={
@@ -5951,6 +5979,10 @@ def _run_swap(payload):
             "mask_erode_dilate_radius",
             getattr(roop_globals.CFG, "mask_erode_dilate_radius", 0)))
         roop_globals.boundary_illumination_strength = float(payload.get("boundary_illumination_strength", getattr(roop_globals.CFG, "boundary_illumination_strength", 0.0)))
+        roop_globals.blend_mode = str(payload.get("blend_mode", getattr(roop_globals.CFG, "blend_mode", "laplacian")))
+        roop_globals.semantic_paste_mask = bool(payload.get("semantic_paste_mask", getattr(roop_globals.CFG, "semantic_paste_mask", True)))
+        roop_globals.skin_lab_match = float(payload.get("skin_lab_match", getattr(roop_globals.CFG, "skin_lab_match", 1.0)))
+        roop_globals.debug_mask_channels = bool(payload.get("debug_mask_channels", False))
         roop_globals.identity_detail_strength = float(payload.get("identity_detail_strength", getattr(roop_globals.CFG, "identity_detail_strength", 0.0)))
         roop_globals.expression_restore_strength = float(payload.get("expression_restore_strength", getattr(roop_globals.CFG, "expression_restore_strength", 0.0)))
         roop_globals.expression_restore_region = payload.get("expression_restore_region", getattr(roop_globals.CFG, "expression_restore_region", "all"))

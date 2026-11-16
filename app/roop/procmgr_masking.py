@@ -640,7 +640,38 @@ class MaskingMixin:
             return None
         return canvas.astype(np.float32) / 255, cx0, cy0
 
-    def paste_upscale(self, fake_face, upsk_face, M, target_img, scale_factor, mask_offsets, face_landmarks=None, face_kps=None, region=None, model_mask=None, model_mask_weight=0.0, inplace=False, target_face=None, appearance=None, temporal_compositor=None, track_id=None, frame_index=None, occlusion_score=0.0, motion=0.0, crop_alpha=None):
+    # Below this |yaw| the swapped crop's own parse adds nothing the landmark hull does not already say; above
+    # it the swap net's rim (warp ring, grey fill) is where a second contour comes from. One extra BiSeNet call
+    # per face, only at turned poses.
+    _SWAP_PARSE_MIN_YAW = 25.0
+
+    def _semantic_parse(self, crop):
+        """BiSeNet parse of an aligned crop for the paste matte, or None (no weights / disabled / failed).
+
+        None is not an error: `paste_upscale` then builds a hull parse from the landmarks, so the matte
+        degrades to the landmark hull instead of failing.
+
+        COST: a label-cache hit (0.04 ms) only on the frontal canonical-crop path, where RealityUX has just
+        parsed this exact crop. Non-frontal faces take the unwarped-box path in `process_mask`, so RealityUX
+        parsed a DIFFERENT crop and this is a real BiSeNet call (22.6 ms uncached, single thread, RTX 4070,
+        2026-11-16) -- on exactly the turned faces Bug #2 is about. The effect on render fps is NOT measured."""
+        if crop is None or not bool(getattr(roop.globals, 'semantic_paste_mask', True)):
+            return None
+        try:
+            from roop.face_parser import FaceParser
+            from roop.procmgr_runtime import _gpu_guard
+            parser = FaceParser()
+            if not parser.available():
+                return None
+            with _gpu_guard(pooled=False, owner='mask'):
+                return parser.parse(crop)
+        except Exception as exc:
+            _swallowed("roop/procmgr_masking.py:semantic_parse", exc, "paste matte uses the landmark hull")
+            _warn_once('semantic_parse', '[Mask] semantic parse failed; this face used the landmark hull: %s: %s'
+                       % (type(exc).__name__, str(exc)[:160]))
+            return None
+
+    def paste_upscale(self, fake_face, upsk_face, M, target_img, scale_factor, mask_offsets, face_landmarks=None, face_kps=None, region=None, model_mask=None, model_mask_weight=0.0, inplace=False, target_face=None, appearance=None, temporal_compositor=None, track_id=None, frame_index=None, occlusion_score=0.0, motion=0.0, crop_alpha=None, semantic_parse=None):
         from roop.unified_matte import mask2d, inward_alpha, yaw_from_kps, warp_premultiplied
         M_scale = np.asarray(M, dtype=np.float64) * float(scale_factor)
         if (M_scale.shape != (2,3) or not np.isfinite(M_scale).all()
@@ -682,13 +713,15 @@ class MaskingMixin:
         alpha = img_matte.astype(np.float32) / 255.
         if crop_alpha is not None:
             alpha = np.minimum(alpha, mask2d(crop_alpha, alpha.shape))
+        crop_hull_f = None
         if face_landmarks is not None:
             forward = cv2.invertAffineTransform(IM)
             crop_lm = np.asarray(face_landmarks,np.float32)[:,:2] @ forward[:,:2].T + forward[:,2]
             crop_kps = (None if face_kps is None else
                         np.asarray(face_kps,np.float32) @ forward[:,:2].T + forward[:,2])
             crop_hull = self.create_landmark_mask(crop_lm, (h,w), 0, kps=crop_kps)
-            alpha = np.minimum(alpha, crop_hull.astype(np.float32)/255.)
+            crop_hull_f = crop_hull.astype(np.float32)/255.
+            alpha = np.minimum(alpha, crop_hull_f)
         yaw = yaw_from_kps(face_kps) if face_kps is not None else 0.
         # Clip against source-frame coverage without allocating a frame-sized
         # ones image. All calculations remain crop-sized and vectorized.
@@ -698,7 +731,44 @@ class MaskingMixin:
         _sy = IM[1,0]*_xx + IM[1,1]*_yy + IM[1,2]
         alpha *= ((_sx >= 0) & (_sx <= target_img.shape[1]-1) &
                   (_sy >= 0) & (_sy <= target_img.shape[0]-1))
-        alpha = inward_alpha(alpha, max(1., min(h,w)*float(mask_offsets[4])/200.), yaw)
+        _feather = max(1., min(h,w)*float(mask_offsets[4])/200.)
+        _parse = None
+        _sem_alpha = None
+        if bool(getattr(roop.globals, 'semantic_paste_mask', True)):
+            # Semantic matte: parsed target interior (hair / ears / neck / background removed) intersected
+            # with the swapped crop's valid interior and the landmark hull, then the yaw-asymmetric inward
+            # feather. With no parse the hull itself is parsed, so the feather shape is the same either way.
+            try:
+                from roop import face_parser as _fp
+                from roop.mask_composer import MaskComposer
+                _parse = semantic_parse
+                if _parse is None and crop_hull_f is not None:
+                    _parse = _fp.ParseResult((crop_hull_f > 0.5).astype(np.uint8), 'hull')
+                if _parse is not None:
+                    _swap_parse = None
+                    if _parse.is_semantic and abs(yaw) >= self._SWAP_PARSE_MIN_YAW:
+                        from roop.procmgr_runtime import _gpu_guard
+                        _parser = _fp.FaceParser()
+                        if _parser.available():
+                            with _gpu_guard(pooled=False, owner='mask'):
+                                _swap_parse = _parser.parse(upsk_face)
+                    _sem = MaskComposer().compose((h, w), _parse, swap=_swap_parse, hull=crop_hull_f,
+                                                  base_alpha=alpha, yaw=yaw, feather=_feather)
+                    _sem_alpha = _sem
+                    alpha = _sem.alpha
+            except Exception as exc:
+                _swallowed("roop/procmgr_masking.py:semantic_matte", exc, "legacy inward feather")
+                _warn_once('semantic_matte', '[Mask] semantic matte failed; this face used the legacy feather: %s: %s'
+                           % (type(exc).__name__, str(exc)[:160]))
+                _parse = _sem_alpha = None
+        if _sem_alpha is None:
+            alpha = inward_alpha(alpha, _feather, yaw)
+        elif getattr(roop.globals, 'debug_mask_channels', False):
+            try:
+                from roop.mask_composer import debug_channels, publish_debug
+                publish_debug(debug_channels(np.clip(upsk_face, 0, 255).astype(np.uint8), _parse, _sem_alpha))
+            except Exception as exc:
+                _swallowed("roop/procmgr_masking.py:mask_debug", exc, "debug channels skipped")
         # Crop support is strict, including frame-edge cutoffs.
         alpha[[0,-1],:] = 0.; alpha[:,[0,-1]] = 0.
         mox = moy = 0
@@ -834,6 +904,23 @@ class MaskingMixin:
                 base = cv2.resize(base, (w,h), interpolation=cv2.INTER_CUBIC)
             content = cv2.addWeighted(upsk_face, self.options.blend_ratio,
                                       base, 1.-self.options.blend_ratio, 0.)
+        # ── Skin-class Lab match at the seam ─────────────────────────────────
+        # Statistics from the eroded `skin` class only (eyes, brows, lips, mouth interior stay out of
+        # them and are not recoloured), swapped crop vs the plate under it. The two are pixel-aligned by
+        # the same affine, so one skin mask indexes both. Needs a real parse: a hull has no skin class.
+        _lab = float(getattr(roop.globals, 'skin_lab_match', 1.0) or 0.0)
+        if _lab > 0.0 and _parse is not None and _parse.is_semantic:
+            try:
+                from roop import blender as _bl
+                from roop import face_parser as _fp
+                _skin = _fp.class_mask(_fp.resize_labels(_parse.labels, (h, w)), ('skin',)) & (alpha > 0.01)
+                _plate_crop = cv2.warpAffine(target_img, cv2.invertAffineTransform(IM), (w, h),
+                                             flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+                content, _ = _bl.skin_lab_match(content, _plate_crop, _skin, strength=_lab)
+            except Exception as exc:
+                _swallowed("roop/procmgr_masking.py:skin_lab_match", exc, "fallback continued")
+                _warn_once('skin_lab_match', '[Mask] skin Lab match failed; this face was pasted without it: %s: %s'
+                           % (type(exc).__name__, str(exc)[:160]))
         roi_warp = str(os.environ.get('ROOP_BLEND_ROI_WARP', '1')).strip().lower() not in (
             '0', 'false', 'no', 'off')
         if roi_warp:
@@ -905,7 +992,20 @@ class MaskingMixin:
                 _swallowed("roop/procmgr_masking.py:compositing_engine", exc, "compositing engine fallback")
                 blended_roi = roi_matte * roi_paste + (1.0 - roi_matte) * roi_target
         else:
-            blended_roi = roi_matte * roi_paste + (1.0 - roi_matte) * roi_target
+            # roop.blender: laplacian (default, 4-level multi-band) | poisson_fast | alpha_feather. The last is the
+            # legacy linear blend, kept as the exact previous expression.
+            from roop.blender import normalize_blend_mode, blend as _blend_roi
+            _mode = normalize_blend_mode(getattr(roop.globals, 'blend_mode', 'laplacian'))
+            if _mode == 'alpha_feather':
+                blended_roi = roi_matte * roi_paste + (1.0 - roi_matte) * roi_target
+            else:
+                try:
+                    blended_roi = _blend_roi(roi_paste, roi_target, roi_matte[:, :, 0], _mode)
+                except Exception as exc:
+                    _swallowed("roop/procmgr_masking.py:blend_mode", exc, "linear blend")
+                    _warn_once('blend_mode', '[Mask] %s blend failed; this face used the linear blend: %s: %s'
+                               % (_mode, type(exc).__name__, str(exc)[:160]))
+                    blended_roi = roi_matte * roi_paste + (1.0 - roi_matte) * roi_target
 
         # ProcessMgr supplies an accumulating destination that is already
         # private from the original plate.  Re-copying that entire frame here

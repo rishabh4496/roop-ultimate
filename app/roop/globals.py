@@ -146,6 +146,12 @@ ultramax_detail_weight = 0.75
 mask_erode_dilate_radius = 0
 # Rim-only low-frequency grade of the paste toward the plate; 0 is a no-op.
 boundary_illumination_strength = 0.0
+# Paste-back blend and semantic matte (roop.blender / roop.mask_composer); see Settings.
+blend_mode = 'laplacian'
+semantic_paste_mask = True
+skin_lab_match = 1.0
+# Per-request: publish parsing_overlay / final_alpha_mask for the preview API.
+debug_mask_channels = False
 # Persistent source identity detail from FaceSet V2. Unlike the setting above,
 # this never reads the target crop's texture and is confidence/visibility gated.
 # 0 = off (bit-identical legacy path), 0..1 = controlled restoration strength.

@@ -829,6 +829,18 @@
       "default": 0.0,
       "type": "float"
     },
+    "blend_mode": {
+      "default": "laplacian",
+      "type": "str"
+    },
+    "semantic_paste_mask": {
+      "default": true,
+      "type": "bool"
+    },
+    "skin_lab_match": {
+      "default": 1.0,
+      "type": "float"
+    },
     "color_transfer_mode": {
       "default": "lct",
       "type": "str"

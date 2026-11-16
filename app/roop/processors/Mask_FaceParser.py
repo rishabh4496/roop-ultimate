@@ -1,4 +1,6 @@
 import os
+import threading
+import zlib
 import numpy as np
 import cv2
 import onnxruntime
@@ -168,6 +170,30 @@ def glasses_frame_mask(labels, crop_size, mode='arcface'):
                            sigmaX=_FEATHER_SIGMA)
     return np.clip(out, 0.0, 1.0)
 
+_LABEL_CACHE_SIZE = 4
+_label_cache_tls = threading.local()
+
+
+def _label_cache_key(img):
+    a = np.ascontiguousarray(img)
+    return (a.shape, a.dtype.str, zlib.crc32(a))
+
+
+def _label_cache_get(key):
+    cache = getattr(_label_cache_tls, 'items', None)
+    return None if cache is None else cache.get(key)
+
+
+def _label_cache_put(key, labels):
+    cache = getattr(_label_cache_tls, 'items', None)
+    if cache is None:
+        cache = _label_cache_tls.items = {}
+    if len(cache) >= _LABEL_CACHE_SIZE:
+        cache.pop(next(iter(cache)))
+    labels.flags.writeable = False
+    cache[key] = labels
+
+
 _MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
 _STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 _MODEL_URL = 'https://github.com/yakhyo/face-parsing/releases/download/weights/resnet18.onnx'
@@ -280,7 +306,21 @@ class Mask_FaceParser():
         """Raw (512,512) per-pixel class-id map, before any region grouping,
         blur or inversion -- split out from Run() so a caller (RealityUX) that
         needs the raw semantic classes, not just the default face/not-face
-        mask, doesn't have to re-run inference itself."""
+        mask, doesn't have to re-run inference itself.
+
+        A crop this thread parsed a moment ago is returned from a 4-entry cache
+        (keyed by shape + CRC of the pixels): the model is deterministic, so the
+        answer is identical, and the paste-back matte (roop.face_parser) asks for
+        the same crop RealityUX has just parsed. The cached array is read-only."""
+        key = _label_cache_key(img1)
+        hit = _label_cache_get(key)
+        if hit is not None:
+            return hit
+        labels = self._run_labels_uncached(img1)
+        _label_cache_put(key, labels)
+        return labels
+
+    def _run_labels_uncached(self, img1):
         resized = cv2.resize(img1, (512, 512), interpolation=cv2.INTER_LINEAR)
         rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
         rgb = (rgb - _MEAN) / _STD

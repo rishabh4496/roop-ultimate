@@ -1214,6 +1214,12 @@ class Settings:
         # Rim-only low-frequency grade of the paste toward the plate. 0 disables
         # and is a bit-identical no-op.
         self.boundary_illumination_strength = self.default_get(data, 'boundary_illumination_strength', 0.0)
+        # Paste-back blend (roop.blender): laplacian (4-level multi-band) | poisson_fast | alpha_feather.
+        self.blend_mode = self.default_get(data, 'blend_mode', 'laplacian')
+        # Semantic paste matte (roop.face_parser + roop.mask_composer): BiSeNet interior, yaw-asymmetric feather.
+        self.semantic_paste_mask = self.default_get(data, 'semantic_paste_mask', True)
+        # Skin-class Lab transfer at the seam (0 disables; roop.blender.skin_lab_match).
+        self.skin_lab_match = self.default_get(data, 'skin_lab_match', 1.0)
         # Skin-tone / lighting match of swapped crop → original: none|rct|lct|mkl
         self.color_transfer_mode = self.default_get(data, 'color_transfer_mode', 'lct')
         self.skin_tone_warmth = self.default_get(data, 'skin_tone_warmth', 0.0)
@@ -1632,6 +1638,9 @@ class Settings:
             'mask_edge_mode': self.mask_edge_mode,
             'mask_erode_dilate_radius': self.mask_erode_dilate_radius,
             'boundary_illumination_strength': self.boundary_illumination_strength,
+            'blend_mode': self.blend_mode,
+            'semantic_paste_mask': self.semantic_paste_mask,
+            'skin_lab_match': self.skin_lab_match,
             'color_transfer_mode': self.color_transfer_mode,
             'skin_tone_warmth': self.skin_tone_warmth,
             'saturation_match': self.saturation_match,
