@@ -469,6 +469,83 @@ export function stageTimelineCuts({
   return { jobs, error: null };
 }
 
+// ── Strategy 5: Range Lock tracks populated from Stage 2 / Trajectory Spans ────────
+export function stageRangeLockTracks({
+  targets = [],
+  targetIndex = 0,
+  tracks = [],
+  activeIntervals = [],
+  sourceFacesInfo = [],
+  createJobPayload,
+  swapMode = DEFAULT_SWAP_MODE,
+  settings = {},
+} = {}) {
+  if (targets.length === 0) return { jobs: [], error: ERR_NO_TARGETS };
+  const target = targets[targetIndex] || targets[0];
+  if (!target) return { jobs: [], error: ERR_NO_TARGETS };
+  const totalFrames = target?.frames || 1;
+
+  // Use activeIntervals if provided, otherwise derive from tracks
+  const intervalsToStage = (activeIntervals && activeIntervals.length > 0)
+    ? activeIntervals.filter((iv) => iv.active !== false)
+    : (tracks || []).flatMap((t) => {
+        const ranges = t.ranges || [[t.first || 1, t.last || totalFrames]];
+        return ranges.map((r, rIdx) => ({
+          trackId: t.track ?? t.trackId ?? 0,
+          startFrame: r[0],
+          endFrame: r[1],
+          sourceIndex: t.source_index ?? t.sourceIndex ?? 0,
+          facesetId: t.faceset_id ?? t.facesetId ?? null,
+          label: `${t.label || `Track #${(t.track ?? 0) + 1}`} (part ${rIdx + 1})`,
+        }));
+      });
+
+  if (intervalsToStage.length === 0) {
+    return { jobs: [], error: 'No active Range Lock intervals to stage' };
+  }
+
+  const payloadFn = createJobPayload || ((mappings, mode) => buildBatchJobPayload({
+    mappings,
+    swapMode: mode,
+    settings,
+    sourceCount: sourceFacesInfo.length,
+    sourceFacesInfo,
+  }));
+
+  const jobs = intervalsToStage.map((iv, idx) => {
+    const fs = Math.max(1, iv.startFrame != null ? iv.startFrame : 1);
+    const fe = Math.min(totalFrames, Math.max(fs, iv.endFrame != null ? iv.endFrame : fs));
+    const trackId = iv.trackId ?? 0;
+    const srcIdx = (Number.isInteger(iv.sourceIndex) && iv.sourceIndex >= 0 && iv.sourceIndex < sourceFacesInfo.length)
+      ? iv.sourceIndex
+      : 0;
+
+    const built = payloadFn([{ personRank: trackId, sourceIdx: srcIdx }], swapMode);
+    return {
+      ...stagedJob({
+        target,
+        targetIndex,
+        built,
+        sourceFacesInfo,
+        frameStart: fs,
+        frameEnd: fe,
+        totalFrames: fe - fs + 1,
+        label: iv.label || `Range Lock | Track #${trackId + 1} [${fs}–${fe}] (${target.name})`,
+      }),
+      source_name: sourceFacesInfo[srcIdx]?.name || iv.facesetId || `Faceset #${srcIdx + 1}`,
+      source_id: iv.facesetId || sourceFacesInfo[srcIdx]?.id || null,
+      range_lock: {
+        track_id: trackId,
+        interval_index: idx + 1,
+        start_frame: fs,
+        end_frame: fe,
+      },
+    };
+  });
+
+  return { jobs, error: null };
+}
+
 // ── The request ──────────────────────────────────────────────────────────
 // Staged jobs -> the `jobs` list of POST /api/queue/add_batch. Identical for
 // every strategy: the target travels by NAME, the primary faceset by id (with

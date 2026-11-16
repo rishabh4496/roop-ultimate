@@ -59,6 +59,7 @@ import AmbilightGlow from './faceswap/AmbilightGlow';
 import FloatingActionDock from './faceswap/FloatingActionDock';
 import PipelinePill from './faceswap/PipelinePill';
 import { ModularPipelineFlowStrip } from './faceswap/PipelinePill';
+import { useRunBarSync } from './faceswap/runBarSync';
 import ParameterSweepModal from './faceswap/ParameterSweepModal';
 import MediaTabSessionBar from './faceswap/MediaTabSessionBar';
 import PresetStudioModal from './faceswap/PresetStudioModal';
@@ -2528,6 +2529,26 @@ export default function FaceSwap({
     : sourceFaces.length === 0 ? 'Add a source face to start.'
     : '';
 
+  const runBarSync = useRunBarSync({
+    targets,
+    targetIndex: selTarget,
+    sourceFacesInfo,
+    settings: p,
+    telemetry: null,
+    onStageBatchJobs: () => {},
+    onStartRender: start,
+    onSelectTrackForPreview: (trackId) => {
+      if (trackId !== null && previewFaces && previewFaces.length > 0) {
+        const idx = trackId % previewFaces.length;
+        selectDetectedFace(idx);
+      }
+    },
+    onSelectFaceForPreview: (faceIdx) => {
+      selectDetectedFace(faceIdx);
+    },
+    notify,
+  });
+
   // Hide the previous "Latest output" while a job is running so a new upload +
   // run never shows a stale result. The poll keeps reporting the old _last_output
   // until the new job finishes, so we gate on `processing` rather than clearing
@@ -4567,7 +4588,98 @@ export default function FaceSwap({
                   </div>
                 </div>
               </div>
-              {progress.processing && <PipelinePill processing className="order-3 w-full px-1" />}
+              {/* 3-Step Run Bar & Preview Export Parity Controls */}
+              <div className="order-3 w-full flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-white/5 text-micro">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <button
+                    type="button"
+                    data-testid="runbar-step-prescan"
+                    disabled={progress.processing || runBarSync.isPreScanning || targets.length === 0}
+                    onClick={runBarSync.handlePreScan}
+                    className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-semibold transition-all ${
+                      runBarSync.activeStep === 1
+                        ? 'border-sky-400 bg-sky-500/10 text-sky-200 shadow-[0_0_8px_rgba(56,189,248,0.25)]'
+                        : runBarSync.trackLanes.length > 0
+                          ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
+                          : 'border-white/10 bg-white/[0.03] text-white/70 hover:border-white/20'
+                    }`}
+                    title="Step 1: Run sparse keyframe & ByteTrack trajectory scan"
+                  >
+                    <span className={runBarSync.isPreScanning ? 'animate-spin' : ''}>
+                      {runBarSync.isPreScanning ? '⟳' : runBarSync.trackLanes.length > 0 ? '✓' : '1.'}
+                    </span>
+                    <span>1 Pre-Scan</span>
+                    {runBarSync.trackLanes.length > 0 && (
+                      <span className="font-mono text-emerald-300/80">({runBarSync.trackLanes.length} tracks)</span>
+                    )}
+                  </button>
+
+                  <span aria-hidden="true" className="text-white/25">→</span>
+
+                  <button
+                    type="button"
+                    data-testid="runbar-step-rangelock"
+                    onClick={() => runBarSync.handleStepClick('rangelock')}
+                    className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-semibold transition-all ${
+                      runBarSync.activeStep === 2
+                        ? 'border-amber-400 bg-amber-500/10 text-amber-200 shadow-[0_0_8px_rgba(251,191,36,0.25)]'
+                        : runBarSync.activeIntervals.length > 0
+                          ? 'border-white/20 bg-white/[0.05] text-white/90'
+                          : 'border-white/10 bg-white/[0.03] text-white/60 hover:border-white/20'
+                    }`}
+                    title="Step 2: Trim active track intervals and bind facesets (Batch Matrix sync)"
+                  >
+                    <span>2. Range Lock</span>
+                    {runBarSync.activeIntervals.length > 0 && (
+                      <span className="font-mono text-amber-300/80">({runBarSync.activeIntervals.length} ranges)</span>
+                    )}
+                  </button>
+
+                  <span aria-hidden="true" className="text-white/25">→</span>
+
+                  <button
+                    type="button"
+                    data-testid="runbar-step-render"
+                    disabled={progress.processing || !!startBlockedReason}
+                    onClick={runBarSync.handleRenderMux}
+                    className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-semibold transition-all ${
+                      runBarSync.activeStep === 3 || progress.processing
+                        ? 'border-[var(--accent)] bg-[var(--accent)]/15 text-white shadow-[0_0_8px_var(--accent-glow)]'
+                        : 'border-white/10 bg-white/[0.03] text-white/70 hover:border-white/20'
+                    }`}
+                    title="Step 3: Render face swaps and mux source audio stream"
+                  >
+                    <span>3. Render &amp; Mux</span>
+                  </button>
+                </div>
+
+                <div className="flex items-center gap-2 font-mono text-micro ml-auto">
+                  {runBarSync.parityState.trajectoryPlanActive && (
+                    <span
+                      data-testid="runbar-parity-badge"
+                      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border ${
+                        runBarSync.parityState.isParityVerified
+                          ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
+                          : 'border-amber-500/40 bg-amber-500/10 text-amber-300'
+                      }`}
+                      title={runBarSync.parityState.reason}
+                    >
+                      <span className="h-1.5 w-1.5 rounded-full bg-current animate-pulse" />
+                      <span>{runBarSync.parityState.isParityVerified ? 'Parity Verified' : 'Trajectory Active'}</span>
+                    </span>
+                  )}
+                  {runBarSync.stagedJobs.length > 0 && (
+                    <span
+                      data-testid="runbar-staged-badge"
+                      className="px-2 py-0.5 rounded-full border border-sky-400/30 bg-sky-400/10 text-sky-200"
+                      title={`${runBarSync.stagedJobs.length} Range Lock job(s) staged in Batch Matrix`}
+                    >
+                      Staged: {runBarSync.stagedJobs.length}
+                    </span>
+                  )}
+                </div>
+              </div>
+              {progress.processing && <PipelinePill processing onStepClick={runBarSync.handleStepClick} className="order-4 w-full px-1" />}
             </div>
           </div>
 

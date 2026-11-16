@@ -20,8 +20,45 @@ const TONE = {
   pending: 'text-muted', skipped: 'text-muted', failed: 'text-red-300',
 };
 
-function Step({ step, last }) {
+function Step({ step, last, onStepClick }) {
   const active = step.state === 'active';
+  const clickable = typeof onStepClick === 'function';
+
+  const badge = (
+    <span
+      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-micro font-semibold transition-all ${
+        clickable ? 'hover:border-white/30 hover:bg-white/[0.08] active:scale-95' : ''
+      } ${
+        active ? 'border-[var(--accent)] bg-white/[0.06] text-white' : 'border-white/10 bg-black/30 text-white/80'}`}
+    >
+      <span className={`${TONE[step.state]} ${active ? 'animate-pulse' : ''}`} aria-hidden="true">{GLYPH[step.state]}</span>
+      <span className="tabular-nums" aria-hidden="true">{step.n}.</span>
+      <span>{step.label}</span>
+      {step.detail && <span className="font-mono text-white/70 tabular-nums" data-testid="pill-detail">{step.detail}</span>}
+      <span className="sr-only">{`, ${step.word}`}</span>
+      {!last && <span className="sr-only">, then</span>}
+    </span>
+  );
+
+  if (clickable) {
+    return (
+      <li
+        aria-current={active ? 'step' : undefined}
+        data-step={step.key}
+        data-state={step.state}
+      >
+        <button
+          type="button"
+          onClick={() => onStepClick(step.key, step)}
+          title={`Click Step ${step.n}: ${step.label}`}
+          className="appearance-none bg-transparent p-0 border-0 text-left font-inherit cursor-pointer inline-flex"
+        >
+          {badge}
+        </button>
+      </li>
+    );
+  }
+
   return (
     <li
       aria-current={active ? 'step' : undefined}
@@ -48,14 +85,14 @@ function MouthFallbackNote() {
 }
 
 /** The pill for a model (pure view; the store-bound `PipelinePill` below is what the app mounts). */
-export function PipelinePillView({ model, processing = true, className = '' }) {
+export function PipelinePillView({ model, processing = true, className = '', onStepClick }) {
   if (!model) return null;
   return (
     <div className={`flex flex-wrap items-center gap-x-3 gap-y-1.5 ${className}`} data-testid="pipeline-pill">
       <ol aria-label="Render pipeline, 3 steps" className="m-0 flex list-none flex-wrap items-center gap-1.5 p-0">
         {model.steps.map((s, i) => (
           <React.Fragment key={s.key}>
-            <Step step={s} last={i === model.steps.length - 1} />
+            <Step step={s} last={i === model.steps.length - 1} onStepClick={onStepClick} />
             {i < model.steps.length - 1 && <li aria-hidden="true" className="text-muted text-micro select-none">→</li>}
           </React.Fragment>
         ))}
@@ -78,10 +115,10 @@ export function PipelinePillView({ model, processing = true, className = '' }) {
  * `processing` is whether a job is running now: Stage 4 (the mux) is not in the backend's `stages`, so it is what
  * lets step 3 stay "Muxing" between Stage 3 ending and the report arriving. Renders nothing while idle.
  */
-export default function PipelinePill({ processing = true, className = '' }) {
+export default function PipelinePill({ processing = true, className = '', onStepClick }) {
   const pipeline = useTelemetryStore(useShallow((s) => s.pipeline));
   const model = pillModel(pipeline, { processing });
-  return <PipelinePillView model={model} processing={processing} className={className} />;
+  return <PipelinePillView model={model} processing={processing} className={className} onStepClick={onStepClick} />;
 }
 
 /**
