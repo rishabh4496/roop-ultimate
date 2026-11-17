@@ -42,6 +42,76 @@ class _Mgr:
         return "SWAPPED"
 
 
+class _RealShapeMgr:
+    """Stand-in with the SAME signature as `ProcessMgr.process_frame`, recording what arrives.
+
+    `_Mgr` above declares only `frame_idx`, so it could not see the wrapper dropping the other two
+    parameters: `core.live_swap` calls `process_frame(frame, frame_idx=..., frame_absolute=True,
+    source_video=...)`, and a wrapper with a fixed `(frame, frame_idx, output_pending)` signature raised
+    `TypeError: ... unexpected keyword argument 'frame_absolute'` on every UI preview and single-image swap
+    (found by driving the live UI against the real backend, 2026-11-18).
+    """
+
+    def __init__(self, is_preview):
+        self.is_preview = is_preview
+        self.seen = None
+
+    @pause_aware
+    def process_frame(self, frame, frame_idx=None, frame_absolute=False, source_video=None):
+        self.seen = {"frame_idx": frame_idx, "frame_absolute": frame_absolute, "source_video": source_video}
+        return "SWAPPED"
+
+
+class WrapperForwardsEveryArgumentTests(unittest.TestCase):
+    def setUp(self):
+        self._processing = roop.globals.processing
+        pause_controller.finish()
+        self.addCleanup(self._restore)
+
+    def _restore(self):
+        roop.globals.processing = self._processing
+        pause_controller.finish()
+
+    def test_preview_call_exactly_as_live_swap_makes_it(self):
+        roop.globals.processing = False
+        mgr = _RealShapeMgr(is_preview=True)
+        out = mgr.process_frame("PLATE", frame_idx=7, frame_absolute=True, source_video="clip.mp4")
+        self.assertEqual(out, "SWAPPED")
+        self.assertEqual(mgr.seen, {"frame_idx": 7, "frame_absolute": True, "source_video": "clip.mp4"})
+
+    def test_render_call_inside_a_run_forwards_them_too(self):
+        roop.globals.processing = True
+        mgr = _RealShapeMgr(is_preview=False)
+        mgr.process_frame("PLATE", frame_idx=3, frame_absolute=True, source_video="clip.mp4")
+        self.assertEqual(mgr.seen, {"frame_idx": 3, "frame_absolute": True, "source_video": "clip.mp4"})
+
+    def test_defaults_are_untouched_when_the_caller_passes_nothing_extra(self):
+        roop.globals.processing = True
+        mgr = _RealShapeMgr(is_preview=False)
+        mgr.process_frame("PLATE", frame_idx=1)
+        self.assertEqual(mgr.seen, {"frame_idx": 1, "frame_absolute": False, "source_video": None})
+
+    def test_a_refused_frame_still_returns_the_plate_and_never_calls_the_body(self):
+        roop.globals.processing = False
+        mgr = _RealShapeMgr(is_preview=False)
+        self.assertEqual(mgr.process_frame("PLATE", frame_idx=1, frame_absolute=True), "PLATE")
+        self.assertIsNone(mgr.seen)
+
+    def test_core_live_swap_passes_only_names_the_wrapper_forwards(self):
+        """Source-level drift guard: every keyword `live_swap` sends must be accepted by the real wrapper."""
+        core = os.path.join(_APP, "roop", "core.py")
+        with open(core, encoding="utf-8") as handle:
+            text = handle.read()
+        start = text.find("_preview_process_mgr.process_frame(")
+        self.assertGreater(start, 0, "live_swap's process_frame call moved; update this guard")
+        call = text[start:text.find(")", start) + 1]
+        sent = {kw for kw in ("frame_idx", "frame_absolute", "source_video") if kw + "=" in call}
+        mgr = _RealShapeMgr(is_preview=True)
+        roop.globals.processing = False
+        mgr.process_frame("PLATE", **{kw: (True if kw == "frame_absolute" else 1) for kw in sent})
+        self.assertEqual(set(k for k, v in mgr.seen.items() if v not in (None, False)), sent)
+
+
 class PreviewAdmissionTests(unittest.TestCase):
     def setUp(self):
         self._processing = roop.globals.processing

@@ -1521,14 +1521,19 @@ def pause_aware(function):
     GPU work through the preview route.
     """
     @functools.wraps(function)
-    def wrapped(self, frame, frame_idx=None, output_pending=False):
+    def wrapped(self, frame, frame_idx=None, output_pending=False, **kwargs):
+        # `**kwargs` is the rest of the decorated method's own signature (`frame_absolute`, `source_video`).
+        # A fixed `(frame, frame_idx, output_pending)` signature here raised
+        # `TypeError: ... unexpected keyword argument 'frame_absolute'` on every UI preview and single-image
+        # swap once `process_frame` grew those parameters (d33b13a), and would have dropped them silently
+        # even if it had accepted them. The wrapper owns only the admission gate and `output_pending`.
         if getattr(self, 'is_preview', False) and not bool(
                 getattr(roop.globals, 'processing', False)):
-            return function(self, frame, frame_idx=frame_idx)
+            return function(self, frame, frame_idx=frame_idx, **kwargs)
         with pause_scope(lambda: bool(getattr(roop.globals, 'processing', False))) as allowed:
             if not allowed:
                 return frame
-            result = function(self, frame, frame_idx=frame_idx)
+            result = function(self, frame, frame_idx=frame_idx, **kwargs)
             if output_pending and result is not None:
                 pause_controller.pending_output(1)
             return result

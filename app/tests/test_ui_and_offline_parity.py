@@ -171,20 +171,34 @@ def test_studio_controls_are_consumed_by_a_component():
     assert any(p.name != "studioControls.js" for p in importers), "studioControls.js is imported by nothing"
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "Not built as a control: 'SCRFD-gnkps' appears only as a model label in flamegraphModel.js, and the GN-kps "
-    "detector weights are not shipped (licence blocker, see test_ultramax_temporal_and_gnkps.TestGnKpsPremise). "
-    "A control that the backend cannot honour must not exist, so this stays a known gap."))
-def test_gnkps_control_exists():
-    """A control is a rendered input (Slider, Toggle, Select, ...) or a wire-table entry. A model label such as
-    flamegraphModel.js's 'SCRFD-gnkps' is display text and does not count."""
-    control = re.compile(
-        r"<(Slider|Toggle|Select|MiniSwitch|NumericInput|Checkbox)\b[^>]{0,600}?gn-?kps"
-        r"|wire:\s*['\"][^'\"]*gn-?kps",
-        re.I | re.S)
-    hits = [p for p in SRC.rglob("*") if p.suffix in (".jsx", ".tsx", ".js", ".ts")
-            and control.search(_read(p))]
-    assert hits, "no gnkps control in the UI"
+def test_gnkps_detector_is_a_selectable_engine_end_to_end():
+    """`gnkps` is a data-driven option of the Detector engine select, not a literal in React source.
+
+    An earlier version of this test grepped the UI source for a `gnkps` control, found none, and recorded a
+    strict xfail "not built". That was wrong, and the live UI showed it: the dropdown's options come from the
+    backend (`options={meta.detector_engines || [...]}`), and the backend serves `gnkps` in that list. So the
+    chain is asserted link by link: UI select bound to the backend list -> backend serves 'gnkps' -> the
+    detector dispatch and model-file mapping honour it -> the weights exist (skipped where they are absent,
+    because the GN-kps file is not redistributable and is fetched by hand).
+    """
+    face_swap = _read(SRC / "components" / "FaceSwap.jsx")
+    assert re.search(r"options=\{\s*meta\.detector_engines\b", face_swap), \
+        "the Detector engine select is no longer bound to meta.detector_engines"
+
+    api = _read(APP / "api.py")
+    listed = re.search(r'"detector_engines"\s*:\s*\[([^\]]*)\]', api)
+    assert listed, "api.py no longer serves detector_engines"
+    assert '"gnkps"' in listed.group(1), "api.py does not offer gnkps in detector_engines"
+
+    face_util = _read(APP / "roop" / "face_util.py")
+    assert "engine == 'gnkps'" in face_util, "face_util has no dispatch branch for the gnkps engine"
+    retinaface = _read(APP / "roop" / "retinaface.py")
+    assert "scrfd_10g_gnkps.onnx" in retinaface, "retinaface.py does not map gnkps to its weights file"
+
+    weights = APP / "models" / "scrfd_10g_gnkps.onnx"
+    if not weights.is_file():
+        pytest.skip("scrfd_10g_gnkps.onnx is not present on this machine (not redistributable)")
+    assert weights.stat().st_size > 1_000_000, "scrfd_10g_gnkps.onnx is present but implausibly small"
 
 
 # --------------------------------------------------------------------------- #
