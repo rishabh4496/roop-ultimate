@@ -2,7 +2,7 @@
 
 Run it directly (it is not a pytest module, so a bulk pytest run never starts it):
 
-    app/env/Scripts/python.exe app/tests/benchmark_pipeline.py --md out.md
+    app/env/Scripts/python.exe app/tests/provider_stage_benchmark.py --md out.md
 
 What it measures, and how
 -------------------------
