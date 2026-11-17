@@ -3,12 +3,9 @@ import React, { useState, useRef, useEffect } from 'react';
 import { LAYOUT_PRESETS, useWorkspaceStore } from '../../store/workspaceStore';
 import { Icon } from '../../icons';
 
-// The workstation workspace layout switcher & custom layout manager.
-//
-// Allows switching between built-in presets (Standard, Max Canvas, Inspection Suite,
-// My Roto Setup, Dual-Monitor Color, Minimal Laptop) and saving custom user layouts
-// with persisted panel proportions (Left Media Rail, Right Inspector, Bottom Timeline).
-export default function LayoutSwitcher({ tab, onNavigate }) {
+// The first three presets stay in the header. Additional and custom layouts
+// share the same saved sizes; choosing one keeps the current hash route.
+export default function LayoutSwitcher() {
   const {
     mode,
     activeLayoutId,
@@ -60,7 +57,7 @@ export default function LayoutSwitcher({ tab, onNavigate }) {
 
   const handleSelect = (id) => {
     applyLayout(id);
-    if (tab !== 'faceswap') onNavigate('faceswap');
+    // Layout selection applies without leaving the current hash route.
     setOpen(false);
   };
 

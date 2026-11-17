@@ -274,7 +274,7 @@ export default function RunHistory({ notify, setSettings, setTab, settings }) {
           placeholder="Search by output name or a setting value…"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          className="w-full md:max-w-md px-3 py-2 rounded-xl glass-input text-white text-sm focus:outline-none"
+          className="w-full px-3 py-2 rounded-xl glass-input text-white text-sm focus:outline-none"
         />
       )}
 

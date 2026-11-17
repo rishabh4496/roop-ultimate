@@ -1,7 +1,7 @@
 import { useShallow } from 'zustand/react/shallow';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useSystemTelemetryPoller } from '../faceswap/useTelemetry';
-import { LiveText } from '../LiveTelemetry';
+import { LiveText, LiveBar } from '../LiveTelemetry';
 import { Icon } from '../../icons';
 import { fpsBasisWord, useTelemetryStore, videoIoTextOf } from '../../store/telemetryStore';
 import { pct, readingOf } from './telemetryReading';
@@ -202,11 +202,6 @@ export default function TelemetryPill({ engine, onOpenDiagnostics }) {
 
   // The button's accessible name is its CONTENT (the sr-only prefix + the live text nodes), so it follows the
   // numbers without a React render and without an aria-label that would have to be re-set on each one.
-  const part = (pick) => (s) => {
-    const r = readingOf(s.system);
-    return r ? pick(r) : '';
-  };
-
   return (
     <div ref={wrapRef} className="relative shrink-0">
       <button
@@ -220,10 +215,11 @@ export default function TelemetryPill({ engine, onOpenDiagnostics }) {
       >
         <Icon.cpu size={14} className="text-accent" />
         <span className="sr-only">Hardware telemetry:</span>
-        <LiveText select={(s) => (s.system ? part((r) => (r.gpu !== null ? `GPU ${fmt(r.gpu)}%` : ''))(s) : 'GPU —')} className="empty:hidden" />
-        <LiveText select={part((r) => `VRAM ${fmt(r.vram)}%`)} className="empty:hidden" />
-        <LiveText select={part((r) => `CPU ${fmt(r.cpu)}%`)} className="empty:hidden max-lg:hidden" />
-        <Sparkline />
+        <LiveText select={(s) => s.system?.gpu || 'GPU —'} className="studio-gpu-name" />
+        <span className="studio-vram-meter"><LiveBar select={(s) => s.system?.vram_total > 0 ? Math.min(1, s.system.vram_used / s.system.vram_total) : 0} /></span>
+        <LiveText select={(s) => s.system?.vram_total > 0 ? `VRAM ${fmt(s.system.vram_used, 1)}/${fmt(s.system.vram_total, 1)} GB` : 'VRAM —'} />
+        <span className="studio-provider">{engine?.provider || 'UNKNOWN'}</span>
+        <LiveText select={(s) => `${fmt(s.run.fps_now ?? s.run.fps, 1)} fps / ${s.run.frame_ms == null ? '—' : fmt(s.run.frame_ms)} ms`} />
       </button>
 
       {open && (
@@ -233,7 +229,7 @@ export default function TelemetryPill({ engine, onOpenDiagnostics }) {
           style={{ background: 'linear-gradient(var(--card-bg), var(--card-bg)), var(--bg-base)' }}
           className="glass-panel animate-slide-up absolute right-0 top-full z-50 mt-2 w-[300px] origin-top-right space-y-3 rounded-xl p-3.5 shadow-xl"
         >
-          <Details engine={engine} onOpenDiagnostics={onOpenDiagnostics} onClose={() => setOpen(false)} />
+          <Sparkline /><Details engine={engine} onOpenDiagnostics={onOpenDiagnostics} onClose={() => setOpen(false)} />
         </div>
       )}
     </div>

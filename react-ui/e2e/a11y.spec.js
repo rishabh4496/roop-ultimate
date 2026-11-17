@@ -57,6 +57,7 @@ for (const view of VIEWS) {
 test('the zoom button\'s accessible name contains its visible "100%"', async ({ page }) => {
   await openTab(page, 'faceswap');
   // The app zoom lives in the header; the preview stage has its own controls.
+  await page.locator('summary[aria-label="Studio tools"]').click();
   const zoom = page.locator('header').getByRole('button', { name: /100%/ });
   await expect(zoom).toHaveCount(1);
   await expect(zoom).toHaveText('100%');

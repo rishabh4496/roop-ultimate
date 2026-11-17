@@ -75,7 +75,7 @@ export default function WorkstationRail({
   return (
     <nav
       aria-label="Main"
-      className={`sticky top-0 z-40 flex h-screen shrink-0 flex-col self-start border-r border-white/[0.07] bg-black/30 backdrop-blur-xl py-3 transition-[width] duration-200 max-md:w-[60px] ${collapsed ? 'w-[60px]' : 'w-[200px]'}`}
+      className={`studio-rail ${collapsed ? 'is-collapsed' : ''}`}
     >
       <div className={`mb-3 flex items-center gap-2.5 px-3.5 ${collapsed ? 'justify-center px-0' : ''} max-md:justify-center max-md:px-0`}>
         <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-[var(--accent)]/30 bg-[var(--accent)]/15 text-accent">
@@ -97,7 +97,7 @@ export default function WorkstationRail({
         )}
       </div>
 
-      <ul className="flex flex-1 flex-col gap-0.5 overflow-y-auto px-2">
+      <ul className="flex flex-1 flex-col gap-0.5 overflow-y-auto px-1">
         {tabs.map((t) => (
           <RailItem
             key={t.id}

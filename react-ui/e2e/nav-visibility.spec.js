@@ -86,6 +86,9 @@ test('the rail collapses to icons, keeps its names, remembers it across a reload
   const toggle = page.locator(`${NAV} button[aria-expanded]`);
   const faceSwap = page.locator(`${NAV} ul button[aria-label="Face Swap"]`);
 
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  expect((await page.locator(NAV).boundingBox()).width).toBe(48);
+  await toggle.click();
   await expect(toggle).toHaveAttribute('aria-expanded', 'true');
   await expect(faceSwap).toHaveText('Face Swap');
   const wide = (await page.locator(NAV).boundingBox()).width;
@@ -145,8 +148,8 @@ test('the layout switcher drives the Face Swap workspace and is the same state a
   await openTab(page, 'faceswap');
   const group = page.getByRole('group', { name: 'Workspace layout' });
   const standard = group.getByRole('button', { name: 'Standard' });
-  const canvas = group.getByRole('button', { name: 'Max Canvas' });
-  const inspect = group.getByRole('button', { name: 'Inspection Suite' });
+  const canvas = group.getByRole('button', { name: 'Cinema Preview' });
+  const inspect = group.getByRole('button', { name: 'Ultra-Wide Dual Stage' });
   const inspector = page.getByTestId('inspector');
 
   await expect(standard).toHaveAttribute('aria-pressed', 'true');
@@ -164,16 +167,17 @@ test('the layout switcher drives the Face Swap workspace and is the same state a
   await expect(inspector).toBeHidden();
   await expect(canvas).toHaveAttribute('aria-pressed', 'true');
 
-  // From another tab the switcher takes you to Face Swap, where it applies.
+  // A layout selection preserves the current route and applies on return.
   await page.locator(`${NAV} button[aria-label="Settings"]`).click();
   await expect(page).toHaveURL(/#\/settings$/);
   await standard.click();
-  await expect(page).toHaveURL(/#\/faceswap$/);
+  await expect(page).toHaveURL(/#\/settings$/);
+  await page.locator(`${NAV} button[aria-label="Face Swap"]`).click();
   await expect(inspector).toBeVisible();
 
   await inspect.click();
   await expect(inspect).toHaveAttribute('aria-pressed', 'true');
-  await expect(inspector, 'Inspection Suite is preview + timeline, no side panels').toBeHidden();
+  await expect(inspector, 'Dual stage keeps the inspector visible').toBeVisible();
 });
 
 test('Ctrl+K opens the palette from inside a text field and runs a layout command', async ({ page }) => {
@@ -185,8 +189,8 @@ test('Ctrl+K opens the palette from inside a text field and runs a layout comman
   const palette = page.getByPlaceholder('Search actions, themes, settings…');
   await expect(palette, 'Ctrl+K works while a field has focus').toBeVisible();
 
-  await palette.fill('max canvas');
-  await expect(page.getByRole('button', { name: /Layout: Max Canvas/ })).toBeVisible();
+  await palette.fill('cinema preview');
+  await expect(page.getByRole('button', { name: /Layout: Cinema Preview/ })).toBeVisible();
   await page.keyboard.press('Enter');
   await expect(palette).toHaveCount(0);
   await expect(page).toHaveURL(/#\/faceswap$/);
@@ -204,8 +208,8 @@ test('the telemetry pill reads the hardware poll, opens a popover, Escape closes
   await openTab(page, 'home');
   const pill = page.getByRole('button', { name: /^Hardware telemetry:/ });
   await expect(pill).toContainText('VRAM');
-  await expect(pill).toContainText('CPU');
-  await expect(pill.locator('canvas')).toHaveCount(1);
+  await expect(pill).toContainText('fps');
+  await expect(pill).toContainText('GB');
 
   await pill.click();
   const dialog = page.getByRole('dialog', { name: 'Hardware telemetry' });

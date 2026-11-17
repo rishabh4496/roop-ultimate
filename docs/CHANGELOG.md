@@ -1,3 +1,36 @@
+## 2026-11-18 ? UI overhaul Stage 2: full-viewport shell and reusable docking
+
+The React shell fills the viewport on every hash route, with a 38px studio header,
+a 48px expandable rail, internal pane scrolling and 4px WebKit scrollbars.
+`WorkspaceSplitLayout` places assets left, viewport/timeline center, parameters
+right, and the live queue in a fourth column in Ultra-Wide Dual Stage. Hairline
+splitters support pointer/keyboard resizing, cyan drag feedback, double-click
+reset and saved widths. Standard NLE and Cinema Preview retain the timeline;
+a fresh display wider than 2200px selects Dual Stage. The checkpoint selector
+restores existing session snapshots and shows actual recipe edits. Existing
+viewport tools remain, with explicit contained canvas sizing and corrected
+magnifier-border offsets in compact panes. The action dock occupies a bottom
+row, keeping the timeline clear.
+
+**Verified:** production build, lint (warnings remain), module/API/offline gates,
+and the full render-check script group. The focused browser suite has **45
+passed**, with **2 additional magnifier/type-scale tests passed**. All nine
+routes were measured at 1920x1080, 3840x2160, 3440x1440 and 5120x1440; raster
+pixels, checkpoint restoration, resize persistence, independent scrolling,
+route history and zoom were exercised. The browser mock still emits a socket
+ECONNRESET at shutdown and exits 1, so the commands are not claimed fully green.
+
+**Broader validation is not green:** light pytest has 2828 passed, 6 failed,
+1054 skipped, 206 deselected and 4 xfailed; all six failures reproduced at the
+starting commit, `9612427`. The broader UI sweep was stopped after 148 test
+decisions (92 passed / 17 failed / 39 skipped); inherited brush, face-exclusion
+and playback retry failures were reproduced independently, while other failures
+remain unverified. No allowlist was weakened. GPU-backed full pytest and render
+benchmarks were not run while the user's production render was active. No
+inference code, saved look configuration, provider/precision policy, launcher
+or venv changed, and the backend was not restarted. Evidence and limits:
+`docs/audits/UI_STAGE2_VALIDATION.md`; usage: `docs/development/UI_OVERHAUL_STAGE2.md`.
+
 ## 2026-11-17 — restorer bypass ramp, luminance-only UltraMax sharpen, seam colour modes; the rest of the detection/restoration brief measured or found already shipped (acceptance pending)
 
 **Built:**

@@ -105,7 +105,7 @@ import usePlaybackBuffer from './faceswap/usePlaybackBuffer';
 import useGridPreviewLoader from './faceswap/useGridPreviewLoader';
 import useWorkspaceLayout from './faceswap/useWorkspaceLayout';
 import PreFlightLinter from './faceswap/PreFlightLinter';
-import PanelResizeDivider from './faceswap/PanelResizeDivider';
+import WorkspaceSplitLayout from './shell/WorkspaceSplitLayout';
 import { TRACKER_DEFAULT_VALUES, TRACKER_BYPASS_VALUES } from './faceswap/trackerConfig';
 import { TiltCard } from '../motion';
 import { LiveText } from './LiveTelemetry';
@@ -281,7 +281,6 @@ export default function FaceSwap({
   // override it. See faceswap/useWorkspaceLayout.
   const {
     workspaceMode, setWorkspaceMode,
-    panelSizes, setPanelSize,
     ambilightEnabled, setAmbilightEnabled,
     drawers, setDrawers,
     showLeftPanel, showRightPanel, showTimelineDeck,
@@ -1792,7 +1791,7 @@ export default function FaceSwap({
       }
       return;
     }
-    
+
     previewBusyRef.current = true;
     setPreviewing(true);
     // Safety net: the first run of a new model downloads it and builds a
@@ -3133,7 +3132,7 @@ export default function FaceSwap({
           await postJSON('/api/target/set_frame', {
             which: 'end', frame: origStartEnd.end, target_media_id: activeTargetMediaId,
           });
-          
+
           // Sync targets list
           const res = await getJSON('/api/state');
           if (res.targets) setTargets(res.targets);
@@ -3670,116 +3669,228 @@ export default function FaceSwap({
     return () => { ro.disconnect(); root.style.removeProperty('--ws-runbar-h'); };
   }, []);
 
-  // How much of the top of the window the pinned header + run bar + deck cover. Anything below the deck that
-  // is focused or scrolled to (Tab onto a slider, a scrollIntoView) is kept clear of that band with
-  // `scroll-margin-top` (index.css, [data-after-deck]); without it the browser scrolls the control "into
-  // view" to a spot that is still underneath the deck. The deck only sticks from lg up.
   const deckRef = useRef(null);
-  const timelineResized = !!panelSizes?.bottomHeight && panelSizes.bottomHeight !== 280;
-  useLayoutEffect(() => {
-    const root = document.documentElement;
-    const bar = runBarRef.current;
-    const deck = deckRef.current;
-    if (!bar || !deck) return undefined;
-    const mq = window.matchMedia('(min-width: 1024px)');
-    const apply = () => {
-      const hdr = parseFloat(root.style.getPropertyValue('--ws-header-h')) || 56;
-      const covered = hdr + bar.offsetHeight + (mq.matches ? deck.offsetHeight : 0) + 8;
-      root.style.setProperty('--ws-sticky-top', `${covered}px`);
-    };
-    apply();
-    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(apply) : null;
-    ro?.observe(bar);
-    ro?.observe(deck);
-    mq.addEventListener?.('change', apply);
-    window.addEventListener('resize', apply);
-    return () => {
-      ro?.disconnect();
-      mq.removeEventListener?.('change', apply);
-      window.removeEventListener('resize', apply);
-      root.style.removeProperty('--ws-sticky-top');
-    };
-  }, []);
-
-  // The stage's height budget, MEASURED. The deck is sticky AND capped (max-h = a share of the window, with
-  // overflow-y-auto as the last-resort safety net). If its content is taller than the cap it scrolls
-  // internally, and then a wheel over the preview moves the picture under the run bar instead of scrolling the
-  // page - "the preview is not fixed". The old budget subtracted a guessed 96px for everything that is not the
-  // stage (tab bar, toolbar rows, resize divider, the timeline header ...), which stopped being true as those
-  // grew. Here the real overhead is read back from the DOM: overhead = what the deck holds beyond the stage,
-  // stage cap = the deck's budget - that. Published as --stage-fit-h; --stage-max-h falls back to the formula
-  // until this has measured (and for the compare grids, which have no .preview-stage).
-  useLayoutEffect(() => {
-    const deck = deckRef.current;
-    const bar = runBarRef.current;
-    if (!deck) return undefined;
-    const root = document.documentElement;
-    const mq = window.matchMedia('(min-width: 1024px)');
-    const share = timelineResized ? 0.85 : 0.8;
-    const apply = () => {
-      // The classic stage, or the Pro Studio viewport (which takes its height from this same budget).
-      const stage = deck.querySelector('.preview-stage, [data-testid="preview-viewport-container"]');
-      if (!mq.matches || !stage) {
-        deck.style.removeProperty('--stage-fit-h');
-        return;
-      }
-      const z = parseFloat(root.style.zoom) || 1;
-      const vh = parseFloat(root.style.getPropertyValue('--ws-vh')) || window.innerHeight / z;
-      const hdr = parseFloat(root.style.getPropertyValue('--ws-header-h')) || 56;
-      const budget = (vh - hdr - (bar ? bar.offsetHeight : 0)) * share;
-      // scrollHeight (not offsetHeight): it is the full content even while the deck is clipped by its cap.
-      const overhead = deck.scrollHeight - stage.offsetHeight;
-      const fit = Math.max(150, Math.min(1000, Math.floor(budget - overhead - 2)));
-      const next = `${fit}px`;
-      if (deck.style.getPropertyValue('--stage-fit-h') !== next) deck.style.setProperty('--stage-fit-h', next);
-    };
-    apply();
-    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(apply) : null;
-    // The deck's own box does not change when its content outgrows the cap, so watch the content wrapper too.
-    ro?.observe(deck);
-    if (deck.firstElementChild) ro?.observe(deck.firstElementChild);
-    if (bar) ro?.observe(bar);
-    mq.addEventListener?.('change', apply);
-    window.addEventListener('resize', apply);
-    // The stage / timeline / toolbar rows mount and unmount with the media and the compare modes.
-    let raf = 0;
-    const schedule = () => { if (!raf) raf = requestAnimationFrame(() => { raf = 0; apply(); }); };
-    const mo = typeof MutationObserver !== 'undefined' ? new MutationObserver(schedule) : null;
-    mo?.observe(deck, { childList: true, subtree: true });
-    return () => {
-      ro?.disconnect();
-      mo?.disconnect();
-      if (raf) cancelAnimationFrame(raf);
-      mq.removeEventListener?.('change', apply);
-      window.removeEventListener('resize', apply);
-      deck.style.removeProperty('--stage-fit-h');
-    };
-  }, [timelineResized]);
 
   return (
-    // pb-28: the floating dock is fixed over the bottom ~80px of the viewport. Without
-    // this room the last row of every column could be scrolled no higher than the
-    // dock's own top edge, so whatever sat there (the final setting, a button) was
-    // unreachable by mouse. See also the scroll-padding effect near the dock hook.
-    <div className="flex flex-col lg:flex-row gap-4 items-start w-full pb-28">
+    <div className="faceswap-workspace">
+      <WorkspaceSplitLayout leftOpen={showRightPanel} rightOpen={showLeftPanel}
+        onToggleLeft={() => setDrawers((v) => ({ ...v, right: !v.right }))}
+        onToggleRight={() => setDrawers((v) => ({ ...v, left: !v.left }))}
+        left={<div className="space-y-3">          <Section title="Target media" icon={Icon.faceswap}>
+            <PersonGroups
+              targetFaces={targetFaces}
+              targetGroups={targetGroups}
+              targetNames={targetNames}
+              targetFacesInfo={targetFacesInfo}
+              targetPersonIds={targetPersonIds}
+              targetReferenceFaceIds={targetReferenceFaceIds}
+              selectedTargetPersonId={selectedTargetPersonId}
+              setSelectedTargetPersonId={setSelectedTargetPersonId}
+              selectedReferenceFaceId={selectedReferenceFaceId}
+              setSelectedReferenceFaceId={setSelectedReferenceFaceId}
+              applyTargetContext={applyTargetContext}
+              commitTargetContext={commitTargetContext}
+              setTargetPersonIds={setTargetPersonIds}
+              setTargetReferenceFaceIds={setTargetReferenceFaceIds}
+              selTargetFace={selTargetFace}
+              setSelTargetFace={setSelTargetFace}
+              sourceFaces={sourceFaces}
+              sourceFacesInfo={sourceFacesInfo}
+              faceSelection={p.face_detection_mode}
+              setFaceSelection={(v) => set('face_detection_mode', v)}
+              selectedSource={selSource}
+              faceMapping={faceMapping}
+              setFaceMapping={setFaceMapping}
+              frame={frame}
+              selTarget={selTarget}
+              targetMediaId={activeTargetMediaId}
+              setTargetFaces={setTargetFaces}
+              setTargetGroups={setTargetGroups}
+              setTargetNames={setTargetNames}
+              setTargetFacesInfo={setTargetFacesInfo}
+              notify={notify}
+              clearPreviewCache={clearPreviewCache}
+            />
+          </Section>
 
-      {/* COLUMN 1: the inspector — sticky sidebar on large viewports so it follows
-          the scroll while scrolling a taller workspace.
+          <Section title="Target file(s)">
+            <FileDrop accept="image/*,video/*,.webp" multiple label="Add target media" onFiles={onAddTarget} busy={uploadingTgt} hint="drop images or videos here"
+                      progress={tgtProgress} onCancel={() => tgtAbortRef.current?.abort()}
+                      onPaths={onAddTargetPaths} />
+            {targets.length === 0 ? (
+              <div className="h-24 flex items-center justify-center rounded-xl border border-dashed border-white/10 text-xs text-muted bg-black/10 select-none">No target media loaded</div>
+            ) : (
+              <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
+                {targets.map((t, i) => {
+                  // Show the most advanced state any queued job for this file
+                  // reached — with segments, one target can carry several jobs.
+                  const mediaId = t.media_id || t.id;
+                  const jobs = queue.jobs.filter(j => mediaId
+                    ? j.target_media_id === mediaId
+                    : j.target_name === t.name);
+                  const job = jobs.find(j => ACTIVE_STATES.includes(jobState(j)))
+                    || jobs.find(j => RETRYABLE_STATES.includes(jobState(j)))
+                    || jobs.find(j => jobState(j) === 'RECOVERABLE')
+                    || jobs.find(j => jobState(j) === 'COMPLETED');
+                  const jobSt = job ? jobState(job) : null;
+                  const statusLabel = jobSt ? (QUEUE_STATE_LABEL[jobSt] || jobSt) : null;
+                  const badgeColor = jobSt ? QUEUE_STATE_CLASS[jobSt] : '';
+                  const isVideo = t.frames > 1;
+                  const duration = isVideo && t.fps ? (t.frames / t.fps).toFixed(1) : null;
+                  const TypeIcon = isVideo ? Icon.film : Icon.still;
+                  return (
+                    <div key={mediaId || i}
+                      className={`group flex items-center gap-3 px-3.5 py-3 rounded-xl text-sm border transition-all duration-200 cursor-pointer ${selTarget === i ? 'bg-[var(--accent)]/10 border-[var(--accent)]/40' : 'bg-white/[0.02] border-white/[0.06] hover:border-white/15 hover:bg-white/[0.04]'}`}
+                      onClick={() => selectTarget(i)}>
+                      {/* v=name busts the browser cache: the URL is index-based, so
+                          after a removal the same index can point at another file. */}
+                      <img
+                        src={`${API}/api/target/preview?index=${i}&frame=1&width=96&v=${encodeURIComponent(mediaId || t.name)}`}
+                        alt=""
+                        loading="lazy"
+                        className="w-12 h-9 shrink-0 rounded-lg object-cover bg-black/40 border border-white/10"
+                        onError={(e) => { e.target.style.display = 'none'; if (e.target.nextElementSibling) e.target.nextElementSibling.style.display = 'block'; }}
+                      />
+                      {/* Revealed by the <img>'s onError above (it sets
+                          display:block on its nextElementSibling), so this is
+                          the fallback when a thumbnail cannot be decoded. */}
+                      <div className="shrink-0 opacity-75 hidden text-white/50"><TypeIcon size={16} /></div>
+                      <div className="flex-1 min-w-0">
+                        <span className="truncate block font-bold text-white/90 group-hover:text-white transition-colors">{t.name}</span>
+                        <div className="flex items-center gap-2 mt-0.5 text-note font-medium text-muted">
+                          {isVideo ? (
+                            <span>{t.frames} frames · {t.fps} FPS{duration ? ` · ${duration}s` : ''}</span>
+                          ) : (
+                            <span>Static Image</span>
+                          )}
+                          {statusLabel && (
+                            <span className={`text-nano uppercase tracking-wider px-1.5 py-0.5 rounded border font-semibold ${badgeColor}`}>
+                              {statusLabel}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <button type="button" title="Remove this target" aria-label="Remove this target"
+                        onClick={(e) => { e.stopPropagation(); removeTarget(i); }}
+                        className="h-6 w-6 shrink-0 rounded-full bg-black/50 text-white/60 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:bg-[var(--accent-hover)] hover:text-white transition-all flex items-center justify-center"><Icon.close size={12} /></button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            {targets.length > 0 && (
+              <div className="pt-2 border-t border-white/5 flex justify-end">
+                <Button size="sm" variant="stop" onClick={async () => {
+                  rememberTargetContext();
+                  const r = await postJSON('/api/target/clear', {
+                    target_media_id: activeTargetMediaId,
+                  });
+                  setTargets(r.targets || []);
+                  setTargetFaces([]); setTargetGroups([]); setTargetNames([]);
+                  setTargetFacesInfo([]); setTargetPersonIds([]);
+                  setTargetReferenceFaceIds([]); setSelectedTargetPersonId(null);
+                  setSelectedReferenceFaceId(null); setFaceMapping({}); setSelTargetFace(0);
+                  setPreviewSrc(''); setPreviewFor('');
+                }}>Clear targets</Button>
+              </div>
+            )}
+          </Section>
 
-          Five named groups instead of one 100-control column: Detection, Masking,
-          Restoration & Color (the four-stage enhancer chain), Temporal, and the
-          rest. The groups are InspectorGroup accordions that remember their open
-          state; every control in them is the one that used to sit in the long
-          column, moved, not rewritten.
+          <Section title="Source images / facesets" icon={Icon.faces}>
+          <FileDrop accept="image/*,.fsz" multiple label="Add source faces" onFiles={onAddSource} busy={uploadingSrc} hint="drop images or .fsz here"
+                    progress={srcProgress} onCancel={() => srcAbortRef.current?.abort()} />
+          <label className="mt-2 flex cursor-pointer items-center justify-center rounded-xl border border-dashed border-white/15 px-3 py-2 text-xs text-white/55 transition hover:border-[var(--accent)] hover:text-white">
+            Build one multi-angle faceset from a folder
+            <input type="file" accept="image/*" multiple webkitdirectory="" directory="" className="sr-only"
+              onChange={(event) => { onAddSourceFolder(Array.from(event.target.files || [])); event.target.value = ''; }} />
+          </label>
+          <FacesetLibrary
+            canSave={sourceFaces.length > 0}
+            onLoaded={(r) => { setSourceFaces(r.source_faces || []); if (r.source_faces_info) setSourceFacesInfo(r.source_faces_info); }}
+            notify={notify} />
+          {pinnedIdentities.length > 0 && (
+            <div className="p-2.5 rounded-xl bg-black/40 border border-white/10 space-y-1.5 animate-slide-up">
+              <div className="flex items-center justify-between text-micro font-bold uppercase tracking-wider text-white/50">
+                <span>⭐ Pinned Quick Identities ({pinnedIdentities.length})</span>
+                <button type="button" onClick={() => { setPinnedIdentities([]); localStorage.removeItem('roop_pinned_identities'); }} className="text-muted hover:text-white">Clear</button>
+              </div>
+              <div className="flex items-center gap-2 overflow-x-auto py-1">
+                {pinnedIdentities.map((pin, i) => (
+                  <button
+                    key={pin.id || i}
+                    type="button"
+                    onClick={() => {
+                      const idx = sourceFaces.findIndex((f) => f === pin.data);
+                      if (idx >= 0) selectSource(idx);
+                      else notify?.('Face not in current source gallery', 'warning');
+                    }}
+                    className="relative group h-12 w-12 rounded-lg border border-white/20 overflow-hidden shrink-0 hover:border-[var(--accent)] transition-all"
+                    title={pin.label}
+                  >
+                    <img src={pin.data} alt="Pin" className="w-full h-full object-cover" />
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          <FaceGallery title="Input faces" faces={sourceFaces} selected={selSource} onSelect={selectSource} draggable={true} large={true}
+            onRemove={(i) => removeSource(i)} empty="Upload a face image" info={sourceFacesInfo} />
+          {sourceFaces.length > 0 && (
+            <div className="space-y-3">
+              <div className="flex flex-wrap gap-2">
+                <Button size="sm" variant="secondary" onClick={togglePinCurrentSource} title="Pin selected identity to Quick Bar">
+                  ⭐ Pin Identity
+                </Button>
+                <Button size="sm" variant="secondary" onClick={() => moveSource('left')}>⬅ Move</Button>
+                <Button size="sm" variant="secondary" onClick={() => moveSource('right')}>Move ➡</Button>
+                <Button size="sm" variant="secondary" onClick={() => sourceAction('/api/source/remove', { index: selSource })}>Remove</Button>
+                <Button size="sm" variant="secondary" title="Set each tile to the most frontal face in its set" onClick={() => sourceAction('/api/source/refresh_thumbs', {})}>Frontal thumb</Button>
+                <Button size="sm" variant="stop" onClick={() => sourceAction('/api/source/clear', {})}>Clear all</Button>
+              </div>
 
-          This keeps its layout during a run: watching a render and setting up the
-          next job are two different tabs, so the run has the Processing tab to
-          itself. */}
-      <div
-        data-testid="inspector"
-        className={`w-full lg:w-[350px] 3xl:w-[400px] 4xl:w-[460px] shrink-0 space-y-3 select-none ${!showLeftPanel ? 'hidden' : ''}`}
-        style={showLeftPanel && panelSizes?.leftWidth ? { width: `${panelSizes.leftWidth}px`, minWidth: `${panelSizes.leftWidth}px` } : undefined}
-      >
+              {sourceFacesInfo[selSource] && (
+                <div className="p-3.5 rounded-xl bg-black/45 border border-white/5 space-y-2 text-xs select-none">
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold text-micro uppercase tracking-[0.14em] text-white/50">Selected source details</span>
+                    <span className="px-2 py-0.5 rounded-full bg-[var(--accent)]/10 text-micro text-accent font-bold border border-[var(--accent)]/20">
+                      {sourceFacesInfo[selSource].count > 1 ? `${sourceFacesInfo[selSource].count} Reference Faces` : 'Single Face'}
+                    </span>
+                  </div>
+
+                  <div className="space-y-1.5 pt-1">
+                    {(sourceFacesInfo[selSource].count || 1) > 1 && Array.isArray(sourceFacesInfo[selSource].poses) && sourceFacesInfo[selSource].poses.length > 0 ? (
+                      <>
+                        <div className="text-micro font-bold text-muted mb-1">Pose Coverage Breakdown:</div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {Object.entries(
+                            (sourceFacesInfo[selSource].poses || []).reduce((acc, p) => {
+                              acc[p] = (acc[p] || 0) + 1;
+                              return acc;
+                            }, {})
+                          ).map(([pose, cnt]) => (
+                            <span key={pose} className="px-2 py-1 rounded-lg bg-white/[0.03] border border-white/5 text-micro text-white/70">
+                              {pose} <span className="text-accent font-extrabold">({cnt})</span>
+                            </span>
+                          ))}
+                        </div>
+                      </>
+                    ) : (
+                      <div className="flex items-center justify-between text-white/60">
+                        <span>Detected Pose:</span>
+                        <span className="font-bold text-white">{sourceFacesInfo[selSource].poses?.[0] || 'Front'}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </Section>
+        <IdentityBlender sourceFaces={sourceFaces} sourceFacesInfo={sourceFacesInfo}
+          value={identityBlend} onChange={setIdentityBlend} onUploadSource={onAddSource} notify={notify}
+          playheadFrame={frame} />
+      </div>}
+        right={<div data-testid="inspector" className="space-y-3">
         <RecipePresetBar
           recipes={QUICK_RECIPES}
           activeId={activeRecipe}
@@ -4445,267 +4556,391 @@ export default function FaceSwap({
               <Button size="sm" variant="secondary" onClick={() => useShortcutStore.getState().openOverlay()}>Keyboard Shortcuts Info</Button>
             </div>
         </Section>
-      </div>
+                  <div data-after-deck className="space-y-3">
 
+            {/* Modular Pipeline Flow Strip & 1-Click Buffer Soloing */}
+            {showFlowStrip && (
+              <div className="pt-1">
+                <div className="flex items-center justify-between mb-1 text-micro text-white/50 px-1">
+                  <span className="font-semibold uppercase tracking-wider text-mini text-white/70">Modular Pipeline Flow</span>
+                  <span className="text-note">Alt+Click node to solo intermediate buffer &bull; ⏻ bypass</span>
+                </div>
+                <ModularPipelineFlowStrip
+                  soloStage={soloStage}
+                  onSoloStage={handleSoloStage}
+                  bypassedStages={bypassedStages}
+                  onToggleBypass={handleToggleBypass}
+                />
+              </div>
+            )}
 
-      
-      {showLeftPanel && (
-        <PanelResizeDivider
-          direction="vertical"
-          side="left"
-          currentSize={panelSizes?.leftWidth || 350}
-          min={240}
-          max={620}
-          onResize={(val) => setPanelSize('leftWidth', val)}
-          onReset={() => setPanelSize('leftWidth', 350)}
-          title="Drag to resize Inspector panel (Double-click to reset)"
-          className="hidden lg:flex"
-        />
-      )}
-
-      {/* COLUMN 2 & 3 WRAPPER: Preview canvas leads (hero) with the media
-          asset managers as a right rail (2xl:flex-row-reverse), so the live
-          preview is the visual center instead of buried on the far right. */}
-      <div className="flex-1 w-full min-w-0 space-y-3.5 flex flex-col xl:flex-row-reverse gap-3.5">
-
-        {/* COLUMN 2: Media Asset Manager — right rail. Stays put during a run,
-            as with column 1: the sources and targets a running job baked in are
-            already its own, so editing these is setting up the NEXT job. */}
-        <div className={`w-full xl:w-[330px] 3xl:w-[380px] 4xl:w-[440px] shrink-0 space-y-3.5 select-none ${!showRightPanel ? 'hidden' : ''}`}
-          style={showRightPanel && panelSizes?.rightWidth ? { width: `${panelSizes.rightWidth}px`, minWidth: `${panelSizes.rightWidth}px` } : undefined}>
-          <Section title="Target media" icon={Icon.faceswap}>
-            <PersonGroups
-              targetFaces={targetFaces}
-              targetGroups={targetGroups}
-              targetNames={targetNames}
-              targetFacesInfo={targetFacesInfo}
-              targetPersonIds={targetPersonIds}
-              targetReferenceFaceIds={targetReferenceFaceIds}
-              selectedTargetPersonId={selectedTargetPersonId}
-              setSelectedTargetPersonId={setSelectedTargetPersonId}
-              selectedReferenceFaceId={selectedReferenceFaceId}
-              setSelectedReferenceFaceId={setSelectedReferenceFaceId}
-              applyTargetContext={applyTargetContext}
-              commitTargetContext={commitTargetContext}
-              setTargetPersonIds={setTargetPersonIds}
-              setTargetReferenceFaceIds={setTargetReferenceFaceIds}
-              selTargetFace={selTargetFace}
-              setSelTargetFace={setSelTargetFace}
-              sourceFaces={sourceFaces}
-              sourceFacesInfo={sourceFacesInfo}
-              faceSelection={p.face_detection_mode}
-              setFaceSelection={(v) => set('face_detection_mode', v)}
-              selectedSource={selSource}
-              faceMapping={faceMapping}
-              setFaceMapping={setFaceMapping}
-              frame={frame}
-              selTarget={selTarget}
-              targetMediaId={activeTargetMediaId}
-              setTargetFaces={setTargetFaces}
-              setTargetGroups={setTargetGroups}
-              setTargetNames={setTargetNames}
-              setTargetFacesInfo={setTargetFacesInfo}
-              notify={notify}
-              clearPreviewCache={clearPreviewCache}
+            {/* Live Slider Tracker Bar. It scrolls UNDER the pinned deck above, so a slider is dragged
+                with the picture it changes in view. */}
+            <SliderTrackerBar
+              params={p}
+              onSetParam={(key, val) => {
+                set(key, val);
+              }}
+              sliderEffectEnabled={sliderEffectEnabled}
+              onToggleSliderEffect={toggleSliderEffect}
+              onResetSliders={resetTrackerSliders}
+              onRefreshPreview={() => refreshPreview({ force: true })}
             />
-          </Section>
 
-          <Section title="Target file(s)">
-            <FileDrop accept="image/*,video/*,.webp" multiple label="Add target media" onFiles={onAddTarget} busy={uploadingTgt} hint="drop images or videos here"
-                      progress={tgtProgress} onCancel={() => tgtAbortRef.current?.abort()}
-                      onPaths={onAddTargetPaths} />
-            {targets.length === 0 ? (
-              <div className="h-24 flex items-center justify-center rounded-xl border border-dashed border-white/10 text-xs text-muted bg-black/10 select-none">No target media loaded</div>
-            ) : (
-              <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
-                {targets.map((t, i) => {
-                  // Show the most advanced state any queued job for this file
-                  // reached — with segments, one target can carry several jobs.
-                  const mediaId = t.media_id || t.id;
-                  const jobs = queue.jobs.filter(j => mediaId
-                    ? j.target_media_id === mediaId
-                    : j.target_name === t.name);
-                  const job = jobs.find(j => ACTIVE_STATES.includes(jobState(j)))
-                    || jobs.find(j => RETRYABLE_STATES.includes(jobState(j)))
-                    || jobs.find(j => jobState(j) === 'RECOVERABLE')
-                    || jobs.find(j => jobState(j) === 'COMPLETED');
-                  const jobSt = job ? jobState(job) : null;
-                  const statusLabel = jobSt ? (QUEUE_STATE_LABEL[jobSt] || jobSt) : null;
-                  const badgeColor = jobSt ? QUEUE_STATE_CLASS[jobSt] : '';
-                  const isVideo = t.frames > 1;
-                  const duration = isVideo && t.fps ? (t.frames / t.fps).toFixed(1) : null;
-                  const TypeIcon = isVideo ? Icon.film : Icon.still;
-                  return (
-                    <div key={mediaId || i}
-                      className={`group flex items-center gap-3 px-3.5 py-3 rounded-xl text-sm border transition-all duration-200 cursor-pointer ${selTarget === i ? 'bg-[var(--accent)]/10 border-[var(--accent)]/40' : 'bg-white/[0.02] border-white/[0.06] hover:border-white/15 hover:bg-white/[0.04]'}`}
-                      onClick={() => selectTarget(i)}>
-                      {/* v=name busts the browser cache: the URL is index-based, so
-                          after a removal the same index can point at another file. */}
-                      <img
-                        src={`${API}/api/target/preview?index=${i}&frame=1&width=96&v=${encodeURIComponent(mediaId || t.name)}`}
-                        alt=""
-                        loading="lazy"
-                        className="w-12 h-9 shrink-0 rounded-lg object-cover bg-black/40 border border-white/10"
-                        onError={(e) => { e.target.style.display = 'none'; if (e.target.nextElementSibling) e.target.nextElementSibling.style.display = 'block'; }}
-                      />
-                      {/* Revealed by the <img>'s onError above (it sets
-                          display:block on its nextElementSibling), so this is
-                          the fallback when a thumbnail cannot be decoded. */}
-                      <div className="shrink-0 opacity-75 hidden text-white/50"><TypeIcon size={16} /></div>
-                      <div className="flex-1 min-w-0">
-                        <span className="truncate block font-bold text-white/90 group-hover:text-white transition-colors">{t.name}</span>
-                        <div className="flex items-center gap-2 mt-0.5 text-note font-medium text-muted">
-                          {isVideo ? (
-                            <span>{t.frames} frames · {t.fps} FPS{duration ? ` · ${duration}s` : ''}</span>
-                          ) : (
-                            <span>Static Image</span>
-                          )}
-                          {statusLabel && (
-                            <span className={`text-nano uppercase tracking-wider px-1.5 py-0.5 rounded border font-semibold ${badgeColor}`}>
-                              {statusLabel}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                      <button type="button" title="Remove this target" aria-label="Remove this target"
-                        onClick={(e) => { e.stopPropagation(); removeTarget(i); }}
-                        className="h-6 w-6 shrink-0 rounded-full bg-black/50 text-white/60 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:bg-[var(--accent-hover)] hover:text-white transition-all flex items-center justify-center"><Icon.close size={12} /></button>
-                    </div>
-                  );
-                })}
+            {/* Stage 23: the four snapshot slots. Keys 1-4 over the stage do the same as these. */}
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
+              <SnapshotSlots api={slotBank} />
+              {referenceId && !referenceFrame && (
+                <span className="text-micro text-amber-300" role="status">
+                  Split-wipe reference Slot {referenceId} is of another frame, so the wipe shows the original.
+                </span>
+              )}
+            </div>
+
+            {/* A previous render sent from Outputs, wiped against the live preview. Renders nothing until one is sent. */}
+            <ABReferencePanel previewSrc={previewSrc} frame={frame} fps={targets[selTarget]?.fps || 25} startFrame={startFrame} />
+
+            {/* Preview controls. Each one drives a preview render, which does
+                compete with a run for the GPU — but it takes a deliberate click
+                to fire one, and the automatic refreshes still hold off until
+                the run is over (see the deferred-preview effect above). */}
+            <div className={`flex items-center flex-wrap gap-3 ${maxFrames > 1 ? 'pt-3 border-t border-white/5' : ''}`}>
+              <Button size="sm" variant="secondary" title="Re-run the swap for this frame, ignoring the cached result" onClick={() => refreshPreview({ force: true })}>Refresh</Button>
+              <Button size="sm" variant="primary" disabled={selectedDetectedFaceIndex === null}
+                title={selectedDetectedFaceIndex === null
+                  ? 'Select a numbered detected face first'
+                  : `Capture detected face ${selectedDetectedFaceIndex + 1}`} onClick={useFaceFromFrame}>
+                {selectedDetectedFaceIndex === null
+                  ? 'Select a face to capture'
+                  : `Use selected face ${selectedDetectedFaceIndex + 1}`}
+              </Button>
+              <Button size="sm" variant="secondary" disabled={!previewFaces.length}
+                title="Explicitly capture every detected face as a separate target person"
+                onClick={captureAllPeopleFromFrame}>Capture all people</Button>
+              <Button
+                size="sm"
+                variant="secondary"
+                data-testid="faceswap-sweep-btn"
+                title="Open 3x3 Parameter Sweep Contact Sheet"
+                onClick={() => setShowSweepModal(true)}
+              >
+                Parameter Sweep (3×3 Grid)
+              </Button>
+              {previewSrc && !comparingEnhancers && !comparingMasks && !comparingSwappers && !comparingUpscalers && (
+                <Button size="sm" variant="secondary" disabled={upscaling} onClick={upscaleThisFrame}
+                  title="AI-upscale just this frame to preview final quality">
+                  {upscaling ? 'Upscaling…' : `Upscale this frame (${AI_UPSCALE_MODELS.find(m => m.value === (p.upscale_model_after || 'esrganx2'))?.label || 'AI'})`}
+                </Button>
+              )}
+            </div>
+
+            {previewDiagnostic && (
+              <div role="status" className="mt-2 rounded-lg border border-amber-400/25 bg-amber-400/[0.06] px-3 py-2 text-xs text-amber-200/90">
+                {previewDiagnostic === 'target_required'
+                  ? 'Capture a target face before using Selected face mode. The preview is showing the original frame.'
+                  : previewDiagnostic === 'invalid_person_id'
+                    ? 'The selected target person is no longer available. Select another target person. The preview is showing the original frame.'
+                    : 'Select a target person before using this mode. The preview is showing the original frame.'}
               </div>
             )}
-            {targets.length > 0 && (
-              <div className="pt-2 border-t border-white/5 flex justify-end">
-                <Button size="sm" variant="stop" onClick={async () => {
-                  rememberTargetContext();
-                  const r = await postJSON('/api/target/clear', {
-                    target_media_id: activeTargetMediaId,
-                  });
-                  setTargets(r.targets || []);
-                  setTargetFaces([]); setTargetGroups([]); setTargetNames([]);
-                  setTargetFacesInfo([]); setTargetPersonIds([]);
-                  setTargetReferenceFaceIds([]); setSelectedTargetPersonId(null);
-                  setSelectedReferenceFaceId(null); setFaceMapping({}); setSelTargetFace(0);
-                  setPreviewSrc(''); setPreviewFor('');
-                }}>Clear targets</Button>
-              </div>
-            )}
-          </Section>
-          
-          <Section title="Source images / facesets" icon={Icon.faces}>
-          <FileDrop accept="image/*,.fsz" multiple label="Add source faces" onFiles={onAddSource} busy={uploadingSrc} hint="drop images or .fsz here"
-                    progress={srcProgress} onCancel={() => srcAbortRef.current?.abort()} />
-          <label className="mt-2 flex cursor-pointer items-center justify-center rounded-xl border border-dashed border-white/15 px-3 py-2 text-xs text-white/55 transition hover:border-[var(--accent)] hover:text-white">
-            Build one multi-angle faceset from a folder
-            <input type="file" accept="image/*" multiple webkitdirectory="" directory="" className="sr-only"
-              onChange={(event) => { onAddSourceFolder(Array.from(event.target.files || [])); event.target.value = ''; }} />
-          </label>
-          <FacesetLibrary
-            canSave={sourceFaces.length > 0}
-            onLoaded={(r) => { setSourceFaces(r.source_faces || []); if (r.source_faces_info) setSourceFacesInfo(r.source_faces_info); }}
-            notify={notify} />
-          {pinnedIdentities.length > 0 && (
-            <div className="p-2.5 rounded-xl bg-black/40 border border-white/10 space-y-1.5 animate-slide-up">
-              <div className="flex items-center justify-between text-micro font-bold uppercase tracking-wider text-white/50">
-                <span>⭐ Pinned Quick Identities ({pinnedIdentities.length})</span>
-                <button type="button" onClick={() => { setPinnedIdentities([]); localStorage.removeItem('roop_pinned_identities'); }} className="text-muted hover:text-white">Clear</button>
-              </div>
-              <div className="flex items-center gap-2 overflow-x-auto py-1">
-                {pinnedIdentities.map((pin, i) => (
-                  <button
-                    key={pin.id || i}
-                    type="button"
-                    onClick={() => {
-                      const idx = sourceFaces.findIndex((f) => f === pin.data);
-                      if (idx >= 0) selectSource(idx);
-                      else notify?.('Face not in current source gallery', 'warning');
-                    }}
-                    className="relative group h-12 w-12 rounded-lg border border-white/20 overflow-hidden shrink-0 hover:border-[var(--accent)] transition-all"
-                    title={pin.label}
-                  >
-                    <img src={pin.data} alt="Pin" className="w-full h-full object-cover" />
-                  </button>
-                ))}
+
+            <div className="flex items-center flex-wrap gap-3">
+              <Toggle label="Live Swap" checked={fakePreview} onChange={setFakePreview} />
+              <Toggle label="Compare" checked={compare} onChange={(v) => { setCompare(v); if (v) { setComparingEnhancers(false); setComparingMasks(false); setComparingSwappers(false); setComparingUpscalers(false); } }} />
+              <Toggle label="Flow Nodes" checked={showFlowStrip} onChange={setShowFlowStrip} />
+              {compare && <Toggle label="Split View" checked={splitView} onChange={setSplitView} />}
+              <Toggle label="Enhancer Grid" checked={comparingEnhancers} onChange={(v) => { setComparingEnhancers(v); if (v) { setCompare(false); setComparingMasks(false); setComparingSwappers(false); setComparingUpscalers(false); } }} />
+              <Toggle label="Mask Grid" checked={comparingMasks} onChange={(v) => { setComparingMasks(v); if (v) { setCompare(false); setComparingEnhancers(false); setComparingSwappers(false); setComparingUpscalers(false); } }} />
+              <Toggle label="Swapper Grid" checked={comparingSwappers} onChange={(v) => { setComparingSwappers(v); if (v) { setCompare(false); setComparingEnhancers(false); setComparingMasks(false); setComparingUpscalers(false); } }} />
+              <Toggle label="Upscale Grid" checked={comparingUpscalers} onChange={(v) => { setComparingUpscalers(v); if (v) { setCompare(false); setComparingEnhancers(false); setComparingMasks(false); setComparingSwappers(false); } }} />
+            </div>
+            </div>{/* /after-deck */}          {/* Stage 24 3x3 Parameter Sweep Contact Sheet Modal */}
+          <ParameterSweepModal
+            isOpen={showSweepModal}
+            onClose={() => setShowSweepModal(false)}
+            targetIndex={selTarget}
+            frame={frame}
+            currentSettings={p}
+            onApplyRecipe={(recipe) => {
+              setSettings((s) => ({ ...s, ...recipe }));
+              refreshPreview({ force: true, overrides: recipe });
+              notify?.('Applied sweep recipe parameters', 'info');
+            }}
+            notify={notify}
+          />
+
+          {/* Single-frame AI-upscale spot-check modal — portaled to <body> so
+              transformed ancestors (TiltCard / motion) can't clip the fixed
+              overlay. */}
+          {upscaledSrc && createPortal((
+            <div
+              className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-6"
+              onClick={() => setUpscaledSrc('')}
+            >
+              <div
+                className="relative flex flex-col max-w-[95vw] max-h-[92vh] rounded-2xl border border-white/10 bg-[var(--card-bg)] shadow-2xl overflow-hidden"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex items-center justify-between gap-4 px-4 py-2.5 border-b border-white/10">
+                  <span className="text-xs font-semibold text-white/80">
+                    Upscaled frame{upscaledDims ? ` · ${upscaledDims.w}×${upscaledDims.h}` : ''}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <a
+                      href={upscaledSrc}
+                      download={`upscaled_frame_${frame}.png`}
+                      className="px-3 py-1.5 rounded-lg text-mini font-semibold border border-white/10 bg-white/[0.04] text-white/80 hover:border-white/25 hover:text-white transition-colors"
+                    >
+                      ⬇ Download
+                    </a>
+                    <button
+                      type="button"
+                      onClick={() => setUpscaledSrc('')}
+                      className="px-3 py-1.5 rounded-lg text-mini font-semibold border border-white/10 bg-white/[0.04] text-white/80 hover:border-white/25 hover:text-white transition-colors"
+                    >
+                      ✕ Close
+                    </button>
+                  </div>
+                </div>
+                <div className="overflow-auto flex-1 min-h-0">
+                  <img src={upscaledSrc} alt="Upscaled frame" className="block max-w-none" />
+                </div>
               </div>
             </div>
-          )}
-          <FaceGallery title="Input faces" faces={sourceFaces} selected={selSource} onSelect={selectSource} draggable={true} large={true}
-            onRemove={(i) => removeSource(i)} empty="Upload a face image" info={sourceFacesInfo} />
-          {sourceFaces.length > 0 && (
-            <div className="space-y-3">
-              <div className="flex flex-wrap gap-2">
-                <Button size="sm" variant="secondary" onClick={togglePinCurrentSource} title="Pin selected identity to Quick Bar">
-                  ⭐ Pin Identity
-                </Button>
-                <Button size="sm" variant="secondary" onClick={() => moveSource('left')}>⬅ Move</Button>
-                <Button size="sm" variant="secondary" onClick={() => moveSource('right')}>Move ➡</Button>
-                <Button size="sm" variant="secondary" onClick={() => sourceAction('/api/source/remove', { index: selSource })}>Remove</Button>
-                <Button size="sm" variant="secondary" title="Set each tile to the most frontal face in its set" onClick={() => sourceAction('/api/source/refresh_thumbs', {})}>Frontal thumb</Button>
-                <Button size="sm" variant="stop" onClick={() => sourceAction('/api/source/clear', {})}>Clear all</Button>
+          ), document.body)}
+
+          {targets.length > 0 && sourceFaces.length > 0 && estFrames > 1 && (
+            <TiltCard className="rounded-2xl w-full" max={6}>
+            <div className="rounded-2xl glass-panel p-5 shadow-2xl border border-white/5 w-full">
+              <div className="flex items-center justify-between mb-4">
+                <span className="text-mini uppercase tracking-[0.14em] text-muted font-semibold">Runtime estimation</span>
+                <span className={`text-micro font-semibold uppercase tracking-wide px-2 py-0.5 rounded-full border ${estSourceClass}`}>{estSourceLabel}</span>
               </div>
-              
-              {sourceFacesInfo[selSource] && (
-                <div className="p-3.5 rounded-xl bg-black/45 border border-white/5 space-y-2 text-xs select-none">
-                  <div className="flex items-center justify-between">
-                    <span className="font-semibold text-micro uppercase tracking-[0.14em] text-white/50">Selected source details</span>
-                    <span className="px-2 py-0.5 rounded-full bg-[var(--accent)]/10 text-micro text-accent font-bold border border-[var(--accent)]/20">
-                      {sourceFacesInfo[selSource].count > 1 ? `${sourceFacesInfo[selSource].count} Reference Faces` : 'Single Face'}
-                    </span>
+              <div className="flex items-end gap-3 mb-4">
+                <span className="text-3xl font-bold text-white/95 tabular-nums leading-none">~{fmtTime(estTotalMs)}</span>
+                <span className="text-xs text-muted mb-0.5">{Math.round(estPerFrame)} ms/frame{heavyVram ? ' · high VRAM' : ''}</span>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-5 gap-y-2.5 text-mini">
+                {[
+                  ['Frames', estFrames.toLocaleString()],
+                  ['Duration', estDurationS ? `${estDurationS.toFixed(1)}s @ ${estFps} fps` : '—'],
+                  ['Faces / frame', `${previewFaces.length || '—'}${calibEst?.density_bucket ? ` (${calibEst.density_bucket})` : ''}`],
+                  ['This combo', estLearned ? `${calibEst.samples} run${calibEst.samples > 1 ? 's' : ''}` : 'no data yet'],
+                  ['GPU', calibEst?.gpu || '—'],
+                  ['Threads', calibEst?.threads ?? '—'],
+                  ['Precision', calibEst?.precision || '—'],
+                  ['Learned combos', calibEst?.store?.entries ?? 0],
+                  ['Total runs logged', calibEst?.store?.global_samples ?? 0],
+                ].map(([k, v]) => (
+                  <div key={k} className="flex flex-col leading-tight min-w-0">
+                    <span className="text-muted">{k}</span>
+                    <span className="text-white/80 tabular-nums truncate" title={String(v)}>{v}</span>
                   </div>
-                  
-                  <div className="space-y-1.5 pt-1">
-                    {(sourceFacesInfo[selSource].count || 1) > 1 && Array.isArray(sourceFacesInfo[selSource].poses) && sourceFacesInfo[selSource].poses.length > 0 ? (
-                      <>
-                        <div className="text-micro font-bold text-muted mb-1">Pose Coverage Breakdown:</div>
-                        <div className="flex flex-wrap gap-1.5">
-                          {Object.entries(
-                            (sourceFacesInfo[selSource].poses || []).reduce((acc, p) => {
-                              acc[p] = (acc[p] || 0) + 1;
-                              return acc;
-                            }, {})
-                          ).map(([pose, cnt]) => (
-                            <span key={pose} className="px-2 py-1 rounded-lg bg-white/[0.03] border border-white/5 text-micro text-white/70">
-                              {pose} <span className="text-accent font-extrabold">({cnt})</span>
-                            </span>
-                          ))}
-                        </div>
-                      </>
-                    ) : (
-                      <div className="flex items-center justify-between text-white/60">
-                        <span>Detected Pose:</span>
-                        <span className="font-bold text-white">{sourceFacesInfo[selSource].poses?.[0] || 'Front'}</span>
-                      </div>
-                    )}
+                ))}
+              </div>
+              <div className="mt-3 pt-3 border-t border-white/5 text-note text-muted leading-snug">
+                {estLearned
+                  ? 'Learned from your completed runs with these settings. Accuracy improves as you process more.'
+                  : calibEst?.source === 'global'
+                    ? 'No history for this exact settings + face-density combo yet — showing a blend of your overall average and the heuristic. Finish a run to calibrate it.'
+                    : 'Heuristic estimate. Finish a run with these settings to start learning the real speed.'}
+              </div>
+            </div>
+            </TiltCard>
+          )}
+
+          {/* Saved projects. The backend has always written one per render
+              (api.py `_create_processing_project`) and kept its safe frame up
+              to date; until now nothing could read them, so an interrupted
+              render's checkpoint was unreachable from the UI. */}
+          <div>
+            <ProjectsPanel
+              notify={notify}
+              processing={progress.processing}
+              onLoaded={() => hydrateWorkspaceFromState({ restoreView: false })}
+            />
+          </div>
+
+          <Section title="Output settings & renders">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
+              <div className="space-y-4">
+                <Select label="Output method" value={p.output_method} onChange={(v) => set('output_method', v)} options={meta.output_methods} />
+              </div>
+              {out?.path && (
+                <div className="space-y-2">
+                  <div className="text-xs text-[var(--text-muted)]">Latest output</div>
+                  {out.kind === 'video'
+                    ? <OutputVideoPlayer src={outUrl} renderKey={out?.path || out?.url} source={outputSource(out)} className="w-full rounded-xl border border-white/5" />
+                    : <img src={outUrl} alt="output" className="w-full rounded-xl border border-white/5" />}
+                  <div className="flex flex-wrap gap-2">
+                    <a href={outUrl} download
+                      className="inline-block px-3 py-1.5 rounded-xl text-sm bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-white font-bold transition-colors">⬇ Download</a>
+                    <Button size="sm" variant="secondary" onClick={revealOutput}>Open folder</Button>
                   </div>
+                  <QualityReport outputPath={out.path} notify={notify} />
                 </div>
               )}
             </div>
+          </Section>
+
+</div>}
+        queue={<>          {/* Batch queue. It used to be hidden mid-run unless a queue was what
+              was running — the queue-level Stop had to stay reachable, or the
+              next job would start after stopping the current one. Nothing is
+              hidden mid-run any more, so that special case is gone with it. */}
+          <div>
+            <QueuePanel
+              q={queue}
+              onAddCurrent={addToQueue}
+              onLoadJobSettings={loadJobSettings}
+              canAdd={targets.length > 0 && sourceFaces.length > 0}
+              notify={notify}
+            />
+          </div>
+
+</>}
+        bottom={showTimelineDeck ? <>            {maxFrames > 1 && (
+              <div className="flex flex-col">
+              {/* The split layout owns the timeline height; its contents scroll here. */}
+              <div
+                data-testid="timeline-deck"
+                className="pt-3 border-t border-[var(--border-color)] overflow-y-auto custom-scrollbar"
+                style={{ maxHeight: 'var(--tl-h)' }}
+              >
+                {useProStudioView || runBarSync.trackLanes.length > 0 ? (
+                  <NleTimeline
+                    frame={Math.max(0, frame - 1)}
+                    maxFrames={maxFrames}
+                    fps={targets[selTarget]?.fps || 25}
+                    isPlaying={isPlaying}
+                    targetIndex={selTarget}
+                    mediaId={activeTargetMediaId}
+                    targetKey={activeTargetMediaId || targets[selTarget]?.name || String(selTarget)}
+                    trackLanes={studioTracks.map((track) => {
+                      const binding = studio.project.bindings.find((b) => b.track_id === track.trackId);
+                      return binding ? { ...track, active: binding.enabled !== false, facesetPath: binding.faceset_path } : track;
+                    })}
+                    facesets={sourceFacesInfo.map((source) => ({ id: source.id, name: source.name, path: source.id }))}
+                    warningTicks={runBarSync.warningTicks}
+                    suggestedAssignments={runBarSync.suggestedAssignments}
+                    rangeLockIntervals={studio.project.intervals.length ? studio.project.intervals : runBarSync.activeIntervals}
+                    selectedTrackId={runBarSync.selectedTrackId}
+                    trimIn={Math.max(0, startFrame - 1)}
+                    trimOut={Math.max(0, endFrame - 1)}
+                    keyframes={studio.project.keyframes}
+                    onUpdateKeyframes={(keyframes) => studio.update({ keyframes })}
+                    onSeek={(f) => setFrame(f + 1)}
+                    onSelectTrack={(trackId) => runBarSync.handleSelectTrack(trackId)}
+                    onToggleTrackActive={(trackId, active) => {
+                      studio.update({ bindings: studio.project.bindings.map((b) => b.track_id === trackId ? { ...b, enabled: active } : b) });
+                      runBarSync.handleToggleTrackActive(trackId, active);
+                    }}
+                    onUpdateRangeLockIntervals={(intervals) => {
+                      studio.update({ intervals });
+                      runBarSync.handleUpdateIntervals(intervals);
+                    }}
+                    onUpdateTrim={(inF, outF) => {
+                      studio.update({ trim: { start: inF + 1, end: outF + 1 } });
+                    }}
+                    onAssignFsz={(trackId, name) => {
+                      const sourceIndex = sourceFacesInfo.findIndex((source) => [source.name, source.id, source.path, source.faceset_path].includes(name));
+                      if (sourceIndex < 0) { notify('Load this faceset into the source gallery first.', 'error'); return; }
+                      const source = sourceFacesInfo[sourceIndex];
+                      const facesetPath = source.faceset_path || source.id || source.path;
+                      const binding = { track_id: trackId, label: `Track #${trackId + 1}`, faceset_path: facesetPath, active_ranges: [], locked: true };
+                      studio.update({ bindings: [...studio.project.bindings.filter((b) => b.track_id !== trackId), binding] });
+                      runBarSync.handleAssignTrackFaceset(trackId, sourceIndex, source.id);
+                    }}
+                    onPreScanClick={runBarSync.handlePreScan}
+                    onRangeLockClick={() => runBarSync.handleStepClick('rangelock')}
+                    onRenderClick={runBarSync.handleRenderMux}
+                    onBatchClick={() => { window.location.hash = '#/batch'; }}
+                    stagedJobsCount={runBarSync.stagedJobs.length}
+                    isPreScanActive={runBarSync.isPreScanning}
+                    isRangeLockActive={runBarSync.activeStep === 2}
+                    isRenderActive={!!progress.processing}
+                  />
+                ) : (
+                  <Timeline
+                    audioTrack={{
+                      offsetMs: clampOffset(p.audio_offset_ms),
+                      onOffsetChange: (ms) => set('audio_offset_ms', clampOffset(ms)),
+                      trackPath: requestFields(p).override_audio_path,
+                      hasTargetAudio: targetHasAudio,
+                    }}
+                    fps={targets[selTarget]?.fps || 25}
+                    maxFrames={maxFrames}
+                    frame={frame}
+                    setFrame={setFrame}
+                    startFrame={startFrame}
+                    endFrame={endFrame}
+                    setFrameMarkerVal={setFrameMarkerVal}
+                    timelineRef={timelineRef}
+                    onPointerDown={handleTimelinePointerDown}
+                    onPointerMove={handleTimelinePointerMove}
+                    onPointerLeave={handleTimelinePointerLeave}
+                    hoverFrame={hoverFrame}
+                    isScrubbing={isScrubbing}
+                    view={view}
+                    setView={setView}
+                    isPlaying={isPlaying}
+                    setIsPlaying={setIsPlaying}
+                    buffering={playStalled}
+                    isLooping={isLooping}
+                    setIsLooping={setIsLooping}
+                    playbackRate={playbackRate}
+                    setPlaybackRate={setPlaybackRate}
+                    thumbUrl={(f) => `${API}/api/target/preview?index=${selTarget}&frame=${f}&width=384`}
+                    targetKey={activeTargetMediaId || targets[selTarget]?.name || String(selTarget)}
+                    segments={segments.segments}
+                    onSegmentClick={jumpToSegment}
+                    sceneCuts={sceneCuts}
+                    targetIndex={selTarget}
+                    matchThreshold={num(p.max_face_distance, 0.75)}
+                    running={!!progress.processing}
+                    renderLog={renderLog.log}
+                    fpPieces={timelinePieces}
+                    liveRange={liveRange}
+                    sceneOverrides={sceneOverrides}
+                    identityKeys={identityTrack}
+                    curveEditor={curveEditor}
+                    sceneApiRef={sceneApiRef}
+                    swapModels={meta.swap_models}
+                    detectionMode={p.face_detection_mode}
+                    baseValues={{
+                      mask_erosion: num(p.mask_erode_dilate_radius, 0),
+                      mask_feather: num(p.face_mask_blend, 20),
+                      restore_blend: num(p.restore_ultra_detail_weight, 0.75),
+                      swapper: p.swap_model,
+                    }}
+                    onPresenceSelect={selectPresencePerson}
+                    onRenderRange={start}
+                    onRenderOverrides={() => queueOverridePieces()}
+                    renderBlockedReason={startBlockedReason}
+                    playheadApiRef={playheadApiRef}
+                  />
+                )}
+                <SegmentBar
+                  segments={segments.segments}
+                  fps={targets[selTarget]?.fps || 25}
+                  maxFrames={maxFrames}
+                  startFrame={startFrame}
+                  endFrame={endFrame}
+                  onAdd={segments.add}
+                  onRemove={segments.remove}
+                  onClear={segments.clear}
+                  onJump={jumpToSegment}
+                  onQueueAll={queueSegments}
+                  onJoin={joinSegments}
+                  joinable={joinableJobs.length}
+                  coveredFrames={segments.coveredFrames()}
+                  busy={progress.processing}
+                />
+              </div>
+            </div>
           )}
-        </Section>
-        <IdentityBlender sourceFaces={sourceFaces} sourceFacesInfo={sourceFacesInfo}
-          value={identityBlend} onChange={setIdentityBlend} onUploadSource={onAddSource} notify={notify}
-          playheadFrame={frame} />
-      </div>
-
-        
-        {showRightPanel && (
-          <PanelResizeDivider
-            direction="vertical"
-            side="right"
-            currentSize={panelSizes?.rightWidth || 330}
-            min={240}
-            max={580}
-            onResize={(val) => setPanelSize('rightWidth', val)}
-            onReset={() => setPanelSize('rightWidth', 330)}
-            title="Drag to resize Media Asset Rail (Double-click to reset)"
-            className="hidden xl:flex"
-          />
-        )}
-
-        {/* COLUMN 3: Active Canvas, Timeline & Outputs */}
-        <div className="flex-1 min-w-0 space-y-6">
-          {/* run bar */}
+{maxFrames <= 1 && <div className="workspace-empty-timeline"><span>Timeline</span><p>Load a video to edit tracks, trim a range and add keyframes.</p></div>}</> : null}
+      >          {/* run bar */}
           {/* Pinned directly under the header at its measured height (not a guessed `top-20`, which left a
               strip of scrolling content showing between the two). */}
           <div ref={runBarRef} data-testid="run-bar" className="sticky top-[var(--ws-header-h,56px)] z-30 pb-2 pt-1 bg-[#0c0e14]/90 backdrop-blur-md shadow-[0_10px_14px_-10px_rgba(0,0,0,0.7)]">
@@ -4884,36 +5119,13 @@ export default function FaceSwap({
           {/* The preview holds a live image and its scrub/compare controls;
               nothing here should move under the cursor. This used to spell that
               out as three separate opt-outs, which is now just an elevation. */}
-          <Section title="Preview" elevation="flat">
-            {/* THE DECK: tabs, stage and timeline are one sticky unit, pinned under the run bar, so the
-                picture and the timeline that drives it are on screen together at every scroll position.
-                Everything that used to sit ABOVE the stage (the pipeline flow strip, the ~20-slider
-                tracker, the snapshot slots) now follows it and scrolls underneath. That tracker is a
-                single column of ~2000px in a centre column this narrow, and it was pushing the stage
-                2300px down the page, with the timeline below that.
-
-                --stage-max-h is the stage's height budget: a share of the window, never less than 220px,
-                so the timeline keeps its share. If the deck is still taller than the room (a comparison
-                grid, a tall timeline), it scrolls inside itself instead of becoming unreachable. */}
+          <Section title="Preview" elevation="flat" className="workspace-preview-panel">
+            {/* The docking grid bounds this viewport; the timeline is a separate
+                bottom slot and the long-form controls live in the inspector. */}
             <div
               ref={deckRef}
               data-testid="stage-deck"
-              className="lg:sticky lg:top-[calc(var(--ws-header-h,56px)+var(--ws-runbar-h,0px))] z-20 -mx-1 px-1 pb-2 bg-[#0c0e14]/90 backdrop-blur-md lg:max-h-[calc(var(--deck-avail)*var(--deck-share))] lg:overflow-y-auto custom-scrollbar"
-              style={{
-                // The room under the header and run bar. The deck takes a SHARE of it and the rest is left for
-                // the sliders etc. that scroll underneath - a deck that took all of it would leave nothing to
-                // scroll them into, and they would sit behind the floating dock. Dragging the timeline divider
-                // (anything but its 280 default) asks for more, so the share grows with it.
-                '--deck-avail': 'calc(var(--ws-vh, 100vh) - var(--ws-header-h, 56px) - var(--ws-runbar-h, 0px))',
-                '--deck-share': timelineResized ? 0.85 : 0.8,
-                // The timeline's own height budget, shared with the timeline below so both agree.
-                '--tl-h': `max(120px, min(${panelSizes?.bottomHeight || 280}px, calc(var(--deck-avail) * ${timelineResized ? 0.5 : 0.2})))`,
-                // The stage gets whatever the deck's share leaves after the timeline and the tab bar /
-                // gaps (~90px), so the deck's contents always fit and it never scrolls internally (that
-                // internal scroll is what made the preview slide under the wheel).
-                // --stage-fit-h is the MEASURED version (see the effect above); the formula is its fallback.
-                '--stage-max-h': 'var(--stage-fit-h, clamp(150px, calc(var(--deck-avail) * var(--deck-share) - var(--tl-h) - 96px), 1000px))',
-              }}
+              className="workspace-preview-deck"
             >
             <div className="space-y-3">
                 {/* Media Session Tab Bar for multi-file workspace */}
@@ -4989,7 +5201,9 @@ export default function FaceSwap({
                       itemNoun="upscalers"
                     />
               ) : (
-                <div className="relative rounded-2xl">
+                <div className={workspaceMode === 'dual' ? 'workspace-ab' : 'workspace-single-preview relative rounded-2xl'}>
+                  {workspaceMode === 'dual' && <figure aria-label="Source A"><figcaption>A / SOURCE</figcaption>{rawUrl ? <img src={rawUrl} alt="Original source frame" /> : <span>Load source media</span>}</figure>}
+                  <div className="relative min-w-0 h-full">{workspaceMode === 'dual' && <span className="workspace-b-label">B / LIVE PREVIEW</span>}
                   <AmbilightGlow
                     previewSrc={previewSrc || rawUrl}
                     enabled={ambilightEnabled}
@@ -5050,8 +5264,8 @@ export default function FaceSwap({
                       parityState={runBarSync.parityState}
                       tracksSource={runBarSync.parityState.tracksSource}
                       trajectoryPlanActive={runBarSync.parityState.trajectoryPlanActive}
-                      compare={compare}
-                      compareMode={splitView ? 'split' : 'slider'}
+                      compare={workspaceMode === 'dual' ? false : compare}
+                      compareMode={workspaceMode === 'dual' || splitView ? 'split' : 'slider'}
                       onToggleCompare={() => setCompare((v) => { const n = !v; if (n) { setComparingEnhancers(false); setComparingMasks(false); setComparingSwappers(false); setComparingUpscalers(false); } return n; })}
                       isPeekingOriginal={isPeekingOriginal}
                       soloStage={soloStage}
@@ -5094,8 +5308,8 @@ export default function FaceSwap({
                       onUnpinIdentity={onUnpinIdentity}
                       faceMenu={faceMenu}
                       notify={notify}
-                      splitView={splitView}
-                      compare={compare}
+                      splitView={workspaceMode === 'dual' ? false : splitView}
+                      compare={workspaceMode === 'dual' ? false : compare}
                       onToggleCompare={() => setCompare((v) => { const n = !v; if (n) { setComparingEnhancers(false); setComparingMasks(false); setComparingSwappers(false); setComparingUpscalers(false); } return n; })}
                       sliderEffectEnabled={sliderEffectEnabled}
                       onToggleSliderEffect={toggleSliderEffect}
@@ -5113,6 +5327,7 @@ export default function FaceSwap({
                       colorBadge={previewColorBadge || targets[selTarget]?.color_badge || ''}
                     />
                   )}
+                  </div>
                 </div>
               )
             ) : (
@@ -5163,411 +5378,15 @@ export default function FaceSwap({
               </div>
             )}
           </div>
-            
+
             {/* Clip timeline. It used to go away for the duration of a run;
                 it now stays, because this tab is where the next job is set up
                 and the timeline is how a range is chosen. */}
-            {maxFrames > 1 && showTimelineDeck && (
-              <div className="flex flex-col">
-                <PanelResizeDivider
-                  direction="horizontal"
-                  side="bottom"
-                  currentSize={panelSizes?.bottomHeight || 280}
-                  min={140}
-                  max={600}
-                  onResize={(val) => setPanelSize('bottomHeight', val)}
-                  onReset={() => setPanelSize('bottomHeight', 280)}
-                  title="Drag to resize Timeline deck (Double-click to reset)"
-                  className="mb-2"
-                />
-              {/* The divider above sets this height (it was saved to the workspace store but nothing read it, so
-                  dragging it did nothing). Capped to a share of the window so the stage above keeps its room;
-                  a taller timeline scrolls inside this box. */}
-              <div
-                data-testid="timeline-deck"
-                className="pt-3 border-t border-[var(--border-color)] overflow-y-auto custom-scrollbar"
-                style={{ maxHeight: 'var(--tl-h)' }}
-              >
-                {useProStudioView || runBarSync.trackLanes.length > 0 ? (
-                  <NleTimeline
-                    frame={Math.max(0, frame - 1)}
-                    maxFrames={maxFrames}
-                    fps={targets[selTarget]?.fps || 25}
-                    isPlaying={isPlaying}
-                    targetIndex={selTarget}
-                    mediaId={activeTargetMediaId}
-                    targetKey={activeTargetMediaId || targets[selTarget]?.name || String(selTarget)}
-                    trackLanes={studioTracks.map((track) => {
-                      const binding = studio.project.bindings.find((b) => b.track_id === track.trackId);
-                      return binding ? { ...track, active: binding.enabled !== false, facesetPath: binding.faceset_path } : track;
-                    })}
-                    facesets={sourceFacesInfo.map((source) => ({ id: source.id, name: source.name, path: source.id }))}
-                    warningTicks={runBarSync.warningTicks}
-                    suggestedAssignments={runBarSync.suggestedAssignments}
-                    rangeLockIntervals={studio.project.intervals.length ? studio.project.intervals : runBarSync.activeIntervals}
-                    selectedTrackId={runBarSync.selectedTrackId}
-                    trimIn={Math.max(0, startFrame - 1)}
-                    trimOut={Math.max(0, endFrame - 1)}
-                    keyframes={studio.project.keyframes}
-                    onUpdateKeyframes={(keyframes) => studio.update({ keyframes })}
-                    onSeek={(f) => setFrame(f + 1)}
-                    onSelectTrack={(trackId) => runBarSync.handleSelectTrack(trackId)}
-                    onToggleTrackActive={(trackId, active) => {
-                      studio.update({ bindings: studio.project.bindings.map((b) => b.track_id === trackId ? { ...b, enabled: active } : b) });
-                      runBarSync.handleToggleTrackActive(trackId, active);
-                    }}
-                    onUpdateRangeLockIntervals={(intervals) => {
-                      studio.update({ intervals });
-                      runBarSync.handleUpdateIntervals(intervals);
-                    }}
-                    onUpdateTrim={(inF, outF) => {
-                      studio.update({ trim: { start: inF + 1, end: outF + 1 } });
-                    }}
-                    onAssignFsz={(trackId, name) => {
-                      const sourceIndex = sourceFacesInfo.findIndex((source) => [source.name, source.id, source.path, source.faceset_path].includes(name));
-                      if (sourceIndex < 0) { notify('Load this faceset into the source gallery first.', 'error'); return; }
-                      const source = sourceFacesInfo[sourceIndex];
-                      const facesetPath = source.faceset_path || source.id || source.path;
-                      const binding = { track_id: trackId, label: `Track #${trackId + 1}`, faceset_path: facesetPath, active_ranges: [], locked: true };
-                      studio.update({ bindings: [...studio.project.bindings.filter((b) => b.track_id !== trackId), binding] });
-                      runBarSync.handleAssignTrackFaceset(trackId, sourceIndex, source.id);
-                    }}
-                    onPreScanClick={runBarSync.handlePreScan}
-                    onRangeLockClick={() => runBarSync.handleStepClick('rangelock')}
-                    onRenderClick={runBarSync.handleRenderMux}
-                    onBatchClick={() => { window.location.hash = '#/batch'; }}
-                    stagedJobsCount={runBarSync.stagedJobs.length}
-                    isPreScanActive={runBarSync.isPreScanning}
-                    isRangeLockActive={runBarSync.activeStep === 2}
-                    isRenderActive={!!progress.processing}
-                  />
-                ) : (
-                  <Timeline
-                    audioTrack={{
-                      offsetMs: clampOffset(p.audio_offset_ms),
-                      onOffsetChange: (ms) => set('audio_offset_ms', clampOffset(ms)),
-                      trackPath: requestFields(p).override_audio_path,
-                      hasTargetAudio: targetHasAudio,
-                    }}
-                    fps={targets[selTarget]?.fps || 25}
-                    maxFrames={maxFrames}
-                    frame={frame}
-                    setFrame={setFrame}
-                    startFrame={startFrame}
-                    endFrame={endFrame}
-                    setFrameMarkerVal={setFrameMarkerVal}
-                    timelineRef={timelineRef}
-                    onPointerDown={handleTimelinePointerDown}
-                    onPointerMove={handleTimelinePointerMove}
-                    onPointerLeave={handleTimelinePointerLeave}
-                    hoverFrame={hoverFrame}
-                    isScrubbing={isScrubbing}
-                    view={view}
-                    setView={setView}
-                    isPlaying={isPlaying}
-                    setIsPlaying={setIsPlaying}
-                    buffering={playStalled}
-                    isLooping={isLooping}
-                    setIsLooping={setIsLooping}
-                    playbackRate={playbackRate}
-                    setPlaybackRate={setPlaybackRate}
-                    thumbUrl={(f) => `${API}/api/target/preview?index=${selTarget}&frame=${f}&width=384`}
-                    targetKey={activeTargetMediaId || targets[selTarget]?.name || String(selTarget)}
-                    segments={segments.segments}
-                    onSegmentClick={jumpToSegment}
-                    sceneCuts={sceneCuts}
-                    targetIndex={selTarget}
-                    matchThreshold={num(p.max_face_distance, 0.75)}
-                    running={!!progress.processing}
-                    renderLog={renderLog.log}
-                    fpPieces={timelinePieces}
-                    liveRange={liveRange}
-                    sceneOverrides={sceneOverrides}
-                    identityKeys={identityTrack}
-                    curveEditor={curveEditor}
-                    sceneApiRef={sceneApiRef}
-                    swapModels={meta.swap_models}
-                    detectionMode={p.face_detection_mode}
-                    baseValues={{
-                      mask_erosion: num(p.mask_erode_dilate_radius, 0),
-                      mask_feather: num(p.face_mask_blend, 20),
-                      restore_blend: num(p.restore_ultra_detail_weight, 0.75),
-                      swapper: p.swap_model,
-                    }}
-                    onPresenceSelect={selectPresencePerson}
-                    onRenderRange={start}
-                    onRenderOverrides={() => queueOverridePieces()}
-                    renderBlockedReason={startBlockedReason}
-                    playheadApiRef={playheadApiRef}
-                  />
-                )}
-                <SegmentBar
-                  segments={segments.segments}
-                  fps={targets[selTarget]?.fps || 25}
-                  maxFrames={maxFrames}
-                  startFrame={startFrame}
-                  endFrame={endFrame}
-                  onAdd={segments.add}
-                  onRemove={segments.remove}
-                  onClear={segments.clear}
-                  onJump={jumpToSegment}
-                  onQueueAll={queueSegments}
-                  onJoin={joinSegments}
-                  joinable={joinableJobs.length}
-                  coveredFrames={segments.coveredFrames()}
-                  busy={progress.processing}
-                />
-              </div>
-            </div>
-          )}
             </div>{/* /stage-deck */}
-            <div data-after-deck className="space-y-3">
 
-            {/* Modular Pipeline Flow Strip & 1-Click Buffer Soloing */}
-            {showFlowStrip && (
-              <div className="pt-1">
-                <div className="flex items-center justify-between mb-1 text-micro text-white/50 px-1">
-                  <span className="font-semibold uppercase tracking-wider text-mini text-white/70">Modular Pipeline Flow</span>
-                  <span className="text-note">Alt+Click node to solo intermediate buffer &bull; ⏻ bypass</span>
-                </div>
-                <ModularPipelineFlowStrip
-                  soloStage={soloStage}
-                  onSoloStage={handleSoloStage}
-                  bypassedStages={bypassedStages}
-                  onToggleBypass={handleToggleBypass}
-                />
-              </div>
-            )}
-
-            {/* Live Slider Tracker Bar. It scrolls UNDER the pinned deck above, so a slider is dragged
-                with the picture it changes in view. */}
-            <SliderTrackerBar
-              params={p}
-              onSetParam={(key, val) => {
-                set(key, val);
-              }}
-              sliderEffectEnabled={sliderEffectEnabled}
-              onToggleSliderEffect={toggleSliderEffect}
-              onResetSliders={resetTrackerSliders}
-              onRefreshPreview={() => refreshPreview({ force: true })}
-            />
-
-            {/* Stage 23: the four snapshot slots. Keys 1-4 over the stage do the same as these. */}
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
-              <SnapshotSlots api={slotBank} />
-              {referenceId && !referenceFrame && (
-                <span className="text-micro text-amber-300" role="status">
-                  Split-wipe reference Slot {referenceId} is of another frame, so the wipe shows the original.
-                </span>
-              )}
-            </div>
-
-            {/* A previous render sent from Outputs, wiped against the live preview. Renders nothing until one is sent. */}
-            <ABReferencePanel previewSrc={previewSrc} frame={frame} fps={targets[selTarget]?.fps || 25} startFrame={startFrame} />
-
-            {/* Preview controls. Each one drives a preview render, which does
-                compete with a run for the GPU — but it takes a deliberate click
-                to fire one, and the automatic refreshes still hold off until
-                the run is over (see the deferred-preview effect above). */}
-            <div className={`flex items-center flex-wrap gap-3 ${maxFrames > 1 ? 'pt-3 border-t border-white/5' : ''}`}>
-              <Button size="sm" variant="secondary" title="Re-run the swap for this frame, ignoring the cached result" onClick={() => refreshPreview({ force: true })}>Refresh</Button>
-              <Button size="sm" variant="primary" disabled={selectedDetectedFaceIndex === null}
-                title={selectedDetectedFaceIndex === null
-                  ? 'Select a numbered detected face first'
-                  : `Capture detected face ${selectedDetectedFaceIndex + 1}`} onClick={useFaceFromFrame}>
-                {selectedDetectedFaceIndex === null
-                  ? 'Select a face to capture'
-                  : `Use selected face ${selectedDetectedFaceIndex + 1}`}
-              </Button>
-              <Button size="sm" variant="secondary" disabled={!previewFaces.length}
-                title="Explicitly capture every detected face as a separate target person"
-                onClick={captureAllPeopleFromFrame}>Capture all people</Button>
-              <Button
-                size="sm"
-                variant="secondary"
-                data-testid="faceswap-sweep-btn"
-                title="Open 3x3 Parameter Sweep Contact Sheet"
-                onClick={() => setShowSweepModal(true)}
-              >
-                Parameter Sweep (3×3 Grid)
-              </Button>
-              {previewSrc && !comparingEnhancers && !comparingMasks && !comparingSwappers && !comparingUpscalers && (
-                <Button size="sm" variant="secondary" disabled={upscaling} onClick={upscaleThisFrame}
-                  title="AI-upscale just this frame to preview final quality">
-                  {upscaling ? 'Upscaling…' : `Upscale this frame (${AI_UPSCALE_MODELS.find(m => m.value === (p.upscale_model_after || 'esrganx2'))?.label || 'AI'})`}
-                </Button>
-              )}
-            </div>
-
-            {previewDiagnostic && (
-              <div role="status" className="mt-2 rounded-lg border border-amber-400/25 bg-amber-400/[0.06] px-3 py-2 text-xs text-amber-200/90">
-                {previewDiagnostic === 'target_required'
-                  ? 'Capture a target face before using Selected face mode. The preview is showing the original frame.'
-                  : previewDiagnostic === 'invalid_person_id'
-                    ? 'The selected target person is no longer available. Select another target person. The preview is showing the original frame.'
-                    : 'Select a target person before using this mode. The preview is showing the original frame.'}
-              </div>
-            )}
-
-            <div className="flex items-center flex-wrap gap-3">
-              <Toggle label="Live Swap" checked={fakePreview} onChange={setFakePreview} />
-              <Toggle label="Compare" checked={compare} onChange={(v) => { setCompare(v); if (v) { setComparingEnhancers(false); setComparingMasks(false); setComparingSwappers(false); setComparingUpscalers(false); } }} />
-              <Toggle label="Flow Nodes" checked={showFlowStrip} onChange={setShowFlowStrip} />
-              {compare && <Toggle label="Split View" checked={splitView} onChange={setSplitView} />}
-              <Toggle label="Enhancer Grid" checked={comparingEnhancers} onChange={(v) => { setComparingEnhancers(v); if (v) { setCompare(false); setComparingMasks(false); setComparingSwappers(false); setComparingUpscalers(false); } }} />
-              <Toggle label="Mask Grid" checked={comparingMasks} onChange={(v) => { setComparingMasks(v); if (v) { setCompare(false); setComparingEnhancers(false); setComparingSwappers(false); setComparingUpscalers(false); } }} />
-              <Toggle label="Swapper Grid" checked={comparingSwappers} onChange={(v) => { setComparingSwappers(v); if (v) { setCompare(false); setComparingEnhancers(false); setComparingMasks(false); setComparingUpscalers(false); } }} />
-              <Toggle label="Upscale Grid" checked={comparingUpscalers} onChange={(v) => { setComparingUpscalers(v); if (v) { setCompare(false); setComparingEnhancers(false); setComparingMasks(false); setComparingSwappers(false); } }} />
-            </div>
-            </div>{/* /after-deck */}
           </Section>
 
-          {/* Stage 24 3x3 Parameter Sweep Contact Sheet Modal */}
-          <ParameterSweepModal
-            isOpen={showSweepModal}
-            onClose={() => setShowSweepModal(false)}
-            targetIndex={selTarget}
-            frame={frame}
-            currentSettings={p}
-            onApplyRecipe={(recipe) => {
-              setSettings((s) => ({ ...s, ...recipe }));
-              refreshPreview({ force: true, overrides: recipe });
-              notify?.('Applied sweep recipe parameters', 'info');
-            }}
-            notify={notify}
-          />
-
-          {/* Single-frame AI-upscale spot-check modal — portaled to <body> so
-              transformed ancestors (TiltCard / motion) can't clip the fixed
-              overlay. */}
-          {upscaledSrc && createPortal((
-            <div
-              className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-6"
-              onClick={() => setUpscaledSrc('')}
-            >
-              <div
-                className="relative flex flex-col max-w-[95vw] max-h-[92vh] rounded-2xl border border-white/10 bg-[var(--card-bg)] shadow-2xl overflow-hidden"
-                onClick={(e) => e.stopPropagation()}
-              >
-                <div className="flex items-center justify-between gap-4 px-4 py-2.5 border-b border-white/10">
-                  <span className="text-xs font-semibold text-white/80">
-                    Upscaled frame{upscaledDims ? ` · ${upscaledDims.w}×${upscaledDims.h}` : ''}
-                  </span>
-                  <div className="flex items-center gap-2">
-                    <a
-                      href={upscaledSrc}
-                      download={`upscaled_frame_${frame}.png`}
-                      className="px-3 py-1.5 rounded-lg text-mini font-semibold border border-white/10 bg-white/[0.04] text-white/80 hover:border-white/25 hover:text-white transition-colors"
-                    >
-                      ⬇ Download
-                    </a>
-                    <button
-                      type="button"
-                      onClick={() => setUpscaledSrc('')}
-                      className="px-3 py-1.5 rounded-lg text-mini font-semibold border border-white/10 bg-white/[0.04] text-white/80 hover:border-white/25 hover:text-white transition-colors"
-                    >
-                      ✕ Close
-                    </button>
-                  </div>
-                </div>
-                <div className="overflow-auto flex-1 min-h-0">
-                  <img src={upscaledSrc} alt="Upscaled frame" className="block max-w-none" />
-                </div>
-              </div>
-            </div>
-          ), document.body)}
-
-          {targets.length > 0 && sourceFaces.length > 0 && estFrames > 1 && (
-            <TiltCard className="rounded-2xl w-full" max={6}>
-            <div className="rounded-2xl glass-panel p-5 shadow-2xl border border-white/5 w-full">
-              <div className="flex items-center justify-between mb-4">
-                <span className="text-mini uppercase tracking-[0.14em] text-muted font-semibold">Runtime estimation</span>
-                <span className={`text-micro font-semibold uppercase tracking-wide px-2 py-0.5 rounded-full border ${estSourceClass}`}>{estSourceLabel}</span>
-              </div>
-              <div className="flex items-end gap-3 mb-4">
-                <span className="text-3xl font-bold text-white/95 tabular-nums leading-none">~{fmtTime(estTotalMs)}</span>
-                <span className="text-xs text-muted mb-0.5">{Math.round(estPerFrame)} ms/frame{heavyVram ? ' · high VRAM' : ''}</span>
-              </div>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-5 gap-y-2.5 text-mini">
-                {[
-                  ['Frames', estFrames.toLocaleString()],
-                  ['Duration', estDurationS ? `${estDurationS.toFixed(1)}s @ ${estFps} fps` : '—'],
-                  ['Faces / frame', `${previewFaces.length || '—'}${calibEst?.density_bucket ? ` (${calibEst.density_bucket})` : ''}`],
-                  ['This combo', estLearned ? `${calibEst.samples} run${calibEst.samples > 1 ? 's' : ''}` : 'no data yet'],
-                  ['GPU', calibEst?.gpu || '—'],
-                  ['Threads', calibEst?.threads ?? '—'],
-                  ['Precision', calibEst?.precision || '—'],
-                  ['Learned combos', calibEst?.store?.entries ?? 0],
-                  ['Total runs logged', calibEst?.store?.global_samples ?? 0],
-                ].map(([k, v]) => (
-                  <div key={k} className="flex flex-col leading-tight min-w-0">
-                    <span className="text-muted">{k}</span>
-                    <span className="text-white/80 tabular-nums truncate" title={String(v)}>{v}</span>
-                  </div>
-                ))}
-              </div>
-              <div className="mt-3 pt-3 border-t border-white/5 text-note text-muted leading-snug">
-                {estLearned
-                  ? 'Learned from your completed runs with these settings. Accuracy improves as you process more.'
-                  : calibEst?.source === 'global'
-                    ? 'No history for this exact settings + face-density combo yet — showing a blend of your overall average and the heuristic. Finish a run to calibrate it.'
-                    : 'Heuristic estimate. Finish a run with these settings to start learning the real speed.'}
-              </div>
-            </div>
-            </TiltCard>
-          )}
-
-          {/* Batch queue. It used to be hidden mid-run unless a queue was what
-              was running — the queue-level Stop had to stay reachable, or the
-              next job would start after stopping the current one. Nothing is
-              hidden mid-run any more, so that special case is gone with it. */}
-          <div>
-            <QueuePanel
-              q={queue}
-              onAddCurrent={addToQueue}
-              onLoadJobSettings={loadJobSettings}
-              canAdd={targets.length > 0 && sourceFaces.length > 0}
-              notify={notify}
-            />
-          </div>
-
-          {/* Saved projects. The backend has always written one per render
-              (api.py `_create_processing_project`) and kept its safe frame up
-              to date; until now nothing could read them, so an interrupted
-              render's checkpoint was unreachable from the UI. */}
-          <div>
-            <ProjectsPanel
-              notify={notify}
-              processing={progress.processing}
-              onLoaded={() => hydrateWorkspaceFromState({ restoreView: false })}
-            />
-          </div>
-
-          <Section title="Output settings & renders">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
-              <div className="space-y-4">
-                <Select label="Output method" value={p.output_method} onChange={(v) => set('output_method', v)} options={meta.output_methods} />
-              </div>
-              {out?.path && (
-                <div className="space-y-2">
-                  <div className="text-xs text-[var(--text-muted)]">Latest output</div>
-                  {out.kind === 'video'
-                    ? <OutputVideoPlayer src={outUrl} renderKey={out?.path || out?.url} source={outputSource(out)} className="w-full rounded-xl border border-white/5" />
-                    : <img src={outUrl} alt="output" className="w-full rounded-xl border border-white/5" />}
-                  <div className="flex flex-wrap gap-2">
-                    <a href={outUrl} download
-                      className="inline-block px-3 py-1.5 rounded-xl text-sm bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-white font-bold transition-colors">⬇ Download</a>
-                    <Button size="sm" variant="secondary" onClick={revealOutput}>Open folder</Button>
-                  </div>
-                  <QualityReport outputPath={out.path} notify={notify} />
-                </div>
-              )}
-            </div>
-          </Section>
-
-        </div>
-      </div>
-
+</WorkspaceSplitLayout>
       {/* Paste routing dialog */}
       {pastedFiles && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center animate-slide-up">

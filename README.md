@@ -25,6 +25,8 @@ renders the result locally on your GPU; nothing leaves the machine.
 
 ### Workstation features
 
+- **Viewport workspace:** all nine routes fill the window beneath a 38px studio header and a 48px expandable navigation rail. Face Swap uses independently scrolling asset and parameter panes, a resizable viewport/timeline split, and saved panel widths. Drag a hairline divider, use its arrow keys, or double-click it to reset.
+- **Layout presets:** **Standard NLE** uses 260px assets, 340px parameters and a 260px timeline; **Cinema Preview** retains the timeline with collapsed icon rails; **Ultra-Wide Dual Stage** adds source/live-preview canvases and a separate live queue. A fresh window wider than 2200px selects Dual Stage; an existing saved choice takes precedence. The header's checkpoint selector restores saved session snapshots and marks recipe changes since that checkpoint.
 - **Full-bleed media canvas:** sub-pixel coordinate mapping, persistent crossfading, split comparison wipe, alpha blend, diff map, a 3.5x magnifier loupe and a paint/erase mask brush.
 - **Timeline:** filmstrip thumbnails, a measured timecode ruler, in/out trim points, chapter markers and 0.25x-4x playback.
 - **3D head pose & tracking:** 5-point ArcFace landmark overlays with live `yaw`/`pitch`/`roll` readouts.

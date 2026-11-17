@@ -131,7 +131,7 @@ export default function Home({ progress, setTab, setSettings, notify }) {
               <h2 className="text-title font-bold text-white/95 tracking-tight">
                 {progress.paused ? 'Paused mid-render' : 'Rendering now'}
               </h2>
-              <p className="text-compact text-muted mt-1.5 max-w-prose">
+              <p className="text-compact text-muted mt-1.5">
                 <LiveText select={(s) => s.run.desc || progress.desc || 'Working…'} />
               </p>
             </div>

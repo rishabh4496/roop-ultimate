@@ -793,7 +793,7 @@ export default function InteractivePreview({
       if (box) {
         setSmallStage(box.height < 300 || box.width < 560);
         if (box.width > 0 && box.height > 0) {
-          setContainerDim({ w: box.width, h: box.height });
+          setContainerDim({ w: el.clientWidth, h: el.clientHeight });
         }
       }
       const z = zoomRef.current;
@@ -943,8 +943,10 @@ export default function InteractivePreview({
                   aImg.style.height = `${p.imgH * loupePower}px`;
                 }
               }
-              const tx = -((p.x - p.imgX) * loupePower - LENS_R);
-              const ty = -((p.y - p.imgY) * loupePower - LENS_R);
+              // Absolute image offsets start inside the glass border. Account
+              // for it even when a compact dock leaves a small preview pane.
+              const tx = -((p.x - p.imgX) * loupePower - LENS_R) - glass.clientLeft;
+              const ty = -((p.y - p.imgY) * loupePower - LENS_R) - glass.clientTop;
               if (bImg) bImg.style.transform = `translate3d(${tx}px, ${ty}px, 0)`;
               if (aImg) aImg.style.transform = `translate3d(${tx}px, ${ty}px, 0)`;
             });
@@ -1356,8 +1358,13 @@ export default function InteractivePreview({
     return imgDim.w / imgDim.h;
   }, [imgDim, sarVal, darVal]);
 
+  const pictureRatio = displayRatio || (imgDim ? imgDim.w / imgDim.h : 1);
+  const pictureWidth = containerDim.w && containerDim.h
+    ? Math.min(containerDim.w, containerDim.h * pictureRatio) : undefined;
   const aspectStyle = {
     aspectRatio: displayRatio ? `${displayRatio}` : (imgDim ? `${imgDim.w}/${imgDim.h}` : '1'),
+    width: pictureWidth,
+    height: pictureWidth ? pictureWidth / pictureRatio : undefined,
     maxHeight: '100%',
     maxWidth: '100%',
     display: 'flex',

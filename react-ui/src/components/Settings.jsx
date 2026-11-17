@@ -283,7 +283,7 @@ export default function Settings({ meta, settings, setSettings, notify, progress
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center gap-3">
-        <div className="relative flex-1 min-w-[16rem] max-w-md">
+        <div className="relative flex-1 min-w-[16rem]">
           <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted pointer-events-none"><Icon.search size={14} /></span>
           <input
             type="search"

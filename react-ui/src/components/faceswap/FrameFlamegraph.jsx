@@ -356,7 +356,7 @@ export default function FrameFlamegraph({
               >
                 {/* Truncated label inside bar if width allows */}
                 {item.sharePct >= 8 && (
-                  <span className="text-micro font-mono font-bold text-black drop-shadow-sm truncate px-1">
+                  <span className="text-micro font-mono font-bold text-white bg-black/80 rounded truncate px-1">
                     {displayLabel.split('/')[0].split('-')[0]} {item.current}ms
                   </span>
                 )}

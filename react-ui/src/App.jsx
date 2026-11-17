@@ -638,6 +638,7 @@ export default function App() {
   const bumpZoom = useCallback((d) => setZoom((z) => Math.min(1.6, Math.max(0.5, Math.round((z + d) * 20) / 20))), []);
   useEffect(() => {
     document.documentElement.style.zoom = String(zoom);
+    document.documentElement.style.setProperty('--studio-zoom', String(zoom));
     localStorage.setItem('roop_zoom', String(zoom));
   }, [zoom]);
 
@@ -659,6 +660,17 @@ export default function App() {
     } catch { return []; }
   });
 
+  const [checkpointId, setCheckpointId] = useState(() => {
+    try { return localStorage.getItem('roop_checkpoint') || ''; } catch { return ''; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('roop_checkpoint', checkpointId); } catch { /* storage unavailable */ }
+  }, [checkpointId]);
+  const sessionBaselineRef = useRef(null);
+  if (settings && !sessionBaselineRef.current) sessionBaselineRef.current = JSON.stringify(settings);
+  const checkpoint = snapshots.find((v) => String(v.id) === checkpointId);
+  const checkpointDirty = !!settings && JSON.stringify(settings) !== (checkpoint ? JSON.stringify(checkpoint.settings) : sessionBaselineRef.current);
+
   const saveSessionSnapshot = useCallback(async () => {
     const defaultName = `Session ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
     const name = await promptDialog({
@@ -677,6 +689,7 @@ export default function App() {
       settings: { ...(settings || {}) },
       activeQualityProfile,
     };
+    setCheckpointId(String(snap.id));
     setSnapshots((prev) => {
       const updated = [snap, ...prev];
       localStorage.setItem('roop_session_snapshots', JSON.stringify(updated));
@@ -686,6 +699,7 @@ export default function App() {
   }, [tab, settings, activeQualityProfile, notify]);
 
   const loadSessionSnapshot = useCallback((snap) => {
+    setCheckpointId(String(snap.id));
     if (snap.settings) setSettings(snap.settings);
     if (snap.tab) setTab(snap.tab);
     if (snap.activeQualityProfile) setActiveQualityProfile(snap.activeQualityProfile);
@@ -1270,7 +1284,7 @@ export default function App() {
 
   return (
     <MotionConfig reducedMotion="user">
-    <div className="min-h-screen flex relative overflow-x-clip select-none">
+    <div className="studio-shell select-none">
       <ModelSplash />
       {/* Floating Ambient Background Glows — static.
           These are two very large filter-blur discs. When they animated
@@ -1302,9 +1316,18 @@ export default function App() {
         } : null}
       />
 
-      <div className="relative z-10 flex min-w-0 flex-1 flex-col">
+      <div className="studio-content">
       <WorkstationHeader
         current={ALL_TABS.find((t) => t.id === tab)}
+        tabs={ALL_TABS} warmTab={warmTab} snapshots={snapshots}
+        checkpointId={checkpointId} dirty={checkpointDirty}
+        queueCount={queuePending}
+        onSelectCheckpoint={(id) => {
+          if (id === 'manage') { setShowSnapshotsModal(true); return; }
+          const snap = snapshots.find((v) => String(v.id) === id);
+          if (snap) loadSessionSnapshot(snap);
+          setCheckpointId(id);
+        }}
         tab={tab}
         onNavigate={setTab}
         runChip={runChip}
@@ -1379,7 +1402,7 @@ export default function App() {
       )}
 
       {/* Main Container Layout */}
-      <main className="flex-1 w-full max-w-none px-3 sm:px-4 md:px-6 2xl:px-8 py-3 md:py-4 mt-1.5 z-10 relative">
+      <main className="studio-main" data-route={tab}>
         {error && (
           <div role="alert" className="rounded-2xl bg-red-500/10 border border-red-500/20 p-5 text-sm text-red-300 animate-slide-up flex flex-wrap items-center justify-between gap-3">
             {/* items-start: on a wrapped multi-line error the icon belongs on
@@ -1413,6 +1436,7 @@ export default function App() {
           <AnimatePresence mode="wait">
             <motion.div
               key={tab}
+              className={`studio-route ${tab === 'faceswap' ? 'is-workspace' : ''}`}
               variants={viewTransition}
               initial="initial"
               animate="animate"

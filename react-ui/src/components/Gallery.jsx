@@ -293,7 +293,7 @@ export default function Gallery({ notify, setSettings, setTab }) {
 
       {/* Filter and Search capsule */}
       <Card className="p-4 flex flex-col md:flex-row gap-4 items-center justify-between">
-        <div className="w-full md:w-auto flex-1 max-w-md">
+        <div className="w-full md:w-auto flex-1">
           <input
             type="text"
             placeholder="Search outputs..."

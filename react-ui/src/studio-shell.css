@@ -1,0 +1,96 @@
+/* Stage 2: bounded studio surfaces; scrolling belongs to panes. */
+html, body, #root { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+#root { width: 100vw; height: 100vh; display: grid; }
+.studio-shell {
+  width: calc(100vw / var(--studio-zoom, 1));
+  height: calc(100vh / var(--studio-zoom, 1));
+  overflow: hidden; display: grid; position: relative;
+  grid-template: 38px minmax(0, 1fr) / auto minmax(0, 1fr);
+  background: var(--bg-shell); color: var(--text-main);
+}
+.studio-content { display: contents; }
+.studio-header { grid-area: 1 / 1 / 2 / -1; z-index: 45; height: 38px; min-width: 0; display: flex; align-items: center; gap: 8px; padding: 0 8px; border-bottom: 1px solid var(--border-subtle); background: var(--bg-shell); white-space: nowrap; }
+.studio-header button, .studio-header select, .studio-header a { font-size: 12px; }
+.studio-checkpoint { display: flex; align-items: center; gap: 6px; flex: 0 1 185px; min-width: 100px; }
+.studio-checkpoint select { width: 100%; min-width: 0; background: var(--bg-panel); border: 1px solid var(--border-subtle); padding: 3px; color: inherit; border-radius: 3px; }
+.studio-dirty { width: 6px; height: 6px; flex: none; border-radius: 50%; background: var(--accent-emerald); }
+.studio-dirty.is-dirty { background: var(--accent-amber); box-shadow: 0 0 6px var(--accent-amber); }
+.studio-routes { display: flex; align-items: stretch; min-width: 0; height: 100%; }
+.studio-routes a { display: flex; align-items: center; gap: 6px; padding: 0 9px; border-bottom: 2px solid transparent; color: var(--text-muted); }
+.studio-routes a:hover, .studio-routes a[aria-current] { color: var(--accent-cyan); background: var(--bg-elevated); border-bottom-color: var(--accent-cyan); }
+.studio-queue-pill { position: relative; margin-left: auto; flex: none; padding: 0 6px; border: 1px solid var(--border-subtle); border-radius: 4px; }
+.studio-queue-progress { position: absolute; height: 2px; background: var(--accent-cyan); left: 0; bottom: 0; }
+.studio-tools { position: relative; flex: none; }
+.studio-tools summary { cursor: pointer; padding: 4px; list-style: none; }
+.studio-tools-popover { position: absolute; right: 0; top: 30px; padding: 10px; border: 1px solid var(--border-subtle); background: var(--bg-panel); box-shadow: 0 8px 30px #0008; border-radius: 5px; }
+.studio-tools-popover > div[role="group"] { flex-wrap: wrap; width: 330px; margin-top: 8px; }
+.studio-header .studio-provider { max-width: 130px; overflow: hidden; text-overflow: ellipsis; padding: 2px 4px; border: 1px solid var(--accent-cyan); border-radius: 3px; color: var(--accent-cyan); }
+.studio-gpu-name { max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+.studio-vram-meter { width: 42px; height: 4px; flex: none; background: var(--bg-elevated); }
+.studio-vram-meter > div { height: 100%; background: var(--accent-cyan); }
+.studio-rail { grid-area: 2 / 1; width: 184px; height: 100%; min-height: 0; display: flex; flex-direction: column; z-index: 40; overflow: hidden; padding: 8px 0; border-right: 1px solid var(--border-subtle); background: var(--bg-shell); }
+.studio-rail.is-collapsed { width: 48px; }
+.studio-rail.is-collapsed > div:first-child { padding: 0; }
+.studio-rail.is-collapsed li button, .studio-rail.is-collapsed > div:last-child button { padding-inline: 0; }
+.studio-main { grid-area: 2 / 2; position: relative; z-index: 10; min-height: 0; min-width: 0; overflow: hidden; display: grid; }
+.studio-route { height: 100%; width: 100%; min-height: 0; min-width: 0; overflow: auto; overscroll-behavior: contain; padding: 12px; }
+.studio-route > div { width: 100%; max-width: none; min-width: 0; }
+.studio-route.is-workspace { padding: 0; overflow: hidden; }
+.faceswap-workspace { display: grid; grid-template-rows: minmax(0, 1fr) auto; height: 100%; min-height: 0; min-width: 0; overflow: hidden; }
+.workspace-split { display: grid; height: 100%; width: 100%; min-height: 0; min-width: 0; overflow: hidden; }
+.workspace-pane { display: grid; grid-template-rows: 30px minmax(0, 1fr); min-width: 0; min-height: 0; overflow: hidden; background: var(--bg-panel); }
+.workspace-pane-heading { display: flex; align-items: center; gap: 6px; padding: 0 5px; border-bottom: 1px solid var(--border-subtle); font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; }
+.workspace-pane-heading button { flex: none; height: 24px; width: 24px; color: var(--accent-cyan); }
+.workspace-pane-scroll { overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; min-height: 0; padding: 8px; }
+.workspace-pane-scroll[hidden] { display: none; }
+.workspace-pane.is-collapsed .workspace-pane-heading { padding: 0 4px; }
+.workspace-center { display: grid; min-width: 0; min-height: 0; overflow: hidden; background: var(--bg-void); }
+.workspace-stage { display: flex; flex-direction: column; min-height: 0; min-width: 0; overflow: hidden; }
+.workspace-stage [data-testid="run-bar"] { position: relative; top: auto; flex: none; }
+.workspace-stage > .workspace-preview-panel { min-height: 0; flex: 1; display: flex; flex-direction: column; padding: 0; border: 0; border-radius: 0; }
+.workspace-preview-panel > .mb-3 { display: none; }
+.workspace-preview-panel > .space-y-3 { min-height: 0; flex: 1; }
+.workspace-preview-deck { min-height: 0; height: 100%; --stage-max-h: 100% !important; --stage-fit-h: 100% !important; }
+.workspace-preview-deck > div { height: 100%; display: flex; flex-direction: column; min-height: 0; }
+.workspace-preview-deck > div > :last-child { min-height: 0; flex: 1; }
+.workspace-preview-deck [class~="-inset-8"] { inset: 0; }
+.workspace-preview-deck .preview-stage { max-height: none; height: 100%; aspect-ratio: auto !important; max-width: none !important; min-height: 0; }
+.workspace-preview-deck [data-testid="preview-viewport-container"] { min-height: 150px; height: 100%; max-height: none; }
+.workspace-timeline { overflow-y: auto; min-height: 0; min-width: 0; background: var(--bg-panel); padding: 0 8px; }
+.workspace-timeline [data-testid="timeline-deck"] { height: 100%; max-height: none !important; padding-top: 0; border-top: 0; }
+.workspace-timeline > .flex { height: 100%; min-height: 0; }
+.workspace-empty-timeline { height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 8px; color: var(--text-muted); font-size: 12px; }
+.workspace-empty-timeline > span { font-family: monospace; text-transform: uppercase; letter-spacing: .15em; color: var(--accent-cyan); }
+.workspace-divider { position: relative; z-index: 25; background: var(--border-subtle); touch-action: none; outline-offset: 0; flex: none; }
+.workspace-divider.vertical { width: 1px; height: 100%; cursor: col-resize; }
+.workspace-divider.horizontal { height: 1px; width: 100%; cursor: row-resize; }
+.workspace-divider::after { content: ''; position: absolute; }
+.workspace-divider.vertical::after { left: -2.5px; top: 0; height: 100%; width: 6px; }
+.workspace-divider.horizontal::after { top: -2.5px; left: 0; width: 100%; height: 6px; }
+.workspace-divider:hover, .workspace-divider:focus-visible, .workspace-divider.is-dragging { background: var(--accent-cyan); box-shadow: 0 0 8px var(--accent-cyan); }
+.workspace-ab { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 1px; flex: 1; min-height: 150px; background: var(--border-subtle); }
+.workspace-ab > figure { margin: 0; position: relative; min-width: 0; min-height: 0; display: grid; place-items: center; background: var(--bg-void); }
+.workspace-ab > figure img { width: 100%; height: 100%; object-fit: contain; }
+.workspace-ab figcaption { position: absolute; top: 8px; left: 8px; padding: 3px 6px; background: var(--bg-shell); color: var(--accent-cyan); font: 12px monospace; }
+.workspace-ab > .relative { min-width: 0; min-height: 0; height: 100%; display: flex; flex-direction: column; }
+.workspace-b-label { position: absolute; top: 8px; left: 8px; z-index: 20; background: var(--bg-shell); color: var(--accent-cyan); padding: 3px 6px; font: 12px monospace; pointer-events: none; }
+.workspace-single-preview { flex: 1; min-height: 0; }
+.workspace-preview-deck > div > .workspace-single-preview > div { height: 100%; display: flex; flex-direction: column; }
+.workspace-single-preview .preview-stage, .workspace-ab .preview-stage { flex: 1; height: auto; }
+.workspace-preview-deck [data-testid="preview-viewport-container"] { flex: 1; height: auto; min-height: 0; }
+.faceswap-workspace > .workspace-action-dock { position: relative; bottom: auto; left: auto; transform: none; display: flex; justify-content: center; padding: 3px; background: var(--bg-shell); border-top: 1px solid var(--border-subtle); }
+.workspace-action-dock > div { padding: 2px 8px; border-radius: 4px; box-shadow: none; gap: 5px; }
+/* WebKit supports the exact 4px track; Firefox uses its thin native track. */
+.studio-shell * { scrollbar-width: thin; scrollbar-color: var(--scrollbar-thumb) transparent; }
+.studio-shell *::-webkit-scrollbar { width: 4px; height: 4px; }
+.studio-shell *::-webkit-scrollbar-track { background: transparent; }
+.studio-shell *::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 2px; }
+.studio-shell *::-webkit-scrollbar-thumb:hover { background: var(--accent-cyan); }
+@supports selector(::-webkit-scrollbar) {
+  /* A non-auto scrollbar-width overrides WebKit's exact pixel width. */
+  .studio-shell * { scrollbar-width: auto; }
+}
+@media (max-width: 2700px) { .studio-routes a > span { display: none; } }
+@media (max-width: 1600px) { .studio-header { gap: 4px; } .studio-gpu-name { max-width: 110px; } .studio-header > .relative button { gap: 5px; padding-inline: 6px; } .studio-routes a { padding-inline: 6px; } }
+@media (max-width: 1250px) { .studio-gpu-name, .studio-vram-meter { display: none; } .studio-header .studio-provider { max-width: 70px; } .studio-checkpoint { flex-basis: 120px; } .studio-header [aria-label="Workspace layout"] > button { padding-inline: 5px; } }
+@media (max-width: 950px) { .studio-header > .relative > [aria-label="Workspace layout"] > button:nth-child(-n+3) { display: none; } .studio-header .studio-provider { display: none; } .studio-checkpoint { min-width: 80px; } }

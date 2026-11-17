@@ -1,5 +1,5 @@
 import { useShallow } from 'zustand/react/shallow';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { WORKSPACE_LAYOUT, WORKSPACE_MODES, useWorkspaceStore } from '../../store/workspaceStore';
 
 // ── What each workspace mode actually does ────────────────────────────────
@@ -18,20 +18,18 @@ export default function useWorkspaceLayout() {
   const {
     workspaceMode,
     setWorkspaceMode,
-    panelSizes,
-    setPanelSize,
-    resetPanelSizes,
+    layoutEpoch,
   } = useWorkspaceStore(
     useShallow((s) => ({
       workspaceMode: s.workspaceMode,
       setWorkspaceMode: s.setWorkspaceMode,
-      panelSizes: s.panelSizes,
-      setPanelSize: s.setPanelSize,
-      resetPanelSizes: s.resetPanelSizes,
+      layoutEpoch: s.layoutEpoch,
     }))
   );
   const [ambilightEnabled, setAmbilightEnabled] = useState(true);
   const [drawers, setDrawers] = useState({ left: true, right: true, bottom: true });
+
+  useEffect(() => setDrawers({ left: true, right: true, bottom: true }), [layoutEpoch]);
 
   const layout = WORKSPACE_LAYOUT[workspaceMode] || WORKSPACE_LAYOUT.default;
 
@@ -39,7 +37,6 @@ export default function useWorkspaceLayout() {
   // closing a drawer by hand still closes it.
   return {
     workspaceMode, setWorkspaceMode,
-    panelSizes, setPanelSize, resetPanelSizes,
     ambilightEnabled, setAmbilightEnabled,
     drawers, setDrawers,
     showLeftPanel: layout.left && drawers.left,

@@ -847,7 +847,7 @@ export default function BatchSwap({ settings = {}, notify, onUpdateSetting }) {
             <Icon.batch className="text-accent" size={24} />
             Batch Matrix & Multi-File Workbench
           </h2>
-          <p className="text-xs text-white/50 mt-1 max-w-2xl">
+          <p className="text-xs text-white/50 mt-1">
             Configure multi-file batch swaps with flexible combinations: single faceset across multiple files,
             custom file-group rules, distinct facesets per target file, or automated Pro Recipes.
           </p>

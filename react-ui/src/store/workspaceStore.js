@@ -2,39 +2,30 @@ import { create } from 'zustand';
 
 // ── Workstation chrome state ────────────────────────────────────────────────
 //
-// Persistent workstation preferences remembered across tabs and reloads:
-//   workspaceMode   which panels the Face Swap workspace shows (default, cinema, dual, timeline)
-//   railCollapsed   the left navigation rail: icon + label, or icon only
-//   panelSizes      resizable dimensions for Left Inspector, Right Media Rail, Bottom Timeline
-//   customLayouts   user-saved named workspace layouts with custom proportions
-//   activeLayoutId  id of the active preset or custom layout
-//
-// Persisted to localStorage under KEY = 'roop_workspace'.
-
-//            left faces   right settings   timeline deck
-//  default       yes            yes              yes
-//  cinema        no             no               no       (all canvas)
-//  dual          yes            yes              no       (faces + params)
-//  timeline      no             no               yes      (precision scrub)
+// Saved under roop_workspace: navigation width, selected layout, pane sizes and
+// custom presets. Cinema and timeline retain the bottom deck with icon rails.
+// A fresh wide display selects dual stage; an explicit saved choice wins.
 export const WORKSPACE_LAYOUT = {
   default: { left: true, right: true, bottom: true },
-  cinema: { left: false, right: false, bottom: false },
-  dual: { left: true, right: true, bottom: false },
+  cinema: { left: false, right: false, bottom: true },
+  dual: { left: true, right: true, bottom: true },
   timeline: { left: false, right: false, bottom: true },
 };
 
 export const WORKSPACE_MODES = Object.keys(WORKSPACE_LAYOUT);
 
 export const DEFAULT_PANEL_SIZES = {
-  leftWidth: 350,
-  rightWidth: 330,
-  bottomHeight: 280,
+  leftWidth: 260,
+  rightWidth: 340,
+  bottomHeight: 260,
+  queueWidth: 280,
 };
 
 export const PANEL_LIMITS = {
   leftWidth: { min: 240, max: 620 },
   rightWidth: { min: 240, max: 580 },
   bottomHeight: { min: 140, max: 600 },
+  queueWidth: { min: 220, max: 500 },
 };
 
 export const clampPanelSize = (panel, val) => {
@@ -47,8 +38,9 @@ export const clampPanelSize = (panel, val) => {
 
 /** Built-in workspace presets including specialized workstation profiles. */
 export const LAYOUT_PRESETS = [
-  { id: 'standard', mode: 'default', label: 'Standard', hint: 'Faces, settings, preview and timeline', sizes: { leftWidth: 350, rightWidth: 330, bottomHeight: 280 } },
-  { id: 'canvas', mode: 'cinema', label: 'Max Canvas', hint: 'Preview only: every panel hidden', sizes: { leftWidth: 350, rightWidth: 330, bottomHeight: 280 } },
+  { id: 'standard', mode: 'default', label: 'Standard NLE', hint: 'Assets 260 · fluid viewport · inspector 340 · timeline 260', sizes: DEFAULT_PANEL_SIZES },
+  { id: 'canvas', mode: 'cinema', label: 'Cinema Preview', hint: 'Collapsed icon rails with viewport and timeline', sizes: DEFAULT_PANEL_SIZES },
+  { id: 'ultrawide', mode: 'dual', label: 'Ultra-Wide Dual Stage', hint: 'Source / face bank, dual A/B canvas, inspector and live queue', sizes: DEFAULT_PANEL_SIZES },
   { id: 'inspect', mode: 'timeline', label: 'Inspection Suite', hint: 'Preview and timeline for frame-by-frame inspection', sizes: { leftWidth: 350, rightWidth: 330, bottomHeight: 380 } },
   { id: 'roto', mode: 'default', label: 'My Roto Setup', hint: 'Expanded Inspector & high timeline for precision roto', sizes: { leftWidth: 440, rightWidth: 300, bottomHeight: 360 } },
   { id: 'dual_color', mode: 'dual', label: 'Dual-Monitor Color', hint: 'Wide inspector and faceset rail for grade/color', sizes: { leftWidth: 460, rightWidth: 400, bottomHeight: 220 } },
@@ -72,14 +64,6 @@ const readSaved = () => {
 const saved = readSaved();
 
 export const RAIL_AUTO_COLLAPSE_BELOW = 1400;
-const autoCollapsed = () => {
-  try {
-    const zoom = parseFloat(window.localStorage.getItem('roop_zoom')) || 1;
-    return window.innerWidth / zoom < RAIL_AUTO_COLLAPSE_BELOW;
-  } catch {
-    return false;
-  }
-};
 
 const persist = (state) => {
   try {
@@ -98,22 +82,24 @@ const initialSizes = {
   leftWidth: clampPanelSize('leftWidth', saved.panelSizes?.leftWidth ?? DEFAULT_PANEL_SIZES.leftWidth),
   rightWidth: clampPanelSize('rightWidth', saved.panelSizes?.rightWidth ?? DEFAULT_PANEL_SIZES.rightWidth),
   bottomHeight: clampPanelSize('bottomHeight', saved.panelSizes?.bottomHeight ?? DEFAULT_PANEL_SIZES.bottomHeight),
+  queueWidth: clampPanelSize('queueWidth', saved.panelSizes?.queueWidth ?? DEFAULT_PANEL_SIZES.queueWidth),
 };
 
 const initialCustom = Array.isArray(saved.customLayouts) ? saved.customLayouts : [];
 
 export const useWorkspaceStore = create((set, get) => ({
-  workspaceMode: WORKSPACE_MODES.includes(saved.workspaceMode) ? saved.workspaceMode : 'default',
-  railCollapsed: typeof saved.railCollapsed === 'boolean' ? saved.railCollapsed : autoCollapsed(),
+  workspaceMode: WORKSPACE_MODES.includes(saved.workspaceMode) ? saved.workspaceMode : (typeof window !== 'undefined' && window.innerWidth > 2200 ? 'dual' : 'default'),
+  railCollapsed: typeof saved.railCollapsed === 'boolean' ? saved.railCollapsed : true,
   railChosen: typeof saved.railCollapsed === 'boolean',
   settingsTab: SETTINGS_TABS.includes(saved.settingsTab) ? saved.settingsTab : 'providers',
   panelSizes: initialSizes,
   customLayouts: initialCustom,
-  activeLayoutId: saved.activeLayoutId || 'standard',
+  activeLayoutId: saved.activeLayoutId || (typeof window !== 'undefined' && window.innerWidth > 2200 ? 'ultrawide' : 'standard'),
+  layoutEpoch: 0,
 
   setWorkspaceMode: (mode) => {
     if (!WORKSPACE_MODES.includes(mode) || mode === get().workspaceMode) return;
-    set({ workspaceMode: mode });
+    set({ workspaceMode: mode, activeLayoutId: { default: 'standard', cinema: 'canvas', dual: 'ultrawide', timeline: 'inspect' }[mode], layoutEpoch: get().layoutEpoch + 1 });
     persist(get());
   },
   setRailCollapsed: (collapsed) => {
@@ -151,6 +137,7 @@ export const useWorkspaceStore = create((set, get) => ({
           leftWidth: clampPanelSize('leftWidth', layout.sizes.leftWidth ?? DEFAULT_PANEL_SIZES.leftWidth),
           rightWidth: clampPanelSize('rightWidth', layout.sizes.rightWidth ?? DEFAULT_PANEL_SIZES.rightWidth),
           bottomHeight: clampPanelSize('bottomHeight', layout.sizes.bottomHeight ?? DEFAULT_PANEL_SIZES.bottomHeight),
+          queueWidth: clampPanelSize('queueWidth', layout.sizes.queueWidth ?? DEFAULT_PANEL_SIZES.queueWidth),
         }
       : get().panelSizes;
 
@@ -158,6 +145,7 @@ export const useWorkspaceStore = create((set, get) => ({
       workspaceMode: nextMode,
       panelSizes: nextSizes,
       activeLayoutId: layoutId,
+      layoutEpoch: get().layoutEpoch + 1,
     });
     persist(get());
   },

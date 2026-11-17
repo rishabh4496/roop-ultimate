@@ -293,7 +293,7 @@ export default function PreFlightLinter({
           )}
           {checks?.vram && (
             <span
-              className={`px-1.5 py-0.5 rounded text-micro font-mono border ${
+              className={`px-1.5 py-0.5 rounded text-mini font-mono border ${
                 checks.vram.ok
                   ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-300'
                   : 'bg-amber-500/20 border-amber-500/40 text-amber-300 animate-pulse'

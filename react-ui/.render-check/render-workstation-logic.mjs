@@ -100,13 +100,13 @@ ok('anything else is general', tabForSetting('selected_theme', 'Appearance & The
 // ── workspace store ────────────────────────────────────────────────────────
 console.log('workspace store');
 const st = () => useWorkspaceStore.getState();
-ok('defaults', st().workspaceMode === 'default' && st().railCollapsed === false && st().settingsTab === 'providers');
+ok('defaults', st().workspaceMode === 'default' && st().railCollapsed === true && st().settingsTab === 'providers');
 st().setWorkspaceMode('cinema');
 ok('a known layout is stored', st().workspaceMode === 'cinema');
 st().setWorkspaceMode('nonsense');
 ok('an unknown layout is refused', st().workspaceMode === 'cinema');
 st().toggleRail();
-ok('the rail toggles', st().railCollapsed === true);
+ok('the rail toggles', st().railCollapsed === false);
 st().setSettingsTab('diagnostics');
 st().setSettingsTab('bogus');
 ok('an unknown settings tab is refused', st().settingsTab === 'diagnostics');

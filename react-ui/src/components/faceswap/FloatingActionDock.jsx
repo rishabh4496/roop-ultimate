@@ -40,16 +40,16 @@ export default function FloatingActionDock({
   // `label`, which the trigger below then had to split back apart on a space —
   // so any label whose first word was not an icon silently rendered wrong.
   const MODES = [
-    { id: 'default', icon: Icon.layout, label: 'Standard Studio', desc: 'Faces, settings and timeline' },
-    { id: 'cinema', icon: Icon.faceswap, label: 'Cinema Canvas', desc: 'Canvas only — panels and timeline hidden' },
-    { id: 'dual', icon: Icon.faces, label: 'Dual Inspector', desc: 'Faces + parameters, no timeline' },
+    { id: 'default', icon: Icon.layout, label: 'Standard NLE', desc: 'Faces, settings and timeline' },
+    { id: 'cinema', icon: Icon.faceswap, label: 'Cinema Preview', desc: 'Icon rails, viewport and timeline' },
+    { id: 'dual', icon: Icon.faces, label: 'Ultra-Wide Dual Stage', desc: 'Dual preview, parameters and live queue' },
     { id: 'timeline', icon: Icon.film, label: 'Timeline Deck', desc: 'Canvas and timeline, panels hidden' },
   ];
 
   const currentMode = MODES.find((m) => m.id === workspaceMode) || MODES[0];
 
   return (
-    <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 pointer-events-auto transition-all duration-300">
+    <div className="workspace-action-dock z-30 pointer-events-auto">
       <div className="relative flex items-center gap-2.5 rounded-full border border-white/15 bg-black/85 px-4 py-2.5 shadow-2xl backdrop-blur-xl ring-1 ring-white/10">
         
         {/* There is no Start / Cancel here. The run bar at the top of the

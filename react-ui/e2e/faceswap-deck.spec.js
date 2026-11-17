@@ -64,7 +64,7 @@ test('the timeline divider changes the timeline height (it used to save a number
   await openFaceSwap(page, 1920, 1080);
   const before = (await rect(page, 'timeline-deck')).height;
   // the divider is the horizontal separator directly above the timeline deck; dragging UP makes it taller
-  const divider = page.locator('[data-testid="timeline-deck"]').locator('xpath=preceding-sibling::*[1]');
+  const divider = page.getByRole('separator', { name: 'Resize Timeline panel', exact: true });
   const box = await divider.boundingBox();
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await page.mouse.down();

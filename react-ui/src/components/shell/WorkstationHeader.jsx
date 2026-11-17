@@ -4,15 +4,14 @@ import { useWorkspaceMetrics } from './useWorkspaceMetrics';
 import LayoutSwitcher from './LayoutSwitcher';
 import TelemetryPill from './TelemetryPill';
 import HistoryPopover from './HistoryPopover';
+import { LiveBar } from '../LiveTelemetry';
+import { selectProg } from '../../store/telemetryStore';
 
 // ── The top workstation header ──────────────────────────────────────────────
 //
-// One slim bar above every route: where you are, the run chip while a job
-// runs, the workspace layout switcher, the hardware pill and the workspace
-// tools. Navigation moved to the rail (WorkstationRail), which is why the
-// header no longer needs the density logic, the "More" menu or its tooltip
-// system: it has nine fewer things to fit. It still wraps rather than clips if
-// the window is narrow.
+// A single 38px row spans both the navigation rail and route surface. Checkpoints,
+// hash-route tabs, layouts, queue and live hardware readings stay in view; less
+// frequent tools live in the disclosure to keep the row from wrapping.
 const BTN = 'flex h-8 items-center gap-1.5 rounded-lg px-2 text-mini font-semibold transition-colors';
 const IDLE = 'text-white/65 hover:bg-white/10 hover:text-white';
 
@@ -20,24 +19,33 @@ export default function WorkstationHeader({
   current, tab, onNavigate, runChip, engine, onOpenDiagnostics,
   zoom, onBumpZoom, onResetZoom,
   profileName, onOpenProfiles, onOpenSnapshots, onOpenPalette, pipOn, onTogglePip,
+  tabs = [], warmTab, snapshots = [], checkpointId, dirty, onSelectCheckpoint, queueCount = 0,
 }) {
-  const Ico = current?.icon;
   const headerRef = useRef(null);
   useWorkspaceMetrics(headerRef);
   return (
-    <header ref={headerRef} className="sticky top-0 z-30 flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-white/[0.07] bg-black/35 px-4 py-2 backdrop-blur-xl">
-      <div className="flex min-w-0 items-center gap-3">
-        <h1 className="flex items-center gap-2 text-lead font-bold tracking-tight text-white/95">
-          {Ico && <Ico size={16} className="text-accent" />}
-          {current?.label || 'Roop Ultimate'}
-        </h1>
-        {runChip}
+    <header ref={headerRef} className="studio-header">
+      <h1 className="sr-only">{current?.label || 'Roop Ultimate'}</h1>
+      <div className="studio-checkpoint">
+        <span role="img" className={`studio-dirty ${dirty ? 'is-dirty' : ''}`} title={dirty ? 'Changes since checkpoint' : 'Checkpoint saved'} aria-label={dirty ? 'Unsaved checkpoint changes' : 'Checkpoint saved'} />
+        <select aria-label="Project checkpoint" value={checkpointId || ''} onChange={(e) => onSelectCheckpoint(e.target.value)}>
+          <option value="">Working session</option>
+          {snapshots.map((s) => <option key={s.id} value={String(s.id)}>{s.name}</option>)}
+          <option value="manage">Save / manage checkpoints…</option>
+        </select>
       </div>
-
-      <div className="ml-auto flex flex-wrap items-center gap-2">
-        <LayoutSwitcher tab={tab} onNavigate={onNavigate} />
+      <nav className="studio-routes" aria-label="Quick route switcher">
+        {tabs.map((t) => { const Ico = t.icon; return <a key={t.id} href={`#/${t.id}`} aria-label={t.label} title={t.label}
+          aria-current={t.id === tab ? 'page' : undefined} onPointerEnter={() => warmTab?.(t.id)} onFocus={() => warmTab?.(t.id)}>
+          <Ico size={14} /><span>{t.label}</span>
+        </a>; })}
+      </nav>
+      <LayoutSwitcher tab={tab} onNavigate={onNavigate} />
+      <div className="studio-queue-pill">{runChip || <button type="button" onClick={() => onNavigate('processing')} aria-label="Global Render Queue">Queue · {queueCount || 'Idle'}</button>}<LiveBar select={selectProg} className="studio-queue-progress" /></div>
+      <TelemetryPill engine={engine} onOpenDiagnostics={onOpenDiagnostics} />
+      <details className="studio-tools"><summary aria-label="Studio tools" title="Studio tools">•••</summary>
+      <div className="studio-tools-popover">
         <HistoryPopover />
-        <TelemetryPill engine={engine} onOpenDiagnostics={onOpenDiagnostics} />
 
         <div role="group" aria-label="Workspace tools" className="flex items-center gap-0.5 rounded-xl border border-white/10 bg-white/[0.03] p-0.5">
           <button
@@ -76,6 +84,7 @@ export default function WorkstationHeader({
           </div>
         </div>
       </div>
+      </details>
     </header>
   );
 }
