@@ -12,6 +12,8 @@ The three scenarios match the stability brief:
   a) hard-angle lateral sweep, -65..+65 degrees yaw
   b) foreign-object sweep across 40% of the face over 30 frames
   c) two faceset-bound tracks crossing with overlapping boxes
+  d) Restore Ultra / UltraMax: 256-384 px bypass ramp, temporal EMA, identity
+     gate (algebra invariants) and B=4 batched TensorRT parity
 
 Where the shipped code does not meet a stated bound, the case is recorded as a
 strict ``xfail`` whose reason carries the measured number. A bound is never
@@ -24,7 +26,10 @@ rectangles, not real hands or bars. The seam case uses the blender's
 ``laplacian`` mode on a constant colour step, without the production colour
 match (``skin_lab_match``) in front of it.
 """
+import importlib.util
 import math
+import os
+import sys
 from types import MappingProxyType, SimpleNamespace  # noqa: F401  (kept for readers)
 
 import cv2
@@ -37,6 +42,8 @@ from roop.multi_face_tracker import MultiFaceTracker, locked_source
 from roop.face_z_order import depth_order, subtract_foreground
 from roop.blender import delta_e76, laplacian_blend
 from roop.face_parser import hull_labels
+from roop import smart_restorer_bypass as _sb
+from roop.enhancer_stabilizer import DEFAULT_BLEND, TemporalEnhancerBlend
 
 
 # --------------------------------------------------------------------------- #
@@ -327,6 +334,117 @@ def test_dual_face_crossing_track_to_faceset_invariant_and_z_ordered():
     assert overlap.any()
     assert float(result[far][overlap].max()) == 0.0, "far face still owns the overlap"
     assert float(result[near][overlap].min()) == 1.0, "near face lost its own pixels"
+
+
+# --------------------------------------------------------------------------- #
+# (d) Restore Ultra / UltraMax
+# --------------------------------------------------------------------------- #
+_TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
+_APP_DIR = os.path.dirname(_TESTS_DIR)
+
+
+def _load_sibling(name):
+    """Load a harness module that sits beside this file and is not a package member."""
+    if _TESTS_DIR not in sys.path:
+        sys.path.insert(0, _TESTS_DIR)   # the harnesses import `fixtures` and friends by bare name
+    spec = importlib.util.spec_from_file_location(name, os.path.join(_TESTS_DIR, name + ".py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_restore_ramp_is_monotone_and_has_no_step_over_256_384():
+    """The bypass weight falls from 1 at 256 px to 0 at 384 px, linearly. Monotone, bounded, and
+    no adjacent-height step larger than the ramp's own slope (the old 320 px step jumped by 1.0)."""
+    heights = np.arange(200.0, 450.0, 0.5)
+    w = np.array([_sb.ramp_weight(h) for h in heights])
+    assert np.all((w >= 0.0) & (w <= 1.0))
+    assert np.all(np.diff(w) <= 1e-12), "ramp weight rises with face height"
+    assert _sb.ramp_weight(256.0) == 1.0 and _sb.ramp_weight(384.0) == 0.0
+    max_step = float(np.max(np.abs(np.diff(w)))) / 0.5           # per pixel
+    assert max_step <= 1.0 / (_sb.RAMP_HI_PX - _sb.RAMP_LO_PX) + 1e-12
+
+
+def _ultra_texture(seed=1, size=192):
+    rng = np.random.default_rng(seed)
+    chans = []
+    for c in range(3):
+        n = cv2.GaussianBlur(rng.standard_normal((size, size)).astype(np.float32), (0, 0), 3.0)
+        n = (n - n.min()) / max(float(n.max() - n.min()), 1e-6)
+        chans.append(100.0 + 60.0 * n + 5.0 * c)
+    return np.stack(chans, -1).astype(np.float32)
+
+
+def _ultra_redraw(base, seed, sigma=7.0):
+    """The same face with an independent high-frequency texture draw each frame: what a restorer does."""
+    rng = np.random.default_rng(seed)
+    n = cv2.GaussianBlur(rng.standard_normal(base.shape[:2]).astype(np.float32), (0, 0), 0.7)
+    n *= sigma / max(float(n.std()), 1e-6)
+    return np.clip(base + n[..., None] + 0.5, 0, 255).astype(np.uint8)
+
+
+def _hf_variance(frames):
+    hp = [f.astype(np.float32) - cv2.GaussianBlur(f.astype(np.float32), (0, 0), 1.5) for f in frames]
+    return float(np.mean(np.var(np.stack(hp), axis=0)))
+
+
+def _shimmer_reduction(blend, n=40, skip=8):
+    base = _ultra_texture()
+    frames = [_ultra_redraw(base, 700 + i) for i in range(n)]
+    eng = TemporalEnhancerBlend(blend=blend)
+    outs = [eng.blend_crop(f, track_id=1, frame_index=i) for i, f in enumerate(frames)]
+    return 1.0 - _hf_variance(outs[skip:]) / _hf_variance(frames[skip:])
+
+
+@pytest.mark.xfail(strict=True, reason=(
+    "Measured gap: the flow-registered EMA at the shipped DEFAULT blend (0.20) cuts high-pass "
+    "temporal variance by 33.3% (closed form 1-(1-w)/(1+w)); the >40% bound needs history "
+    "weight w >= 0.25. The bound is not loosened; the default is not changed here."))
+def test_ema_variance_reduction_exceeds_40pct_at_default_blend():
+    assert DEFAULT_BLEND == 0.20
+    got = _shimmer_reduction(DEFAULT_BLEND)
+    assert got > 0.40, f"default blend reduced HF temporal variance by {got:.3f}"
+
+
+def test_ema_variance_reduction_exceeds_40pct_at_blend_030():
+    got = _shimmer_reduction(0.30)
+    assert got > 0.40, f"blend 0.30 reduced HF temporal variance by only {got:.3f}"
+
+
+def test_identity_gate_algebra_invariants_hold():
+    """The identity gate's offline half: unit norm, slerp constancy, keyframe smoothness and the
+    de-identification bound, with no model and no GPU. Render arms need real faces and are not run here."""
+    bench = _load_sibling("identity_algebra_bench")
+    assert bench.algebra_check(seed=0) == 0
+
+
+@pytest.mark.gpu
+def test_ultramax_b4_batched_matches_b1_on_tensorrt():
+    """Four faces in one TensorRT call against four single-face calls, on the shipped codeformer.fp16 graph.
+    Skips (never passes) when TensorRT or the model is absent."""
+    ort = pytest.importorskip("onnxruntime")
+    if "TensorrtExecutionProvider" not in ort.get_available_providers():
+        pytest.skip("TensorRT is not available on this machine")
+    probe = _load_sibling("ultramax_batch_probe")
+    if not os.path.isfile(os.path.join(_APP_DIR, probe.MODEL_REL)):
+        pytest.skip("codeformer.fp16.onnx is not present")
+    import roop.globals as g
+    saved_cwd = os.getcwd()
+    saved = (getattr(g, "CFG", None), getattr(g, "execution_providers", None))
+    try:
+        probe.init_environment()
+        if not any("Tensorrt" in str(p) for p in g.execution_providers):
+            pytest.skip("TensorRT is not among the decoded execution providers")
+        sess = probe.build_session("shipped")
+        assert sess.get_providers()[0] == "TensorrtExecutionProvider", "the session fell back off TensorRT"
+        r = probe.measure(sess, 4, iters=3, warm=2)
+    finally:
+        os.chdir(saved_cwd)
+        g.CFG, g.execution_providers = saved
+    assert r["finite"]
+    assert r["max_levels_u8"] <= 2, f"B=4 differs from B=1 by {r['max_levels_u8']} levels"
+    assert r["frac_pixels_differing_u8"] <= 0.001
+    assert r["batched_ms_per_face"] < 250.0, "too slow to be the TensorRT engine"
 
 
 def load_tests(loader, tests, pattern):

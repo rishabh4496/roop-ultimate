@@ -617,7 +617,9 @@ class TrackingMixin:
                 if skip_detection:
                     return _DetectionResult([], mode='coast')
                 with _prof('track_detect'), _gpu_guard(pooled=True):
-                    with _prof('detection'), _studio.frame_scope(absolute_index, fr.shape):
+                    # Symbolic frame tokens (unit tests feed them; see the isinstance guard above) have no shape.
+                    with _prof('detection'), _studio.frame_scope(
+                            absolute_index, fr.shape if isinstance(fr, np.ndarray) else None):
                         return _run_detect(fr, crop_bbox, expected_count, rescue_ok,
                                            rotation_action)
 

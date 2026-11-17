@@ -1,4 +1,3 @@
-from roop.degrade import swallowed as _swallowed
 """OptimizedInferenceSession: TensorRT -> CUDA -> CPU, with persistent device
 IO binding, for the swap models (HiFiFace, HyperSwap).
 
@@ -43,6 +42,8 @@ import os
 import re
 import threading
 from pathlib import Path
+
+from roop.degrade import swallowed as _swallowed
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np

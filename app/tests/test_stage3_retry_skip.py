@@ -37,7 +37,7 @@ def _mgr(temporal=True, covered=100, cache=True):
     m.num_frames_no_face = 0
     m._temporal_engine = lambda name: None
     m._publish_live = lambda fr: None
-    m.swap_faces = lambda frame, temp, stabilize=False, frame_idx=None: (0, frame)
+    m.swap_faces = lambda frame, temp, stabilize=False, frame_idx=None, frame_absolute=None: (0, frame)
     m.retries = []
     m.retry_rotated = lambda fr: (m.retries.append(1), fr)[1]
     return m
@@ -94,7 +94,7 @@ class RetrySkip(unittest.TestCase):
     def test_a_swapped_frame_is_unaffected(self):
         m = _mgr()
         swapped = np.ones((4, 4, 3), np.uint8)
-        m.swap_faces = lambda frame, temp, stabilize=False, frame_idx=None: (1, swapped)
+        m.swap_faces = lambda frame, temp, stabilize=False, frame_idx=None, frame_absolute=None: (1, swapped)
         res, text = self._run(m, 10)
         self.assertIs(res, swapped)
         self.assertEqual(text, '')

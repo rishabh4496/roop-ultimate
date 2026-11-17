@@ -321,7 +321,7 @@ class WiringTests(unittest.TestCase):
         # The hook must sit AFTER the V2 pose override so it sees the
         # pose-selected vector, and BEFORE the swap processors run.
         self.assertLess(src.index("_stage0.pose_conditioned_input("), src.index("_stage0.blended_input("))
-        self.assertLess(src.index("_stage0.blended_input("), src.index("for p in self.processors:\n            if p.type == 'swap':"))
+        self.assertLess(src.index("_stage0.blended_input("), src.index("for p in self._processors_for_frame():\n            if p.type == 'swap':"))
 
     def test_api_applies_payload_on_preview_and_swap(self):
         src = self._src("api.py")

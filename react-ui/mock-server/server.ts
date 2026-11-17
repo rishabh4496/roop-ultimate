@@ -1083,7 +1083,7 @@ async function startServer() {
       },
     });
   });
-  app.get('/api/target/waveform', (req, res) => {
+  const targetWaveform = (req: express.Request, res: express.Response) => {
     const idx = Number(req.query.index ?? selectedTargetIndex);
     const target = targetEntries[idx];
     if (!target || !(target.frames > 1) || (target as { has_audio?: boolean }).has_audio === false) { res.json({ ready: true, state: 'none', duration: 0, peaks: '' }); return; }
@@ -1098,6 +1098,14 @@ async function startServer() {
       peaks[i] = t < 1 ? 6 : Math.round(Math.min(255, 40 + 190 * speech * speech));
     }
     res.json({ ready: true, state: 'ready', duration, t0, t1, bins, peaks: peaks.toString('base64') });
+  };
+  app.get('/api/target/waveform', targetWaveform);
+  // The primary waveform route the timeline asks first (useAudioWaveform). The real route answers 404 "no target"
+  // when nothing is selected, and otherwise the same envelope as the target route, so the mock does the same.
+  app.get('/api/media/waveform', (req, res) => {
+    const idx = Number(req.query.index ?? selectedTargetIndex);
+    if (!targetEntries[idx]) { res.status(404).json({ message: 'no target' }); return; }
+    targetWaveform(req, res);
   });
   // Stage 17: the waveform of an UPLOADED dub track (the real route answers only files in its upload directory; the mock's
   // /api/lipsync/audio/add returns `temp/<name>`, so that is the prefix it accepts). 14.5 s, like the upload answer says.

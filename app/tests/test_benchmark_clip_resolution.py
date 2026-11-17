@@ -92,8 +92,14 @@ class ResolveTargetTest(unittest.TestCase):
 class BenchmarkPipelineWiringTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        # Load by path: a bare `import benchmark_pipeline` resolves to the repo-root tests/benchmark_pipeline.py
+        # (same basename, different file), which is not the harness this class is about.
+        import importlib.util
+        path = os.path.join(BENCH_DIR, "benchmark_pipeline.py")
         try:
-            import benchmark_pipeline as bp
+            spec = importlib.util.spec_from_file_location("scripts_benchmarks_pipeline", path)
+            bp = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(bp)
         except Exception as exc:                                       # torch / face_engine unavailable (light CI profile)
             raise unittest.SkipTest("benchmark_pipeline needs the GPU stack to import: %s" % exc)
         cls.bp = bp
@@ -107,7 +113,7 @@ class BenchmarkPipelineWiringTest(unittest.TestCase):
             self.addCleanup(patcher.stop)
 
     def test_the_default_is_a_name_not_a_path(self):
-        import benchmark_pipeline as real
+        real = self.bp
         self.assertFalse(os.path.isabs(real.DEFAULT_CLIP))
         self.assertFalse(re.match(r"^[A-Za-z]:", real.DEFAULT_CLIP))
 
