@@ -489,9 +489,12 @@ def _provider_failure(tag: str, requested, active: List[str], strict: bool,
 
 def _concrete_shape(meta, default_hw: Sequence[int]) -> Optional[tuple]:
     """A runnable shape for one input, resolving symbolic axes conservatively."""
-    shape = list(getattr(meta, "shape", None) or [])
-    if not shape:
+    declared = getattr(meta, 'shape', None)
+    if declared is None:
         return None
+    shape = list(declared)
+    if not shape:
+        return ()  # a declared scalar, e.g. CodeFormer's float64 fidelity w
     resolved = []
     for index, dim in enumerate(shape):
         if isinstance(dim, int) and dim > 0:

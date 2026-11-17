@@ -1,5 +1,16 @@
 # Phase 5 — Model-Specific Precision Policy
 
+## 2026-11-17: Studio cache identity
+
+ORT engine filenames now carry model SHA256 prefix, effective precision,
+graph input shapes, batch profile/build constraints and Pixel Boost. The parent
+namespace continues to isolate GPU, driver and runtime. This intentionally
+causes an initial cold engine build; it does not change precision admission,
+the auxiliary/swap canaries or fidelity thresholds. The optional byte-identical
+`face_parser.onnx` alias inherits `resnet18`'s FP32 lock. Functional cache-key
+and alias tests live in `app/tests/test_studio_integration.py`; runtime evidence
+and the still-open hardware gates are in `docs/development/STUDIO_INTEGRATION.md`.
+
 This is the runtime policy for inference precision. It is deliberately
 model-specific: the global TensorRT setting is only a request, not permission
 to use FP16 for every graph. `app/roop/precision_policy.py` resolves the

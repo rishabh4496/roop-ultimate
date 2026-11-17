@@ -73,6 +73,7 @@ from roop.flow_coast import (FlowCoaster, bridge_gap, spread_residual, chain_pol
                              SUBSTITUTE, REFRESH, CONTINUE, REANCHOR)
 from roop.bystander_bank import TargetBank, bystanders_from_tracks
 
+from roop import studio_parameters as _studio
 import roop.globals
 from roop import session_pool
 from roop.face_util import get_all_faces, analysis_pooled
@@ -599,7 +600,7 @@ class TrackingMixin:
                 rescue_backoff.record(f_idx, st[0], st[1])
 
         def _detect_one(fr, crop_bbox=None, expected_count=None, skip_detection=False,
-                        rescue_ok=True, rotation_action=None):
+                        rescue_ok=True, rotation_action=None, absolute_index=None):
             # Runs inside a pool worker, one at a time per worker (ThreadPoolExecutor
             # caps concurrency at pool_workers == the analyser pool size), so this is
             # real GPU/model time, not queue-wait — lease_face_analyser() should never
@@ -616,7 +617,7 @@ class TrackingMixin:
                 if skip_detection:
                     return _DetectionResult([], mode='coast')
                 with _prof('track_detect'), _gpu_guard(pooled=True):
-                    with _prof('detection'):
+                    with _prof('detection'), _studio.frame_scope(absolute_index, fr.shape):
                         return _run_detect(fr, crop_bbox, expected_count, rescue_ok,
                                            rotation_action)
 
@@ -1351,7 +1352,7 @@ class TrackingMixin:
                             if rescue_backoff is not None else True)
                     in_flight.append((idx, det_executor.submit(
                         _detect_one, frame, crop_bbox, expected_count, skip_detection, _rok,
-                        getattr(detect_plan, 'rotation_action', None))))
+                        getattr(detect_plan, 'rotation_action', None), frame_start + idx)))
                     max_in_flight = pool_workers + 2
                     if len(in_flight) >= max_in_flight:
                         done_idx, done_fut = in_flight.popleft()
@@ -2583,6 +2584,7 @@ class TrackingMixin:
         detection cost leaves the hot loop entirely. The scan also fills
         self._track_assignments, so identity locking rides along for free."""
         self._trajectory_source_video = source_video
+        self._temporal_frame_start = int(frame_start or 0)
         try:
             gap_max = int(os.environ.get('ROOP_TEMPORAL_GAP', '10') or '10')
         except ValueError:
@@ -3551,7 +3553,7 @@ class TrackingMixin:
                     if line:
                         self._landmark_smooth_lines.append(
                             'track %s %s' % (t['id'], line))
-            if stab_on and float(getattr(self.options, 'stabilization_strength', 0.5) or 0.0) > 0.0:
+            if stab_on and _studio.maximum('stabilization_strength', float(getattr(self.options, 'stabilization_strength', 0.5) or 0.0)) > 0.0:
                 # This pass runs in the same ordered, per-track prepass as the
                 # legacy landmark smoother. Swap workers only consume its
                 # immutable frame annotations; they never share filter state.
@@ -3572,6 +3574,11 @@ class TrackingMixin:
                     beta=0.5, d_cutoff=8.0,
                     dropout_prediction_frames=_max_drop, fps=_fps)
                 for _i in sorted(merged):
+                    _stabilizer.set_strength(float(_studio.at(
+                        getattr(self, '_temporal_frame_start', 0) + _i,
+                        'stabilization_strength', _strength)))
+                    if _stabilizer.strength <= 0.0:
+                        continue
                     _f = merged[_i]
                     _kps = getattr(_f, 'kps', None)
                     _bbox = getattr(_f, 'bbox', None)

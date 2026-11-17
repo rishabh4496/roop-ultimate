@@ -28,6 +28,7 @@ scans (e.g. the upscale pass's _outputs_since) ignore them.
 """
 from roop.degrade import swallowed as _swallowed
 
+import dataclasses
 import errno
 import gc
 import json
@@ -203,8 +204,8 @@ class SegmentedVideoWriter:
                 info = _probe_video(source_video) or {}
                 sar = info.get("sar")
                 dar = info.get("dar")
-                from roop import source_color
-                color = source_color.plan_for(info, int(size[1] or 0))
+                from roop.video_muxer import output_plan
+                color = output_plan(info, int(size[1] or 0))
             except (OSError, ValueError, KeyError, AttributeError):
                 pass
         self._writer_options = {
@@ -235,7 +236,10 @@ class SegmentedVideoWriter:
             "codec": codec,
             "crf": crf,
             "signature": signature or "",
-            "writer_options": self._writer_options,
+            # ColorPlan is a dataclass, not JSON: the manifest must store (and
+            # a resume must compare) its plain-dict form.
+            "writer_options": {k: (dataclasses.asdict(v) if dataclasses.is_dataclass(v) else v)
+                               for k, v in self._writer_options.items()},
         }
         # Only present for a managed HDR render (roop/hdr_pipeline.py), so an
         # SDR manifest written before this key existed still matches (None ==
@@ -374,7 +378,7 @@ class SegmentedVideoWriter:
         active_codec = self._effective_codec or self.codec
         from roop import hdr_pipeline
         hdr_spec = hdr_pipeline.active_for(self._identity["source"]) if self._identity["source"] else None
-        if hdr_spec is not None:
+        if hdr_spec is not None and not hdr_pipeline.output_to_sdr():
             # The segment's first source frame: the trim start plus every frame
             # already committed (inherited parts included -- _next_first counts
             # them), so the writer's own master decode lines up with it.

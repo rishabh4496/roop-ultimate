@@ -1005,7 +1005,10 @@ def build_surgical_engine(
             precision = "fp8"
 
     # Destination engine name
-    engine_name = f"{model_path.stem}_sm{gpu['sm_version']}_{precision}_surgical.engine"
+    from roop.engine_cache import engine_cache_prefix
+    from roop.trt_shape_profile import graph_inputs
+    stamp = engine_cache_prefix(model_path, precision, [(s.name, s.dims) for s in graph_inputs(str(model_path))], (1, 1, 1))
+    engine_name = f"{model_path.stem}_sm{gpu['sm_version']}_{stamp}_surgical.engine"
     dest_path = output_dir / engine_name
 
     logger.info("Building TensorRT engine -> %s ...", dest_path)

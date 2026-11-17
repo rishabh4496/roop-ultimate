@@ -208,7 +208,10 @@ class TemporalEnhancerBlend:
             return crop
 
     def _blend_crop(self, crop, track_id, frame_index, keep, cut=False, region=None):
-        if not self.enabled or self._blend <= 0.0 or crop is None:
+        from roop.studio_parameters import keyed
+        override = keyed('temporal_restore_alpha')
+        blend = self._blend if override is None else float(override)
+        if not self.enabled or blend <= 0.0 or crop is None:
             return crop
         if frame_index is None:
             self._tally.bump("skipped_no_key")
@@ -262,7 +265,7 @@ class TemporalEnhancerBlend:
                            borderMode=cv2.BORDER_REPLICATE).astype(np.float32)
         gate = np.clip(1.0 - np.maximum(err - GATE_FLOOR, 0.0) / max(self.photo_t - GATE_FLOOR, 1.0), 0.0, 1.0)
         gate = cv2.resize(gate, (w, h), interpolation=cv2.INTER_LINEAR)
-        wgt = (self._blend * gate)[..., None]
+        wgt = (blend * gate)[..., None]
         out = (1.0 - wgt) * crop.astype(np.float32) + wgt * warped
         if crop.dtype == np.uint8:
             out = np.clip(out + 0.5, 0, 255).astype(np.uint8)

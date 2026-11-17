@@ -20,7 +20,8 @@ import {
   clampRangeLockInterval,
 } from '../../utils/ptsFrameMap';
 import { stageRangeLockTracks } from './batchMatrix.js';
-import { getJSON, API, timeoutFor } from '../../api.js';
+import { getJSON, postJSON, API, timeoutFor } from '../../api.js';
+import { studioPayload } from './studioControls';
 
 export type { RangeLockInterval };
 
@@ -488,6 +489,8 @@ export async function triggerPreScan(
     maxGap?: number;
     apiBase?: string;
     sourceFacesInfo?: any[];
+    targetMediaId?: string;
+    settings?: Record<string, unknown>;
   } = {}
 ): Promise<{
   summary: TrajectorySummary;
@@ -496,10 +499,17 @@ export async function triggerPreScan(
   warnings: WarningTick[];
   suggestedAssignments: SuggestedFszAssignment[];
 }> {
+  await postJSON(`${options.apiBase || ''}/api/target/prescan`, {
+    ...options.settings,
+    ...studioPayload(options.settings || {}),
+    target_index: targetIndex,
+    target_media_id: options.targetMediaId,
+  }, { timeout: 0 });
   const [summary, spans] = await Promise.all([
     fetchTrajectorySummary(options.apiBase),
-    fetchTrajectorySpans(options.apiBase, options.relative ?? true, options.maxGap ?? 1),
+    fetchTrajectorySpans(options.apiBase, options.relative ?? false, options.maxGap ?? 1),
   ]);
+  if (!summary.available || !spans.available) throw new Error(summary.reason || spans.reason || 'Pre-Scan has no trajectory');
 
   const lanes = formatTrackLanes(spans, options.sourceFacesInfo);
   const warnings = extractWarningTicks(spans, summary);
@@ -532,6 +542,7 @@ export interface UseRunBarSyncReturn {
   trajectorySummary: TrajectorySummary | null;
   trajectorySpans: TrajectorySpansResponse | null;
   trackLanes: ByteTrackLane[];
+  trackMediaKey?: string;
   warningTicks: WarningTick[];
   suggestedAssignments: SuggestedFszAssignment[];
 
@@ -577,6 +588,7 @@ export function useRunBarSync({
   const [trajectorySummary, setTrajectorySummary] = useState<TrajectorySummary | null>(null);
   const [trajectorySpans, setTrajectorySpans] = useState<TrajectorySpansResponse | null>(null);
   const [trackLanes, setTrackLanes] = useState<ByteTrackLane[]>([]);
+  const [trackMediaKey, setTrackMediaKey] = useState<string | undefined>();
   const [warningTicks, setWarningTicks] = useState<WarningTick[]>([]);
   const [suggestedAssignments, setSuggestedAssignments] = useState<SuggestedFszAssignment[]>([]);
 
@@ -585,6 +597,16 @@ export function useRunBarSync({
 
   const [stagedJobs, setStagedJobs] = useState<any[]>([]);
   const [stagedJobsError, setStagedJobsError] = useState<string | null>(null);
+  const mediaKey = targets[targetIndex]?.media_id || targets[targetIndex]?.id || String(targetIndex);
+  useEffect(() => {
+    setTrackLanes([]);
+    setWarningTicks([]);
+    setActiveIntervals([]);
+    setSelectedTrackId(null);
+    setTrajectorySummary(null);
+    setTrajectorySpans(null);
+    setSuggestedAssignments([]);
+  }, [mediaKey]);
 
   // Compute Preview Export Parity state
   const parityState = useMemo(() => {
@@ -626,11 +648,14 @@ export function useRunBarSync({
     try {
       const res = await triggerPreScan(targetIndex, {
         sourceFacesInfo,
+        targetMediaId: targets[targetIndex]?.media_id || targets[targetIndex]?.id,
+        settings,
       });
 
       setTrajectorySummary(res.summary);
       setTrajectorySpans(res.spans);
       setTrackLanes(res.lanes);
+      setTrackMediaKey(String(targets[targetIndex]?.media_id || targets[targetIndex]?.id || targetIndex));
       setWarningTicks(res.warnings);
       setSuggestedAssignments(res.suggestedAssignments);
 
@@ -656,7 +681,7 @@ export function useRunBarSync({
     } finally {
       setIsPreScanning(false);
     }
-  }, [targetIndex, sourceFacesInfo, syncToBatch, notify]);
+  }, [targetIndex, targets, sourceFacesInfo, settings, syncToBatch, notify]);
 
   // Select a track lane from NleTimeline
   const handleSelectTrack = useCallback(
@@ -798,6 +823,7 @@ export function useRunBarSync({
     trajectorySummary,
     trajectorySpans,
     trackLanes,
+    trackMediaKey,
     warningTicks,
     suggestedAssignments,
     activeIntervals,

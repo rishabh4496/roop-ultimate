@@ -9,9 +9,10 @@ Model
 The parser is the BiSeNet ResNet-18 network the project already ships as
 ``models/resnet18.onnx`` (yakhyo/face-parsing, MIT; sha256 in
 ``model_manifest.json``). It is NOT a second download: the Face Parser /
-RealityUX engines already use it, and registering a second ``face_parser.onnx``
-beside it would double the weights, the VRAM and the manifest entry for the same
-network. Execution providers, precision (FP32 by ``PRECISION_OVERRIDES``) and
+RealityUX engines already use it. ``face_parser.onnx`` is now a registry alias
+of these exact bytes: its presence check accepts ``resnet18.onnx`` and its
+loader reuses the existing parser, without another session. Execution providers,
+precision (FP32 by ``PRECISION_OVERRIDES``) and
 the TensorRT / CUDA / DirectML / CoreML / CPU fallback ladder all come from
 ``Mask_FaceParser.Initialize`` -- this module never builds an ORT session itself.
 
@@ -201,7 +202,15 @@ def _warn_once(key: str, message: str) -> None:
 
 def model_path() -> str:
     from roop.utilities import resolve_relative_path
-    return os.path.join(resolve_relative_path('../models'), _MODEL_FILE)
+    root = resolve_relative_path('../models')
+    original = os.path.join(root, _MODEL_FILE)
+    if os.path.isfile(original):
+        return original
+    renamed = os.path.join(root, 'face_parser.onnx')
+    if os.path.isfile(renamed):
+        from roop.model_integrity import require_local_model
+        return require_local_model('face_parser.onnx', models_dir=root)
+    return original
 
 
 def weights_available() -> bool:

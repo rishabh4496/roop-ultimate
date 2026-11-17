@@ -9,6 +9,7 @@ import threading
 import cv2
 import numpy as np
 
+from roop import studio_parameters as _studio
 import roop.globals
 from roop.appearance_conditioning import VERY_DARK, _soft_mask
 
@@ -351,7 +352,7 @@ class ColorTransferMixin:
                  Materially more expensive than the other three — see
                  _color_transfer_idt.
         """
-        mode = getattr(roop.globals, 'color_transfer_mode', 'rct')
+        mode = _studio.value('color_transfer_mode', 'rct')
         controls_active = (
             abs(float(getattr(roop.globals, 'skin_tone_warmth', 0.0) or 0.0)) > 1e-6
             or float(getattr(roop.globals, 'saturation_match', 0.0) or 0.0) > 1e-6
@@ -393,6 +394,17 @@ class ColorTransferMixin:
             out = self._color_transfer_mkl(source, target, mask=sample_mask)
         elif mode == 'idt':
             out = self._color_transfer_idt(source, target, mask=sample_mask)
+        elif mode == 'cdf':
+            from roop.procmgr_merger import MergerMixin
+            out = MergerMixin.apply_hist_match(self, source, target, 1.0, mask=sample_mask)
+        elif mode == 'adain':
+            src, ref = source.astype(np.float32), target.astype(np.float32)
+            if target.shape[:2] != source.shape[:2]:
+                ref = cv2.resize(ref, (source.shape[1], source.shape[0]))
+            samples = src.reshape(-1, 3) if sample_mask is None else src[sample_mask.astype(bool)]
+            reference = ref.reshape(-1, 3) if sample_mask is None else ref[sample_mask.astype(bool)]
+            ratio = np.clip(reference.std(axis=0) / np.maximum(samples.std(axis=0), 1.0), 0.5, 2.0)
+            out = np.clip((src - samples.mean(axis=0)) * ratio + reference.mean(axis=0), 0, 255).astype(np.uint8)
         else:
             # Default: rct (LAB mean/std).
             out = self._color_transfer_rct(source, target, mask=sample_mask)

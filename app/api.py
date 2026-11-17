@@ -204,7 +204,21 @@ def _configuration_ready():
 def _render_active() -> bool:
     """Whether a render job owns the GPU right now (the one `processing` flag the
     other busy-guards in this module read)."""
-    return bool(_progress.get("processing"))
+    return bool(_progress.get("processing") or getattr(roop_globals, 'engine_compiling', False))
+
+
+def reserve_engine_compilation():
+    """Claim the preview/scan slot before a background model build starts."""
+    if not _preview_request_lock.acquire(blocking=False):
+        return None
+    if _render_active() or _benchmark_state['running']:
+        _preview_request_lock.release()
+        return None
+    roop_globals.engine_compiling = True
+    def release():
+        roop_globals.engine_compiling = False
+        _preview_request_lock.release()
+    return release
 
 
 def _render_active_response():
@@ -1937,8 +1951,8 @@ def get_meta():
                           "Segment Anything (MobileSAM)", "Segment Anything (FastSAM)",
                           "Segment Anything 2 (tracked)"],
         "sam2_model_sizes": ["tiny", "small", "base_plus", "large"],
-        "color_transfer_modes": ["none", "rct", "lct", "mkl", "idt"],
-        "detector_engines": ["scrfd", "yoloface", "retinaface", "retinaface_r50", "retinaface_r50_gpu", "yunet"],
+        "color_transfer_modes": ["none", "rct", "lct", "mkl", "idt", "lab", "cdf", "adain"],
+        "detector_engines": ["gnkps", "scrfd", "yoloface", "retinaface", "retinaface_r50", "retinaface_r50_gpu", "yunet"],
         "encoder_presets": ["auto", "ultrafast", "superfast", "veryfast", "faster",
                              "fast", "medium", "slow", "slower", "veryslow"],
         "pool_sizes": ["auto", "1", "2", "3", "4", "5", "6", "7", "8",
@@ -3030,6 +3044,66 @@ def target_scene_cuts(index: int = None, media_id: str = None):
         "target_media_id": resolved_id,
         "scene_cuts": scene_cuts,
     }
+
+
+@app.get('/api/models/offline')
+def models_offline():
+    from roop.model_integrity import offline_presence
+    return {'models': offline_presence()}
+
+
+@app.get('/api/target/color')
+def target_color(index: int = None, media_id: str = None):
+    target_index, resolved = _target_index_for_ref(index=index, media_id=media_id)
+    if target_index is None:
+        return JSONResponse(status_code=404, content={'message': 'no target'})
+    from roop.video_muxer import probe_color
+    try:
+        return {'target_media_id': resolved, 'color': probe_color(list_files_process[target_index].filename)}
+    except ValueError as error:
+        return JSONResponse(status_code=422, content={'message': str(error)})
+
+
+@app.post('/api/target/prescan')
+def target_prescan(payload: dict = Body(...)):
+    if not _configuration_ready():
+        return _configuration_initializing()
+    if _render_active() or _benchmark_state['running']:
+        return _render_active_response()
+    if not _preview_request_lock.acquire(blocking=False):
+        return JSONResponse(status_code=409, content={'message': 'A preview or Pre-Scan already owns the GPU'})
+    try:
+        if _render_active():
+            return _render_active_response()
+        from roop.studio_parameters import normalize_payload
+        payload = normalize_payload(payload)
+        with _target_context_lock:
+            index, media_id, error = _activate_target_from_payload(payload, refresh=False)
+            if error is not None:
+                return error
+            roop_globals.processing = True
+            _progress['processing'] = True
+            _progress['status'] = 'Studio Pre-Scan'
+            try:
+                from ui.main import prepare_environment
+                prepare_environment()
+                roop_globals.is_preview = False
+                roop_globals.g_desired_face_analysis = ['detection', 'recognition', 'landmark_2d_106', 'landmark_3d_68']
+                roop_globals.detector_engine = payload.get('detector_engine', roop_globals.CFG.detector_engine)
+                roop_globals.autorotate_faces = payload.get('autorotate_faces', roop_globals.CFG.autorotate_faces)
+                _apply_timeline_settings(payload)
+                from roop.studio_prescan import scan
+                result = scan(list_files_process[index].filename, payload)
+                result['target_media_id'] = media_id
+                return result
+            finally:
+                roop_globals.processing = False
+                _progress['processing'] = False
+                _progress['status'] = ''
+    except (ValueError, RuntimeError, OSError) as error:
+        return JSONResponse(status_code=422, content={'message': str(error)})
+    finally:
+        _preview_request_lock.release()
 
 
 @app.get("/api/target/timeline_tracks")
@@ -4798,6 +4872,15 @@ def _apply_merger_settings(payload):
             "merger_sharpness_headroom", getattr(roop_globals.CFG, "merger_sharpness_headroom", 0.7)))
     except (TypeError, ValueError):
         roop_globals.merger_sharpness_headroom = 0.7
+    _apply_studio_settings(payload)
+
+
+def _apply_studio_settings(payload):
+    """Apply Studio additions using Settings' authoritative defaults."""
+    for name, cast in (('yaw_erosion_bias', float), ('ultramax_ramp', float), ('ultramax_batch_size', int)):
+        value = payload.get(name, getattr(roop_globals.CFG, name, None))
+        if value is not None:
+            setattr(roop_globals, name, cast(value))
 
 
 def _apply_eye_restore_settings(payload):
@@ -5110,6 +5193,11 @@ def _mask_debug_fields(payload):
 @app.post("/api/preview")
 def preview(payload: dict = Body(...)):
     """Render the selected target frame, optionally with a live face swap."""
+    try:
+        from roop.studio_parameters import normalize_payload
+        payload = normalize_payload(payload)
+    except ValueError as error:
+        return JSONResponse(status_code=422, content={'message': str(error)})
     if not _configuration_ready():
         return _configuration_initializing()
     # Refused BEFORE any state is touched. Past this point a preview sets the
@@ -6046,12 +6134,17 @@ def preview_upscale(payload: dict = Body(...)):
 # ── Run the swap ─────────────────────────────────────────────────────────────
 @app.post("/api/swap")
 def trigger_swap(payload: dict = Body(...)):
+    try:
+        from roop.studio_parameters import normalize_payload
+        payload = normalize_payload(payload)
+    except ValueError as error:
+        return JSONResponse(status_code=422, content={'message': str(error)})
     if not _configuration_ready():
         return _configuration_initializing()
     _refused = _terms_refusal()
     if _refused is not None:
         return _refused
-    if _progress["processing"]:
+    if _render_active():
         return JSONResponse(status_code=409, content={"message": "already processing"})
     # The benchmark holds several pools of TensorRT contexts and is timing them.
     # Starting a render on top of that gives the render a card that is already
@@ -6151,6 +6244,8 @@ def _run_swap(payload):
     pause_state = {"requested": False, "acknowledged": False}
     target_context_lock_held = False
     try:
+        from roop.studio_parameters import normalize_payload
+        payload = normalize_payload(payload)
         # The render owns an immutable target context for its whole lifetime.
         # UI target switches wait until this finally block releases the lock;
         # they cannot replace TARGET_FACES while ProcessMgr is reading them.

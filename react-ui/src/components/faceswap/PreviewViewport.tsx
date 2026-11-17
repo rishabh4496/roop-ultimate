@@ -20,6 +20,7 @@
  *   4. 100% Offline Compliance: zero external URLs, CDNs, or fonts.
  */
 
+import { useHistoryStore } from '../../store/historyStore';
 import React, {
   useCallback,
   useEffect,
@@ -788,21 +789,25 @@ export const PreviewViewport: React.FC<PreviewViewportProps> = ({
   }, [redrawMaskStrokes]);
 
   // ── Undo / Redo Actions ─────────────────────────────────────────────────────
+  const projectCanUndo = useHistoryStore((state) => state.canUndo);
+  const projectCanRedo = useHistoryStore((state) => state.canRedo);
   const handleUndo = useCallback(() => {
+    if (onMaskStrokesChange) { useHistoryStore.getState().undo(); return; }
     if (undoStackRef.current.length === 0) return;
     const previous = undoStackRef.current.pop()!;
     redoStackRef.current.push([...maskStrokes]);
     setMaskStrokes(previous);
     setHistoryTick((t) => t + 1);
-  }, [maskStrokes, setMaskStrokes]);
+  }, [maskStrokes, setMaskStrokes, onMaskStrokesChange]);
 
   const handleRedo = useCallback(() => {
+    if (onMaskStrokesChange) { useHistoryStore.getState().redo(); return; }
     if (redoStackRef.current.length === 0) return;
     const next = redoStackRef.current.pop()!;
     undoStackRef.current.push([...maskStrokes]);
     setMaskStrokes(next);
     setHistoryTick((t) => t + 1);
-  }, [maskStrokes, setMaskStrokes]);
+  }, [maskStrokes, setMaskStrokes, onMaskStrokesChange]);
 
   const handleInvertMask = useCallback(() => {
     if (controlledOnInvertMask) {
@@ -825,6 +830,7 @@ export const PreviewViewport: React.FC<PreviewViewportProps> = ({
   // Keyboard shortcut listener for Undo (Ctrl+Z) and Redo (Ctrl+Y / Ctrl+Shift+Z)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || onMaskStrokesChange) return;
       if ((e.target as HTMLElement)?.tagName === 'INPUT' || (e.target as HTMLElement)?.tagName === 'TEXTAREA') {
         return;
       }
@@ -843,7 +849,7 @@ export const PreviewViewport: React.FC<PreviewViewportProps> = ({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleUndo, handleRedo]);
+  }, [handleUndo, handleRedo, onMaskStrokesChange]);
 
   // ── Pointer Handlers with Zero-Drift ViewportMatrix Mapping ──────────────────
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -1760,7 +1766,7 @@ export const PreviewViewport: React.FC<PreviewViewportProps> = ({
               <button
                 type="button"
                 onClick={handleUndo}
-                disabled={undoStackRef.current.length === 0}
+                disabled={onMaskStrokesChange ? !projectCanUndo : undoStackRef.current.length === 0}
                 className={`px-2 py-0.5 rounded text-micro font-bold transition-colors ${
                   undoStackRef.current.length > 0
                     ? 'bg-white/15 hover:bg-white/25 text-white'
@@ -1773,7 +1779,7 @@ export const PreviewViewport: React.FC<PreviewViewportProps> = ({
               <button
                 type="button"
                 onClick={handleRedo}
-                disabled={redoStackRef.current.length === 0}
+                disabled={onMaskStrokesChange ? !projectCanRedo : redoStackRef.current.length === 0}
                 className={`px-2 py-0.5 rounded text-micro font-bold transition-colors ${
                   redoStackRef.current.length > 0
                     ? 'bg-white/15 hover:bg-white/25 text-white'

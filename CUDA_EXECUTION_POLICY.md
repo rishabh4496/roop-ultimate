@@ -1,5 +1,19 @@
 # Phase 6 — CUDA Streams and CUDA Graphs
 
+## 2026-11-17: UltraMax transient VRAM admission
+
+`VramSessionManager` coordinates pending UltraMax allocations across workers,
+queries free memory and caps requested batches to 1–8. Cards below 7 GiB keep
+batch one and the existing global GPU guard. No stream, graph, pool-width,
+precision or provider admission policy changes. OOM retries reduce a batch
+without dropping/reordering faces; inability to admit one face fails explicitly.
+The existing cross-worker coordinator is used when a batch above one is
+requested, grouping equal keyed settings. Its default remains one; live
+memory pressure can lower any request. The 1536 MiB reserve and 640 MiB/face
+estimate are admission budgets, not measured 4K peak guarantees. The real
+four-face restorer probe and injected-pressure tests are recorded in the
+Studio integration guide; physical 3060 and 4K multi-face acceptance remain open.
+
 **Recorded:** 2026-08-28
 
 This phase keeps CUDA execution hardware-adaptive. The RTX 3060 Laptop and

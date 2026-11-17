@@ -131,6 +131,7 @@ export interface NleTimelineProps {
 
   // Tracks, warnings, and suggested assignments from Step 1 Pre-Scan
   trackLanes?: ByteTrackLane[];
+  facesets?: Array<{ id: string; name: string; path: string }>;
   warningTicks?: WarningTick[];
   suggestedAssignments?: SuggestedFszAssignment[];
 
@@ -240,6 +241,7 @@ export const NleTimeline: React.FC<NleTimelineProps> = ({
   markers: markersProp = [],
   keyframes: keyframesProp = [],
   activeKeyframeParam: activeParamProp = 'Swap Opacity',
+  facesets = [],
   snapEnabled: initialSnapEnabled = true,
   onSeek,
   onSelectTrack,
@@ -1526,10 +1528,7 @@ export const NleTimeline: React.FC<NleTimelineProps> = ({
                   className="bg-black/60 border border-white/15 rounded px-1.5 py-0.5 text-micro font-medium text-white focus:outline-none focus:border-amber-400/60"
                   title="Active Keyframe Parameter"
                 >
-                  <option value="Swap Opacity">Swap Opacity</option>
-                  <option value="Mask Feather">Mask Feather</option>
-                  <option value="Yaw Erosion">Yaw Erosion</option>
-                  <option value="Color Match">Color Match</option>
+                  {Object.values(PARAMETER_CONFIGS).map((config) => <option key={config.id} value={config.id}>{config.label}</option>)}
                 </select>
               </div>
 
@@ -1638,6 +1637,15 @@ export const NleTimeline: React.FC<NleTimelineProps> = ({
                   <span className="text-micro font-mono text-neutral-300">
                     #{selectedKeyframe.frame_idx}:
                   </span>
+                  {PARAMETER_CONFIGS[selectedKeyframe.param].choices ? (
+                    <select aria-label="Keyframe value" value={selectedKeyframe.value} onChange={(e) => onUpdateKeyframes?.(nleKeyframes.map((k) => k.id === selectedKeyframe.id ? { ...k, value: Number(e.target.value), curve: 'Hold' } : k))}>
+                      {PARAMETER_CONFIGS[selectedKeyframe.param].choices!.map((v, i) => <option key={i} value={i}>{String(v)}</option>)}
+                    </select>
+                  ) : <input aria-label="Keyframe value" type="number" className="w-16 bg-black text-white" min={PARAMETER_CONFIGS[selectedKeyframe.param].min} max={PARAMETER_CONFIGS[selectedKeyframe.param].max} step={PARAMETER_CONFIGS[selectedKeyframe.param].step} value={selectedKeyframe.value} onChange={(e) => {
+                    const config = PARAMETER_CONFIGS[selectedKeyframe.param];
+                    const value = Number(e.target.value);
+                    if (Number.isFinite(value)) onUpdateKeyframes?.(nleKeyframes.map((k) => k.id === selectedKeyframe.id ? { ...k, value: Math.max(config.min, Math.min(config.max, value)) } : k));
+                  }} />}
                   {(['Linear', 'Ease In/Out', 'Hold'] as TimelineCurveType[]).map((c) => (
                     <button
                       key={c}
@@ -1763,6 +1771,10 @@ export const NleTimeline: React.FC<NleTimelineProps> = ({
                       </button>
                     </div>
 
+                    {facesets.length > 0 && <select aria-label={`Faceset for Track #${track.trackId + 1}`} value={track.facesetPath || track.facesetId || ''} onChange={(event) => onAssignFsz?.(track.trackId, event.target.value)} className="w-full bg-black/40 text-white text-micro">
+                      <option value="" disabled>Choose faceset</option>
+                      {facesets.map((source) => <option key={source.id} value={source.path}>{source.name}</option>)}
+                    </select>}
                     {/* Assigned / Suggested .fsz Assignment Chip */}
                     {showSuggestedFsz && (
                       <div className="flex items-center justify-between gap-1 mt-0.5">

@@ -1,0 +1,7 @@
+{
+  "part": "compile-cpu",
+  "offline": true,
+  "performance_acceptance": false,
+  "engine_path": null,
+  "provider": "CPUExecutionProvider"
+}

@@ -241,6 +241,9 @@ class BatchProcessingMixin:
                 and float(getattr(self.options, 'stabilization_strength', 0.5) or 0.0) > 0.0)
             or bool(getattr(self.options, 'pose_adaptive_faceset', False)))
         self._temporal_faces = None
+        from roop.timeline_state import active as active_timeline
+        if active_timeline() and active_timeline().keyframes:
+            self._temporal_mode = True
         self.stage2_frame_plan = {}
         self._temporal_covered = 0
         # A ProcessMgr instance can render more than one clip.  Never let a
@@ -697,8 +700,8 @@ class BatchProcessingMixin:
                     _src_info = _probe_video(source_video) or {}
                     _src_sar = _src_info.get('sar')
                     _src_dar = _src_info.get('dar')
-                    from roop import source_color as _source_color
-                    _src_color = _source_color.plan_for(_src_info, int(height or 0))
+                    from roop.video_muxer import output_plan
+                    _src_color = output_plan(_src_info, int(height or 0))
                     if _src_color is not None:
                         print('[Color] source is not BT.709 limited range - encoding with the source\'s own '
                               f'{_src_color.describe()} so the un-swapped background keeps its values and tags.')
@@ -746,7 +749,7 @@ class BatchProcessingMixin:
             else:
                 codec = roop.globals.video_encoder
                 _hdr_spec = _hdr_pipeline.active_for(source_video)
-                if _hdr_spec is not None:
+                if _hdr_spec is not None and not _hdr_pipeline.output_to_sdr():
                     self.videowriter = _hdr_pipeline.HdrVideoWriter(
                         target_video, width, height, fps, _hdr_spec, source_video,
                         start_frame=frame_start, codec=codec,

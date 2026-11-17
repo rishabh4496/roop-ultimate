@@ -46,7 +46,7 @@
     "test:stage11": "node .render-check/run-module.mjs render-stage11-logic.mjs",
     "test:trt-queues": "node .render-check/run-module.mjs render-stage14.mjs",
     "test:shortcuts": "node .render-check/workstation-shortcuts-check.mjs",
-    "test:render-checks": "npm run test:render &&npm run test:mapping && npm run test:stage14 && npm run test:batch && npm run test:render:mutations && npm run test:player && npm run test:error-boundary && npm run test:api-client && npm run test:recognition && npm run test:retry-policy && npm run test:brush && npm run test:pipeline-report && npm run test:pipeline-pill && npm run test:retired-controls && npm run test:head-pose-hud && npm run test:provider-matrix && npm run test:pipeline-controls && npm run test:video-io-hud && npm run test:workstation && npm run test:timeline && npm run test:stage5 && npm run test:stage8 && npm run test:console-mirror && npm run test:stage11 && npm run test:trt-queues && npm run test:mouth-custody && npm run test:stage18 && npm run test:stage19 && npm run test:identity-keyframes && npm run test:stage21 && npm run test:stage22 && npm run test:history && npm run test:stage25 && npm run test:stage26 && npm run test:stage27 && npm run test:pts-frame-map && npm run test:run-bar-sync && npm run test:preview-viewport && npm run test:nle-timeline && npm run test:shortcuts",
+    "test:render-checks": "npm run test:render &&npm run test:mapping && npm run test:stage14 && npm run test:batch && npm run test:render:mutations && npm run test:player && npm run test:error-boundary && npm run test:api-client && npm run test:recognition && npm run test:retry-policy && npm run test:brush && npm run test:pipeline-report && npm run test:pipeline-pill && npm run test:retired-controls && npm run test:head-pose-hud && npm run test:provider-matrix && npm run test:pipeline-controls && npm run test:video-io-hud && npm run test:workstation && npm run test:timeline && npm run test:stage5 && npm run test:stage8 && npm run test:console-mirror && npm run test:stage11 && npm run test:trt-queues && npm run test:mouth-custody && npm run test:stage18 && npm run test:stage19 && npm run test:identity-keyframes && npm run test:stage21 && npm run test:stage22 && npm run test:history && npm run test:stage25 && npm run test:stage26 && npm run test:stage27 && npm run test:pts-frame-map && npm run test:run-bar-sync && npm run test:preview-viewport && npm run test:nle-timeline && npm run test:shortcuts && npm run test:studio",
     "test:e2e": "playwright test -c e2e/playwright.config.js",
     "test:e2e:baseline": "node e2e/baseline.js",
     "test:e2e:themes": "node e2e/run-themes.js",
@@ -60,7 +60,8 @@
     "test:pts-frame-map": "node .render-check/run-module.mjs render-pts-frame-map.mjs",
     "test:run-bar-sync": "node .render-check/run-module.mjs render-run-bar-sync.mjs",
     "test:preview-viewport": "node .render-check/run-module.mjs preview-viewport-check.mjs",
-    "test:nle-timeline": "node .render-check/run-module.mjs nle-timeline-check.mjs"
+    "test:nle-timeline": "node .render-check/run-module.mjs nle-timeline-check.mjs",
+    "test:studio": "node .render-check/run-module.mjs render-studio-integration.mjs"
   },
   "dependencies": {
     "@tanstack/react-virtual": "3.14.18",

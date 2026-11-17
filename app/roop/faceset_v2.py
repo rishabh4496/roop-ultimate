@@ -613,6 +613,7 @@ def _entry(face, image, source_index):
         "pose_bin": _pose_bin(pose),
         "pose_cell": pose_matrix_key(pose_matrix_cell(pose)),
         "pose": [_json_float(pose[0]), _json_float(pose[1]), _json_float(pose[2])] if pose else None,
+        "det_score": detector_conf,
     }
 
 

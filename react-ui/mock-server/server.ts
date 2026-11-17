@@ -1431,6 +1431,14 @@ async function startServer() {
 
   // Head-pose HUD (roop/trajectory_cache.py): one head that turns deterministically with the frame number, and a
   // second that is gap-filled on every 5th frame, so the HUD shows both a detection and a flagged face.
+  const studioColor = { color_space: 'bt709', color_trc: 'bt709', color_transfer: 'bt709', color_primaries: 'bt709', color_range: 'tv', hdr: false, bit_depth: 8 };
+  app.get('/api/target/color', (_req, res) => res.json({ color: studioColor }));
+  app.post('/api/target/prescan', (req, res) => res.json({ available: true, target_media_id: req.body.target_media_id, color: studioColor }));
+  app.get('/api/models/offline', (_req, res) => res.json({ models: {} }));
+  app.get('/api/trajectory/summary', (_req, res) => res.json({ available: true, frames: 360, tracks: 2, first_frame: 0, last_frame: 359 }));
+  app.get('/api/trajectory/spans', (_req, res) => res.json({ available: true, relative: false,
+    tracks: [0, 1].map((track) => ({ track, first: 0, last: 359, frames: 360, ranges: [[0, 359]],
+      source_index: track, faceset_id: sourceInfo[track]?.id || null, faceset_path: sourceInfo[track]?.id || null, via: 'mock' })) }));
   app.get('/api/trajectory/pose', (req, res) => {
     const frame = Math.max(0, Number(req.query.frame) || 0);
     res.json({

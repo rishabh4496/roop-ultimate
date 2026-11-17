@@ -109,6 +109,7 @@ SIGNATURE_KEYS = (
     "grain_match_strength", "eyes_blend_amount", "eyes_feather_blend",
     "output_video_codec", "video_quality", "track_identities",
     "temporal_detection", "autorotate_faces",
+    "yaw_erosion_bias", "ultramax_ramp",
 )
 
 STAGES = ("decode", "detect", "swap", "mask", "enhance", "encode")

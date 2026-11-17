@@ -633,6 +633,29 @@ def _mean_bgr(jpeg_bytes):
 
 
 class TestPreviewFrameApi:
+    def test_compilation_reserves_the_scan_preview_slot_and_releases_it(self, client, api_module):
+        release = api_module.reserve_engine_compilation()
+        assert release is not None
+        try:
+            assert api_module._render_active()
+            assert api_module.reserve_engine_compilation() is None
+            response = client.post('/api/preview/frame', json={'frame_idx': 0, 'render_mode': 'original'})
+            assert response.status_code == 409
+        finally:
+            release()
+        assert not api_module._render_active()
+        assert not api_module._preview_request_lock.locked()
+
+    def test_studio_keys_reach_the_frame_preview_contract(self, client):
+        response = client.post('/api/preview/frame', json={'frame_idx': 0, 'render_mode': 'original',
+            'timeline': {'keyframes': [{'frame': 0, 'detector_model': 'gnkps', 'multi_angle_detect': True,
+                'pixel_boost': 768, 'preserve_inner_mouth': True, 'mask_engine': 'bisenet+xseg',
+                'grain_match_strength': .6, 'ultramax_ramp': 350}]}})
+        assert response.status_code == 200
+        parameters = _decode_telemetry(response)['timeline']['parameters']
+        assert parameters['pixel_boost'] == 768 and parameters['preserve_inner_mouth'] is True
+        assert parameters['detector_model'] == 'gnkps' and parameters['ultramax_ramp'] == 350
+
     def test_the_binary_frame_is_the_requested_frame(self, client):
         for k in (0, 3, 7, 11):
             r = client.post("/api/preview/frame", json={"frame_idx": k, "render_mode": "original"})

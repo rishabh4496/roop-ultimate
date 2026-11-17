@@ -1,3 +1,4 @@
+import process from 'node:process';
 /**
  * Unit verification for Pro Keyboard Shortcuts & Shuttle Ergonomics.
  */

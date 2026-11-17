@@ -6,12 +6,18 @@
  */
 
 import { clampFrameIdx } from '../../../utils/ptsFrameMap';
+import { STUDIO_CONTROLS } from '../studioControls';
 
 export type TimelineParamType =
   | 'Swap Opacity'
   | 'Mask Feather'
   | 'Yaw Erosion'
-  | 'Color Match';
+  | 'Color Match'
+  | 'detector_model' | 'multi_angle_detect' | 'stabilization_strength'
+  | 'pose_adaptive_faceset' | 'mask_engine' | 'yaw_erosion_bias'
+  | 'expression_restorer_weight' | 'preserve_inner_mouth' | 'pixel_boost'
+  | 'ultramax_ramp' | 'temporal_restore_alpha' | 'restore_identity_weight'
+  | 'color_transfer_mode' | 'grain_match_strength' | 'motion_blur_match';
 
 export type TimelineCurveType = 'Linear' | 'Ease In/Out' | 'Hold';
 
@@ -24,9 +30,11 @@ export interface ParameterConfig {
   defaultValue: number;
   unit: string;
   color: string;
+  wire?: string;
+  choices?: readonly (string | number | boolean)[];
 }
 
-export const PARAMETER_CONFIGS: Record<TimelineParamType, ParameterConfig> = {
+export const PARAMETER_CONFIGS = {
   'Swap Opacity': {
     id: 'Swap Opacity',
     label: 'Swap Opacity',
@@ -50,7 +58,7 @@ export const PARAMETER_CONFIGS: Record<TimelineParamType, ParameterConfig> = {
   'Yaw Erosion': {
     id: 'Yaw Erosion',
     label: 'Yaw Erosion',
-    min: 0,
+    min: -1,
     max: 1,
     step: 0.01,
     defaultValue: 0.0,
@@ -67,7 +75,38 @@ export const PARAMETER_CONFIGS: Record<TimelineParamType, ParameterConfig> = {
     unit: '',
     color: '#34d399', // Emerald 400
   },
-};
+} as Record<TimelineParamType, ParameterConfig>;
+
+for (const control of STUDIO_CONTROLS) {
+  const choices: readonly (string | number | boolean)[] | undefined = control.toggle ? [false, true] : control.choices;
+  const rawDefault = control.wire === 'pixel_boost' ? Number.parseInt(String(control.defaultValue), 10) : control.defaultValue;
+  PARAMETER_CONFIGS[control.wire as TimelineParamType] = {
+    id: control.wire as TimelineParamType, wire: control.wire, label: control.label,
+    min: choices ? 0 : control.min!, max: choices ? choices.length - 1 : control.max!,
+    step: choices ? 1 : control.step || 0.01,
+    defaultValue: choices ? Math.max(0, choices.indexOf(rawDefault as string | number | boolean)) : Number(rawDefault),
+    choices, unit: control.unit || '', color: '#a78bfa',
+  };
+}
+
+const WIRE_KEYS = { 'Swap Opacity': 'swap_opacity', 'Mask Feather': 'mask_feather', 'Yaw Erosion': 'yaw_erosion_bias', 'Color Match': 'color_match_strength' };
+const CURVES = { Linear: 'linear', 'Ease In/Out': 'ease_in_out', Hold: 'hold' };
+
+/** Group keys by absolute decoder frame, retaining a curve for each parameter. */
+export function serializeParameterKeyframes(keyframes: NleKeyframe[]) {
+  const frames = new Map<number, Record<string, unknown>>();
+  for (const keyframe of sortAndNormalizeKeyframes(keyframes)) {
+    const cfg = PARAMETER_CONFIGS[keyframe.param];
+    if (!cfg) continue;
+    const wire = cfg.wire || WIRE_KEYS[keyframe.param as keyof typeof WIRE_KEYS];
+    if (!wire) continue;
+    const frame = frames.get(keyframe.frame_idx) || { frame: keyframe.frame_idx, interpolations: {} };
+    frame[wire] = cfg.choices ? cfg.choices[Math.max(0, Math.min(cfg.choices.length - 1, Math.round(keyframe.value)))] : keyframe.value;
+    (frame.interpolations as Record<string, string>)[wire] = cfg.choices ? 'hold' : CURVES[keyframe.curve];
+    frames.set(keyframe.frame_idx, frame);
+  }
+  return [...frames.values()].sort((a, b) => Number(a.frame) - Number(b.frame));
+}
 
 export interface NleKeyframe {
   id: string;
@@ -83,9 +122,7 @@ export interface NleKeyframe {
  */
 export function easeInOut(t: number): number {
   const clamped = Math.max(0, Math.min(1, t));
-  return clamped < 0.5
-    ? 4 * clamped * clamped * clamped
-    : 1 - Math.pow(-2 * clamped + 2, 3) / 2;
+  return clamped * clamped * (3 - 2 * clamped);
 }
 
 /**
@@ -100,7 +137,8 @@ export function createNleKeyframe(
 ): NleKeyframe {
   const cfg = PARAMETER_CONFIGS[param] || PARAMETER_CONFIGS['Swap Opacity'];
   const rawVal = value !== undefined ? value : cfg.defaultValue;
-  const clampedVal = Math.max(cfg.min, Math.min(cfg.max, rawVal));
+  const bounded = Math.max(cfg.min, Math.min(cfg.max, rawVal));
+  const clampedVal = cfg.choices ? Math.round(bounded) : bounded;
 
   return {
     id: `kf_${param.replace(/\s+/g, '_').toLowerCase()}_${frame_idx}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
@@ -178,7 +216,7 @@ export function evaluateKeyframeValue(
 
       const t = (target - kf0.frame_idx) / span;
 
-      if (kf0.curve === 'Hold') {
+      if (kf0.curve === 'Hold' || cfg.choices) {
         return kf0.value;
       }
       if (kf0.curve === 'Linear') {

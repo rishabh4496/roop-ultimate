@@ -62,6 +62,7 @@ import os
 import cv2
 import numpy as np
 
+from roop import studio_parameters as _studio
 import roop.globals
 from roop.appearance_conditioning import sharpen_factor, _soft_mask
 
@@ -170,7 +171,7 @@ def _sharp_headroom():
 
 def _cfg(name, default=0.0):
     try:
-        return float(getattr(roop.globals, name, default) or default)
+        return float(_studio.value(name, default) or default)
     except (TypeError, ValueError):
         return default
 

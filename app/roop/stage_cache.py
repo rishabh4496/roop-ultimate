@@ -63,7 +63,7 @@ class Unserializable(Exception):
 def _temporal_prepass_features(pm: Any) -> Dict[str, Any]:
     options = getattr(pm, "options", None)
     strength = float(getattr(options, "stabilization_strength", 0.5) or 0.0)
-    return {
+    result = {
         "association_policy": "bytetrack-v1",
         "active": bool((getattr(options, "stabilize_face", False) and strength > 0.0)
                        or getattr(options, "pose_adaptive_faceset", False)),
@@ -76,6 +76,16 @@ def _temporal_prepass_features(pm: Any) -> Dict[str, Any]:
         "dropout_prediction_frames": int(getattr(options, "dropout_prediction_frames", 8)),
         "pose_adaptive_faceset": bool(getattr(options, "pose_adaptive_faceset", False)),
     }
+    from roop.timeline_state import active
+    timeline = active()
+    keys = {'detector_model', 'multi_angle_detect', 'stabilization_strength', 'pose_adaptive_faceset'}
+    automation = [{**{'frame': kf.frame, 'interpolation': kf.interpolation},
+                   'interpolations': {k: v for k, v in kf.interpolations.items() if k in keys},
+                   **{k: v for k, v in kf.values().items() if k in keys}}
+                  for kf in timeline.keyframes if keys.intersection(kf.values())] if timeline else []
+    if automation:
+        result['keyframed_analysis'] = automation
+    return result
 
 
 # ── tagged JSON values ───────────────────────────────────────────────────────────────────────────────

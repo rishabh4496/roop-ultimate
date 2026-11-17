@@ -53,8 +53,24 @@ PARAMETER_RANGES: Dict[str, Tuple[float, float]] = {
     "yaw_erosion_bias": (-1.0, 1.0),
     "color_match_strength": (0.0, 1.0),
     "occlusion_sensitivity": (0.0, 2.0),
+    "stabilization_strength": (0.0, 1.0),
+    "expression_restorer_weight": (0.0, 1.0),
+    "ultramax_ramp": (256.0, 384.0),
+    "temporal_restore_alpha": (0.0, 0.9),
+    "restore_identity_weight": (0.0, 1.0),
+    "grain_match_strength": (0.0, 1.0),
+    "motion_blur_match": (0.0, 1.0),
 }
-PARAMETERS = tuple(PARAMETER_RANGES)
+PARAMETER_CHOICES = {
+    "detector_model": ("gnkps", "scrfd", "retinaface", "retinaface_r50", "retinaface_r50_gpu", "yoloface", "yunet"),
+    "mask_engine": ("bisenet+xseg", "RealityUX", "Face Parser", "DFL XSeg", "None"),
+    "pixel_boost": (256, 512, 768),
+    "color_transfer_mode": ("lab", "cdf", "adain", "none", "rct", "lct", "mkl", "idt"),
+    "multi_angle_detect": (False, True),
+    "pose_adaptive_faceset": (False, True),
+    "preserve_inner_mouth": (False, True),
+}
+PARAMETERS = (*PARAMETER_RANGES, *PARAMETER_CHOICES)
 
 MAX_KEYFRAMES = 20000
 MAX_BINDINGS = 256
@@ -91,11 +107,26 @@ def _float(value: Any, what: str, lo: float, hi: float) -> float:
 class ParameterKeyframe:
     frame: int
     interpolation: str = "linear"
+    interpolations: Mapping[str, str] = field(default_factory=dict)
     swap_opacity: Optional[float] = None
     mask_feather: Optional[float] = None
     yaw_erosion_bias: Optional[float] = None
     color_match_strength: Optional[float] = None
     occlusion_sensitivity: Optional[float] = None
+    stabilization_strength: Optional[float] = None
+    expression_restorer_weight: Optional[float] = None
+    ultramax_ramp: Optional[float] = None
+    temporal_restore_alpha: Optional[float] = None
+    restore_identity_weight: Optional[float] = None
+    grain_match_strength: Optional[float] = None
+    motion_blur_match: Optional[float] = None
+    detector_model: Optional[str] = None
+    mask_engine: Optional[str] = None
+    pixel_boost: Optional[int] = None
+    color_transfer_mode: Optional[str] = None
+    multi_angle_detect: Optional[bool] = None
+    pose_adaptive_faceset: Optional[bool] = None
+    preserve_inner_mouth: Optional[bool] = None
 
     def values(self) -> Dict[str, float]:
         return {n: getattr(self, n) for n in PARAMETERS if getattr(self, n) is not None}
@@ -103,6 +134,8 @@ class ParameterKeyframe:
     def to_dict(self) -> Dict[str, Any]:
         out: Dict[str, Any] = {"frame": self.frame, "interpolation": self.interpolation}
         out.update(self.values())
+        if self.interpolations:
+            out['interpolations'] = dict(self.interpolations)
         return out
 
     @classmethod
@@ -111,7 +144,7 @@ class ParameterKeyframe:
             return data
         if not isinstance(data, Mapping):
             raise TimelineError(f"{where} must be an object")
-        known = {"frame", "interpolation", *PARAMETERS}
+        known = {"frame", "interpolation", "interpolations", *PARAMETERS}
         extra = sorted(set(data) - known)
         if extra:
             raise TimelineError(f"{where} has unknown field(s): {', '.join(map(str, extra))}")
@@ -124,7 +157,18 @@ class ParameterKeyframe:
         for name, (lo, hi) in PARAMETER_RANGES.items():
             raw = data.get(name)
             values[name] = None if raw is None else _float(raw, f"{where}.{name}", lo, hi)
-        return cls(frame=_int(data["frame"], f"{where}.frame"), interpolation=interpolation, **values)
+        for name, choices in PARAMETER_CHOICES.items():
+            raw = data.get(name)
+            if raw is not None and (raw not in choices or
+                    (isinstance(choices[0], bool) and not isinstance(raw, bool)) or
+                    (name == 'pixel_boost' and (isinstance(raw, bool) or not isinstance(raw, int)))):
+                raise TimelineError(f'{where}.{name} must be one of {choices}')
+            values[name] = raw
+        curves = data.get('interpolations') or {}
+        if not isinstance(curves, Mapping) or any(k not in PARAMETERS or v not in INTERPOLATIONS for k, v in curves.items()):
+            raise TimelineError(f'{where}.interpolations contains an invalid parameter or curve')
+        return cls(frame=_int(data["frame"], f"{where}.frame"), interpolation=interpolation,
+                   interpolations=MappingProxyType(dict(curves)), **values)
 
 
 def _normalise_ranges(raw: Any, where: str) -> Tuple[Tuple[int, int], ...]:
@@ -160,9 +204,12 @@ class FaceTrackBinding:
     thumbnail_b64: str = ""
     active_ranges: Tuple[Tuple[int, int], ...] = ()
     locked: bool = False
+    enabled: bool = True
 
     def is_active(self, frame: int) -> bool:
         """Empty ``active_ranges`` means the whole clip."""
+        if not self.enabled:
+            return False
         if not self.active_ranges:
             return True
         i = bisect.bisect_right(self.active_ranges, (frame, math.inf)) - 1
@@ -171,7 +218,8 @@ class FaceTrackBinding:
     def to_dict(self) -> Dict[str, Any]:
         return {"track_id": self.track_id, "label": self.label, "faceset_path": self.faceset_path,
                 "thumbnail_b64": self.thumbnail_b64,
-                "active_ranges": [[s, e] for s, e in self.active_ranges], "locked": self.locked}
+                "active_ranges": [[s, e] for s, e in self.active_ranges], "locked": self.locked,
+                **({'enabled': False} if not self.enabled else {})}
 
     @classmethod
     def from_dict(cls, data: Any, where: str = "binding") -> "FaceTrackBinding":
@@ -206,10 +254,13 @@ class FaceTrackBinding:
         locked = data.get("locked", False)
         if not isinstance(locked, bool):
             raise TimelineError(f"{where}.locked must be true or false")
+        enabled = data.get('enabled', True)
+        if not isinstance(enabled, bool):
+            raise TimelineError(f'{where}.enabled must be true or false')
         return cls(track_id=_int(data["track_id"], f"{where}.track_id", lo=-(2 ** 31)), label=label,
                    faceset_path=path, thumbnail_b64=thumb,
                    active_ranges=_normalise_ranges(data.get("active_ranges"), f"{where}.active_ranges"),
-                   locked=locked)
+                   locked=locked, enabled=enabled)
 
 
 @dataclass(frozen=True)
@@ -290,7 +341,7 @@ class KeyframeCurves:
         raw: Dict[str, List[Tuple[int, float, str]]] = {n: [] for n in PARAMETERS}
         for kf in sorted((ParameterKeyframe.from_dict(k) for k in keyframes), key=lambda k: k.frame):
             for name, value in kf.values().items():
-                raw[name].append((kf.frame, value, kf.interpolation))
+                raw[name].append((kf.frame, value, kf.interpolations.get(name, kf.interpolation)))
         self._curves = {n: (tuple(f for f, _, _ in pts), tuple(v for _, v, _ in pts), tuple(i for _, _, i in pts))
                         for n, pts in raw.items() if pts}
 
@@ -306,7 +357,7 @@ class KeyframeCurves:
                 out[name] = values[0]
             elif frames[i] == frame or i == len(frames) - 1:
                 out[name] = values[i]
-            elif interps[i] == "hold":
+            elif interps[i] == "hold" or name in PARAMETER_CHOICES:
                 out[name] = values[i]
             else:
                 t = (frame - frames[i]) / float(frames[i + 1] - frames[i])
@@ -429,7 +480,7 @@ def gate_pending(pending: List[Tuple[Any, Any]], absolute_frame: int) -> Tuple[L
     state = _active
     if state is None or not state.bindings:
         return pending, []
-    by_track = {b.track_id: b for b in state.bindings if b.active_ranges}
+    by_track = {b.track_id: b for b in state.bindings if b.active_ranges or not b.enabled}
     if not by_track:
         return pending, []
     kept, dropped = [], []

@@ -479,6 +479,10 @@ def parse_precision_overrides(text: str) -> dict:
 def precision_override_for(model_key, model_path):
     """The per-model precision for this file, or None to follow the global setting. Swappers are always None."""
     stem = _stem(model_path)
+    # The pinned face_parser export is byte-identical to resnet18. Renaming
+    # the offline asset must not bypass BiSeNet's owner-mandated FP32 lock.
+    if stem == "face_parser":
+        stem = "resnet18"
     if not stem:
         return None
     table = dict(PRECISION_OVERRIDES)
@@ -607,7 +611,8 @@ def _finalize(model_key, model_path, providers, device_id=0):
     except Exception as _degrade_error:
         # Shape profiling is an optimisation, never a reason to fail a build.
         _swallowed("roop/precision_policy.py:426", _degrade_error, "fallback continued")
-    return apply_build_override(providers, model_key, model_path)
+    from roop.engine_cache import qualify_providers
+    return qualify_providers(apply_build_override(providers, model_key, model_path), model_path)
 
 
 # ── per-model TensorRT build overrides ─────────────────────────────────────────────────────────────

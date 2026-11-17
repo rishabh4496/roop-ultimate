@@ -1207,6 +1207,9 @@ class Settings:
         self.temporal_enhancer_blend = self.default_get(data, 'temporal_enhancer_blend', 0.20)
         self.velocity_motion_blur = self.default_get(data, 'velocity_motion_blur', 1.0)
         self.grain_match_strength = self.default_get(data, 'grain_match_strength', 0.35)
+        self.yaw_erosion_bias = self.default_get(data, 'yaw_erosion_bias', 0.0)
+        self.ultramax_ramp = self.default_get(data, 'ultramax_ramp', 384.0)
+        self.ultramax_batch_size = self.default_get(data, 'ultramax_batch_size', 1)
         self.hf_flow_backend = self.default_get(data, 'hf_flow_backend', 'auto')
         self.hf_flow_vram = self.default_get(data, 'hf_flow_vram', 'auto')
         self.hf_flow_weights = self.default_get(data, 'hf_flow_weights', '')
@@ -1641,6 +1644,9 @@ class Settings:
             'temporal_enhancer_blend': self.temporal_enhancer_blend,
             'velocity_motion_blur': self.velocity_motion_blur,
             'grain_match_strength': self.grain_match_strength,
+            'yaw_erosion_bias': self.yaw_erosion_bias,
+            'ultramax_ramp': self.ultramax_ramp,
+            'ultramax_batch_size': self.ultramax_batch_size,
             'hf_flow_backend': self.hf_flow_backend,
             'hf_flow_vram': self.hf_flow_vram,
             'hf_flow_weights': self.hf_flow_weights,

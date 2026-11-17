@@ -305,8 +305,8 @@ def _probe_video(video_path: str):
                         bit_depth = b
                         break
 
-            color_dict = {k: str(st.get(k) or "") for k in
-                          ("color_space", "color_primaries", "color_transfer", "color_range")}
+            from roop.video_muxer import extract_color_tags
+            color_dict = extract_color_tags(st)
             from roop.source_color import format_color_badge
             color_badge = format_color_badge(
                 {"color": color_dict, "bit_depth": bit_depth, "pix_fmt": pix_fmt, "codec": codec},

@@ -183,7 +183,7 @@ class ManifestTests(unittest.TestCase):
             self.assertRegex(e.sha256, r"^[0-9a-f]{64}$", e.file)
             self.assertGreater(e.size, 0)
             self.assertTrue(e.urls and all(u.startswith("https://") for u in e.urls))
-            self.assertTrue(all(u.endswith("/" + os.path.basename(e.file)) for u in e.urls), e.file)
+            self.assertTrue(all(any(u.endswith("/" + os.path.basename(name)) for name in (e.file, *e.aliases)) for u in e.urls), e.file)
 
     def test_a_subfolder_entry_is_found_by_its_full_path(self):
         entries = mi.load_manifest()
@@ -204,7 +204,11 @@ class ManifestTests(unittest.TestCase):
             APP / "roop" / "core.py",
         ])
         for e in mi.load_manifest():
-            self.assertIn(os.path.basename(e.file), sources)
+            if not e.offline_only:
+                self.assertIn(os.path.basename(e.file), sources)
+            else:
+                self.assertFalse(e.required)
+                self.assertEqual(len(e.sha256), 64)
 
     def test_startup_runs_the_integrity_check(self):
         source = (APP / "roop" / "core.py").read_text(encoding="utf-8")

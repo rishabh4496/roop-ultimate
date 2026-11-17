@@ -376,12 +376,18 @@ def _ensure_pool(model_type):
 
         if model_type == 'r50':
             url, file = _MODEL_R50_URL, "retinaface_r50.onnx"
+        elif model_type == 'gnkps':
+            url, file = None, 'scrfd_10g_gnkps.onnx'
         else:
             url, file = _MODEL_10G_URL, "retinaface_10g.onnx"
 
         model_dir = resolve_relative_path('../models')
-        conditional_download(model_dir, [url])
+        if url:
+            conditional_download(model_dir, [url])
         model_path = os.path.join(model_dir, file)
+        if model_type == 'gnkps':
+            from roop.model_integrity import require_local_model
+            model_path = require_local_model(file, models_dir=model_dir)
 
         if roop.globals.CFG is not None and roop.globals.CFG.force_cpu:
             providers = ["CPUExecutionProvider"]

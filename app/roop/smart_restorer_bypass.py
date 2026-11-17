@@ -203,6 +203,8 @@ def bypass_weight(
     3. Restorer is CodeFormer, GFPGAN, RestoreFormer++ / RF++, Restore Ultra or UltraMax.
     4. The face's bounding-box height sets the weight along the ``lo``..``hi`` ramp.
     """
+    from roop.studio_parameters import value
+    hi = float(value('ultramax_ramp', hi))
     return ramp_weight(_bypass_height(target_face, swap_model, restorer_processor, enabled), lo, hi)
 
 

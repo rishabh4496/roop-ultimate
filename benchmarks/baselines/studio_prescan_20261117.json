@@ -1,0 +1,54 @@
+{
+  "part": "prescan",
+  "offline": true,
+  "performance_acceptance": false,
+  "available": true,
+  "summary": {
+    "frame_start": 0,
+    "sar": 1.0,
+    "faces": 600,
+    "frames": 600,
+    "tracks": 1,
+    "plan_kind": "forward_backward_one_euro",
+    "template_mode": "arcface",
+    "filter_min_cutoff": 0.05,
+    "filter_beta": 0.02,
+    "filter_d_cutoff": 8.0,
+    "fps": 30.0,
+    "total_frames": 600,
+    "source_path": "G:\\pinokio\\api\\roop-ultimate\\app\\roop\\assets\\benchmark\\regression_solo_600f_1080p.mp4",
+    "source_size": 2413883,
+    "source_mtime_ns": 1792399563768677800,
+    "frame_shape": [
+      1080,
+      1920
+    ],
+    "pts_table": "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",
+    "pts_count": 600,
+    "pts_time_base": "seconds_as_exact_fraction",
+    "is_vfr": false,
+    "format": "roop-trajectory",
+    "version": 2,
+    "template": "arcface",
+    "template_size": 112,
+    "pose_convention": "solve_pose_5pt: +yaw nose toward the viewer's right, +pitch tilted down, +roll clockwise (degrees)",
+    "bytes": 303000,
+    "first_frame": 0,
+    "last_frame": 599,
+    "track_ids": [
+      0
+    ]
+  },
+  "color": {
+    "color_space": "",
+    "color_primaries": "",
+    "color_transfer": "",
+    "color_range": "",
+    "color_trc": "",
+    "hdr": false,
+    "bit_depth": 8,
+    "color_badge": "BT.709  Limited Range  8-bit",
+    "width": 1920,
+    "height": 1080
+  }
+}

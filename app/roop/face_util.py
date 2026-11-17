@@ -8,6 +8,7 @@ from queue import Queue
 from typing import Any, Optional
 import insightface
 
+from roop import studio_parameters as _studio
 import roop.globals
 from roop.typing import Frame, Face
 from roop import session_pool
@@ -76,14 +77,20 @@ def _desired_det_size():
 
 # Engines that bring their OWN detector and only borrow buffalo_l's aux models
 # via _hybrid_detector_faces (which skips taskname == 'detection').
-_HYBRID_ENGINES = ('yoloface', 'retinaface', 'retinaface_r50', 'retinaface_r50_gpu', 'yunet')
+_HYBRID_ENGINES = ('gnkps', 'yoloface', 'retinaface', 'retinaface_r50', 'retinaface_r50_gpu', 'yunet')
 
 
 def _current_engine():
+    # The shared auxiliary bundle stays stable while per-frame keys choose
+    # independent, leased detector sessions in _detect_faces_singlepass.
     return getattr(roop.globals, 'detector_engine', 'scrfd')
 
 
 def _hybrid_engine_active() -> bool:
+    from roop import timeline_state
+    timeline = timeline_state.active()
+    if timeline and any(k.detector_model is not None for k in timeline.keyframes):
+        return False  # retain SCRFD for keyed returns to the stock detector
     return _current_engine() in _HYBRID_ENGINES
 
 
@@ -179,7 +186,9 @@ def _per_model_precision(chains):
         if chain:
             member = bundle_member_providers('recognition:buffalo_l', chain, name)
             if member is not None:
-                kwargs['providers'] = chain = member
+                chain = member
+            from roop.engine_cache import qualify_providers
+            kwargs['providers'] = chain = qualify_providers(chain, name)
         chains[os.path.normcase(os.path.abspath(name))] = list(chain or [])
         return original(name, **kwargs)
 
@@ -213,6 +222,8 @@ def _guard_aux_models(fa, chains):
                 continue
 
             def _build(c, _f=model_file):
+                from roop.engine_cache import qualify_providers
+                c = qualify_providers(c, _f)
                 return onnxruntime.InferenceSession(_f, get_onnx_session_options(), providers=c)
             session, _used, _verdict = aux_canary.guard(stem, model.session, model_file, chain, _build)
             if session is not model.session:
@@ -1059,7 +1070,7 @@ def _detect_faces_raw(frame, det_size=None, det_thresh=None, aux=True, unclamped
     second one while holding the first would deadlock a pool whose every instance
     is held by a worker.
     """
-    engine = getattr(roop.globals, 'detector_engine', 'scrfd')
+    engine = _studio.value('detector_engine', 'scrfd')
     if _bp.enabled():
         # Counted at the call that runs the detector, attributed to its direct
         # caller, so "rescue X ran" is read off real executions.
@@ -1098,6 +1109,8 @@ def _detect_faces_raw(frame, det_size=None, det_thresh=None, aux=True, unclamped
         try:
             if engine == 'yoloface':
                 faces = _hybrid_yolo_faces(frame, fa, eff_size, eff_thresh, aux=aux)
+            elif engine == 'gnkps':
+                faces = _hybrid_retinaface_faces(frame, fa, eff_size, eff_thresh, model_type='gnkps', aux=aux)
             elif engine == 'retinaface':
                 faces = _hybrid_retinaface_faces(frame, fa, eff_size, eff_thresh, model_type='10g', aux=aux)
             elif engine == 'retinaface_r50':
@@ -1924,7 +1937,7 @@ def _detect_faces(frame, expected_count=None, rescue=True, det_thresh=None):
         return _enrich_detected_faces(frame, faces)
     if not faces:
         attempted = True
-        engine = getattr(roop.globals, 'detector_engine', 'scrfd')
+        engine = _studio.value('detector_engine', 'scrfd')
         has_multiscale = (engine in ('retinaface', 'retinaface_r50', 'retinaface_r50_gpu')
                           or bool(getattr(roop.globals, 'detector_scale_pyramid', None)))
         # 1. Small-face rescue.

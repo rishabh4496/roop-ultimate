@@ -204,6 +204,17 @@ class FaceTrackStabilizer:
     def reset(self) -> None:
         self._tracks.clear()
 
+    def set_strength(self, strength: float) -> None:
+        """Apply an animated strength to existing filters without losing time."""
+        self.strength = float(np.clip(strength, 0.0, 1.0))
+        self.beta = 0.5 * self.strength
+        self.min_cutoff = max(0.005, 0.5 - 0.45 * self.strength)
+        for state in self._tracks.values():
+            for name in ('landmarks_filter', 'dense_filter', 'affine_filter'):
+                getattr(state, name).min_cutoff = self.min_cutoff
+        if self.strength <= 0.0:
+            self.reset()
+
     def reset_track(self, track_id: Any) -> None:
         self._tracks.pop(track_id, None)
 

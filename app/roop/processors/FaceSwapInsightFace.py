@@ -696,8 +696,9 @@ def _swap_providers(providers, model_key='face_swap', model_path=None):
     for the known overflow-safe override; ``ROOP_SWAP_FP16=1`` remains as a
     backwards-compatible alias meaning "do not force FP32".
     """
+    from roop.engine_cache import qualify_providers
     if os.environ.get('ROOP_SWAP_FP16', '0') == '1':
-        return providers
+        return qualify_providers(providers, model_path)
     cfg = getattr(roop.globals, 'CFG', None)
     precision = str(getattr(cfg, 'trt_precision', 'mixed') or 'mixed').lower()
     force_fp32 = os.environ.get('ROOP_SWAP_FP32', '0') == '1' or precision == 'fp32'
@@ -707,7 +708,7 @@ def _swap_providers(providers, model_key='face_swap', model_path=None):
         print(f"[RealSwap] TensorRT precision={decision.effective}; "
               f"policy={decision.model}; preserving guarded precision", flush=True)
         return selected
-    return _force_fp32_providers(providers)
+    return qualify_providers(_force_fp32_providers(providers), model_path)
 
 
 def _force_fp32_providers(providers):
@@ -913,6 +914,7 @@ class FaceSwapInsightFace():
             # rebuild this exact model on CUDA/CPU (see _rebuild_without_trt).
             self._swap_providers = swap_providers
             self._model_arg = model_arg
+            self._model_path = model_path
             self._trt_disabled = False
             self._batch_unsupported = not spec.get("batch_capable", True)
 
@@ -1281,6 +1283,8 @@ class FaceSwapInsightFace():
               f"This TensorRT FP16/mixed engine would swap every face to the wrong picture "
               f"with no error. Rebuilding on a TensorRT FP32 engine.", flush=True)
         fp32 = _force_fp32_providers(providers)
+        from roop.engine_cache import qualify_providers
+        fp32 = qualify_providers(fp32, getattr(self, '_model_path', None))
         try:
             from roop.strict_session import create_strictly_accelerated_session
             self.model_swap_insightface = create_strictly_accelerated_session(

@@ -214,6 +214,10 @@ returns `"mock": true`.
 
 ### HTTP API
 
+The [offline Studio integration guide](docs/development/STUDIO_INTEGRATION.md)
+documents pose-indexed facesets, track bindings, keyframed Inspector controls,
+checkpoint recovery, offline model checks, and the Pre-Scan/color endpoints.
+
 The backend detects the active GPU and software stack at runtime. It records the
 GPU name, architecture/compute capability, total and available VRAM, driver,
 CUDA, TensorRT, ONNX Runtime, Tensor Core precision modes, and NVDEC/NVENC

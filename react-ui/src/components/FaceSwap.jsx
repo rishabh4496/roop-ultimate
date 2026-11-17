@@ -37,6 +37,10 @@ import ParserRegions from './faceswap/ParserRegions';
 import InteractivePreview from './faceswap/InteractivePreview';
 import PreviewViewport from './faceswap/PreviewViewport';
 import NleTimeline from './faceswap/NleTimeline';
+import StudioParameters from './faceswap/StudioParameters';
+import { studioPayload } from './faceswap/studioControls';
+import { serializeStudioTimeline } from './faceswap/studioProjectModel';
+import useStudioProject from './faceswap/useStudioProject';
 import useWorkstationShortcuts from './faceswap/useWorkstationShortcuts';
 import useQueue, {
   ACTIVE_STATES, QUEUE_STATE_CLASS, QUEUE_STATE_LABEL, RETRYABLE_STATES, jobState,
@@ -175,6 +179,8 @@ export default function FaceSwap({
   const [selTargetFace, setSelTargetFace] = useState(0);
   const [frame, setFrame] = useState(1);
   const [maxFrames, setMaxFrames] = useState(1);
+  const startFrame = targets[selTarget]?.start_frame || 1;
+  const endFrame = targets[selTarget]?.end_frame || maxFrames;
   const [previewSrc, setPreviewSrc] = useState('');
   // The same value, readable synchronously. The revoke decision above has to
   // be made against what state currently HOLDS, not against the value this
@@ -208,6 +214,11 @@ export default function FaceSwap({
   const [maskRefKps, setMaskRefKps] = useState(null);
   const [maskVersion, setMaskVersion] = useState(0);
   const maskVersionSeq = useRef(0);
+  const videoRef = useRef(null);
+  const previewCanvasRef = useRef(null);
+  const previewMaskCanvasRef = useRef(null);
+  const previewMaskExportRef = useRef(null);
+  const [studioBrushActive, setStudioBrushActive] = useState(false);
   // Single-frame AI-upscale spot-check (result shown in a modal).
   const [upscaledSrc, setUpscaledSrc] = useState('');
   const [upscaledDims, setUpscaledDims] = useState(null);
@@ -678,6 +689,8 @@ export default function FaceSwap({
   // The timeline's per-scene overrides and its record of finished renders, per clip. The overrides
   // reach a render the same way segments do (one queued job per piece); see timeline/overrides.js.
   const timelineKey = activeTargetMediaId || targets[selTarget]?.name || String(selTarget);
+  const studio = useStudioProject(timelineKey, notify);
+  const studioTimeline = (mediaId = timelineKey) => serializeStudioTimeline(mediaId === timelineKey ? studio.project : {});
   const sceneOverrides = useSceneOverrides(timelineKey, maxFrames);
   const renderLog = useRenderLog(timelineKey);
   // Stage 25: parameter curves (keyframed settings), per clip. The preview reads them exactly; a render reads them as
@@ -1027,6 +1040,8 @@ export default function FaceSwap({
     const selectedSource = Number.isInteger(sourceIndex) ? sourceIndex : selSource;
     return {
       ...sp,
+      ...studioPayload(sp),
+      timeline: studioTimeline(targetMediaId),
       enhancer: sp.selected_enhancer, adaptive_enhancer_profile: sp.adaptive_enhancer_profile || 'BALANCED', detection: sp.face_detection_mode,
       output_method: sp.output_method,
       upscale: sp.subsample_upscale, mask_engine: sp.mask_engine,
@@ -1300,6 +1315,35 @@ export default function FaceSwap({
     () => ({ dataUrl: manualMask, kps: maskRefKps, version: maskVersion }),
     [manualMask, maskRefKps, maskVersion],
   );
+  const recoveredStudioKey = useRef(null);
+  const skipStudioWrite = useRef(false);
+  useEffect(() => {
+    if (!activeTargetMediaId || recoveredStudioKey.current === timelineKey) return;
+    recoveredStudioKey.current = timelineKey;
+    skipStudioWrite.current = true;
+    const restored = studio.project;
+    setManualMask(restored.mask?.dataUrl || '');
+    setMaskRefKps(restored.mask?.kps || null);
+    setMaskVersion(restored.mask?.version || 0);
+    setRotoByMedia((all) => ({ ...all, [clipKey]: restored.roto || [] }));
+    setPinsByMedia((all) => ({ ...all, [clipKey]: restored.pins || [] }));
+  }, [activeTargetMediaId, timelineKey, clipKey, studio.project]);
+  useEffect(() => {
+    if (!activeTargetMediaId || recoveredStudioKey.current !== timelineKey) return;
+    if (skipStudioWrite.current) { skipStudioWrite.current = false; return; }
+    studio.update({ mask: maskBundle, roto: rotoByMedia[clipKey] || [], pins: pinsByMedia[clipKey] || [] });
+  }, [activeTargetMediaId, timelineKey, clipKey, maskBundle, rotoByMedia, pinsByMedia, studio]);
+  useEffect(() => {
+    const trim = studio.project.trim;
+    if (!activeTargetMediaId || !trim) return;
+    setTargets((all) => all.map((target, i) => i === selTarget ? { ...target, start_frame: trim.start, end_frame: trim.end } : target));
+    // Undo/redo and checkpoint recovery update the same backend trim points
+    // consumed by rendering, not just the handles drawn on the timeline.
+    Promise.all([
+      postJSON('/api/target/set_frame', { which: 'start', frame: trim.start, target_media_id: activeTargetMediaId }),
+      postJSON('/api/target/set_frame', { which: 'end', frame: trim.end, target_media_id: activeTargetMediaId }),
+    ]).catch((error) => notify(error.message, 'error'));
+  }, [activeTargetMediaId, selTarget, studio.project.trim, postJSON, notify]);
   useHistoryChannel('mask', maskBundle, (b) => {
     setManualMask(b.dataUrl);
     setMaskRefKps(b.kps);
@@ -1363,6 +1407,9 @@ export default function FaceSwap({
     const previewDetection = activeParams.face_detection_mode;
     return {
       index, frame: fr, fake_preview: fake,
+      ...studioPayload(activeParams),
+      ultramax_batch_size: activeParams.ultramax_batch_size,
+      timeline: studioTimeline(requestedMediaId || targetIdAt(index) || activeTargetMediaId),
       enhancer: activeParams.selected_enhancer, adaptive_enhancer_profile: activeParams.adaptive_enhancer_profile || 'BALANCED', codeformer_fidelity: num(activeParams.codeformer_fidelity, 0.5), tile_diffusion_strength: num(activeParams.tile_diffusion_strength, 0.65), tile_diffusion_steps: num(activeParams.tile_diffusion_steps, 2), restoration_mode: activeParams.restoration_mode || "balanced",
       detection: previewDetection,
       face_distance: num(activeParams.max_face_distance, 0.75), blend_ratio: num(activeParams.blend_ratio, 0.8),
@@ -2480,6 +2527,7 @@ export default function FaceSwap({
 
   const setFrameMarkerVal = async (which, val) => {
     if (!val || isNaN(val)) return;
+    studio.update({ trim: { start: startFrame, end: endFrame, [which]: Number(val) } });
     try {
       const res = await postJSON('/api/target/set_frame', {
         which, frame: val, target_media_id: activeTargetMediaId,
@@ -2551,10 +2599,19 @@ export default function FaceSwap({
     },
     notify,
   });
+  useEffect(() => {
+    if (!runBarSync.trackLanes.length || runBarSync.trackMediaKey !== timelineKey) return;
+    const missing = runBarSync.trackLanes.filter((track) => !studio.project.bindings.some((binding) => binding.track_id === track.trackId));
+    studio.update({ tracks: runBarSync.trackLanes, bindings: [...studio.project.bindings, ...missing.map((track) => ({
+      track_id: track.trackId, label: track.label, faceset_path: track.facesetPath || track.facesetId || '', active_ranges: [], locked: false,
+    }))] });
+  }, [runBarSync.trackLanes, runBarSync.trackMediaKey, timelineKey, studio]);
+  const studioTracks = runBarSync.trackMediaKey === timelineKey ? runBarSync.trackLanes : studio.project.tracks || [];
 
   // ── Workstation Shortcuts, Pro Studio Mode, & Parity Wiring ───────────────
   const [isPeekingOriginal, setIsPeekingOriginal] = useState(false);
-  const [useProStudioView, setUseProStudioView] = useState(false);
+  const useProStudioView = studio.project.studioView ?? studio.project.bindings.length > 0;
+  const setUseProStudioView = (next) => studio.update({ studioView: typeof next === 'function' ? next(useProStudioView) : next });
 
   const workstationShortcuts = useWorkstationShortcuts({
     frame,
@@ -3274,8 +3331,6 @@ export default function FaceSwap({
     return () => window.removeEventListener('roop:command', h);
   }, []);
 
-  const startFrame = targets[selTarget]?.start_frame || 1;
-  const endFrame = targets[selTarget]?.end_frame || maxFrames;
 
   // ── Timeline: finished renders, scene overrides, and the actions on them ──
   // A render's fingerprint names the settings it used. The cache strip calls a frame "rendered" only
@@ -3681,6 +3736,7 @@ export default function FaceSwap({
         </div>
 
         <InspectorGroup id="detection" title="Detection" icon={Icon.face} defaultOpen>
+          <StudioParameters values={p} onChange={set} />
           <Select label="Face selection" value={p.face_detection_mode} onChange={(v) => set('face_detection_mode', v)} options={meta.face_detection_modes} />
           <Select
             label="Detector engine"
@@ -4877,12 +4933,16 @@ export default function FaceSwap({
                       canvasRef={previewCanvasRef}
                       maskCanvasRef={previewMaskCanvasRef}
                       maskExportRef={previewMaskExportRef}
+                      maskBrushActive={studioBrushActive}
+                      onToggleMaskBrush={() => setStudioBrushActive((active) => !active)}
+                      maskStrokes={studio.project.strokes || []}
+                      onMaskStrokesChange={(strokes) => studio.update({ strokes })}
                       videoSrc={targets[selTarget]?.url || ''}
                       beforeSrc={rawUrl}
                       afterSrc={isPeekingOriginal ? rawUrl : stageAfterSrc}
                       playbackSource={playbackSource}
-                      frame={frame}
-                      setFrame={setFrame}
+                      frame={Math.max(0, frame - 1)}
+                      setFrame={(next) => setFrame(next + 1)}
                       maxFrames={maxFrames}
                       isPlaying={isPlaying}
                       setIsPlaying={setIsPlaying}
@@ -5051,27 +5111,47 @@ export default function FaceSwap({
               >
                 {useProStudioView || runBarSync.trackLanes.length > 0 ? (
                   <NleTimeline
-                    frame={frame}
+                    frame={Math.max(0, frame - 1)}
                     maxFrames={maxFrames}
                     fps={targets[selTarget]?.fps || 25}
                     isPlaying={isPlaying}
                     targetIndex={selTarget}
                     mediaId={activeTargetMediaId}
                     targetKey={activeTargetMediaId || targets[selTarget]?.name || String(selTarget)}
-                    trackLanes={runBarSync.trackLanes}
+                    trackLanes={studioTracks.map((track) => {
+                      const binding = studio.project.bindings.find((b) => b.track_id === track.trackId);
+                      return binding ? { ...track, active: binding.enabled !== false, facesetPath: binding.faceset_path } : track;
+                    })}
+                    facesets={sourceFacesInfo.map((source) => ({ id: source.id, name: source.name, path: source.id }))}
                     warningTicks={runBarSync.warningTicks}
                     suggestedAssignments={runBarSync.suggestedAssignments}
-                    rangeLockIntervals={runBarSync.activeIntervals}
+                    rangeLockIntervals={studio.project.intervals.length ? studio.project.intervals : runBarSync.activeIntervals}
                     selectedTrackId={runBarSync.selectedTrackId}
-                    trimIn={startFrame}
-                    trimOut={endFrame}
-                    onSeek={(f) => setFrame(f)}
+                    trimIn={Math.max(0, startFrame - 1)}
+                    trimOut={Math.max(0, endFrame - 1)}
+                    keyframes={studio.project.keyframes}
+                    onUpdateKeyframes={(keyframes) => studio.update({ keyframes })}
+                    onSeek={(f) => setFrame(f + 1)}
                     onSelectTrack={(trackId) => runBarSync.handleSelectTrack(trackId)}
-                    onToggleTrackActive={(trackId, active) => runBarSync.handleToggleTrackActive(trackId, active)}
-                    onUpdateRangeLockIntervals={(intervals) => runBarSync.handleUpdateIntervals(intervals)}
+                    onToggleTrackActive={(trackId, active) => {
+                      studio.update({ bindings: studio.project.bindings.map((b) => b.track_id === trackId ? { ...b, enabled: active } : b) });
+                      runBarSync.handleToggleTrackActive(trackId, active);
+                    }}
+                    onUpdateRangeLockIntervals={(intervals) => {
+                      studio.update({ intervals });
+                      runBarSync.handleUpdateIntervals(intervals);
+                    }}
                     onUpdateTrim={(inF, outF) => {
-                      setFrameMarkerVal('start', inF);
-                      setFrameMarkerVal('end', outF);
+                      studio.update({ trim: { start: inF + 1, end: outF + 1 } });
+                    }}
+                    onAssignFsz={(trackId, name) => {
+                      const sourceIndex = sourceFacesInfo.findIndex((source) => [source.name, source.id, source.path, source.faceset_path].includes(name));
+                      if (sourceIndex < 0) { notify('Load this faceset into the source gallery first.', 'error'); return; }
+                      const source = sourceFacesInfo[sourceIndex];
+                      const facesetPath = source.faceset_path || source.id || source.path;
+                      const binding = { track_id: trackId, label: `Track #${trackId + 1}`, faceset_path: facesetPath, active_ranges: [], locked: true };
+                      studio.update({ bindings: [...studio.project.bindings.filter((b) => b.track_id !== trackId), binding] });
+                      runBarSync.handleAssignTrackFaceset(trackId, sourceIndex, source.id);
                     }}
                     onPreScanClick={runBarSync.handlePreScan}
                     isPreScanActive={runBarSync.isPreScanning}

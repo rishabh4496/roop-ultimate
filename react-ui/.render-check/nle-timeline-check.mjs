@@ -1,3 +1,4 @@
+import process from 'node:process';
 /**
  * Unit verification for NleTimeline helpers, snapping, zoom-to-cursor, and parameter keyframes.
  */

@@ -1,0 +1,19 @@
+{
+  "part": "batch",
+  "offline": true,
+  "performance_acceptance": false,
+  "stage7_occlusion": false,
+  "neural_batches": [
+    4
+  ],
+  "faces": 4,
+  "max_levels": 0,
+  "mean_levels": 0.0,
+  "restored_calls": 8,
+  "changed_levels": [
+    2.4620463053385415,
+    2.4988581339518228,
+    2.5367762247721353,
+    2.5093002319335938
+  ]
+}

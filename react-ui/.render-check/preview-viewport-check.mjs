@@ -1,3 +1,4 @@
+import process from 'node:process';
 /**
  * Unit verification for PreviewViewport logic and PTS frame / parity integration.
  */

@@ -748,7 +748,10 @@ def ensure_engine(model_path: str | os.PathLike[str], *, tier: str | None = None
     identity = identity_for(model_path, calib if tier != "fp16" else None, tier, device_id,
                             precision_guard=precision_guard)
     root = engine_dir()
-    engine = root / f"{model_path.stem}.{tier}.engine"
+    from roop.engine_cache import engine_cache_prefix
+    from roop.trt_shape_profile import graph_inputs
+    stamp = engine_cache_prefix(model_path, tier, [(s.name, s.dims) for s in graph_inputs(str(model_path))], (1, 1, 1))
+    engine = root / f"{model_path.stem}.{stamp}.{tier}.engine"
     rejected = engine.with_name(engine.name + ".rejected")
     if not force and not validate_artifact(rejected, identity):
         raise QuantizationError(

@@ -321,6 +321,22 @@ def _ingest_faceset(path):
             face_set.attach_v2_metadata(faceset_metadata)
         elif len(face_set.faces) > 1:
             face_set.AverageEmbeddings()
+        missing_analysis = faceset_metadata is None or any(
+            any((entry.get('geometry') or {}).get(key) is None for key in ('yaw', 'pitch', 'roll'))
+            or 'laplacian_variance' not in (entry.get('quality') or {})
+            or 'det_score' not in entry for entry in (faceset_metadata.get('sources') or []))
+        if missing_analysis:
+            from roop.faceset_builder import cache_missing_metadata
+            analysis = cache_missing_metadata(path, face_set)
+            if faceset_metadata is not None and len(analysis) == len(face_set.face_metadata):
+                for entry, measured in zip(face_set.face_metadata, analysis):
+                    for key in ('yaw', 'pitch', 'roll', 'pose_method'):
+                        if (entry.get('geometry') or {}).get(key) is None:
+                            entry.setdefault('geometry', {})[key] = measured['geometry'][key]
+                    entry.setdefault('quality', {}).setdefault('laplacian_variance', measured['quality']['laplacian_variance'])
+                    entry.setdefault('det_score', measured['det_score'])
+                face_set.face_poses = [(entry['geometry'].get('yaw'), entry['geometry'].get('pitch'))
+                                      for entry in face_set.face_metadata]
         # A faceset with no usable crop still gets a (blank) gallery slot: the
         # two lists are positional, so skipping the thumbnail would shift every
         # later face's picture onto the wrong faceset.

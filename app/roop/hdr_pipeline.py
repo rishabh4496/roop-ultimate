@@ -26,6 +26,7 @@ ROOP_HDR_CODEC):
                      deeper than 8 bits; an 8-bit SDR source never enters here
     on               every video source (8-bit output would still be 10-bit)
     off              the legacy 8-bit path everywhere
+    tonemap          managed HDR decode/rolloff to BT.709 limited-range SDR
 """
 
 from __future__ import annotations
@@ -95,6 +96,8 @@ def mode() -> str:
         return "on"
     if m in ("0", "false", "no", "off"):
         return "off"
+    if m == "tonemap":
+        return m
     return "auto"
 
 
@@ -301,19 +304,22 @@ def begin_session(source_video: str, target_video: str) -> Optional[hc.ColorSpec
     if spec is None:
         return None
     ext = os.path.splitext(target_video or "")[1].lower()
-    if ext not in HDR_CONTAINERS:
+    m_output = mode()
+    if ext not in HDR_CONTAINERS and m_output != 'tonemap':
         print(f"[HDR] {spec.describe()} -- but output container {ext or '?'} cannot carry "
               f"10-bit HEVC/AV1; rendering through the 8-bit path.", flush=True)
         return None
-    _session = {"source": _norm(source_video), "spec": spec,
+    _session = {"source": _norm(source_video), "spec": spec, "output_sdr": m_output == 'tonemap',
                 "views": {}, "views_lock": threading.Lock(),
                 "views_cap": max(4, min(48, (512 << 20) // max(1, spec.width * spec.height * 3))),
                 "stats": {"frames": 0, "composited": 0, "blind": 0, "misaligned": 0,
                           "rebuilt_px": 0, "px": 0}}
     src = ", ".join(f"{k}:{v}" for k, v in spec.source.items())
+    output_description = ('output is tone-mapped BT.709 limited-range SDR.' if output_to_sdr()
+                          else 'output keeps the source encoding at 10 bit.')
     print(f"[HDR] managed colour path ON for {os.path.basename(source_video)}: "
           f"{spec.describe()} ({src}). Working view: ACEScg -> Rec.709 display-referred 8-bit; "
-          f"output keeps the source encoding at 10 bit.", flush=True)
+          f"{output_description}", flush=True)
     if spec.mastering_display or spec.content_light:
         print(f"[HDR] source HDR10 static metadata: master-display={spec.mastering_display} "
               f"max-cll={spec.content_light}", flush=True)
@@ -323,6 +329,11 @@ def begin_session(source_video: str, target_video: str) -> Optional[hc.ColorSpec
 def end_session() -> None:
     global _session
     _session = None
+
+
+def output_to_sdr() -> bool:
+    """The output decision is frozen for the whole managed render session."""
+    return bool(_session and _session.get('output_sdr'))
 
 
 def active_for(path: str) -> Optional[hc.ColorSpec]:
@@ -337,7 +348,7 @@ def _share_view(path: str, index: int, view: np.ndarray) -> None:
     writer so it does not recompute it (the view is ~15 ms/frame at 720p).
     Bounded: past the cap the writer simply recomputes."""
     s = _session
-    if s is None or _norm(path) != s["source"]:
+    if s is None or s.get('output_sdr') or _norm(path) != s["source"]:
         return
     with s["views_lock"]:
         if len(s["views"]) < s["views_cap"]:
@@ -366,8 +377,11 @@ def session_descriptor() -> Optional[dict]:
     if s is None:
         return None
     sp = s["spec"]
-    return {"transfer": sp.transfer, "primaries": sp.primaries, "matrix": sp.matrix,
-            "codec": _env("ROOP_HDR_CODEC")}
+    descriptor = {"transfer": sp.transfer, "primaries": sp.primaries, "matrix": sp.matrix,
+                  "codec": _env("ROOP_HDR_CODEC")}
+    if output_to_sdr():
+        descriptor['output_mode'] = 'tonemap'
+    return descriptor
 
 
 # ── reader ───────────────────────────────────────────────────────────────────

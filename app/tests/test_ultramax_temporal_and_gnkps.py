@@ -450,21 +450,18 @@ class TestSeamColourModes(unittest.TestCase):
 
 # ───────────────────────────── the SCRFD GN-kps weights the brief names ──────────────────────────────────────
 class TestGnKpsPremise(unittest.TestCase):
-    """``scrfd_10g_gnkps.onnx`` / ``scrfd_34g_gnkps.onnx`` are not in this repository's model set or manifest, and
-    the only SCRFD weights it uses (buffalo_l ``det_10g``) ship under InsightFace's non-commercial research terms
-    (NOTICE.md). Adding the GN-kps files needs the licence question answered first; this pins the state so the
-    decision is visible in a diff when weights are added."""
+    """GN-kps 10g is an optional pinned offline asset. Its InsightFace research
+    terms remain explicit; registration does not grant a commercial licence.
+    Buffalo's existing SCRFD remains available for backward compatibility."""
 
-    def test_no_gnkps_weights_are_shipped_or_registered(self):
-        models = os.path.join(APP, "models")
-        found = []
-        for dirpath, _dirs, files in os.walk(models):
-            if os.sep + "trt_cache" in dirpath or os.sep + "runtime_profiles" in dirpath:
-                continue
-            found += [f for f in files if "gnkps" in f.lower()]
-        self.assertEqual(found, [])
-        manifest = open(os.path.join(APP, "model_manifest.json"), encoding="utf-8").read().lower()
-        self.assertNotIn("gnkps", manifest)
+    def test_gnkps_is_registered_as_an_optional_offline_asset(self):
+        from roop.model_integrity import lookup
+        entry = lookup('scrfd_10g_gnkps.onnx')
+        self.assertIsNotNone(entry)
+        self.assertEqual(len(entry.sha256), 64)
+        self.assertTrue(entry.offline_only)
+        self.assertFalse(entry.required)
+        self.assertIn('InsightFace', entry.license)
 
     def test_the_detector_that_exists_is_scrfd_10g_from_buffalo(self):
         self.assertTrue(os.path.isfile(os.path.join(APP, "models", "buffalo_l", "det_10g.onnx")))

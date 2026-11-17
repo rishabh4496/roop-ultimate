@@ -26,6 +26,7 @@ from __future__ import annotations
 from roop.degrade import swallowed as _swallowed
 
 import json
+import contextlib
 import math
 import os
 import shutil
@@ -957,7 +958,111 @@ def iter_ring_packets(
         yield packet
 
 
+class VramBudgetError(RuntimeError):
+    """No single-face GPU admission fits the current free-memory budget."""
+
+
+class VramSessionManager:
+    """Coordinate transient restorer memory across workers on one GPU.
+
+    Reservations cover in-flight work that the driver has not allocated yet.
+    This does not unload another worker's sessions or change precision, pools,
+    streams or the small-card global GPU lock. The memory estimate is a
+    conservative admission budget, not a measured peak or an OOM guarantee
+    against unrelated GPU processes.
+    """
+    _instances = {}
+    _instances_lock = threading.Lock()
+
+    def __init__(self, device_id=0, memory_query=None, reserve_bytes=1536 * 1024**2,
+                 bytes_per_face=640 * 1024**2):
+        self.device_id = int(device_id)
+        self.memory_query = memory_query or self._memory_info
+        self.reserve_bytes = int(reserve_bytes)
+        self.bytes_per_face = max(1, int(bytes_per_face))
+        self._condition = threading.Condition()
+        self._reserved = 0
+        self._active = 0
+
+    @classmethod
+    def for_device(cls, device_id=0):
+        with cls._instances_lock:
+            if int(device_id) not in cls._instances:
+                cls._instances[int(device_id)] = cls(device_id)
+            return cls._instances[int(device_id)]
+
+    def _memory_info(self):
+        try:
+            import torch
+            if torch.cuda.is_available():
+                return tuple(int(n) for n in torch.cuda.mem_get_info(self.device_id))
+        except (RuntimeError, OSError):
+            pass
+        return None
+
+    def _capacity(self, requested, frame_shape=None):
+        memory = self.memory_query()
+        if memory is None:
+            return 1
+        free, total = memory
+        if total < 7 * 1024**3:
+            requested = 1
+        frame_bytes = (int(np.prod(frame_shape)) * 4 if frame_shape else 0)
+        available = max(0, free - self.reserve_bytes - frame_bytes - self._reserved)
+        return max(0, min(8, int(requested), available // self.bytes_per_face))
+
+    def cap_batch_size(self, requested=8, frame_shape=None):
+        with self._condition:
+            return max(1, self._capacity(max(1, requested), frame_shape))
+
+    @contextlib.contextmanager
+    def lease(self, requested=1, frame_shape=None):
+        with self._condition:
+            while True:
+                batch = self._capacity(max(1, requested), frame_shape)
+                if batch:
+                    break
+                if not self._active:
+                    raise VramBudgetError('UltraMax cannot admit one face while retaining the VRAM safety margin')
+                self._condition.wait(timeout=0.1)
+            size = batch * self.bytes_per_face
+            self._reserved += size
+            self._active += 1
+        try:
+            yield batch
+        finally:
+            with self._condition:
+                self._reserved -= size
+                self._active -= 1
+                self._condition.notify_all()
+
+    def run_batches(self, inputs, run, requested=8, frame_shape=None):
+        """Run ordered input slices at the live cap; retry OOM at smaller B.
+
+        `run` must return one output per item and own its normal session lease.
+        No successfully returned item is repeated or dropped on retry.
+        """
+        outputs, offset = [], 0
+        ceiling = max(1, min(8, int(requested)))
+        while offset < len(inputs):
+            with self.lease(min(ceiling, len(inputs) - offset), frame_shape) as batch:
+                try:
+                    result = list(run(inputs[offset:offset + batch]))
+                except Exception as error:
+                    message = str(error).lower()
+                    if batch > 1 and any(s in message for s in ('out of memory', 'cudaerrormemoryallocation', 'bad_alloc')):
+                        ceiling = max(1, batch // 2)
+                        continue
+                    raise
+                if len(result) != batch:
+                    raise RuntimeError('UltraMax batch returned the wrong output count')
+                outputs.extend(result)
+                offset += batch
+        return outputs
+
+
 __all__ = [
+    "VramSessionManager", "VramBudgetError",
     "DecodeCapabilities",
     "FrameMetadata",
     "FrameMetadataTracker",

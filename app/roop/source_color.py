@@ -77,7 +77,7 @@ def read_tags(info: Optional[Mapping[str, Any]]) -> Dict[str, str]:
     """The four tags out of a probe dict (``capturer._probe_video`` or a raw ffprobe stream), normalised."""
     info = info or {}
     color = info.get("color") if isinstance(info.get("color"), Mapping) else info
-    return {k: _norm(color.get(k)) for k in COLOR_KEYS}
+    return {k: _norm(color.get(k) or (color.get('color_trc') if k == 'color_transfer' else '')) for k in COLOR_KEYS}
 
 
 def format_color_badge(info: Optional[Mapping[str, Any]] = None, bit_depth: int = 8,

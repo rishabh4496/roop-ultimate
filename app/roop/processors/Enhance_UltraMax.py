@@ -216,6 +216,7 @@ import cv2
 import numpy as np
 import onnxruntime
 
+from roop import studio_parameters as _studio
 import roop.globals
 from roop.typing import Face, FaceSet, Frame
 from roop.processors.enhance_common import (looks_collapsed, sized, exclusive,
@@ -474,8 +475,12 @@ class Enhance_UltraMax:
             self._initialize(plugin_options)
 
     def _initialize(self, plugin_options: dict):
+        plugin_options = {**plugin_options,
+                          'pixel_boost': getattr(roop.globals, 'subsample_size', None),
+                          'batch_profile': getattr(roop.globals, 'ultramax_batch_size', None)}
         if self.plugin_options is not None:
-            if self.plugin_options.get("devicename") != plugin_options.get("devicename"):
+            if any(self.plugin_options.get(key) != plugin_options.get(key)
+                   for key in ('devicename', 'pixel_boost', 'batch_profile')):
                 self.Release()
         self.plugin_options = plugin_options
         self.devicename = plugin_options["devicename"].replace('mps', 'cpu')
@@ -567,6 +572,10 @@ class Enhance_UltraMax:
             self._release()
 
     def _release(self):
+        batcher = getattr(self, '_xframe_batcher', None)
+        if batcher is not None:
+            batcher.stop()
+            self._xframe_batcher = None
         line = self.cost_summary()
         if line:
             print(line, flush=True)
@@ -1017,7 +1026,7 @@ class Enhance_UltraMax:
         try:
             dtype = torch.float16 if self.in_dtype == np.float16 else torch.float32
             source = torch.from_numpy(src512).to('cuda', dtype=torch.float32, non_blocking=False)
-            fidelity = torch.tensor(float(getattr(roop.globals, 'codeformer_fidelity', 0.5)),
+            fidelity = torch.tensor(float(_studio.value('codeformer_fidelity', 0.5)),
                                     device=source.device, dtype=torch.float64)
             in0, in1 = self.model_inputs[0].name, self.model_inputs[1].name
             out_name = self.model_outputs[0].name
@@ -1127,6 +1136,73 @@ class Enhance_UltraMax:
             return None
 
     def Run(self, source_faceset: FaceSet, target_face: Face, temp_frame: Frame) -> Frame:
+        from roop.hardware_streamer import VramSessionManager
+        from roop.studio_parameters import frame_shape
+        providers = getattr(self.session, 'get_providers', lambda: [])()
+        requested = max(1, min(8, int(getattr(roop.globals, 'ultramax_batch_size', 1) or 1)))
+        if (requested > 1 and any('CUDA' in p or 'Tensorrt' in p for p in providers)
+                and not isinstance(self.model_inputs[0].shape[0], int)):
+            from contextvars import copy_context
+            from contextlib import nullcontext
+            from roop.swap_batcher import SwapBatcher
+            with _studio.mask_build_lock:
+                if getattr(self, '_xframe_batcher', None) is None:
+                    self._xframe_batcher = SwapBatcher(self._run_batch_requests, nullcontext, requested)
+                batcher = self._xframe_batcher
+            request = batcher.submit((source_faceset, copy_context(), _studio.batch_context_key()), target_face, temp_frame)
+            return batcher.wait(request)
+        if any('CUDA' in p or 'Tensorrt' in p for p in providers):
+            manager = VramSessionManager.for_device(roop.globals.cuda_device_id)
+            with manager.lease(1, frame_shape()):
+                result = self._run_impl(source_faceset, target_face, temp_frame)
+        else:
+            result = self._run_impl(source_faceset, target_face, temp_frame)
+        return result
+
+    def _run_batch_requests(self, requests):
+        # Frames with different keyed fidelity/ramp values must never inherit
+        # the batcher's thread context or another frame's scalar control.
+        groups, results = {}, [None] * len(requests)
+        for index, (source, face, frame) in enumerate(requests):
+            groups.setdefault(source[2], []).append((index, source, face, frame))
+        for group in groups.values():
+            context = group[0][1][1]
+            outputs = context.run(self.RunBatch, [r[1][0] for r in group],
+                                  [r[2] for r in group], [r[3] for r in group], len(group))
+            for item, output in zip(group, outputs):
+                results[item[0]] = output
+        return results
+
+    def RunBatch(self, source_facesets, target_faces, frames, batch_size=8):
+        """Bounded native dynamic-batch inference with the same per-face finish.
+
+        Scalar fidelity stays scalar, as required by the shipped CodeFormer
+        graph. Static exports are capped at one. No padding or dropped faces.
+        """
+        from roop.hardware_streamer import VramSessionManager
+        if not (len(source_facesets) == len(target_faces) == len(frames)):
+            raise ValueError('UltraMax batch inputs must have equal lengths')
+        if not frames:
+            return []
+        manager = VramSessionManager.for_device(roop.globals.cuda_device_id)
+        requested = 1 if isinstance(self.model_inputs[0].shape[0], int) else batch_size
+        crops = [cv2.resize(frame, (self._SIZE, self._SIZE)) for frame in frames]
+        blobs = [self._lut[crop.transpose(2, 0, 1)[::-1]][None] for crop in crops]
+        fidelity = np.array([_studio.value('codeformer_fidelity', 0.5)], dtype=np.float64)
+
+        def infer(items):
+            with exclusive(self.pool, self._session_lock,
+                           (self.session, self.io_binding)) as (session, _binding):
+                outputs = session.run([self.model_outputs[0].name], {
+                    self.model_inputs[0].name: np.concatenate(items, axis=0),
+                    self.model_inputs[1].name: fidelity})[0]
+            return [outputs[i:i + 1] for i in range(len(items))]
+
+        outputs = manager.run_batches(blobs, infer, requested, _studio.frame_shape())
+        return [self._run_impl(fs, face, frame, output)
+                for fs, face, frame, output in zip(source_facesets, target_faces, frames, outputs)]
+
+    def _run_impl(self, source_faceset, target_face, temp_frame, restored_output=None):
         if temp_frame is None or getattr(temp_frame, 'size', 0) == 0:
             return temp_frame, 1
 
@@ -1140,7 +1216,8 @@ class Enhance_UltraMax:
         else:
             src512 = temp_frame
 
-        cuda_result = self._run_cuda_postprocess(src512, input_size, temp_frame)
+        cuda_result = (self._run_cuda_postprocess(src512, input_size, temp_frame)
+                       if restored_output is None else None)
         if cuda_result is not None:
             res_frame, scale = cuda_result
             try:
@@ -1161,7 +1238,7 @@ class Enhance_UltraMax:
         # indexing returns a fresh C-contiguous array, so the [None] that follows
         # is a free view and no extra copy is made.
         x = self._lut[src512.transpose(2, 0, 1)[::-1]][None]
-        w_fid = np.array([getattr(roop.globals, 'codeformer_fidelity', 0.5)],
+        w_fid = np.array([_studio.value('codeformer_fidelity', 0.5)],
                          dtype=np.float64)
 
         in0, in1 = self.model_inputs[0].name, self.model_inputs[1].name
@@ -1185,9 +1262,12 @@ class Enhance_UltraMax:
         # own lock over its single session -- either way exclusive, and no wider
         # than the model call. Input/output NAMES are identical across sessions
         # built from one ONNX, so the cached lists stay valid for any lease.
-        with exclusive(self.pool, self._session_lock,
-                       (self.session, self.io_binding)) as (sess, iob):
-            ort_outs = _infer(sess, iob)
+        if restored_output is None:
+            with exclusive(self.pool, self._session_lock,
+                           (self.session, self.io_binding)) as (sess, iob):
+                ort_outs = _infer(sess, iob)
+        else:
+            ort_outs = [restored_output]
 
         # CHW RGB -> HWC BGR, contiguous and float32, in one copy.
         hwc = np.ascontiguousarray(ort_outs[0][0][::-1].transpose(1, 2, 0),

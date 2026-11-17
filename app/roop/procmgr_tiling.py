@@ -6,6 +6,7 @@ layout (mean/std, channel order, and the [-1,1] output some models use).
 """
 
 import threading
+import cv2
 
 import numpy as np
 
@@ -99,11 +100,17 @@ class PixelBoostMixin:
         return swap_frame
 
     def implode_pixel_boost(self, aligned_face_frame, model_size, pixel_boost_total:int):
+        grid_size = model_size * pixel_boost_total
+        if aligned_face_frame.shape[:2] != (grid_size, grid_size):
+            aligned_face_frame = cv2.resize(aligned_face_frame, (grid_size, grid_size), interpolation=cv2.INTER_CUBIC)
         subsample_frame = aligned_face_frame.reshape(model_size, pixel_boost_total, model_size, pixel_boost_total, 3)
         subsample_frame = subsample_frame.transpose(1, 3, 0, 2, 4).reshape(pixel_boost_total ** 2, model_size, model_size, 3)
         return subsample_frame
 
     def explode_pixel_boost(self, subsample_frame, model_size, pixel_boost_total, pixel_boost_size):
         final_frame = np.stack(subsample_frame, axis=0).reshape(pixel_boost_total, pixel_boost_total, model_size, model_size, 3)
-        final_frame = final_frame.transpose(2, 0, 3, 1, 4).reshape(pixel_boost_size, pixel_boost_size, 3)
+        grid_size = model_size * pixel_boost_total
+        final_frame = final_frame.transpose(2, 0, 3, 1, 4).reshape(grid_size, grid_size, 3)
+        if grid_size != pixel_boost_size:
+            final_frame = cv2.resize(final_frame, (pixel_boost_size, pixel_boost_size), interpolation=cv2.INTER_CUBIC)
         return final_frame

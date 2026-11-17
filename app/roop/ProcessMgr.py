@@ -432,6 +432,7 @@ def reshape_jaw_frame(result, tgt106, src106, tgt_kps, src_kps, strength,
 from roop.ffmpeg_writer import FFMPEG_VideoWriter
 from roop.StreamWriter import StreamWriter
 from roop import swap_batcher
+from roop import studio_parameters as _studio
 import roop.globals
 
 
@@ -1052,6 +1053,9 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
 
 
     def initialize(self, input_faces, target_faces, options):
+        for cached_mask in getattr(self, '_studio_masks', {}).values():
+            cached_mask.Release()
+        self._studio_masks = {}
         self.input_face_datas = input_faces
         self.target_face_datas = target_faces
         # Small-face restorer gate (ROOP_ENHANCE_MIN_FACE_PX, 0 = off). One per
@@ -1304,10 +1308,15 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         # have survived the small-card policy.
         self._temporal_enhancer.enabled = False
         try:
-            self._temporal_enhancer.blend = float(getattr(roop.globals, 'temporal_enhancer_blend', 0.0) or 0.0)
+            self._temporal_enhancer.blend = float(_studio.value('temporal_enhancer_blend', 0.0) or 0.0)
         except (TypeError, ValueError):
             self._temporal_enhancer.blend = 0.0
         self._want_temporal_enhancer = self._temporal_enhancer.blend > 0.0
+        from roop import timeline_state
+        timeline = timeline_state.active()
+        if timeline and any(k.temporal_restore_alpha is not None and k.temporal_restore_alpha > 0
+                            for k in timeline.keyframes):
+            self._want_temporal_enhancer = True
         self._temporal_enhancer.reset()
         from roop import realism_matcher as _realism_matcher
         _realism_matcher.reset()
@@ -1360,10 +1369,10 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                                  or getattr(options, 'use_frontalization', False)
                                  or getattr(roop.globals, 'refine_landmarks', False))
         modules = ["landmark_2d_106", "detection", "recognition"]
-        if pose_features_need_68 or getattr(roop.globals, 'autorotate_faces', False):
+        if pose_features_need_68 or _studio.value('autorotate_faces', False):
             modules.insert(0, "landmark_3d_68")
         roop.globals.lm68_lazy = (not pose_features_need_68
-                                  and bool(getattr(roop.globals, 'autorotate_faces', False)))
+                                  and bool(_studio.value('autorotate_faces', False)))
         face_util.reset_lm68_state()
         face_util.reset_merged_count()
         roop.globals.g_desired_face_analysis = modules
@@ -3778,7 +3787,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             result = coarticulate_jawline_frame(result, target_face, phoneme_energy=p_en,
                                                viseme_openness=v_op,
                                                strength=float(getattr(roop.globals, 'jaw_coarticulation_strength', 0.6) or 0.6))
-        if getattr(roop.globals, 'oral_cavity_restore', True):
+        if _studio.value('oral_cavity_restore', True):
             from roop.oral_cavity import reconstruct_inner_mouth_geometry
             p_en = getattr(audio_cache, 'phoneme_energy_for_time', lambda t: 0.0)(t_s) if audio_cache else 0.0
             v_op = getattr(audio_cache, 'viseme_openness_for_time', lambda t: 0.0)(t_s) if audio_cache else 0.0
@@ -3956,6 +3965,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         stats = getattr(self, '_angle_route_stats', None)
         return stats.snapshot() if stats is not None else {}
 
+    @_studio.scoped_swap
     def swap_faces(self, frame, temp_frame=None, stabilize=False, frame_idx=None,
                    frame_absolute=False):
         num_faces_found = 0
@@ -5731,9 +5741,38 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             arr = np.stack([cv2.resize(m, (model_size, model_size),
                                        interpolation=cv2.INTER_LINEAR) for m in arr])
         out = arr.reshape(total, total, model_size, model_size)
-        out = out.transpose(2, 0, 3, 1).reshape(out_size, out_size)
+        grid_size = model_size * total
+        out = out.transpose(2, 0, 3, 1).reshape(grid_size, grid_size)
+        if grid_size != out_size:
+            out = cv2.resize(out, (out_size, out_size), interpolation=cv2.INTER_LINEAR)
         return np.clip(out, 0.0, 1.0)
 
+
+    def _processors_for_frame(self):
+        selected = _studio.keyed('mask_engine')
+        if selected is None:
+            return self.processors
+        key = {'bisenet+xseg': 'mask_realityux', 'RealityUX': 'mask_realityux',
+               'Face Parser': 'mask_faceparser', 'DFL XSeg': 'mask_xseg', 'None': None}[selected]
+        masks = [p for p in self.processors if p.type == 'mask']
+        if len(masks) == 1 and masks[0].processorname == key:
+            return self.processors
+        replacements = []
+        if key:
+            with _studio.mask_build_lock:
+                bank = getattr(self, '_studio_masks', None)
+                if bank is None:
+                    bank = self._studio_masks = {}
+                if key not in bank:
+                    processor = str_to_class('roop.processors.' + self.plugins[key], self.plugins[key])
+                    processor.Initialize({'devicename': get_device()})
+                    bank[key] = processor
+                replacements = [bank[key]]
+        # Keep the original swap -> mask -> enhance order even if the base
+        # recipe had no masker. Other workers keep their own selected chain.
+        chain = [p for p in self.processors if p.type != 'mask']
+        index = next((i + 1 for i, p in enumerate(chain) if p.type == 'swap'), 0)
+        return chain[:index] + replacements + chain[index:]
 
     def process_face(self, face_index, target_face:Face, frame:Frame, plate:Frame=None, region=None):
         """Swap one face and composite it into `frame`.
@@ -5816,7 +5855,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
 
         rotation_action = None
         applied_rotation_action = None
-        if roop.globals.autorotate_faces:
+        if _studio.value('autorotate_faces'):
             rotation_action = self.rotation_action(target_face, frame)
             if rotation_action is not None:
                 (startX, startY, endX, endY) = target_face["bbox"].astype("int")
@@ -5874,11 +5913,12 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         swap_p = next((p for p in self.processors if p.type == 'swap'), None)
         model_output_size = getattr(swap_p, 'model_output_size', 128)
 
-        subsample_size = self.options.subsample_size
-        # Ensure subsample_size is an integer multiple of model_output_size
+        subsample_size = _studio.option(self.options, 'subsample_size')
+        # Native 512px models also accept the 768px Studio crop. Their
+        # interleaving uses the next complete grid, then returns to crop space.
         if subsample_size < model_output_size:
             subsample_size = model_output_size
-        subsample_total = subsample_size // model_output_size
+        subsample_total = (subsample_size + model_output_size - 1) // model_output_size
 
         # Align with the swap model's training template (ghost/simswap use
         # arcface_112_v1, hififace uses mtcnn_512; inswapper family = arcface).
@@ -6212,7 +6252,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 selected_src_idx = best_idx
                 inputface = fs.faces[best_idx]
 
-        if (getattr(self.options, 'pose_adaptive_faceset', False)
+        if (_studio.option(self.options, 'pose_adaptive_faceset', False)
                 and source_faceset is not None
                 and target_face.get('_pose_routed_embedding') is None):
             # Still-image/preview path. Video renders prepare and cache this
@@ -6557,7 +6597,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             except Exception as _exc:
                 _swallowed('roop/ProcessMgr.py:smart_skip_warp', _exc, 'smart-skip warp failed; running full swap')
 
-        for p in self.processors:
+        for p in self._processors_for_frame():
             if p.type == 'swap':
               if _smart_skip_reused:
                 self._count_stage3('smart_skip_faces')
@@ -7119,7 +7159,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         # would let it smooth the expression straight back out. aligned_img is
         # the untouched target crop in the same face-template space, so it is
         # the driving face — no extra detection or alignment needed.
-        _ex = float(getattr(roop.globals, 'expression_restore_strength', 0.0) or 0.0)
+        _ex = float(_studio.value('expression_restore_strength', 0.0) or 0.0)
         # Eye-Gaze Follow Ratio (None = eyes follow _ex, the pre-split
         # behaviour) and Blink Sync. Either alone is enough to run the stage.
         _gz = getattr(roop.globals, 'expression_gaze_follow', None)
@@ -7229,7 +7269,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     _vcrop, _ = _rm.velocity_blur(
                         _vcrop, self._plan_velocity(target_face), M, strength=_vb,
                         plate_width=aligned_img.shape[1],
-                        defer_to_plate_blur=float(getattr(roop.globals, 'merger_motion_blur', 0.0) or 0.0) > 0.0)
+                        defer_to_plate_blur=float(_studio.value('merger_motion_blur', 0.0) or 0.0) > 0.0)
                 if enhanced_frame is not None:
                     enhanced_frame = _vcrop
                 else:
@@ -7260,7 +7300,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         # compose instead of stacking) and sensor grain must not be blurred or sharpened. Adds only the noise the
         # swap lacks versus the plate's eroded skin (roop/realism_matcher.py); a counted no-op on a swap that is
         # already as noisy as the plate.
-        _gs = float(getattr(roop.globals, 'grain_match_strength', 0.0) or 0.0)
+        _gs = float(_studio.value('grain_match_strength', 0.0) or 0.0)
         if _gs > 0.0 and _skin_colour_mask is not None:
             try:
                 from roop import realism_matcher as _rm
@@ -7809,7 +7849,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             and float(_expression_plan.get('mouth_strength', 0.0) or 0.0) > 0.0)
         if (not self.options.restore_original_mouth and not lipsync_wins and not _mouth_fallback
                 and not _expression_mouth_active):
-            _oral = bool(getattr(roop.globals, 'oral_cavity_restore', True))
+            _oral = bool(_studio.value('oral_cavity_restore', True))
             _force_mouth = bool(getattr(roop.globals, 'inner_mouth_preserve', False))
             if _oral or _force_mouth:
                 from roop.oral_cavity import reconstruct_inner_mouth_geometry
@@ -7950,6 +7990,9 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
 
 
     def release_resources(self):
+        for p in getattr(self, '_studio_masks', {}).values():
+            p.Release()
+        self._studio_masks = {}
         for p in self.processors:
             p.Release()
         self.processors.clear()

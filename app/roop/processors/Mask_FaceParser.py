@@ -268,8 +268,10 @@ class Mask_FaceParser():
         self.plugin_options = plugin_options
         if self.model is None:
             model_dir = resolve_relative_path('../models')
-            conditional_download(model_dir, [_MODEL_URL])
-            model_path = os.path.join(model_dir, _MODEL_FILE)
+            from roop.face_parser import model_path as parser_model_path
+            model_path = parser_model_path()
+            if not os.path.isfile(model_path):
+                conditional_download(model_dir, [_MODEL_URL])
             from roop.utilities import (get_onnx_session_options,
                                         get_small_card_safe_providers)
             _sess_opts = get_onnx_session_options()

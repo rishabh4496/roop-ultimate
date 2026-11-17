@@ -78,6 +78,164 @@
       "urls": [
         "https://huggingface.co/countfloyd/deepfake/resolve/main/xseg.onnx"
       ]
+    },
+    {
+      "file": "scrfd_10g_gnkps.onnx",
+      "sha256": "ccfcb895a751b8a685ec442aaa09151dcd4cec696f7a1617f0397d0aeb7ec903",
+      "size": 16929223,
+      "family": "scrfd",
+      "required": false,
+      "offline_only": true,
+      "license": "LicenseRef-InsightFace-Research",
+      "aliases": [],
+      "urls": [
+        "https://huggingface.co/camenduru/Arc2Face/resolve/main/scrfd_10g_gnkps.onnx"
+      ]
+    },
+    {
+      "file": "face_parser.onnx",
+      "sha256": "0d9bd318e46987c3bdbfacae9e2c0f461cae1c6ac6ea6d43bbe541a91727e33f",
+      "size": 53205364,
+      "family": "bisenet",
+      "required": false,
+      "offline_only": true,
+      "license": "MIT",
+      "aliases": [
+        "resnet18.onnx"
+      ],
+      "urls": [
+        "https://github.com/yakhyo/face-parsing/releases/download/weights/resnet18.onnx"
+      ]
+    },
+    {
+      "file": "xseg_1.onnx",
+      "sha256": "c4d1498b8a03b5fe2a3a5d2ef2a0402ab03bd51edaf5b2d8d5fb764702a97dd3",
+      "size": 70324286,
+      "family": "xseg",
+      "required": false,
+      "offline_only": true,
+      "license": "",
+      "aliases": [],
+      "urls": [
+        "https://huggingface.co/facefusion/models-3.1.0/resolve/main/xseg_1.onnx"
+      ]
+    },
+    {
+      "file": "xseg_2.onnx",
+      "sha256": "cd9a0879eaf43841d765472cf1f8c330dbf9dcb03da0eace93e95f3bcc399042",
+      "size": 70324286,
+      "family": "xseg",
+      "required": false,
+      "offline_only": true,
+      "license": "",
+      "aliases": [],
+      "urls": [
+        "https://huggingface.co/facefusion/models-3.1.0/resolve/main/xseg_2.onnx"
+      ]
+    },
+    {
+      "file": "liveportrait/appearance_feature_extractor.onnx",
+      "sha256": "d070afccca7f528ffb0ef5052b21588b42225a996661833f7bdede562d1ab921",
+      "size": 3355896,
+      "family": "liveportrait",
+      "required": false,
+      "offline_only": true,
+      "license": "MIT",
+      "aliases": [],
+      "urls": [
+        "https://huggingface.co/warmshao/FasterLivePortrait/resolve/main/liveportrait_onnx/appearance_feature_extractor.onnx"
+      ]
+    },
+    {
+      "file": "liveportrait/motion_extractor.onnx",
+      "sha256": "219a46174297b2b411bb3c5dce48d3a8c8e07a9d82120a0da21f49f58b67fca6",
+      "size": 112648514,
+      "family": "liveportrait",
+      "required": false,
+      "offline_only": true,
+      "license": "MIT",
+      "aliases": [],
+      "urls": [
+        "https://huggingface.co/warmshao/FasterLivePortrait/resolve/main/liveportrait_onnx/motion_extractor.onnx"
+      ]
+    },
+    {
+      "file": "liveportrait/landmark.onnx",
+      "sha256": "31d22a5041326c31f19b78886939a634a5aedcaa5ab8b9b951a1167595d147db",
+      "size": 114666491,
+      "family": "liveportrait",
+      "required": false,
+      "offline_only": true,
+      "license": "MIT",
+      "aliases": [],
+      "urls": [
+        "https://huggingface.co/warmshao/FasterLivePortrait/resolve/main/liveportrait_onnx/landmark.onnx"
+      ]
+    },
+    {
+      "file": "liveportrait/stitching.onnx",
+      "sha256": "8e33658425e3f1014dc35b28f60ca7459189e8f78f20540262a2fe5ac1dc6ec7",
+      "size": 182363,
+      "family": "liveportrait",
+      "required": false,
+      "offline_only": true,
+      "license": "MIT",
+      "aliases": [],
+      "urls": [
+        "https://huggingface.co/warmshao/FasterLivePortrait/resolve/main/liveportrait_onnx/stitching.onnx"
+      ]
+    },
+    {
+      "file": "liveportrait/stitching_eye.onnx",
+      "sha256": "b9a2086c4d757c9be71b9b290d020678406da6a33c6247252c4bb0aeeff48afc",
+      "size": 580926,
+      "family": "liveportrait",
+      "required": false,
+      "offline_only": true,
+      "license": "MIT",
+      "aliases": [],
+      "urls": [
+        "https://huggingface.co/warmshao/FasterLivePortrait/resolve/main/liveportrait_onnx/stitching_eye.onnx"
+      ]
+    },
+    {
+      "file": "liveportrait/stitching_lip.onnx",
+      "sha256": "101d7025cafdc199b6108c4841c7cdee88451787b01d319a1374b3c78344bf72",
+      "size": 150609,
+      "family": "liveportrait",
+      "required": false,
+      "offline_only": true,
+      "license": "MIT",
+      "aliases": [],
+      "urls": [
+        "https://huggingface.co/warmshao/FasterLivePortrait/resolve/main/liveportrait_onnx/stitching_lip.onnx"
+      ]
+    },
+    {
+      "file": "liveportrait/warping_spade.onnx",
+      "sha256": "b0e7a566db8fba690c23523bcd2faa4f0d13f05418db84a779397a851062ad69",
+      "size": 421233096,
+      "family": "liveportrait",
+      "required": false,
+      "offline_only": true,
+      "license": "MIT",
+      "aliases": [],
+      "urls": [
+        "https://huggingface.co/warmshao/FasterLivePortrait/resolve/main/liveportrait_onnx/warping_spade.onnx"
+      ]
+    },
+    {
+      "file": "face_landmarker.task",
+      "sha256": "64184e229b263107bc2b804c6625db1341ff2bb731874b0bcc2fe6544e0bc9ff",
+      "size": 3758596,
+      "family": "mediapipe",
+      "required": false,
+      "offline_only": true,
+      "license": "Apache-2.0",
+      "aliases": [],
+      "urls": [
+        "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task"
+      ]
     }
   ]
 }

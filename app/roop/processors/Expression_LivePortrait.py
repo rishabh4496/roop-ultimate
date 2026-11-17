@@ -36,8 +36,8 @@ The rotation cancels out of the *difference*, so the transfer cannot introduce
 pose drift even if the head-pose estimate is noisy — the only thing moving is the
 expression delta. strength = 0 returns x_s exactly, i.e. a no-op.
 
-Models (~537 MB, downloaded on first use) are the FasterLivePortrait ONNX
-exports, which suit this project's onnxruntime/TensorRT stack.
+Models are the pinned FasterLivePortrait ONNX exports. Provision them locally
+before use; a missing/corrupt model is reported without a runtime download.
 """
 from roop.degrade import swallowed as _swallowed
 
@@ -57,27 +57,25 @@ from roop.gridsample5d import ensure_patched_model
 from roop.session_pool import SessionPool, expression_pool_size
 from roop.precision_policy import providers_for
 from roop.typing import Frame
-from roop.utilities import resolve_relative_path, conditional_download
-
-_BASE = "https://huggingface.co/warmshao/FasterLivePortrait/resolve/main/liveportrait_onnx/"
+from roop.utilities import resolve_relative_path
 
 MODELS = {
-    "appearance": {"file": "appearance_feature_extractor.onnx", "url": _BASE + "appearance_feature_extractor.onnx"},
-    "motion":     {"file": "motion_extractor.onnx",             "url": _BASE + "motion_extractor.onnx"},
-    "warping":    {"file": "warping_spade.onnx",                "url": _BASE + "warping_spade.onnx"},
-    "stitching":  {"file": "stitching.onnx",                    "url": _BASE + "stitching.onnx"},
+    "appearance": {"file": "appearance_feature_extractor.onnx"},
+    "motion":     {"file": "motion_extractor.onnx"},
+    "warping":    {"file": "warping_spade.onnx"},
+    "stitching":  {"file": "stitching.onnx"},
 }
 
-# Blink sync only. Fetched and loaded the first time a face asks for it, so a
-# render that never enables it pays neither the 115 MB download nor the VRAM.
+# Blink sync only. Verified and loaded the first time a face asks for it, so a
+# render that never enables it pays no additional model-session VRAM.
 #   eye       LivePortrait's eyelid retargeting MLP: (x_s[63], c_src_l, c_src_r,
 #             c_target) -> 63 keypoint offsets that move the lids to c_target.
 #   landmark  LivePortrait's 203-point landmarker, which is what the eye MLP's
 #             closure ratios were defined on (calc_eye_close_ratio). A ratio from
 #             a different landmark set would be on a different scale.
 BLINK_MODELS = {
-    "eye":      {"file": "stitching_eye.onnx", "url": _BASE + "stitching_eye.onnx"},
-    "landmark": {"file": "landmark.onnx",      "url": _BASE + "landmark.onnx"},
+    "eye":      {"file": "stitching_eye.onnx"},
+    "landmark": {"file": "landmark.onnx"},
 }
 LANDMARK_SIZE = 224
 
@@ -542,7 +540,9 @@ class Expression_LivePortrait:
             return
         model_dir = resolve_relative_path('../models/liveportrait')
         os.makedirs(model_dir, exist_ok=True)
-        conditional_download(model_dir, [m["url"] for m in MODELS.values()])
+        from roop.model_integrity import require_local_model
+        for spec in MODELS.values():
+            require_local_model('liveportrait/' + spec['file'])
         providers = roop.globals.execution_providers
 
         # The stock warping module cannot run entirely on the GPU: its two 5-D
@@ -764,8 +764,9 @@ class Expression_LivePortrait:
         try:
             with self._blink_lock:
                 if not self._blink_ready:
-                    conditional_download(self._model_dir,
-                                         [m["url"] for m in BLINK_MODELS.values()])
+                    from roop.model_integrity import require_local_model
+                    for spec in BLINK_MODELS.values():
+                        require_local_model('liveportrait/' + spec['file'])
                     self._blink_ready = True
             for key, spec in BLINK_MODELS.items():
                 path = os.path.join(self._model_dir, spec["file"])

@@ -243,7 +243,12 @@ class UltraMaxRuntimeState:
 
     def get_settings(self) -> UltraMaxParameters:
         with self._lock:
-            return self.params.model_copy()
+            result = self.params.model_copy()
+        from roop import globals as runtime
+        requested = getattr(getattr(runtime, 'CFG', None), 'ultramax_batch_size', None) or result.batch_size
+        from roop.hardware_streamer import VramSessionManager
+        result.batch_size = VramSessionManager.for_device(getattr(runtime, 'cuda_device_id', 0)).cap_batch_size(requested)
+        return result
 
     def update_settings(self, patch: UltraMaxUpdateParameters | UltraMaxParameters) -> UltraMaxParameters:
         with self._lock:
@@ -257,6 +262,11 @@ class UltraMaxRuntimeState:
             # Sync to roop.globals if present in the runtime
             try:
                 import roop.globals as roop_globals
+                if 'batch_size' in patch_dict:
+                    roop_globals.ultramax_batch_size = self.params.batch_size
+                    if roop_globals.CFG is not None:
+                        roop_globals.CFG.ultramax_batch_size = self.params.batch_size
+                        roop_globals.CFG.save()
                 if hasattr(roop_globals, "ultramax_skin_strength"):
                     roop_globals.ultramax_skin_strength = self.params.skin_texture_strength
                 if hasattr(roop_globals, "ultramax_blend_ratio"):
@@ -417,8 +427,8 @@ STATE = UltraMaxRuntimeState()
 # Background Compilation Runner
 # -----------------------------------------------------------------------------
 
-async def _compile_engine_task(precision: str, provider: str) -> None:
-    """Simulate or execute the multi-step TensorRT engine compilation workflow."""
+async def _compile_engine_task(precision: str, provider: str, release=None) -> None:
+    """Compile and verify local weights; readiness is backed by a real session."""
     start_time = time.time()
     try:
         STATE.set_compilation_status(
@@ -428,7 +438,6 @@ async def _compile_engine_task(precision: str, provider: str) -> None:
             status="compiling",
             message=f"Optimizing ONNX computational graph for {precision}...",
         )
-        await asyncio.sleep(0.3)
 
         STATE.set_compilation_status(
             compiling=True,
@@ -437,7 +446,8 @@ async def _compile_engine_task(precision: str, provider: str) -> None:
             status="compiling",
             message=f"Compiling TensorRT engine plan on provider {provider}...",
         )
-        await asyncio.sleep(0.5)
+        from roop.ultramax_compile import compile_session
+        result = await asyncio.to_thread(compile_session, precision, provider, STATE.get_settings().batch_size)
 
         STATE.set_compilation_status(
             compiling=True,
@@ -446,7 +456,6 @@ async def _compile_engine_task(precision: str, provider: str) -> None:
             status="compiling",
             message="Running auxiliary startup canary and numerical precision verification...",
         )
-        await asyncio.sleep(0.3)
 
         elapsed = round(time.time() - start_time, 2)
         STATE.set_compilation_status(
@@ -454,9 +463,9 @@ async def _compile_engine_task(precision: str, provider: str) -> None:
             progress=1.0,
             stage="ready",
             status="ready",
-            message=f"Engine compilation successful ({elapsed}s)",
+            message=f"{result['provider']} session verified ({elapsed}s)",
             compilation_time_s=elapsed,
-            engine_path=f"models/trt_cache/ultramax_{precision}_{provider}.plan",
+            engine_path=result['engine_path'],
         )
     except Exception as exc:
         LOGGER.exception("Engine compilation failed: %s", exc)
@@ -467,6 +476,9 @@ async def _compile_engine_task(precision: str, provider: str) -> None:
             status="failed",
             message=f"Compilation error: {exc}",
         )
+    finally:
+        if release is not None:
+            release()
 
 
 # -----------------------------------------------------------------------------
@@ -502,6 +514,9 @@ async def trigger_engine_compilation(
     payload: Optional[Dict[str, Any]] = Body(default=None),
 ) -> EngineCompilationStatus:
     """Trigger compilation or re-tuning of the UltraMax TensorRT engine."""
+    from roop import globals as runtime
+    if getattr(runtime, 'processing', False):
+        raise HTTPException(status_code=409, detail='Wait for the active render or Pre-Scan before compiling')
     cur = STATE.get_settings()
     precision = (payload or {}).get("precision_mode", cur.precision_mode)
     provider = (payload or {}).get("provider", cur.provider)
@@ -510,8 +525,18 @@ async def trigger_engine_compilation(
     if status.compiling:
         return status
 
+    # The app owns the shared preview/scan slot. Reserving it synchronously
+    # also stops a subsequent render from racing the background build.
+    import sys
+    api_module = sys.modules.get('api')
+    release = None
+    if api_module is not None and hasattr(api_module, 'reserve_engine_compilation'):
+        release = api_module.reserve_engine_compilation()
+        if release is None:
+            raise HTTPException(status_code=409, detail='Wait for the active GPU operation before compiling')
+
     # Launch background compilation task
-    asyncio.create_task(_compile_engine_task(precision, provider))
+    asyncio.create_task(_compile_engine_task(precision, provider, release))
     return STATE.set_compilation_status(
         compiling=True,
         progress=0.05,

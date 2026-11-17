@@ -828,10 +828,10 @@ class MaskingMixin:
                             with _gpu_guard(pooled=False, owner='mask'):
                                 _swap_parse = _parser.parse(upsk_face)
                     _composer = MaskComposer()
-                    if 'yaw_erosion_bias' in _tl:
+                    if 'yaw_erosion_bias' in _tl or getattr(roop.globals, 'yaw_erosion_bias', 0.0):
                         # factor = 1 + bias on the far-side inset; bias 0 is the shipped composer untouched.
                         _composer.far_inset_frac = max(
-                            0.0, _composer.far_inset_frac * (1.0 + float(_tl['yaw_erosion_bias'])))
+                            0.0, _composer.far_inset_frac * (1.0 + float(_tl.get('yaw_erosion_bias', getattr(roop.globals, 'yaw_erosion_bias', 0.0)))))
                     _sem = _composer.compose((h, w), _parse, swap=_swap_parse, hull=crop_hull_f,
                                              base_alpha=alpha, yaw=yaw, feather=_feather)
                     _sem_alpha = _sem

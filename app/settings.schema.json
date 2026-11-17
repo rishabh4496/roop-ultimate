@@ -789,6 +789,18 @@
       "default": 0.35,
       "type": "float"
     },
+    "yaw_erosion_bias": {
+      "default": 0.0,
+      "type": "float"
+    },
+    "ultramax_ramp": {
+      "default": 384.0,
+      "type": "float"
+    },
+    "ultramax_batch_size": {
+      "default": 1,
+      "type": "int"
+    },
     "hf_flow_backend": {
       "default": "auto",
       "type": "str",

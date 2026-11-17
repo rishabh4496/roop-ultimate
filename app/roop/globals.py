@@ -222,6 +222,9 @@ merger_clarity = 0.0
 temporal_enhancer_blend = 0.0
 velocity_motion_blur = 0.0
 grain_match_strength = 0.0
+yaw_erosion_bias = None  # defaults and persisted values are owned by Settings
+ultramax_ramp = None
+ultramax_batch_size = None
 # Plate-adaptive limit on sharpen + clarity; see roop/procmgr_merger.plate_sharpness_gate.
 merger_match_sharpness = True
 merger_sharpness_headroom = 0.7

@@ -66,6 +66,9 @@ class ModelEntry:
     required: bool = True
     family: str = ""
     description: str = ""
+    offline_only: bool = False
+    license: str = ""
+    aliases: tuple = ()
 
 
 def load_manifest(path: Optional[str] = None) -> List[ModelEntry]:
@@ -81,6 +84,9 @@ def load_manifest(path: Optional[str] = None) -> List[ModelEntry]:
             required=bool(item.get("required", True)),
             family=str(item.get("family", "")),
             description=str(item.get("description", "")),
+            offline_only=bool(item.get('offline_only', False)),
+            license=str(item.get('license', '')),
+            aliases=tuple(item.get('aliases') or ()),
         ))
     return entries
 
@@ -100,6 +106,38 @@ def lookup(filename: str, manifest: Optional[List[ModelEntry]] = None) -> Option
         if entry.file == name or ("/" in entry.file and (path == entry.file or path.endswith("/" + entry.file))):
             return entry
     return None
+
+
+def require_local_model(filename, models_dir=None, manifest=None):
+    """Resolve and verify a registered asset without opening any network socket.
+
+    Aliases are allowed only for byte-identical renamed assets, never for
+    similarly named XSeg/BiSeNet exports with different tensor conventions.
+    """
+    entry = lookup(filename, manifest)
+    if entry is None:
+        raise ValueError(f'Unregistered offline model: {filename}')
+    root = models_dir or DEFAULT_MODELS_DIR
+    cache = _DigestCache(root)
+    for relative in (entry.file, *entry.aliases):
+        path = os.path.join(root, relative)
+        if os.path.isfile(path):
+            if os.path.getsize(path) == entry.size and file_digest(path, cache) == entry.sha256:
+                return os.path.abspath(path)
+            raise ValueError(f'Offline model SHA256 mismatch: {relative}')
+    raise FileNotFoundError(f'Offline model missing: {entry.file}; provision the pinned asset before rendering')
+
+
+def offline_presence(models_dir=None, manifest=None):
+    result = {}
+    for entry in manifest if manifest is not None else load_manifest():
+        try:
+            path = require_local_model(entry.file, models_dir, [entry])
+            result[entry.file] = {'status': 'ok', 'path': path, 'sha256': entry.sha256}
+        except (OSError, ValueError) as error:
+            result[entry.file] = {'status': 'missing' if isinstance(error, FileNotFoundError) else 'corrupt',
+                                  'error': str(error), 'sha256': entry.sha256}
+    return result
 
 
 # ── hashing ──────────────────────────────────────────────────────────────────
@@ -393,6 +431,7 @@ def verify_and_repair(models_dir: Optional[str] = None,
     The returned report -- and the splash -- say exactly what is wrong.
     """
     models_dir = models_dir or DEFAULT_MODELS_DIR
+    download = download and os.environ.get('ROOP_OFFLINE') != '1'
     status = status or STATUS
     entries = manifest if manifest is not None else load_manifest()
     os.makedirs(models_dir, exist_ok=True)
@@ -402,6 +441,10 @@ def verify_and_repair(models_dir: Optional[str] = None,
 
     for entry in entries:
         path = os.path.join(models_dir, entry.file)
+        if entry.offline_only and not os.path.isfile(path):
+            status.update(entry.file, status='not_installed')
+            results[entry.file] = 'not_installed'
+            continue
         if os.path.isfile(path):
             status.update(entry.file, status="verifying", bytes_done=0)
             try:
@@ -415,7 +458,7 @@ def verify_and_repair(models_dir: Optional[str] = None,
             log("[ModelIntegrity] %s FAILED its SHA256 check (got %s, expected %s)"
                 % (entry.file, digest[:16], entry.sha256[:16]))
             cache.drop(entry.file)
-            if not download:
+            if not download or entry.offline_only:
                 status.update(entry.file, status="corrupt", error="sha256 mismatch")
                 results[entry.file] = "corrupt"
                 continue
@@ -465,5 +508,7 @@ def verify_and_repair(models_dir: Optional[str] = None,
     if bad:
         status.finish("degraded", "Unverified models: " + ", ".join(bad))
     else:
-        status.finish("ready", "All %d models verified" % len(results))
+        absent = sum(value == 'not_installed' for value in results.values())
+        status.finish("ready", (f'{len(results) - absent} models verified; {absent} optional offline assets not installed'
+                                if absent else "All %d models verified" % len(results)))
     return {"results": results, "ok": not bad, "problems": bad}

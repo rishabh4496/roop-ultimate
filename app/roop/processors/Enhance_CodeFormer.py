@@ -3,6 +3,7 @@ import threading
 import cv2 
 import numpy as np
 import onnxruntime
+from roop import studio_parameters as _studio
 import roop.globals
 
 from roop.typing import Face, Frame, FaceSet
@@ -236,7 +237,7 @@ class Enhance_CodeFormer():
         # `w` being per-call costs a tiny array, not a binding rebuild, so
         # there is nothing to gain from a session per fidelity value -- that
         # would multiply the ~530 MB per-context engine cost for no speed.
-        cf_fidelity = getattr(roop.globals, 'codeformer_fidelity', 0.5)
+        cf_fidelity = _studio.value('codeformer_fidelity', 0.5)
 
         def _infer(sess):
             iob = getattr(sess, '_cached_io_binding', None)
