@@ -1213,7 +1213,7 @@ export default function BatchSwap({ settings = {}, notify, onUpdateSetting }) {
       {/* ── Mode 1 Panel: 1 Faceset + 1 Target Face -> Multi Files ── */}
       {batchMode === 'one_to_many' && (
         <Section title="Strategy 1: Single Faceset + Target Mapping ➔ Multi Files">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 3xl:grid-cols-6 gap-4">
             {/* Controls */}
             <div className="space-y-4 md:col-span-1">
               {/* Multi-Face Mapping Builder */}

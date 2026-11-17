@@ -1379,7 +1379,7 @@ export default function App() {
       )}
 
       {/* Main Container Layout */}
-      <main className="flex-1 w-full max-w-[1920px] mx-auto px-3 sm:px-4 md:px-6 py-3 md:py-4 mt-1.5 z-10 relative">
+      <main className="flex-1 w-full max-w-none px-3 sm:px-4 md:px-6 2xl:px-8 py-3 md:py-4 mt-1.5 z-10 relative">
         {error && (
           <div role="alert" className="rounded-2xl bg-red-500/10 border border-red-500/20 p-5 text-sm text-red-300 animate-slide-up flex flex-wrap items-center justify-between gap-3">
             {/* items-start: on a wrapped multi-line error the icon belongs on

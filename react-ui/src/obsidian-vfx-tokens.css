@@ -1,0 +1,140 @@
+/* ── Obsidian VFX Design Tokens & Studio NLE Dark Theme Foundation ──────────
+   Inspired by DaVinci Resolve, Foundry Nuke, and Linear.
+   Provides high-density surface luminance hierarchy, razor-sharp hairlines,
+   semantic compute/status accents, and studio tabular typography.
+   100% offline, zero external font/CDN assets. */
+
+:root {
+  /* ── Surface Luminance Hierarchy ────────────────────────────────────────── */
+  --bg-void: #050507;                                   /* Media viewport canvas backdrop */
+  --bg-shell: #0A0B0E;                                  /* App root background */
+  --bg-panel: #101218;                                  /* Dockable workspace panels */
+  --bg-elevated: #171A23;                               /* Cards, timeline track headers, inputs */
+  --bg-glass: rgba(20, 23, 32, 0.84);                   /* Floating HUDs, overlays */
+  --glass-blur: blur(16px);                             /* Studio glass backdrop blur */
+
+  /* ── Borders & Hairlines ────────────────────────────────────────────────── */
+  --border-subtle: rgba(255, 255, 255, 0.07);           /* Structural hairline dividers */
+  --border-focus: rgba(0, 240, 255, 0.55);             /* Cyan active/focus hairline */
+
+  /* ── Semantic Accents ───────────────────────────────────────────────────── */
+  --accent-cyan: #00F0FF;                               /* Primary playhead, active selection, AI swap focus */
+  --accent-violet: #8B5CF6;                             /* TensorRT / GPU compute / Batch matrix */
+  --accent-emerald: #10B981;                            /* Face locked / high similarity / healthy status */
+  --accent-amber: #F59E0B;                              /* Pose warning / occlusion / queue paused */
+  --accent-rose: #F43F5E;                               /* Error / dropped face / mask erase */
+
+  /* ── Studio Typography & Density Tokens ─────────────────────────────────── */
+  --font-studio-micro: 11px;                            /* Micro-labels, status chips, tick marks */
+  --font-studio-control: 12px;                          /* Slider labels, button controls, dropdowns */
+  --font-studio-body: 13px;                             /* High-density body text, inspect values */
+}
+
+/* ── Obsidian VFX Preset Theme Block ──────────────────────────────────────── */
+.theme-obsidian-vfx {
+  --bg-gradient: radial-gradient(at 15% -10%, rgba(0, 240, 255, 0.05) 0px, transparent 40%),
+                 radial-gradient(at 100% 100%, rgba(139, 92, 246, 0.04) 0px, transparent 45%),
+                 linear-gradient(165deg, #050507, #0A0B0E 50%, #07080D);
+  --card-bg: rgba(16, 18, 24, 0.78);
+  --surface-2: rgba(255, 255, 255, 0.035);
+  --text-main: #F4F5F7;
+  --text-muted: rgba(244, 245, 247, 0.55);
+  --accent: #00F0FF;
+  --accent-hover: #38F5FF;
+  --accent-glow: rgba(0, 240, 255, 0.22);
+  --border-color: rgba(255, 255, 255, 0.07);
+  --border-strong: rgba(255, 255, 255, 0.14);
+  --input-bg: rgba(10, 11, 14, 0.75);
+  --input-focus: rgba(0, 240, 255, 0.2);
+  --scrollbar-thumb: rgba(0, 240, 255, 0.25);
+  --scrollbar-thumb-hover: rgba(0, 240, 255, 0.45);
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.4), 0 12px 36px rgba(0, 0, 0, 0.35);
+  --radius-lg: 12px;
+  --specular: rgba(255, 255, 255, 0.06);
+
+  --bg-void: #050507;
+  --bg-shell: #0A0B0E;
+  --bg-panel: #101218;
+  --bg-elevated: #171A23;
+  --bg-glass: rgba(20, 23, 32, 0.84);
+  --border-subtle: rgba(255, 255, 255, 0.07);
+  --border-focus: rgba(0, 240, 255, 0.55);
+}
+
+/* Light Theme Fallbacks for Studio Tokens */
+[data-theme-mode="light"] {
+  --bg-void: #E8ECEF;
+  --bg-shell: #F3F5F8;
+  --bg-panel: #FFFFFF;
+  --bg-elevated: #F8FAFC;
+  --bg-glass: rgba(255, 255, 255, 0.84);
+  --border-subtle: rgba(0, 0, 0, 0.08);
+  --border-focus: rgba(0, 180, 216, 0.65);
+}
+
+/* ── Surface Utility Classes ──────────────────────────────────────────────── */
+.bg-void { background-color: var(--bg-void); }
+.bg-shell { background-color: var(--bg-shell); }
+.bg-panel { background-color: var(--bg-panel); }
+.bg-elevated { background-color: var(--bg-elevated); }
+.bg-glass {
+  background-color: var(--bg-glass);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+.border-subtle { border-color: var(--border-subtle); }
+.border-focus { border-color: var(--border-focus); }
+
+/* ── Tabular Numeric Alignment ──────────────────────────────────────────────
+   Enforce tabular-nums across all precision indicators: timecodes, frame counters,
+   FPS readouts, coordinates, telemetry percentages, and matrix offsets. */
+.tabular-nums,
+[data-tabular],
+.font-tabular,
+.timecode,
+.fps-counter,
+.coordinate-readout,
+.percentage-readout,
+[data-testid*="fps"],
+[data-testid*="timecode"],
+[data-testid*="coord"] {
+  font-variant-numeric: tabular-nums !important;
+  font-feature-settings: "tnum" 1 !important;
+}
+
+/* ── High-Density Studio Typography Scale ─────────────────────────────────── */
+.text-studio-micro {
+  font-size: var(--font-studio-micro, 11px);
+  line-height: 1.25;
+  letter-spacing: 0.02em;
+}
+
+.text-studio-control {
+  font-size: var(--font-studio-control, 12px);
+  line-height: 1.33;
+}
+
+.text-studio-body {
+  font-size: var(--font-studio-body, 13px);
+  line-height: 1.4;
+}
+
+/* ── Studio Accent Utilities ──────────────────────────────────────────────── */
+.text-accent-cyan { color: var(--accent-cyan); }
+.text-accent-violet { color: var(--accent-violet); }
+.text-accent-emerald { color: var(--accent-emerald); }
+.text-accent-amber { color: var(--accent-amber); }
+.text-accent-rose { color: var(--accent-rose); }
+
+.bg-accent-cyan { background-color: var(--accent-cyan); }
+.bg-accent-violet { background-color: var(--accent-violet); }
+.bg-accent-emerald { background-color: var(--accent-emerald); }
+.bg-accent-amber { background-color: var(--accent-amber); }
+.bg-accent-rose { background-color: var(--accent-rose); }
+
+.border-accent-cyan { border-color: var(--accent-cyan); }
+.border-accent-violet { border-color: var(--accent-violet); }
+.border-accent-emerald { border-color: var(--accent-emerald); }
+.border-accent-amber { border-color: var(--accent-amber); }
+.border-accent-rose { border-color: var(--accent-rose); }

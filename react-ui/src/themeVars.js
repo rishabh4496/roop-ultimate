@@ -195,6 +195,19 @@ export function deriveThemeVars(recipe) {
     '--specular': light ? 'rgba(0, 0, 0, 0.035)' : alpha(lighten(bg, 1), 0.05),
     // Semantic status — mode-picked, not accent-derived. See STATUS_COLORS.
     ...STATUS_COLORS[light ? 'light' : 'dark'],
+    // Studio Surface Luminance Hierarchy & Semantic Accents
+    '--bg-void': light ? '#E8ECEF' : '#050507',
+    '--bg-shell': light ? '#F3F5F8' : '#0A0B0E',
+    '--bg-panel': light ? '#FFFFFF' : '#101218',
+    '--bg-elevated': light ? '#F8FAFC' : '#171A23',
+    '--bg-glass': light ? 'rgba(255, 255, 255, 0.84)' : 'rgba(20, 23, 32, 0.84)',
+    '--border-subtle': light ? 'rgba(0, 0, 0, 0.08)' : 'rgba(255, 255, 255, 0.07)',
+    '--border-focus': light ? 'rgba(0, 180, 216, 0.65)' : 'rgba(0, 240, 255, 0.55)',
+    '--accent-cyan': '#00F0FF',
+    '--accent-violet': '#8B5CF6',
+    '--accent-emerald': '#10B981',
+    '--accent-amber': '#F59E0B',
+    '--accent-rose': '#F43F5E',
     // Light themes only: see the `.glass-input:focus` comment in index.css.
     // Emitting it unconditionally on dark would darken-then-lighten inputs on
     // focus, so it is scoped the same way the preset blocks scope it.

@@ -226,8 +226,8 @@ export default function Processing({ progress, settings, notify, setTab,
           Responsive scrollable container so the terminal and controls are never
           cut off on constrained viewports or laptop displays. */}
       {processing ? (
-        <div className="relative min-h-[620px] rounded-2xl overflow-y-auto overflow-x-hidden custom-scrollbar processing-stage flex flex-col items-center select-none px-4 sm:px-6 py-4">
-          <div className="relative w-full max-w-[1900px] min-h-0 flex flex-col gap-3.5">
+        <div className="relative min-h-[620px] rounded-2xl overflow-y-auto overflow-x-hidden custom-scrollbar processing-stage flex flex-col select-none px-4 sm:px-6 2xl:px-8 py-4">
+          <div className="relative w-full min-h-0 flex flex-col gap-3.5">
 
             <RunHeadlineLive
               p={p}
@@ -694,8 +694,8 @@ function RunPanelsLive({ settings, runtime, telemetry, runConfigSummary, started
     startedAtS, paused, pauseRequested, stopping, elapsedRef,
   });
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 min-h-0">
-      <div className="lg:col-span-1 flex flex-col gap-3.5 min-w-0">
+    <div className="grid grid-cols-1 lg:grid-cols-3 4xl:grid-cols-12 gap-4 3xl:gap-5 min-h-0">
+      <div className="lg:col-span-1 4xl:col-span-4 flex flex-col gap-3.5 min-w-0">
         <LiveProcessingPeek
           // The still Face Swap last had on screen, kept across the tab
           // switch — see faceswap/lastPreview. It is only the fallback for
@@ -726,7 +726,7 @@ function RunPanelsLive({ settings, runtime, telemetry, runConfigSummary, started
           <HeadPoseHud />
         </Section>
       </div>
-      <div className="lg:col-span-2 min-w-0">
+      <div className="lg:col-span-2 4xl:col-span-8 min-w-0">
         <DiagnosticsPanel
           desc={statusLine || desc}
           telemetry={telemetry}

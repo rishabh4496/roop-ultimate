@@ -423,7 +423,7 @@ function FaceQualityGrid({ faces, scores, meta, threshold, selected, onSelect, a
       cellHeight={(w) => Math.round(w)}
       getKey={(_src, i) => i}
       overscan={4}
-      maxCols={8}
+      maxCols={16}
       // p-1: the selection ring and the keyboard focus ring (2px + 2px offset) sit outside a tile, and the scroller
       // clips its children to its own box.
       className="max-h-[60vh] p-1"

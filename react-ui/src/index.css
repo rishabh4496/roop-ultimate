@@ -45,6 +45,8 @@
   --breakpoint-3xl: 1920px;
   --breakpoint-4xl: 2560px;
   --breakpoint-5xl: 3440px;
+  --breakpoint-6xl: 3840px;
+  --breakpoint-7xl: 5120px;
 
   /* ── Type scale ────────────────────────────────────────────────────────
      This app is dense — badges, HUD readouts, micro-labels — so most of its
@@ -126,6 +128,20 @@
   --warn: #FBBF24;
   --danger: #F87171;
   --info: #60A5FA;
+
+  /* ── Studio Surface Luminance Hierarchy & Semantic Accents ── */
+  --bg-void: #050507;
+  --bg-shell: #0A0B0E;
+  --bg-panel: #101218;
+  --bg-elevated: #171A23;
+  --bg-glass: rgba(20, 23, 32, 0.84);
+  --border-subtle: rgba(255, 255, 255, 0.07);
+  --border-focus: rgba(0, 240, 255, 0.55);
+  --accent-cyan: #00F0FF;
+  --accent-violet: #8B5CF6;
+  --accent-emerald: #10B981;
+  --accent-amber: #F59E0B;
+  --accent-rose: #F43F5E;
 }
 
 .theme-glass-light {
@@ -949,7 +965,7 @@ html[data-render-lite] .animate-scanner-sweep {
 .preview-stage {
   background:
     radial-gradient(120% 90% at 50% 0%, rgba(255, 255, 255, 0.035), transparent 62%),
-    #06070b;
+    var(--bg-void, #050507);
   border: 1px solid var(--border-color);
   box-shadow: 0 18px 44px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.04);
   transition: border-color 0.3s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.3s cubic-bezier(0.16, 1, 0.3, 1);

@@ -368,7 +368,7 @@ export default function Settings({ meta, settings, setSettings, notify, progress
       <div id="settings-panel" role="tabpanel" aria-labelledby={`settings-tab-${tab}`} className="space-y-4">
         {show('providers') && (
           <>
-            <div className="columns-1 md:columns-2 xl:columns-3 4xl:columns-4 gap-4 [column-fill:_balance]">
+            <div className="columns-1 md:columns-2 xl:columns-3 4xl:columns-4 5xl:columns-5 6xl:columns-6 gap-4 [column-fill:_balance]">
           <FilterSection title="Execution Providers & TensorRT Engines" icon={Icon.cpu} query={query} onlyModified={onlyModified} onResetKeys={resetKeys}>
           {/* ── GPU Acceleration & Full Potential Suite ── */}
           <div className="rounded-2xl border border-white/10 bg-gradient-to-br from-emerald-500/[0.08] via-black/40 to-cyan-500/[0.05] p-4 space-y-3 shadow-lg">
@@ -658,7 +658,7 @@ export default function Settings({ meta, settings, setSettings, notify, progress
         )}
 
         {show('cpu') && (
-          <div className="columns-1 md:columns-2 xl:columns-3 4xl:columns-4 gap-4 [column-fill:_balance]">
+          <div className="columns-1 md:columns-2 xl:columns-3 4xl:columns-4 5xl:columns-5 6xl:columns-6 gap-4 [column-fill:_balance]">
           <FilterSection title="CPU threads & memory" icon={Icon.cpu} query={query} onlyModified={onlyModified} onResetKeys={resetKeys}>
           <Toggle
             label="Auto thread selection"
@@ -712,7 +712,7 @@ export default function Settings({ meta, settings, setSettings, notify, progress
 
         {show('paths') && (
           <>
-            <div className="columns-1 md:columns-2 xl:columns-3 4xl:columns-4 gap-4 [column-fill:_balance]">
+            <div className="columns-1 md:columns-2 xl:columns-3 4xl:columns-4 5xl:columns-5 6xl:columns-6 gap-4 [column-fill:_balance]">
             <FilterSection title="Server" icon={Icon.settings} query={query} onlyModified={onlyModified} onResetKeys={resetKeys}>
               <Toggle label="Public server (share)" {...bindToggle('server_share')} />
               <Toggle label="Clear output folder before each run" {...bindToggle('clear_output')} />
@@ -792,7 +792,7 @@ export default function Settings({ meta, settings, setSettings, notify, progress
         )}
 
         {show('general') && (
-          <div className="columns-1 md:columns-2 xl:columns-3 4xl:columns-4 gap-4 [column-fill:_balance]">
+          <div className="columns-1 md:columns-2 xl:columns-3 4xl:columns-4 5xl:columns-5 6xl:columns-6 gap-4 [column-fill:_balance]">
             {/* "Theme" belongs in the title: the search matches on a child's label
                 or info, and this section's children are a bare heading and the
                 gallery — neither carries one, so under the old title searching for

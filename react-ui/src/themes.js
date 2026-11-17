@@ -9,6 +9,7 @@ import { deriveThemeVars, normalizeRecipe } from './themeVars';
 
 export const THEMES = [
   { name: 'Default',         className: '',                    accent: '#E94560', bg: '#0B0C12', mode: 'dark',  label: 'Obsidian & Crimson' },
+  { name: 'Obsidian VFX',    className: 'theme-obsidian-vfx',   accent: '#00F0FF', bg: '#0A0B0E', mode: 'dark',  label: 'Obsidian VFX (NLE Studio)' },
   { name: 'Midnight Violet', className: 'theme-midnight-violet', accent: '#9b5de5', bg: '#0d0819', mode: 'dark',  label: 'Deep purple glow' },
   { name: 'Sunset Amber',    className: 'theme-sunset-amber',  accent: '#f59e0b', bg: '#14100a', mode: 'dark',  label: 'Warm amber' },
   { name: 'Ocean Teal',      className: 'theme-ocean-teal',    accent: '#00bbf9', bg: '#071620', mode: 'dark',  label: 'Cyan deep-sea' },

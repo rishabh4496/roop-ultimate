@@ -279,9 +279,9 @@ export default function Home({ progress, setTab, setSettings, notify }) {
             ) : null}
           >
             {outputs === null ? (
-              <div className="grid grid-cols-3 gap-2">{[0, 1, 2].map((i) => <Skeleton key={i} className="aspect-video" />)}</div>
+              <div className="grid grid-cols-3 3xl:grid-cols-4 4xl:grid-cols-6 gap-2">{[0, 1, 2].map((i) => <Skeleton key={i} className="aspect-video" />)}</div>
             ) : (
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-3 3xl:grid-cols-4 4xl:grid-cols-6 gap-2">
                 {outputs.files.slice(0, 6).map((f) => {
                   const targetPath = f.name.includes('/') || f.name.includes('\\') ? f.name : `${outputs.path}/${f.name}`;
                   const src = fileUrl(targetPath);

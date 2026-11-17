@@ -1347,7 +1347,7 @@ export const PreviewViewport: React.FC<PreviewViewportProps> = ({
   return (
     <div
       ref={containerRef}
-      className={`relative w-full h-full min-h-[360px] bg-black/95 select-none overflow-hidden flex items-center justify-center font-sans ${className}`}
+      className={`relative w-full h-full min-h-[360px] bg-[var(--bg-void,#050507)] select-none overflow-hidden flex items-center justify-center font-sans ${className}`}
       style={style}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}

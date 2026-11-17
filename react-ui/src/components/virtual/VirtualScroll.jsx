@@ -100,7 +100,7 @@ export function VirtualRows({
  */
 export function VirtualGrid({
   items, minCell = 240, gap = 12, cellHeight, renderCell, getKey, overscan = 3,
-  className, label, testId, scrollerRef, maxCols = 8, ...rest
+  className, label, testId, scrollerRef, maxCols = 16, ...rest
 }) {
   const [setWidthEl, width] = useContentWidth(0);
   const scroller = useRef(null);
