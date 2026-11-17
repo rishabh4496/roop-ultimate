@@ -313,6 +313,36 @@ def luma_only_recolour(restored, source, chroma=0.0, lab_exact=False):
     return out
 
 
+def luma_only_sharpen(img, gain, sigma=0.8):
+    """Unsharp mask on LUMINANCE only, for a uint8 HxWx3 BGR crop.
+
+    `img + gain * (img - blur(img))` per channel (what UltraMax ran after its colour pass) high-
+    passes B, G and R separately, so a colour edge at constant luminance gets an overshoot in
+    CHROMA - after `luma_only_recolour` had just locked the chroma to the target's. Here ONE delta,
+    ``gain * (Y - blur(Y))``, is added to all three channels: B-Y and R-Y are unchanged, so the
+    chroma stays where the colour pass put it (the only departure is where a channel clips at 0/255).
+    """
+    if gain <= 0.0:
+        return img
+    base = img.astype(np.float32)
+    y = base[:, :, 0] * 0.114 + base[:, :, 1] * 0.587 + base[:, :, 2] * 0.299
+    delta = gain * (y - cv2.GaussianBlur(y, (0, 0), sigma))
+    return np.clip(base + delta[:, :, None], 0.0, 255.0).astype(np.uint8)
+
+
+def luma_only_sharpen_tensor(img, gain, blur):
+    """`luma_only_sharpen` for a CUDA HxWx3 BGR float tensor in [0, 255].
+
+    ``blur(hwc_tensor, sigma)`` is the caller's Gaussian (UltraMax passes its `_blur_gpu`, which
+    keeps the kernel width the CPU operator uses).
+    """
+    if gain <= 0.0:
+        return img
+    y = (img[:, :, 0] * 0.114 + img[:, :, 1] * 0.587 + img[:, :, 2] * 0.299).unsqueeze(-1)
+    delta = gain * (y - blur(y, 0.8))
+    return (img + delta).clamp(0, 255)
+
+
 def looks_collapsed(result, source):
     """True when a restorer returned a degenerate, near-uniform image.
 

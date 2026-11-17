@@ -1226,6 +1226,8 @@ class Settings:
         self.semantic_paste_mask = self.default_get(data, 'semantic_paste_mask', True)
         # Skin-class Lab transfer at the seam (0 disables; roop.blender.skin_lab_match).
         self.skin_lab_match = self.default_get(data, 'skin_lab_match', 1.0)
+        # Statistics model of that transfer: reinhard (mean/clamped sigma) | adain (mean/sigma) | cdf (histogram).
+        self.skin_lab_match_mode = self.default_get(data, 'skin_lab_match_mode', 'reinhard')
         # Skin-tone / lighting match of swapped crop → original: none|rct|lct|mkl
         self.color_transfer_mode = self.default_get(data, 'color_transfer_mode', 'lct')
         self.skin_tone_warmth = self.default_get(data, 'skin_tone_warmth', 0.0)
@@ -1650,6 +1652,7 @@ class Settings:
             'blend_mode': self.blend_mode,
             'semantic_paste_mask': self.semantic_paste_mask,
             'skin_lab_match': self.skin_lab_match,
+            'skin_lab_match_mode': self.skin_lab_match_mode,
             'color_transfer_mode': self.color_transfer_mode,
             'skin_tone_warmth': self.skin_tone_warmth,
             'saturation_match': self.saturation_match,

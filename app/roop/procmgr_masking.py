@@ -1028,7 +1028,8 @@ class MaskingMixin:
                 _skin = _fp.class_mask(_fp.resize_labels(_parse.labels, (h, w)), ('skin',)) & (alpha > 0.01)
                 _plate_crop = cv2.warpAffine(target_img, cv2.invertAffineTransform(IM), (w, h),
                                              flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
-                content, _ = _bl.skin_lab_match(content, _plate_crop, _skin, strength=_lab)
+                content, _ = _bl.skin_lab_match(content, _plate_crop, _skin, strength=_lab,
+                                                mode=getattr(roop.globals, 'skin_lab_match_mode', 'reinhard'))
             except Exception as exc:
                 _swallowed("roop/procmgr_masking.py:skin_lab_match", exc, "fallback continued")
                 _warn_once('skin_lab_match', '[Mask] skin Lab match failed; this face was pasted without it: %s: %s'

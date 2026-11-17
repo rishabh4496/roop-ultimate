@@ -1,7 +1,8 @@
 """Smart Restorer Bypass Mode.
 
 When using high-resolution native swappers (Alpha 256, HyperSwap 1a/1b/1c at 256/512)
-and the target face bounding box height in frame pixels is <= 320px, full neural
+and the target face bounding box height in frame pixels is small (<= 256 px fully, fading out
+linearly to 0 at 384 px; see ``bypass_weight``), full neural
 restorers (CodeFormer, GFPGAN, RestoreFormer++ / RF++) are mathematically redundant:
 the high-resolution native swap already carries more spatial detail than the target
 footprint can preserve when pasted back down.
@@ -139,29 +140,31 @@ def face_bbox_height(face: Any) -> Optional[float]:
     return None
 
 
-def should_bypass_restorer(
+# The bypass used to be a step: h <= 320 px -> DoG only, h > 320 px -> the full restorer. A face
+# walking toward the camera crossed 320 px in one frame and its sharpness jumped. It is now a
+# linear ramp: weight 1.0 (DoG only) at or below RAMP_LO_PX, 0.0 (restorer only) at or above
+# RAMP_HI_PX, and a straight-line mix of the two outputs between. The old 320 px step sits at
+# the ramp's midpoint, so a face that sat on either side of it stays on that side's behaviour
+# to within one half of the ramp.
+RAMP_LO_PX = 256.0
+RAMP_HI_PX = 384.0
+
+
+def _bypass_height(
     target_face: Any,
     swap_model: Optional[str],
     restorer_processor: Any,
-    enabled: bool = False,
-    max_height_px: float = 320.0,
-) -> bool:
-    """Evaluate whether to bypass neural restorer and use GPU DoG unsharp mask.
-
-    Conditions:
-    1. Smart bypass toggle is enabled.
-    2. Swap model is Alpha 256 or HyperSwap (native resolution >= 256px).
-    3. Target face bounding box height <= 320px.
-    4. Restorer model is CodeFormer, GFPGAN, RestoreFormer++ / RF++, or UltraMax.
-    """
+    enabled: bool,
+) -> Optional[float]:
+    """The face height in frame px when every non-height bypass condition holds, else None."""
     if not enabled:
         # Check environment variable as runtime fallback
         env_val = os.environ.get("ROOP_AUTO_BYPASS_RESTORER_NATIVE_SWAP", "").strip().lower()
         if env_val not in ("1", "true", "yes", "on"):
-            return False
+            return None
 
     if not is_bypass_swap_model(swap_model):
-        return False
+        return None
 
     r_name = (
         getattr(restorer_processor, "processorname", None)
@@ -169,10 +172,78 @@ def should_bypass_restorer(
         or type(restorer_processor).__name__
     )
     if not is_bypass_restorer(r_name):
-        return False
+        return None
 
-    h = face_bbox_height(target_face)
-    if h is None or h > max_height_px:
-        return False
+    return face_bbox_height(target_face)
 
-    return True
+
+def ramp_weight(height_px: Optional[float], lo: float = RAMP_LO_PX, hi: float = RAMP_HI_PX) -> float:
+    """Bypass weight for a face height: 1.0 at/below ``lo``, 0.0 at/above ``hi``, linear between."""
+    if height_px is None:
+        return 0.0
+    if hi <= lo:  # degenerate ramp = the old step
+        return 1.0 if height_px <= lo else 0.0
+    return float(min(1.0, max(0.0, (hi - float(height_px)) / (hi - lo))))
+
+
+def bypass_weight(
+    target_face: Any,
+    swap_model: Optional[str],
+    restorer_processor: Any,
+    enabled: bool = False,
+    lo: float = RAMP_LO_PX,
+    hi: float = RAMP_HI_PX,
+) -> float:
+    """How much of the DoG-sharpened crop goes into the output: 1.0 = bypass the neural
+    restorer entirely, 0.0 = restorer only, between = ``w * dog + (1 - w) * restored``.
+
+    Conditions (any failing -> 0.0, the restorer runs alone):
+    1. Smart bypass toggle (or ``ROOP_AUTO_BYPASS_RESTORER_NATIVE_SWAP``) is on.
+    2. Swap model is Alpha 256 / HyperSwap / RealSwap (native resolution >= 256 px).
+    3. Restorer is CodeFormer, GFPGAN, RestoreFormer++ / RF++, Restore Ultra or UltraMax.
+    4. The face's bounding-box height sets the weight along the ``lo``..``hi`` ramp.
+    """
+    return ramp_weight(_bypass_height(target_face, swap_model, restorer_processor, enabled), lo, hi)
+
+
+def manager_blends(processor: Any, weight: float) -> bool:
+    """True when the ramp mix for this restorer is done by ``ProcessMgr`` (UltraMax, Restore Ultra, ...).
+
+    CodeFormer and RF++ gate and mix inside their own ``Run`` (they expose ``_run_network``); the
+    manager must not mix a second time, or the DoG share would be applied as 1 - (1 - w)^2.
+    """
+    return 0.0 < weight < 1.0 and not hasattr(processor, "_run_network")
+
+
+def blend_bypass(restored: np.ndarray, scale: float, bypass_img: np.ndarray, weight: float):
+    """Mix a restorer output with the DoG crop: ``weight * dog + (1 - weight) * restored``.
+
+    ``restored`` may be ``scale`` times larger than ``bypass_img`` (UltraMax / GPEN return
+    an enlarged crop); the DoG crop is resized to it first. Returns ``(uint8 image, scale)``.
+    """
+    if restored is None or bypass_img is None or weight <= 0.0:
+        return restored, scale
+    if weight >= 1.0:
+        return bypass_img, 1
+    if bypass_img.shape[:2] != restored.shape[:2]:
+        bypass_img = cv2.resize(bypass_img, (restored.shape[1], restored.shape[0]),
+                                interpolation=cv2.INTER_CUBIC)
+    mixed = (weight * bypass_img.astype(np.float32)
+             + (1.0 - weight) * restored.astype(np.float32))
+    return np.clip(np.rint(mixed), 0, 255).astype(np.uint8), scale
+
+
+def should_bypass_restorer(
+    target_face: Any,
+    swap_model: Optional[str],
+    restorer_processor: Any,
+    enabled: bool = False,
+    max_height_px: float = 320.0,
+) -> bool:
+    """Legacy step form: True when the face is at or below ``max_height_px``.
+
+    The renderers no longer call this; they use :func:`bypass_weight` (a 256-384 px ramp).
+    Kept for the callers and tests that want the plain yes/no at one height.
+    """
+    h = _bypass_height(target_face, swap_model, restorer_processor, enabled)
+    return not (h is None or h > max_height_px)

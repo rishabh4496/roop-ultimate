@@ -221,6 +221,8 @@ from roop.typing import Face, FaceSet, Frame
 from roop.processors.enhance_common import (looks_collapsed, sized, exclusive,
                                             luma_only_recolour,
                                             luma_only_recolour_tensor,
+                                            luma_only_sharpen,
+                                            luma_only_sharpen_tensor,
                                             ort_cuda_output_to_torch)
 from roop.utilities import resolve_relative_path
 from roop import session_pool
@@ -1088,8 +1090,8 @@ class Enhance_UltraMax:
                 restored = luma_only_recolour_tensor(restored, source, chroma)
             _ss = self._structure_sharpen()
             if _ss > 0.0:
-                restored = (restored + _ss *
-                            (restored - self._blur_gpu(restored, 0.8))).clamp(0, 255)
+                # Luminance only: the colour pass above just locked the chroma to the target's.
+                restored = luma_only_sharpen_tensor(restored, _ss, self._blur_gpu)
             _dw = self._detail_weight()
             if _dw is not None and chroma != 1.0:
                 _lb = self._lowband_blend_gpu(restored, source, _dw)
@@ -1244,10 +1246,9 @@ class Enhance_UltraMax:
         # generated face, and its low gain avoids recreating the old halo.
         _ss = self._structure_sharpen()
         if _ss > 0.0:
-            base = restored.astype(np.float32)
-            blur = cv2.GaussianBlur(base, (0, 0), 0.8)
-            restored = np.clip(base + _ss * (base - blur),
-                               0.0, 255.0).astype(np.uint8)
+            # Luminance only: one delta added to B, G and R keeps the chroma `luma_only_recolour`
+            # just set (a per-channel unsharp overshoots colour edges).
+            restored = luma_only_sharpen(restored, _ss)
 
         # Do this after the colour pass: the protected source pixels should
         # retain the same chroma as the rest of the swapped crop, while the

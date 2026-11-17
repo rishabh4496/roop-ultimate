@@ -150,6 +150,7 @@ boundary_illumination_strength = 0.0
 blend_mode = 'laplacian'
 semantic_paste_mask = True
 skin_lab_match = 1.0
+skin_lab_match_mode = 'reinhard'
 # Per-request: publish parsing_overlay / final_alpha_mask for the preview API.
 debug_mask_channels = False
 # Persistent source identity detail from FaceSet V2. Unlike the setting above,

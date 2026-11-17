@@ -6956,13 +6956,17 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 if _enh_excl is None:
                     _enh_excl = getattr(p, 'pool', None) is not None
 
-                from roop.smart_restorer_bypass import should_bypass_restorer, apply_dog_unsharp_mask
+                from roop.smart_restorer_bypass import (bypass_weight, blend_bypass, manager_blends,
+                                                        apply_dog_unsharp_mask)
                 _swap_proc = next((proc for proc in self.processors if getattr(proc, 'type', None) == 'swap'), None)
                 _swap_m = getattr(self.options, 'swap_model', None) or getattr(_swap_proc, 'loaded_model_key', None)
                 _bypass_toggle = getattr(self.options, 'auto_bypass_restorer_native_swap', False) or (
                     getattr(getattr(roop.globals, "CFG", None), "auto_bypass_restorer_native_swap", False)
                 )
-                if should_bypass_restorer(target_face, _swap_m, p, enabled=_bypass_toggle, max_height_px=320.0):
+                # 256-384 px linear ramp (was a 320 px step): 1.0 = DoG only, 0.0 = restorer only,
+                # between = a straight mix of the two outputs.
+                _bypass_w = bypass_weight(target_face, _swap_m, p, enabled=_bypass_toggle)
+                if _bypass_w >= 1.0:
                     enhanced_frame = apply_dog_unsharp_mask(enh_input)
                     scale_factor = 1.0
                     self._restorer_bypasses = getattr(self, '_restorer_bypasses', 0) + 1
@@ -6989,6 +6993,12 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                             watchdog.check_tensor(enhanced_frame, model_name=getattr(p, 'processorname', getattr(p, 'name', 'enhancer')), frame_idx=_cur_fidx, bbox=_cur_bbox)
                         except Exception:
                             pass
+                        # Inside the ramp: CodeFormer and RF++ gate and blend inside their own Run
+                        # (`_run_network` marks them); every other restorer is blended here, so
+                        # nothing is mixed twice.
+                        if manager_blends(p, _bypass_w) and enhanced_frame is not None:
+                            enhanced_frame, scale_factor = blend_bypass(
+                                enhanced_frame, scale_factor, apply_dog_unsharp_mask(enh_input), _bypass_w)
 
                 if _A is not None and enhanced_frame is not None:
                     # Back to swap-crop space. The enhancer may have returned a

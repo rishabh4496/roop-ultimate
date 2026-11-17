@@ -71,21 +71,61 @@ def eroded_skin(skin, *, erode_frac: float = 0.02, min_pixels: int = 256):
     return None
 
 
+COLOR_MODES = ('reinhard', 'adain', 'cdf')
+DEFAULT_COLOR_MODE = 'reinhard'
+_ADAIN_SCALE_LIMITS = ((0.5, 2.0), (0.5, 2.0), (0.5, 2.0))   # a sanity bound, not a look: AdaIN matches sigma
+_CDF_KNOTS = 33                                              # quantile knots of the per-channel mapping
+_CDF_TAIL = 0.01                                             # knots span the 1st..99th percentile
+
+
+def normalize_color_mode(value) -> str:
+    v = str(value or '').strip().lower().replace('-', '_').replace(' ', '_')
+    if v in ('histogram', 'cdf_histogram', 'histogram_match', 'cdf_match'):
+        v = 'cdf'
+    return v if v in COLOR_MODES else DEFAULT_COLOR_MODE
+
+
+def _cdf_map(content_vals, reference_vals, query):
+    """Histogram specification of ONE channel: the monotone map that sends the content's distribution
+    onto the reference's, as a piecewise-linear function through ``_CDF_KNOTS`` matched quantiles.
+
+    Where Reinhard / AdaIN match two moments, this matches the whole CDF, so a bimodal reference
+    (lit cheek + shadowed cheek) stays bimodal. Values past the content's 1st / 99th percentile move by
+    the end knots' offset instead of being clipped onto them.
+    """
+    q = np.linspace(_CDF_TAIL, 1.0 - _CDF_TAIL, _CDF_KNOTS)
+    kc = np.quantile(content_vals, q).astype(np.float64)
+    kr = np.quantile(reference_vals, q).astype(np.float64)
+    kc = kc + np.arange(_CDF_KNOTS) * 1e-6                       # strictly increasing for np.interp
+    out = np.interp(query, kc, kr)
+    out = np.where(query < kc[0], query + (kr[0] - kc[0]), out)
+    out = np.where(query > kc[-1], query + (kr[-1] - kc[-1]), out)
+    return out.astype(np.float32)
+
+
 def skin_lab_match(content, reference, skin, *, strength: float = 1.0,
                    erode_frac: float = 0.02, soft_frac: float = 0.015,
-                   min_pixels: int = 256, work_px: int = 128):
+                   min_pixels: int = 256, work_px: int = 128, mode: str = DEFAULT_COLOR_MODE):
     """Match ``content`` (swapped crop) to ``reference`` (target crop) in Lab.
 
     Returns ``(corrected float32 BGR 0..255, info)``; ``info['applied']`` is False
     (and ``corrected`` is ``content`` unchanged) when the skin mask is too small.
 
-    The statistics, the clamped Reinhard delta and the soft skin weight are all
+    ``mode`` picks the statistics model over the eroded skin pixels (all three share the skin
+    weight, the per-pixel Lab shift cap and the low-resolution workflow below):
+
+    ``reinhard``  per-channel mean and sigma, sigma ratio clamped to ``_SCALE_LIMITS`` (default).
+    ``adain``     the same affine with the sigma ratio left free (0.5..2): full mean/std transfer.
+    ``cdf``       per-channel CDF (histogram) matching, ``_cdf_map``.
+
+    The statistics, the clamped delta and the soft skin weight are all
     computed at ~``work_px`` pixels on the short side; only the resulting smooth
     colour CORRECTION is upsampled and added to the full-resolution crop. That is
     ~10x cheaper than converting both crops to Lab at full size, and it leaves the
     pores untouched: the correction is a low-frequency field by construction.
     """
-    info = {'applied': False, 'pixels': 0, 'mean_shift_lab': (0.0, 0.0, 0.0)}
+    mode = normalize_color_mode(mode)
+    info = {'applied': False, 'pixels': 0, 'mean_shift_lab': (0.0, 0.0, 0.0), 'mode': mode}
     strength = float(np.clip(strength, 0.0, 1.0))
     c = np.asarray(content, np.float32)
     ref = np.asarray(reference, np.float32)
@@ -107,10 +147,15 @@ def skin_lab_match(content, reference, skin, *, strength: float = 1.0,
     pc, pr = lab_c[stat], lab_r[stat]
     mu_c, mu_r = pc.mean(0), pr.mean(0)
     sd_c, sd_r = pc.std(0), pr.std(0)
-    scale = np.ones(3, np.float32)
-    for i, (lo, hi) in enumerate(_SCALE_LIMITS):
-        scale[i] = np.clip(sd_r[i] / sd_c[i], lo, hi) if sd_c[i] > 1e-3 else 1.0
-    delta = np.clip((lab_c - mu_c) * (scale - 1.0) + (mu_r - mu_c), -_LAB_MAX_SHIFT, _LAB_MAX_SHIFT)
+    if mode == 'cdf':
+        raw = np.stack([_cdf_map(pc[:, i], pr[:, i], lab_c[..., i]) - lab_c[..., i] for i in range(3)], axis=-1)
+    else:
+        limits = _ADAIN_SCALE_LIMITS if mode == 'adain' else _SCALE_LIMITS
+        scale = np.ones(3, np.float32)
+        for i, (lo, hi) in enumerate(limits):
+            scale[i] = np.clip(sd_r[i] / sd_c[i], lo, hi) if sd_c[i] > 1e-3 else 1.0
+        raw = (lab_c - mu_c) * (scale - 1.0) + (mu_r - mu_c)
+    delta = np.clip(raw, -_LAB_MAX_SHIFT, _LAB_MAX_SHIFT)
     weight = cv2.GaussianBlur(skin_lo.astype(np.float32), (0, 0), max(0.7, soft_frac * min(lh, lw)))
     # Difference of two conversions, so Lab<->BGR gamut clipping cancels.
     corr_lo = _from_lab(lab_c + (strength * weight)[..., None] * delta) - _from_lab(lab_c)

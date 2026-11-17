@@ -853,6 +853,10 @@
       "default": 1.0,
       "type": "float"
     },
+    "skin_lab_match_mode": {
+      "default": "reinhard",
+      "type": "str"
+    },
     "color_transfer_mode": {
       "default": "lct",
       "type": "str"

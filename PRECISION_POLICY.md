@@ -188,7 +188,7 @@ recorded by `record_provider_degradation(..., model=...)` and reported in `/api/
 ### Optimisation profiles
 
 `trt_shape_profile.resolve_profile` reads each graph and binds `trt_profile_{min,opt,max}_shapes` only for inputs that have a dynamic dimension. Measured on the
-shipped files: UltraMax (`codeformer.fp16`) `x:1x3x512x512 .. 8x3x512x512` (the brief's 1..4 is a subset); GPEN-256/512, RF++, CodeFormer v0.1 and
+shipped files: UltraMax (`codeformer.fp16`) `x:1x3x512x512 .. 16x3x512x512`, opt 8 (corrected 2026-11-17: `trt_shape_profile.resolve_profile('ultramax', ...)` returns `min 1 / opt 8 / max 16`; B=4 equals four B=1 runs bit for bit on it, and the brief's `1/2/8` profile measured 1.27x per face at B=2 and the same 1.14x at B=4, `app/tests/ultramax_batch_probe.py`); GPEN-256/512, RF++, CodeFormer v0.1 and
 `inswapper_128` are exported **static** `[1,3,S,S]`, so a `[1..4]` or Pixel-Boost `[1..16,3,128,128]` profile cannot be bound to them (TensorRT rejects a
 max above a static dimension) without re-exporting the models, and a dynamic-batch swapper was measured slower. `test_stage2_precision_profiles.py` pins both facts.
 
