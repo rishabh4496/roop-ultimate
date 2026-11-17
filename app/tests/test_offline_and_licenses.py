@@ -105,7 +105,12 @@ class TestOfflineBundle(unittest.TestCase):
 
 class TestStandaloneInstall(unittest.TestCase):
     def test_standalone_install_suite_passes(self):
-        from tests import test_standalone_install as sa
+        # Loaded by path: `tests` resolves to the root tests/ package when both trees are collected.
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "standalone_install_check", APP / "tests" / "test_standalone_install.py")
+        sa = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(sa)
         suite = unittest.TestLoader().loadTestsFromTestCase(sa.TestStandaloneInstall)
         stream = io.StringIO()
         result = unittest.TextTestRunner(stream=stream, verbosity=0).run(suite)

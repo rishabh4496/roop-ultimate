@@ -102,8 +102,20 @@ def test_hard_angle_sweep_stabilizer_beats_raw_detector():
 
 
 def _paste_stub():
-    from tests.test_matte_roi import Stub
-    return Stub()
+    """The production paste mixin with only the attributes paste_upscale reads.
+
+    Defined here rather than imported from another test module, so this file
+    does not depend on how the `tests` package resolves on sys.path."""
+    import threading
+    import types
+    from roop.procmgr_masking import MaskingMixin
+
+    class _Stub(MaskingMixin):
+        def __init__(self):
+            self.options = types.SimpleNamespace(show_face_area_overlay=False, blend_ratio=1.0)
+            self._tls = threading.local()
+
+    return _Stub()
 
 
 def _skin_labels(yaw, size=96):
