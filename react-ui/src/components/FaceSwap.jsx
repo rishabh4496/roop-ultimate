@@ -3701,6 +3701,61 @@ export default function FaceSwap({
     };
   }, []);
 
+  // The stage's height budget, MEASURED. The deck is sticky AND capped (max-h = a share of the window, with
+  // overflow-y-auto as the last-resort safety net). If its content is taller than the cap it scrolls
+  // internally, and then a wheel over the preview moves the picture under the run bar instead of scrolling the
+  // page - "the preview is not fixed". The old budget subtracted a guessed 96px for everything that is not the
+  // stage (tab bar, toolbar rows, resize divider, the timeline header ...), which stopped being true as those
+  // grew. Here the real overhead is read back from the DOM: overhead = what the deck holds beyond the stage,
+  // stage cap = the deck's budget - that. Published as --stage-fit-h; --stage-max-h falls back to the formula
+  // until this has measured (and for the compare grids, which have no .preview-stage).
+  useLayoutEffect(() => {
+    const deck = deckRef.current;
+    const bar = runBarRef.current;
+    if (!deck) return undefined;
+    const root = document.documentElement;
+    const mq = window.matchMedia('(min-width: 1024px)');
+    const share = timelineResized ? 0.85 : 0.8;
+    const apply = () => {
+      // The classic stage, or the Pro Studio viewport (which takes its height from this same budget).
+      const stage = deck.querySelector('.preview-stage, [data-testid="preview-viewport-container"]');
+      if (!mq.matches || !stage) {
+        deck.style.removeProperty('--stage-fit-h');
+        return;
+      }
+      const z = parseFloat(root.style.zoom) || 1;
+      const vh = parseFloat(root.style.getPropertyValue('--ws-vh')) || window.innerHeight / z;
+      const hdr = parseFloat(root.style.getPropertyValue('--ws-header-h')) || 56;
+      const budget = (vh - hdr - (bar ? bar.offsetHeight : 0)) * share;
+      // scrollHeight (not offsetHeight): it is the full content even while the deck is clipped by its cap.
+      const overhead = deck.scrollHeight - stage.offsetHeight;
+      const fit = Math.max(150, Math.min(1000, Math.floor(budget - overhead - 2)));
+      const next = `${fit}px`;
+      if (deck.style.getPropertyValue('--stage-fit-h') !== next) deck.style.setProperty('--stage-fit-h', next);
+    };
+    apply();
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(apply) : null;
+    // The deck's own box does not change when its content outgrows the cap, so watch the content wrapper too.
+    ro?.observe(deck);
+    if (deck.firstElementChild) ro?.observe(deck.firstElementChild);
+    if (bar) ro?.observe(bar);
+    mq.addEventListener?.('change', apply);
+    window.addEventListener('resize', apply);
+    // The stage / timeline / toolbar rows mount and unmount with the media and the compare modes.
+    let raf = 0;
+    const schedule = () => { if (!raf) raf = requestAnimationFrame(() => { raf = 0; apply(); }); };
+    const mo = typeof MutationObserver !== 'undefined' ? new MutationObserver(schedule) : null;
+    mo?.observe(deck, { childList: true, subtree: true });
+    return () => {
+      ro?.disconnect();
+      mo?.disconnect();
+      if (raf) cancelAnimationFrame(raf);
+      mq.removeEventListener?.('change', apply);
+      window.removeEventListener('resize', apply);
+      deck.style.removeProperty('--stage-fit-h');
+    };
+  }, [timelineResized]);
+
   return (
     // pb-28: the floating dock is fixed over the bottom ~80px of the viewport. Without
     // this room the last row of every column could be scrolled no higher than the
@@ -4856,7 +4911,8 @@ export default function FaceSwap({
                 // The stage gets whatever the deck's share leaves after the timeline and the tab bar /
                 // gaps (~90px), so the deck's contents always fit and it never scrolls internally (that
                 // internal scroll is what made the preview slide under the wheel).
-                '--stage-max-h': 'clamp(150px, calc(var(--deck-avail) * var(--deck-share) - var(--tl-h) - 96px), 1000px)',
+                // --stage-fit-h is the MEASURED version (see the effect above); the formula is its fallback.
+                '--stage-max-h': 'var(--stage-fit-h, clamp(150px, calc(var(--deck-avail) * var(--deck-share) - var(--tl-h) - 96px), 1000px))',
               }}
             >
             <div className="space-y-3">
@@ -4947,6 +5003,11 @@ export default function FaceSwap({
                       player owns it and supplies a url instead. */}
                   {useProStudioView ? (
                     <PreviewViewport
+                      // The viewport used to size itself (min-h-[360px], no cap), ignoring the deck's budget,
+                      // so in Pro Studio the deck was always taller than its cap and scrolled internally -
+                      // the preview slid under the run bar on every wheel tick. It now takes the stage budget
+                      // as its height (the media letterboxes inside it), like the classic stage does.
+                      style={{ minHeight: 0, height: 'var(--stage-max-h, 360px)' }}
                       videoRef={videoRef}
                       canvasRef={previewCanvasRef}
                       maskCanvasRef={previewMaskCanvasRef}
