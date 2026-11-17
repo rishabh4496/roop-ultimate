@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { postJSON } from '../../api';
+import { postJSON, getJSON } from '../../api';
 import { Icon } from '../../icons';
 
 /**
@@ -10,6 +10,9 @@ import { Icon } from '../../icons';
  *   Check 2: Hardware Encoder Mismatch (NVIDIA GPU active + CPU libx264 -> 1-click "Switch to NVENC")
  *   Check 3: Precision / TRT Warmth Check ([TRT Ready] vs [Will Compile ~90s])
  *   Check 4: Pose / Resolution Mismatch (Restore Ultra disabled when face bbox > 256px -> 1-click "Enable Restore Ultra")
+ *   Check 5: 12 GB VRAM Budget (Pixel Boost + UltraMax batch size exceeding 12 GB budget -> 1-click "Clamp Batch to 1")
+ *   Check 6: Missing .fsz Profile Angles (active faceset lacking yaw/pitch profile angles -> 1-click "Open Face Manager")
+ *   Check 7: Segment Retention Paths (chunked renders missing retention custody or disabled keep_segments)
  */
 export default function PreFlightLinter({
   target = null,
@@ -19,7 +22,7 @@ export default function PreFlightLinter({
   batchCount = 1,
   className = '',
   // compact: for a pinned bar. Tighter padding, and "Details" opens as a popover over the page instead of
-  // growing the bar (a bar that grows by 200px when you open Details shoves everything under it down).
+  // growing the bar.
   compact = false,
 }) {
   const [probeData, setProbeData] = useState(null);
@@ -31,6 +34,13 @@ export default function PreFlightLinter({
   const codec = settings?.output_video_codec || settings?.video_encoder || 'libx264';
   const selectedEnhancer = settings?.selected_enhancer || '';
   const provider = settings?.provider || '';
+  const pixelBoost = Number(settings?.pixel_boost || settings?.subsample_size || 256);
+  const ultramaxBatchSize = Math.max(1, Number(settings?.ultramax_batch_size || 1));
+  const keepSegments = settings?.keep_segments !== false;
+  const segmentRetentionPath = settings?.segment_retention_path || settings?.segment_dir || '.segments/';
+  const facesetFile = settings?.faceset_file || settings?.selected_faceset || '';
+  const useFaceset = Boolean(settings?.use_faceset);
+  const enableSegments = Boolean(settings?.enable_segments);
 
   // Compute max face dimensions locally from targetFacesInfo as fast fallback
   const maxFacePx = useMemo(() => {
@@ -49,51 +59,174 @@ export default function PreFlightLinter({
 
   const runProbe = useCallback(async () => {
     setLoading(true);
+    let serverRes = null;
     try {
-      const res = await postJSON('/api/render/preflight', {
+      serverRes = await postJSON('/api/render/preflight', {
         target_size: targetSize,
         max_frames: maxFrames,
         batch_count: batchCount,
         codec,
         selected_enhancer: selectedEnhancer,
         max_face_px: maxFacePx,
+        pixel_boost: pixelBoost,
+        ultramax_batch_size: ultramaxBatchSize,
+        faceset_file: facesetFile,
+        keep_segments: keepSegments,
       });
-      if (res && res.checks) {
-        setProbeData(res);
-      }
     } catch {
-      // Client-side fallback if server probe fails
-      const hasNvidia = /tensorrt|cuda/i.test(provider);
-      const encMismatch = hasNvidia && (/libx264|libx265/i.test(codec) || codec.startsWith('libx'));
-      const isTrt = /tensorrt/i.test(provider);
-      const resMismatch = maxFacePx > 256 && selectedEnhancer !== 'Restore Ultra';
-
-      const warnings = [];
-      const autoFixes = [];
-      if (encMismatch) {
-        warnings.push({ check: 'encoder', message: 'NVIDIA GPU active but video encoder is CPU libx264.' });
-        autoFixes.push({ action: 'switch_nvenc', label: 'Switch to NVENC', codec: 'h264_nvenc' });
-      }
-      if (resMismatch) {
-        warnings.push({ check: 'resolution', message: `Target face is ${maxFacePx}px (>256px), but Restore Ultra is disabled.` });
-        autoFixes.push({ action: 'enable_restore_ultra', label: 'Enable Restore Ultra', enhancer: 'Restore Ultra' });
-      }
-
-      setProbeData({
-        status: warnings.length === 0 ? 'ready' : 'warning',
-        checks: {
-          disk: { ok: true, free_gb: 50.0, required_gb: 2.0, ratio: 25.0, warning: null },
-          encoder: { ok: !encMismatch, has_nvidia: hasNvidia, current_codec: codec, recommended_codec: 'h264_nvenc', warning: encMismatch ? 'NVIDIA GPU active but encoder is CPU libx264' : null, auto_fix: encMismatch ? 'switch_nvenc' : null },
-          trt: { ok: !isTrt, is_trt: isTrt, status: isTrt ? '[Will Compile ~90s]' : '[TRT Ready]', warning: null },
-          resolution: { ok: !resMismatch, max_face_px: maxFacePx, selected_enhancer: selectedEnhancer, is_restore_ultra: !resMismatch, warning: resMismatch ? 'Restore Ultra recommended for face > 256px' : null, auto_fix: resMismatch ? 'enable_restore_ultra' : null },
-        },
-        warnings,
-        auto_fixes: autoFixes,
-      });
-    } finally {
-      setLoading(false);
+      // server call failed or unmocked; will compute client-side
+      serverRes = null;
     }
-  }, [batchCount, codec, maxFacePx, maxFrames, provider, selectedEnhancer, targetSize]);
+
+    // Also probe radar if faceset active and not already provided
+    let radarMissing = [];
+    if (facesetFile || useFaceset) {
+      try {
+        const radar = await getJSON('/api/facemgr/radar');
+        if (radar && Array.isArray(radar.missing)) {
+          radarMissing = radar.missing;
+        }
+      } catch {
+        // radar probe optional
+      }
+    }
+
+    const hasNvidia = /tensorrt|cuda/i.test(provider);
+    const encMismatch = hasNvidia && (/libx264|libx265/i.test(codec) || codec.startsWith('libx'));
+    const isTrt = /tensorrt/i.test(provider);
+    const resMismatch = maxFacePx > 256 && selectedEnhancer !== 'Restore Ultra';
+
+    // ── Check 5: 12 GB VRAM Budget (Pixel Boost + UltraMax batch size) ──
+    const tileFactor = pixelBoost >= 768 ? 9 : pixelBoost >= 512 ? 4 : 1;
+    const isUltraMax = /ultramax/i.test(selectedEnhancer);
+    const estimatedVramGb = Number((4.5 + (tileFactor * 0.45) + (ultramaxBatchSize * (isUltraMax ? 2.3 : 1.4))).toFixed(1));
+    const vramOverBudget = estimatedVramGb > 12.0;
+
+    // ── Check 6: Missing .fsz profile angles ──
+    const missingAngles = (serverRes?.checks?.fsz?.missing_angles || radarMissing || []);
+    const fszAngleMissing = Boolean(facesetFile && missingAngles.length > 0);
+
+    // ── Check 7: Segment retention paths ──
+    const isChunked = batchCount > 1 || maxFrames > 600 || enableSegments;
+    const segmentRetentionMismatch = isChunked && (!keepSegments || !segmentRetentionPath);
+
+    const warnings = [];
+    const autoFixes = [];
+
+    // Disk space check
+    const diskCheck = serverRes?.checks?.disk || {
+      ok: true,
+      free_gb: 50.0,
+      required_gb: 2.0,
+      ratio: 25.0,
+      warning: null,
+    };
+    if (diskCheck.warning) {
+      warnings.push({ check: 'disk', message: diskCheck.warning });
+    }
+
+    // Hardware encoder check
+    const encoderCheck = serverRes?.checks?.encoder || {
+      ok: !encMismatch,
+      has_nvidia: hasNvidia,
+      current_codec: codec,
+      recommended_codec: 'h264_nvenc',
+      warning: encMismatch ? 'NVIDIA GPU active but encoder is CPU libx264' : null,
+      auto_fix: encMismatch ? 'switch_nvenc' : null,
+    };
+    if (encoderCheck.warning) {
+      warnings.push({ check: 'encoder', message: encoderCheck.warning });
+      autoFixes.push({ action: 'switch_nvenc', label: 'Switch to NVENC', codec: 'h264_nvenc' });
+    }
+
+    // TRT engine check
+    const trtCheck = serverRes?.checks?.trt || {
+      ok: !isTrt,
+      is_trt: isTrt,
+      status: isTrt ? '[Will Compile ~90s]' : '[TRT Ready]',
+      warning: null,
+    };
+    if (trtCheck.warning) {
+      warnings.push({ check: 'trt', message: trtCheck.warning });
+    }
+
+    // Face resolution / restorer check
+    const resolutionCheck = serverRes?.checks?.resolution || {
+      ok: !resMismatch,
+      max_face_px: maxFacePx,
+      selected_enhancer: selectedEnhancer,
+      is_restore_ultra: !resMismatch,
+      warning: resMismatch ? `Target face is ${maxFacePx}px (>256px), but Restore Ultra is disabled.` : null,
+      auto_fix: resMismatch ? 'enable_restore_ultra' : null,
+    };
+    if (resolutionCheck.warning) {
+      warnings.push({ check: 'resolution', message: resolutionCheck.warning });
+      autoFixes.push({ action: 'enable_restore_ultra', label: 'Enable Restore Ultra', enhancer: 'Restore Ultra' });
+    }
+
+    // VRAM budget check
+    const vramCheck = serverRes?.checks?.vram || {
+      ok: !vramOverBudget,
+      estimated_vram_gb: estimatedVramGb,
+      budget_gb: 12.0,
+      pixel_boost: pixelBoost,
+      ultramax_batch_size: ultramaxBatchSize,
+      warning: vramOverBudget
+        ? `Estimated VRAM (${estimatedVramGb} GB) exceeds 12 GB budget (Pixel Boost ${pixelBoost}px + UltraMax batch ${ultramaxBatchSize}).`
+        : null,
+      auto_fix: vramOverBudget ? 'clamp_vram_budget' : null,
+    };
+    if (vramCheck.warning) {
+      warnings.push({ check: 'vram', message: vramCheck.warning });
+      autoFixes.push({ action: 'clamp_vram_budget', label: 'Clamp UltraMax Batch to 1', batch_size: 1 });
+    }
+
+    // Faceset profile angles check
+    const fszCheck = serverRes?.checks?.fsz || {
+      ok: !fszAngleMissing,
+      faceset_file: facesetFile,
+      missing_angles: missingAngles,
+      warning: fszAngleMissing
+        ? `Active faceset is missing profile angles (${missingAngles.join(', ')}). Swaps at extreme yaw will drift.`
+        : null,
+      auto_fix: fszAngleMissing ? 'open_facemgr' : null,
+    };
+    if (fszCheck.warning) {
+      warnings.push({ check: 'fsz', message: fszCheck.warning });
+      autoFixes.push({ action: 'open_facemgr', label: 'Inspect in Face Manager', route: '#/facemgr' });
+    }
+
+    // Segment retention path check
+    const segmentCheck = serverRes?.checks?.segments || {
+      ok: !segmentRetentionMismatch,
+      keep_segments: keepSegments,
+      retention_path: segmentRetentionPath,
+      warning: segmentRetentionMismatch
+        ? `Segment retention is disabled; chunked render segments in '${segmentRetentionPath}' will not be retained.`
+        : null,
+      auto_fix: segmentRetentionMismatch ? 'enable_segment_retention' : null,
+    };
+    if (segmentCheck.warning) {
+      warnings.push({ check: 'segments', message: segmentCheck.warning });
+      autoFixes.push({ action: 'enable_segment_retention', label: 'Retain Segment Chunks', keep_segments: true });
+    }
+
+    setProbeData({
+      status: warnings.length === 0 ? 'ready' : 'warning',
+      checks: {
+        disk: diskCheck,
+        encoder: encoderCheck,
+        trt: trtCheck,
+        resolution: resolutionCheck,
+        vram: vramCheck,
+        fsz: fszCheck,
+        segments: segmentCheck,
+      },
+      warnings,
+      auto_fixes: autoFixes,
+    });
+    setLoading(false);
+  }, [batchCount, codec, enableSegments, facesetFile, keepSegments, maxFacePx, maxFrames, pixelBoost, provider, segmentRetentionPath, selectedEnhancer, targetSize, ultramaxBatchSize, useFaceset]);
 
   useEffect(() => {
     runProbe();
@@ -109,6 +242,15 @@ export default function PreFlightLinter({
   const trtStatus = checks?.trt?.status || '[TRT Ready]';
   const isTrtWarm = trtStatus === '[TRT Ready]';
 
+  const handleFixClick = (fix) => {
+    if (fix.action === 'open_facemgr') {
+      window.location.hash = '#/facemgr';
+    }
+    if (onAutoFix) {
+      onAutoFix(fix.action, fix);
+    }
+  };
+
   return (
     <div
       role="region"
@@ -122,7 +264,7 @@ export default function PreFlightLinter({
     >
       {/* ── Summary Status Bar ── */}
       <div className={`flex flex-wrap items-center justify-between gap-x-2 ${compact ? 'gap-y-1 px-3 py-1.5' : 'gap-y-2 px-3 py-2'}`}>
-        <div className="flex items-center gap-2.5 min-w-0">
+        <div className="flex items-center gap-2.5 min-w-0 flex-wrap">
           <span
             className={`h-2.5 w-2.5 shrink-0 rounded-full transition-transform ${
               loading
@@ -135,7 +277,7 @@ export default function PreFlightLinter({
           <span className="font-semibold text-white/90 truncate flex items-center gap-1.5">
             <span>Pre-Flight Readiness:</span>
             {loading ? (
-              <span className="text-white/50">Probing hardware & disk…</span>
+              <span className="text-white/50">Probing hardware &amp; disk…</span>
             ) : isReady ? (
               <span className="text-emerald-400 font-bold">Ready</span>
             ) : (
@@ -147,6 +289,18 @@ export default function PreFlightLinter({
           {batchCount > 1 && (
             <span className="px-1.5 py-0.5 rounded text-micro bg-white/10 text-white/70 font-mono">
               Matrix ({batchCount} jobs)
+            </span>
+          )}
+          {checks?.vram && (
+            <span
+              className={`px-1.5 py-0.5 rounded text-micro font-mono border ${
+                checks.vram.ok
+                  ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-300'
+                  : 'bg-amber-500/20 border-amber-500/40 text-amber-300 animate-pulse'
+              }`}
+              title="Estimated VRAM vs 12 GB Budget"
+            >
+              VRAM: {checks.vram.estimated_vram_gb} / 12 GB
             </span>
           )}
         </div>
@@ -186,7 +340,7 @@ export default function PreFlightLinter({
             <button
               key={fix.action}
               type="button"
-              onClick={() => onAutoFix && onAutoFix(fix.action, fix)}
+              onClick={() => handleFixClick(fix)}
               className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-micro font-bold bg-amber-500 hover:bg-amber-400 text-black shadow-sm transition-colors cursor-pointer"
             >
               <span>⚡</span>
@@ -314,8 +468,94 @@ export default function PreFlightLinter({
               </div>
             )}
           </div>
+
+          {/* Check 5: 12 GB VRAM Budget (Pixel Boost + UltraMax batch size) */}
+          <div
+            className={`p-2 rounded-lg border ${
+              checks.vram.ok ? 'bg-black/30 border-white/10' : 'bg-amber-950/40 border-amber-500/40'
+            }`}
+          >
+            <div className="flex items-center justify-between text-muted text-nano uppercase tracking-wider font-sans font-bold">
+              <span className="flex items-center gap-1">
+                <Icon.meter size={12} />
+                <span>12 GB VRAM Budget</span>
+              </span>
+              <span className={checks.vram.ok ? 'text-emerald-400' : 'text-amber-400'}>
+                {checks.vram.estimated_vram_gb} GB / 12 GB
+              </span>
+            </div>
+            <div className="mt-1 text-white font-bold">
+              Pixel Boost {checks.vram.pixel_boost}px · Batch {checks.vram.ultramax_batch_size}
+            </div>
+            <div className="text-white/40 text-micro">
+              {checks.vram.ok ? 'Within 12 GB VRAM headroom' : 'Exceeds 12 GB VRAM budget!'}
+            </div>
+            {checks.vram.warning && (
+              <div className="mt-1 text-micro text-amber-300 font-sans leading-tight">
+                {checks.vram.warning}
+              </div>
+            )}
+          </div>
+
+          {/* Check 6: Missing .fsz profile angles */}
+          <div
+            className={`p-2 rounded-lg border ${
+              checks.fsz.ok ? 'bg-black/30 border-white/10' : 'bg-amber-950/40 border-amber-500/40'
+            }`}
+          >
+            <div className="flex items-center justify-between text-muted text-nano uppercase tracking-wider font-sans font-bold">
+              <span className="flex items-center gap-1">
+                <Icon.face size={12} />
+                <span>.fsz Profile Coverage</span>
+              </span>
+              <span className={checks.fsz.ok ? 'text-emerald-400' : 'text-amber-400'}>
+                {checks.fsz.ok ? 'Covered' : 'Missing Angles'}
+              </span>
+            </div>
+            <div className="mt-1 text-white font-bold truncate">
+              {checks.fsz.faceset_file ? checks.fsz.faceset_file.split(/[\\/]/).pop() : 'Standard Reference'}
+            </div>
+            <div className="text-white/40 text-micro">
+              {checks.fsz.missing_angles?.length ? `Missing: ${checks.fsz.missing_angles.join(', ')}` : 'All 5 pose buckets present'}
+            </div>
+            {checks.fsz.warning && (
+              <div className="mt-1 text-micro text-amber-300 font-sans leading-tight">
+                {checks.fsz.warning}
+              </div>
+            )}
+          </div>
+
+          {/* Check 7: Segment retention paths */}
+          <div
+            className={`p-2 rounded-lg border ${
+              checks.segments.ok ? 'bg-black/30 border-white/10' : 'bg-amber-950/40 border-amber-500/40'
+            }`}
+          >
+            <div className="flex items-center justify-between text-muted text-nano uppercase tracking-wider font-sans font-bold">
+              <span className="flex items-center gap-1">
+                <Icon.folder size={12} />
+                <span>Segment Custody</span>
+              </span>
+              <span className={checks.segments.ok ? 'text-emerald-400' : 'text-amber-400'}>
+                {checks.segments.ok ? 'Retained' : 'Purge Risk'}
+              </span>
+            </div>
+            <div className="mt-1 text-white font-bold truncate">
+              {checks.segments.retention_path}
+            </div>
+            <div className="text-white/40 text-micro">
+              {checks.segments.keep_segments ? 'Chunks preserved on disk' : 'Keep segments disabled'}
+            </div>
+            {checks.segments.warning && (
+              <div className="mt-1 text-micro text-amber-300 font-sans leading-tight">
+                {checks.segments.warning}
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>
   );
 }
+
+export { PreFlightLinter, PreFlightLinter as PreflightLinter };

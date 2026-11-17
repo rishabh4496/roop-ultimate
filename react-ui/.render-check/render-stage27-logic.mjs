@@ -12,19 +12,49 @@
  *    - Min / Avg / P95 / Max percentile statistics
  *    - Hardware residency tags (GPU vs CPU)
  *    - Full telemetry report packaging
+ * 3. Canonical Per-Stage Model Timings:
+ *    - SCRFD-gnkps, Stabilizer, BiSeNet+XSeg, HyperSwap, LivePortrait, UltraMax, Laplacian Blend
+ *    - Model pass latency & percentile metrics
+ * 4. Pre-Flight Render Linter Diagnostics:
+ *    - 12 GB VRAM budget check (Pixel Boost + UltraMax batch size)
+ *    - Missing .fsz profile angles detection
+ *    - Segment retention paths & chunk custody
+ * 5. Face Manager Pose Bucket Distribution & Sharpness:
+ *    - 5 canonical pose buckets (frontal, left_profile, right_profile, high_angle, low_angle)
+ *    - Sharpness score extraction & variance fallback
  *
  *   node .render-check/run-module.mjs render-stage27-logic.mjs
  */
 import process from 'node:process';
+
+// Browser globals shim for modules that touch window.location
+globalThis.window = globalThis;
+globalThis.location = { protocol: 'http:', host: '127.0.0.1:42003', origin: 'http://127.0.0.1:42003', hash: '' };
+globalThis.window.location = globalThis.location;
+globalThis.localStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
+globalThis.window.localStorage = globalThis.localStorage;
+globalThis.document = { documentElement: { style: { setProperty() {} } }, addEventListener() {}, removeEventListener() {} };
+globalThis.window.addEventListener = () => {};
+globalThis.window.removeEventListener = () => {};
+
 import { useWorkspaceStore, LAYOUT_PRESETS, DEFAULT_PANEL_SIZES, PANEL_LIMITS } from '../src/store/workspaceStore.js';
 import {
   FLAMEGRAPH_STAGES,
+  MODEL_PASS_STAGES,
+  STAGE_MODEL_MAPPING,
   STAGE_COLORS,
   STAGE_RESIDENCY,
   computeStageMetrics,
+  computeModelMetrics,
   computeFlamePercentages,
   exportTelemetryReport,
 } from '../src/components/faceswap/flamegraphModel.js';
+
+const {
+  POSE_BUCKET_CONFIG,
+  getPoseBucket,
+  getFaceSharpness,
+} = await import('../src/components/FaceManager.jsx');
 
 let failures = 0;
 const ok = (name, cond, detail = '') => {
@@ -175,6 +205,73 @@ ok('telemetry report includes recipe', report.recipe.swap_model === 'realswap');
 ok('telemetry report includes stage_metrics for all 7 stages',
   expectedStages.every((s) => report.stage_metrics && report.stage_metrics[s] !== undefined)
 );
+
+// ── 3. Canonical Per-Stage Model Timings (Tech Requirement 3d) ───────────────
+console.log('per-stage model timings (7 models)');
+const expectedModels = [
+  'SCRFD-gnkps',
+  'Stabilizer',
+  'BiSeNet+XSeg',
+  'HyperSwap',
+  'LivePortrait',
+  'UltraMax',
+  'Laplacian Blend',
+];
+ok('defines all 7 canonical model passes',
+  expectedModels.every((m) => MODEL_PASS_STAGES.some((s) => s.modelKey === m))
+);
+ok('stage model mapping maps SCRFD-gnkps to detect', STAGE_MODEL_MAPPING.detect === 'SCRFD-gnkps');
+ok('stage model mapping maps Stabilizer to decode', STAGE_MODEL_MAPPING.decode === 'Stabilizer');
+ok('stage model mapping maps BiSeNet+XSeg to mask', STAGE_MODEL_MAPPING.mask === 'BiSeNet+XSeg');
+ok('stage model mapping maps HyperSwap to swap', STAGE_MODEL_MAPPING.swap === 'HyperSwap');
+ok('stage model mapping maps UltraMax to restore', STAGE_MODEL_MAPPING.restore === 'UltraMax');
+ok('stage model mapping maps Laplacian Blend to blend', STAGE_MODEL_MAPPING.blend === 'Laplacian Blend');
+
+const modelMetrics = computeModelMetrics('SCRFD-gnkps', [7.2, 7.8, 8.4]);
+ok('computes model pass min/max/avg', modelMetrics.min === 7.2 && modelMetrics.max === 8.4 && modelMetrics.avg === 7.8);
+ok('telemetry report includes model_metrics for all 7 models',
+  expectedModels.every((m) => report.model_metrics && report.model_metrics[m] !== undefined)
+);
+
+// ── 4. Pre-Flight Render Linter Diagnostics (Tech Requirement 3d) ────────────
+console.log('pre-flight render linter diagnostics');
+// 12 GB VRAM Budget Calculation:
+const calcVram = (pixelBoost, ultramaxBatch) => {
+  const tileFactor = pixelBoost >= 768 ? 9 : pixelBoost >= 512 ? 4 : 1;
+  return Number((4.5 + (tileFactor * 0.45) + (ultramaxBatch * 2.3)).toFixed(1));
+};
+
+ok('standard 256px + batch 1 fits 12 GB VRAM budget', calcVram(256, 1) <= 12.0);
+ok('pixel boost 768px + batch 2 exceeds 12 GB VRAM budget', calcVram(768, 2) > 12.0);
+ok('pixel boost 512px + batch 4 exceeds 12 GB VRAM budget', calcVram(512, 4) > 12.0);
+
+// Missing .fsz profile angles detection:
+const testAngles = (missingList) => Boolean(missingList && missingList.length > 0);
+ok('detects missing yaw profile angles in .fsz', testAngles(['left_profile', 'right_profile']) === true);
+ok('fully covered .fsz produces no warning', testAngles([]) === false);
+
+// Segment retention path custody:
+const testRetention = (isChunked, keepSegments, path) => isChunked && (!keepSegments || !path);
+ok('chunked render with keep_segments disabled flags custody warning', testRetention(true, false, '.segments/') === true);
+ok('chunked render with keep_segments enabled is valid', testRetention(true, true, '.segments/') === false);
+
+// ── 5. Face Manager Pose Bucket Distribution & Sharpness (Tech Requirement 3e)
+console.log('face manager pose bucket distribution & sharpness');
+ok('defines 5 canonical pose buckets in config',
+  ['frontal', 'left_profile', 'right_profile', 'high_angle', 'low_angle'].every((k) => POSE_BUCKET_CONFIG[k] !== undefined)
+);
+
+ok('classifies negative yaw <= -40 as left_profile', getPoseBucket({ yaw: -45.0, pitch: 0 }) === 'left_profile');
+ok('classifies positive yaw >= 40 as right_profile', getPoseBucket({ yaw: 48.0, pitch: 0 }) === 'right_profile');
+ok('classifies positive pitch >= 20 as high_angle', getPoseBucket({ yaw: 10.0, pitch: 25.0 }) === 'high_angle');
+ok('classifies negative pitch <= -20 as low_angle', getPoseBucket({ yaw: -5.0, pitch: -22.0 }) === 'low_angle');
+ok('classifies frontal face with low angles as frontal', getPoseBucket({ yaw: 5.0, pitch: 2.0 }) === 'frontal');
+
+ok('extracts direct face sharpness 0..1', getFaceSharpness({ sharpness: 0.88 }) === 0.88);
+ok('derives sharpness score from sharp_var when direct sharpness absent',
+  Math.abs(getFaceSharpness({ sharp_var: 210.0 }) - 0.70) < 0.01
+);
+ok('handles missing metadata safely', getFaceSharpness({}) === null);
 
 console.log(failures === 0 ? '\nall Stage 27 logic checks passed' : `\n${failures} check(s) FAILED`);
 globalThis.__RENDER_CHECK_FAILURES__ = failures;

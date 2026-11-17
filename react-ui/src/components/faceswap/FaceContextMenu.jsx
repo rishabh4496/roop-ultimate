@@ -1,6 +1,6 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { clampMenuPosition } from './faceContextModel';
+import { clampMenuPosition, getPoseBucket, formatPoseAngles } from './faceContextModel';
 import { uiScale } from './zoomPan';
 
 // The right-click menu on a detected face. Rendered in a portal on <body> and positioned `fixed`, so the stage's
@@ -84,6 +84,18 @@ export default function FaceContextMenu({ menu, onClose, face, sources = [], act
 
   if (!menu || !face) return null;
 
+  // Extract telemetry for on-canvas context menu (Stage 25)
+  const trackMatch = typeof face.trackText === 'string' ? face.trackText.match(/\d+/) : null;
+  const trackId = face.trackId ?? (trackMatch ? trackMatch[0] : (face.personId != null ? face.personId : (face.index != null ? face.index + 1 : '1')));
+  const p = face.pose;
+  const yaw = Number.isFinite(Number(face.yaw)) ? Number(face.yaw) : (Array.isArray(p) ? Number(p[0]) : (Number.isFinite(Number(p?.yaw)) ? Number(p.yaw) : 0));
+  const pitch = Number.isFinite(Number(face.pitch)) ? Number(face.pitch) : (Array.isArray(p) ? Number(p[1]) : (Number.isFinite(Number(p?.pitch)) ? Number(p.pitch) : 0));
+  const roll = Number.isFinite(Number(face.roll)) ? Number(face.roll) : (Array.isArray(p) ? Number(p[2]) : (Number.isFinite(Number(p?.roll)) ? Number(p.roll) : 0));
+  const poseBucket = face.poseBucket || face.pose_bucket || getPoseBucket(yaw, pitch);
+  const occlusion = Number.isFinite(Number(face.occlusionPct)) ? Number(face.occlusionPct)
+    : (Number.isFinite(Number(face.occlusion_coverage_pct)) ? Number(face.occlusion_coverage_pct)
+    : (Number.isFinite(Number(face.occlusion)) ? Number(face.occlusion) : 0));
+
   const onKeyDown = (e) => {
     const list = [...ref.current.querySelectorAll('[role="menuitem"]:not([aria-disabled="true"])')];
     if (!list.length) return;
@@ -134,6 +146,59 @@ export default function FaceContextMenu({ menu, onClose, face, sources = [], act
     >
       <div className="px-2.5 pb-1 pt-1.5 text-nano font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]" data-testid="face-menu-badge">
         {face.badge}
+      </div>
+
+      {/* Live Face Telemetry Header: Track ID, (yaw, pitch, roll), Pose Bucket, Occlusion % (Stage 25) */}
+      <div className="mx-1 mb-1.5 p-2 rounded-lg bg-black/40 border border-white/10 text-micro font-mono space-y-1" data-testid="face-menu-telemetry">
+        <div className="flex items-center justify-between text-white/90">
+          <span className="font-bold text-[var(--accent)]" data-testid="face-menu-track-id">
+            Track ID: #{trackId}
+          </span>
+          <span className="px-1.5 py-0.5 rounded bg-white/10 text-white/80" data-testid="face-menu-pose-bucket">
+            Bucket: {poseBucket}
+          </span>
+        </div>
+        <div className="flex items-center justify-between text-white/70">
+          <span data-testid="face-menu-pose">
+            {formatPoseAngles(p || [yaw, pitch, roll])}
+          </span>
+          <span
+            className={occlusion > 25 ? 'text-amber-400 font-bold' : 'text-emerald-400'}
+            data-testid="face-menu-occlusion"
+          >
+            Occ: {occlusion.toFixed(1)}%
+          </span>
+        </div>
+      </div>
+
+      {/* 1-Click .fsz faceset lock/swap toggle quick actions (Stage 25) */}
+      <div className="mx-1 mb-1.5 grid grid-cols-2 gap-1" data-testid="face-menu-toggles">
+        <button
+          type="button"
+          role="menuitemcheckbox"
+          data-testid="face-menu-lock-toggle"
+          aria-checked={!!face.pinned}
+          disabled={!!face.pinReason}
+          onClick={() => { onClose(); actions.pin?.(); }}
+          className="flex items-center justify-center gap-1 rounded-md px-2 py-1 text-micro font-semibold border transition-all text-left disabled:opacity-40 disabled:cursor-not-allowed bg-white/[0.05] border-white/10 hover:border-amber-400/40 hover:bg-white/[0.08]"
+          title={face.pinReason || (face.pinned ? '1-Click Unlock .fsz Faceset' : '1-Click Lock .fsz Faceset')}
+        >
+          <span className={face.pinned ? 'text-amber-300' : 'text-white/60'}>{face.pinned ? '🔒' : '🔓'}</span>
+          <span className="truncate">{face.pinned ? 'Unlock .fsz' : 'Lock .fsz'}</span>
+        </button>
+        <button
+          type="button"
+          role="menuitemcheckbox"
+          data-testid="face-menu-swap-toggle"
+          aria-checked={!face.excluded}
+          disabled={!!face.bypassReason}
+          onClick={() => { onClose(); actions.bypass?.(); }}
+          className="flex items-center justify-center gap-1 rounded-md px-2 py-1 text-micro font-semibold border transition-all text-left disabled:opacity-40 disabled:cursor-not-allowed bg-white/[0.05] border-white/10 hover:border-sky-400/40 hover:bg-white/[0.08]"
+          title={face.bypassReason || (face.excluded ? '1-Click Enable Swap' : '1-Click Bypass Swap')}
+        >
+          <span className={face.excluded ? 'text-rose-400' : 'text-emerald-400'}>{face.excluded ? '⊘' : '✓'}</span>
+          <span className="truncate">{face.excluded ? 'Enable Swap' : 'Bypass Swap'}</span>
+        </button>
       </div>
       {entries.map((it) => {
         const disabled = !!it.reason;

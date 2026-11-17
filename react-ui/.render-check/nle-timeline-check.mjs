@@ -23,7 +23,22 @@ const {
   getTrackColor,
   getFacesetColor,
   TRACK_PALETTE,
+  NleTimeline,
 } = await import('../src/components/faceswap/NleTimeline.tsx');
+
+const {
+  byteTrackRows,
+  byteTrackHit,
+} = await import('../src/components/faceswap/timeline/laneModel.js');
+
+const {
+  drawByteTrackLane,
+  BYTE_TRACK_ROW_H,
+} = await import('../src/components/faceswap/timeline/lanes.js');
+
+const {
+  ByteTrackLane,
+} = await import('../src/components/faceswap/timeline/Lanes.jsx');
 
 let failures = 0;
 const ok = (name, cond, detail = '') => {
@@ -150,6 +165,24 @@ console.log('── Palette & Micro-Indicator Color Logic ───────�
 
   const fszCol = getFacesetColor('actor_a.fsz');
   ok('derives deterministic faceset color', typeof fszCol === 'string' && fszCol.startsWith('#'));
+}
+
+console.log('── ByteTrack Multi-Track Lane Model & Canvas Helpers ──────────');
+
+{
+  const rawTracks = [
+    { trackId: 0, label: 'Track #1', ranges: [[10, 50], [60, 100]], color: '#38bdf8' },
+    { trackId: 1, label: 'Track #2', ranges: [[20, 80]], color: '#f472b6' },
+  ];
+  const rows = byteTrackRows(rawTracks, 200);
+  ok('normalizes raw tracks into 2 byteTrack rows', rows.length === 2);
+  ok('row 0 has 2 non-overlapping intervals', rows[0].ranges.length === 2);
+  ok('hit-test inside range returns true', byteTrackHit(rows[0], 25) === true);
+  ok('hit-test outside range returns false', byteTrackHit(rows[0], 55) === false);
+
+  ok('drawByteTrackLane is callable function', typeof drawByteTrackLane === 'function');
+  ok('BYTE_TRACK_ROW_H is defined positive number', typeof BYTE_TRACK_ROW_H === 'number' && BYTE_TRACK_ROW_H > 0);
+  ok('ByteTrackLane component is defined', typeof ByteTrackLane === 'function');
 }
 
 if (failures > 0) {

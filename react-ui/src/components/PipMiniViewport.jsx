@@ -1,10 +1,11 @@
-import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Icon } from '../icons';
 import { usePipStore } from '../store/pipStore';
 import {
   PIP_BAR, PIP_DEFAULT, PIP_MARGIN, clampPosition, cornerPositions, pictureHeight, pipVisible, resizeTo, snapCorner,
 } from '../pip/pipModel';
 import { uiScale } from './faceswap/zoomPan';
+import { createViewportMatrix } from './faceswap/viewportMatrix';
 
 // The floating mini-viewport (280x158 by default, resizable): Face Swap's current picture, kept in a corner of the screen
 // while you work somewhere else. Where the picture comes from, and how it is renewed, is store/pipStore.js; where the window
@@ -68,11 +69,25 @@ export default function PipMiniViewport({ tab, onReturn }) {
   const free = sx !== null && sy !== null ? clampPosition({ x: sx, y: sy }, size, vp) : corners['bottom-right'];
   const pos = live && live.x !== undefined ? clampPosition(live, size, vp) : (corner && corners[corner] ? corners[corner] : free);
 
+  // Unified ViewportMatrix for floating PiP mini-viewport (Stage 26)
+  const pipMatrix = useMemo(() => {
+    return createViewportMatrix({
+      containerWidth: width,
+      containerHeight: height,
+      mediaWidth: frame?.w || PIP_DEFAULT.w,
+      mediaHeight: frame?.h || PIP_DEFAULT.h,
+      zoom: 1.0,
+      pan: { x: 0, y: 0 },
+      objectFit: 'contain',
+    });
+  }, [width, height, frame?.w, frame?.h]);
+
   // Paint the frame. The canvas backing store is the on-screen size (capped), not the frame's, so a 4K frame is not held at
   // 4K in a 280 px window.
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!visible || !canvas || !frame?.bitmap) return;
+    canvas.viewportMatrix = pipMatrix;
     const dpr = Math.min(2, window.devicePixelRatio || 1);
     const cw = Math.max(1, Math.round(width * vp.scale * dpr));
     const ch = Math.max(1, Math.round(height * vp.scale * dpr));
@@ -82,7 +97,7 @@ export default function PipMiniViewport({ tab, onReturn }) {
     try {
       ctx.drawImage(frame.bitmap, 0, 0, cw, ch);
     } catch { /* the bitmap was released between the store update and this paint: the next frame repaints */ }
-  }, [visible, frame, width, height, vp.scale]);
+  }, [visible, frame, width, height, vp.scale, pipMatrix]);
 
   // ── drag (move) ─────────────────────────────────────────────────────────
   const dragRef = useRef(null);

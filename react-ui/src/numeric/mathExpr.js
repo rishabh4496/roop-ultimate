@@ -26,6 +26,31 @@
 export const MAX_EXPR_LENGTH = 120;
 export const MAX_DEPTH = 40;
 
+/**
+ * Stage 26: Registered expression math parameters available for formula evaluation.
+ */
+export const REGISTERED_MATH_PARAMETERS = Object.freeze([
+  'stabilization_strength',
+  'yaw_erosion_bias',
+  'expression_restorer_weight',
+  'pixel_boost',
+  'temporal_restore_alpha',
+  'restore_identity_weight',
+  'grain_match_strength',
+  'motion_blur_match',
+]);
+
+export const DEFAULT_MATH_PARAMETER_VALUES = Object.freeze({
+  stabilization_strength: 0.5,
+  yaw_erosion_bias: 0.0,
+  expression_restorer_weight: 0.6,
+  pixel_boost: 512,
+  temporal_restore_alpha: 0.5,
+  restore_identity_weight: 0.6,
+  grain_match_strength: 0.35,
+  motion_blur_match: 0.0,
+});
+
 const NUMBER = '(?:\\d+\\.?\\d*|\\.\\d+)(?:[eE][+-]?\\d+)?';
 const SIGNED_PERCENT = new RegExp(`^([+-])\\s*(${NUMBER})\\s*%$`);
 const PLAIN_PERCENT = new RegExp(`^(${NUMBER})\\s*%$`);
@@ -42,7 +67,7 @@ export function normalizeExpression(text) {
     .trim();
 }
 
-function tokenize(src) {
+function tokenize(src, ctx = {}) {
   const tokens = [];
   let i = 0;
   while (i < src.length) {
@@ -55,6 +80,18 @@ function tokenize(src) {
       tokens.push({ t: 'num', v: Math.PI });
       i += 2;
       continue;
+    }
+    const identMatch = new RegExp(`^[a-zA-Z_][a-zA-Z0-9_]*`).exec(src.slice(i));
+    if (identMatch) {
+      const ident = identMatch[0];
+      const paramVal = ctx.variables?.[ident] ?? ctx.params?.[ident] ?? ctx[ident]
+        ?? (REGISTERED_MATH_PARAMETERS.includes(ident) ? DEFAULT_MATH_PARAMETER_VALUES[ident] : undefined);
+      if (paramVal !== undefined && Number.isFinite(Number(paramVal))) {
+        tokens.push({ t: 'num', v: Number(paramVal) });
+        i += ident.length;
+        continue;
+      }
+      return { error: `Unexpected "${ident}"` };
     }
     return { error: `Unexpected "${c}"` };
   }
@@ -153,7 +190,8 @@ function parse(tokens) {
  * Returns { ok: true, value } or { ok: false, error }. The value is NOT clamped or rounded here -
  * see settleTypedValue for that.
  */
-export function evaluateExpression(text, { current = 0, min = -Infinity, max = Infinity } = {}) {
+export function evaluateExpression(text, ctx = {}) {
+  const { current = 0, min = -Infinity, max = Infinity } = ctx;
   const src = normalizeExpression(text);
   if (!src) return fail('Type a number or an expression');
   if (src.length > MAX_EXPR_LENGTH) return fail('Expression is too long');
@@ -171,7 +209,7 @@ export function evaluateExpression(text, { current = 0, min = -Infinity, max = I
     return { ok: true, value };
   }
 
-  const lexed = tokenize(src);
+  const lexed = tokenize(src, ctx);
   if (lexed.error) return fail(lexed.error);
   let value;
   try {
@@ -190,8 +228,9 @@ const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
  * (`512/3` is 171, not 170.3333), everything else keeps four decimals, and the value lands inside [min, max].
  * `clamped` tells the caller the typed number was out of range so it can say so.
  */
-export function settleTypedValue(text, { current = 0, min = -Infinity, max = Infinity, step = 0 } = {}) {
-  const r = evaluateExpression(text, { current, min, max });
+export function settleTypedValue(text, opts = {}) {
+  const { current = 0, min = -Infinity, max = Infinity, step = 0 } = opts;
+  const r = evaluateExpression(text, opts);
   if (!r.ok) return r;
   const rounded = Number.isInteger(step) && step >= 1 ? Math.round(r.value) : Number(r.value.toFixed(4));
   const value = clamp(rounded, min, max);

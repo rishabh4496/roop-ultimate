@@ -9,7 +9,7 @@
  * slip is exactly the case nobody did. The keymap section pins the SHIPPED DEFAULTS to what the handlers matched before
  * the registry existed, because a remapper that quietly changes the default keys is a regression with no error.
  */
-import { evaluateExpression, normalizeExpression, settleTypedValue, MAX_EXPR_LENGTH } from '../src/numeric/mathExpr.js';
+import { evaluateExpression, normalizeExpression, settleTypedValue, MAX_EXPR_LENGTH, REGISTERED_MATH_PARAMETERS } from '../src/numeric/mathExpr.js';
 import {
   COARSE, FINE, MICRO_STEP, advanceScrub, beginScrub, decimalsFor, scrubMultiplier, snapStep, snapTo, unitsPerPixel,
 } from '../src/numeric/scrubMath.js';
@@ -153,6 +153,19 @@ console.log('settle');
   ok('+10% then clamps at the top (0.95 -> 1)', s('+10%', { current: 0.95, min: 0, max: 1, step: 0.01 }).value === 1);
   ok('a failure passes the message through', s('1/0', { min: 0, max: 1, step: 0.01 }).ok === false);
   ok('integer control: +10% of 7 (7.7) -> 8', s('+10%', { current: 7, min: 0, max: 100, step: 1 }).value === 8);
+
+  // Stage 26: Expression Maths with registered parameters
+  const reqMathParams = [
+    'stabilization_strength', 'yaw_erosion_bias', 'expression_restorer_weight', 'pixel_boost',
+    'temporal_restore_alpha', 'restore_identity_weight', 'grain_match_strength', 'motion_blur_match',
+  ];
+  ok('all 8 parameters are registered in REGISTERED_MATH_PARAMETERS', reqMathParams.every((id) => REGISTERED_MATH_PARAMETERS.includes(id)));
+  ok('stabilization_strength * 2 evaluates with default value (0.5 * 2 = 1.0)', evaluateExpression('stabilization_strength * 2').value === 1.0);
+  ok('pixel_boost / 2 evaluates with default value (512 / 2 = 256)', evaluateExpression('pixel_boost / 2').value === 256);
+  ok('yaw_erosion_bias + 0.5 evaluates with default value (0.0 + 0.5 = 0.5)', evaluateExpression('yaw_erosion_bias + 0.5').value === 0.5);
+  ok('grain_match_strength + 0.15 evaluates (0.35 + 0.15 = 0.5)', near(evaluateExpression('grain_match_strength + 0.15').value, 0.5));
+  ok('context parameter overrides default value', evaluateExpression('stabilization_strength * 2', { stabilization_strength: 0.3 }).value === 0.6);
+  ok('settleTypedValue works with registered parameters', s('stabilization_strength + 0.1', { min: 0, max: 1, step: 0.05 }).value === 0.6);
 }
 
 // ── 6. Scrub arithmetic ────────────────────────────────────────────────────

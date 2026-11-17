@@ -1,14 +1,24 @@
 import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { useTelemetryStore } from '../../store/telemetryStore';
 import { Icon } from '../../icons';
-import { FLAMEGRAPH_STAGES, DEFAULT_LATENCY_MS, calcPercentile } from './flamegraphModel';
+import {
+  FLAMEGRAPH_STAGES,
+  MODEL_PASS_STAGES,
+  DEFAULT_LATENCY_MS,
+  DEFAULT_MODEL_LATENCY_MS,
+  calcPercentile,
+} from './flamegraphModel';
 
 /**
  * Live Per-Frame Bottleneck Flamegraph & Telemetry Export (#/processing).
  *
  * Horizontal Stacked Frame-Time Flamegraph Bar (100% = total ms/frame):
- *   Decode (Cyan) | Detect/Align (Purple) | Swap (Emerald) | Mask/Roto (Blue) |
- *   Restore Ultra (Amber) | Relight/LUT (Pink) | Encode (Slate).
+ *   Decode / Stabilizer (Cyan) | Detect / SCRFD-gnkps (Purple) |
+ *   Swap / HyperSwap (Emerald) | Mask / BiSeNet+XSeg (Blue) |
+ *   Restore / UltraMax (Amber) | Blend / Laplacian Blend (Pink) | Encode / NVENC (Slate).
+ *
+ * Supports both high-level pipeline stages and detailed per-stage model timings:
+ *   (SCRFD-gnkps, Stabilizer, BiSeNet+XSeg, HyperSwap, LivePortrait, UltraMax, Laplacian Blend).
  *
  * Hovering over any segment shows Min / Avg / P95 / Max (ms) and residency.
  * Completed runs offer 1-click Download Job Telemetry & Recipe Report (.json).
@@ -22,6 +32,9 @@ export default function FrameFlamegraph({
 }) {
   const dash = useTelemetryStore((s) => s.dashboard);
   const latencyMs = dash?.telemetry?.latency_ms;
+  const modelLatencyMs = dash?.telemetry?.model_latency_ms;
+
+  const [viewMode, setViewMode] = useState('pipeline'); // 'pipeline' | 'models'
 
   const historyRef = useRef({
     decode: [],
@@ -31,6 +44,16 @@ export default function FrameFlamegraph({
     restore: [],
     blend: [],
     encode: [],
+  });
+
+  const modelHistoryRef = useRef({
+    'SCRFD-gnkps': [],
+    'Stabilizer': [],
+    'BiSeNet+XSeg': [],
+    'HyperSwap': [],
+    'LivePortrait': [],
+    'UltraMax': [],
+    'Laplacian Blend': [],
   });
 
   const [hoveredStage, setHoveredStage] = useState(null);
@@ -47,6 +70,20 @@ export default function FrameFlamegraph({
       }
     }
   }, [latencyMs]);
+
+  // Accumulate model timing samples
+  useEffect(() => {
+    for (const m of MODEL_PASS_STAGES) {
+      const rawVal = modelLatencyMs?.[m.modelKey] ?? latencyMs?.[m.stageKey];
+      if (typeof rawVal === 'number' && Number.isFinite(rawVal) && rawVal > 0) {
+        const hist = modelHistoryRef.current[m.modelKey];
+        if (hist) {
+          hist.push(rawVal);
+          if (hist.length > 200) hist.shift();
+        }
+      }
+    }
+  }, [latencyMs, modelLatencyMs]);
 
   // Compute live / windowed metrics per stage
   const stageStats = useMemo(() => {
@@ -75,9 +112,41 @@ export default function FrameFlamegraph({
     });
   }, [latencyMs]);
 
+  // Compute live / windowed metrics per model pass
+  const modelStats = useMemo(() => {
+    return MODEL_PASS_STAGES.map((m) => {
+      const rawVal = modelLatencyMs?.[m.modelKey] ?? latencyMs?.[m.stageKey];
+      const current = typeof rawVal === 'number' && Number.isFinite(rawVal)
+        ? rawVal
+        : DEFAULT_MODEL_LATENCY_MS[m.modelKey] || 0;
+
+      const history = modelHistoryRef.current[m.modelKey];
+      const samples = history && history.length > 0 ? history : [current];
+      const sorted = [...samples].sort((a, b) => a - b);
+      const min = sorted[0];
+      const max = sorted[sorted.length - 1];
+      const sum = sorted.reduce((acc, v) => acc + v, 0);
+      const avg = sum / sorted.length;
+      const p95 = calcPercentile(sorted, 0.95);
+
+      return {
+        ...m,
+        current: Number(current.toFixed(1)),
+        min: Number(min.toFixed(1)),
+        avg: Number(avg.toFixed(1)),
+        p95: Number(p95.toFixed(1)),
+        max: Number(max.toFixed(1)),
+      };
+    });
+  }, [latencyMs, modelLatencyMs]);
+
   const totalMs = useMemo(() => {
     return Number(stageStats.reduce((acc, s) => acc + s.current, 0).toFixed(1));
   }, [stageStats]);
+
+  const totalModelMs = useMemo(() => {
+    return Number(modelStats.reduce((acc, m) => acc + m.current, 0).toFixed(1));
+  }, [modelStats]);
 
   const stagesWithShare = useMemo(() => {
     const total = Math.max(0.1, totalMs);
@@ -86,6 +155,17 @@ export default function FrameFlamegraph({
       sharePct: Number(((s.current / total) * 100).toFixed(1)),
     }));
   }, [stageStats, totalMs]);
+
+  const modelsWithShare = useMemo(() => {
+    const total = Math.max(0.1, totalModelMs);
+    return modelStats.map((m) => ({
+      ...m,
+      sharePct: Number(((m.current / total) * 100).toFixed(1)),
+    }));
+  }, [modelStats, totalModelMs]);
+
+  // Active items based on viewMode
+  const activeItems = viewMode === 'models' ? modelsWithShare : stagesWithShare;
 
   // Bottleneck
   const bottleneck = useMemo(() => {
@@ -113,7 +193,7 @@ export default function FrameFlamegraph({
       },
       recipe_configuration: {
         swapper_model: settings.swap_model || 'realswap',
-        selected_enhancer: settings.selected_enhancer || 'Restore Ultra',
+        selected_enhancer: settings.selected_enhancer || 'UltraMax',
         trt_precision: settings.trt_precision || 'mixed',
         provider: settings.provider || 'cuda',
         video_encoder: settings.output_video_codec || settings.video_encoder || 'h264_nvenc',
@@ -123,15 +203,19 @@ export default function FrameFlamegraph({
         temporal_detection: !!settings.temporal_detection,
         track_identities: !!settings.track_identities,
         restore_ultra_frequency_blend: !!settings.restore_ultra_frequency_blend,
+        ultramax_batch_size: settings.ultramax_batch_size || 1,
+        pixel_boost: settings.pixel_boost || 256,
       },
       frame_flamegraph_telemetry: {
         total_frame_ms: totalMs,
         effective_fps: Number(effectiveFps),
         bottleneck_stage: bottleneck.label,
+        bottleneck_model: bottleneck.model || 'Unknown',
         bottleneck_share_pct: bottleneck.sharePct,
         stages: stagesWithShare.reduce((acc, s) => {
           acc[s.key] = {
             label: s.label,
+            model: s.model,
             current_ms: s.current,
             share_pct: s.sharePct,
             min_ms: s.min,
@@ -139,6 +223,21 @@ export default function FrameFlamegraph({
             p95_ms: s.p95,
             max_ms: s.max,
             residency: s.residency,
+          };
+          return acc;
+        }, {}),
+        model_passes: modelsWithShare.reduce((acc, m) => {
+          acc[m.modelKey] = {
+            model: m.modelKey,
+            category: m.category,
+            stage: m.stageKey,
+            current_ms: m.current,
+            share_pct: m.sharePct,
+            min_ms: m.min,
+            avg_ms: m.avg,
+            p95_ms: m.p95,
+            max_ms: m.max,
+            residency: m.residency,
           };
           return acc;
         }, {}),
@@ -177,16 +276,41 @@ export default function FrameFlamegraph({
             <Icon.meter size={14} />
           </span>
           <div>
-            <div className="text-xs font-bold uppercase tracking-wider text-white/90 flex items-center gap-2">
+            <div className="text-xs font-bold uppercase tracking-wider text-white/90 flex items-center gap-2 flex-wrap">
               <span>Frame Bottleneck Flamegraph</span>
               <span className="font-mono text-micro text-accent font-semibold px-1.5 py-0.5 rounded bg-accent/10 border border-accent/20">
-                100% = {totalMs} ms/frame
+                100% = {viewMode === 'models' ? totalModelMs : totalMs} ms/frame
               </span>
+              {/* View Mode Toggle */}
+              <div className="inline-flex rounded-lg border border-white/10 bg-black/40 p-0.5 text-nano font-mono">
+                <button
+                  type="button"
+                  onClick={() => setViewMode('pipeline')}
+                  className={`px-2 py-0.5 rounded-md font-bold transition-colors ${
+                    viewMode === 'pipeline'
+                      ? 'bg-accent/20 text-accent border border-accent/30'
+                      : 'text-white/60 hover:text-white'
+                  }`}
+                >
+                  Pipeline Stages
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setViewMode('models')}
+                  className={`px-2 py-0.5 rounded-md font-bold transition-colors ${
+                    viewMode === 'models'
+                      ? 'bg-accent/20 text-accent border border-accent/30'
+                      : 'text-white/60 hover:text-white'
+                  }`}
+                >
+                  Model Timings (7 Models)
+                </button>
+              </div>
             </div>
             <div className="text-micro text-muted font-mono">
               ~{effectiveFps} fps pipeline ceiling &bull; Bottleneck:{' '}
               <span className="font-bold text-amber-300">
-                {bottleneck.label} ({bottleneck.sharePct}%)
+                {bottleneck.label} ({bottleneck.model ? `${bottleneck.model} · ` : ''}{bottleneck.sharePct}%)
               </span>
             </div>
           </div>
@@ -210,29 +334,30 @@ export default function FrameFlamegraph({
       <div className="relative pt-1 pb-1">
         <div
           role="group"
-          aria-label="Stacked frame latency split"
+          aria-label={viewMode === 'models' ? 'Per-model latency split' : 'Stacked frame latency split'}
           className="relative h-7 w-full overflow-hidden rounded-xl bg-white/5 p-0.5 flex items-stretch border border-white/10 shadow-inner"
         >
-          {stagesWithShare.map((stage) => {
-            const isHovered = hoveredStage?.key === stage.key;
+          {activeItems.map((item) => {
+            const isHovered = (hoveredStage?.key || hoveredStage?.modelKey) === (item.key || item.modelKey);
+            const displayLabel = item.modelKey || item.label;
             return (
               <div
-                key={stage.key}
-                onMouseEnter={() => setHoveredStage(stage)}
+                key={item.key || item.modelKey}
+                onMouseEnter={() => setHoveredStage(item)}
                 onMouseLeave={() => setHoveredStage(null)}
                 style={{
-                  width: `${Math.max(2.5, stage.sharePct)}%`,
-                  backgroundColor: stage.color,
+                  width: `${Math.max(2.5, item.sharePct)}%`,
+                  backgroundColor: item.color,
                 }}
                 className={`relative h-full transition-all duration-200 cursor-pointer flex items-center justify-center overflow-hidden border-r border-black/20 last:border-r-0 ${
                   isHovered ? 'brightness-125 z-10 scale-y-105 shadow-lg' : 'hover:brightness-110 opacity-90'
                 }`}
-                title={`${stage.label}: ${stage.current}ms (${stage.sharePct}%)`}
+                title={`${displayLabel}: ${item.current}ms (${item.sharePct}%) - ${item.residency}`}
               >
                 {/* Truncated label inside bar if width allows */}
-                {stage.sharePct >= 7 && (
+                {item.sharePct >= 8 && (
                   <span className="text-micro font-mono font-bold text-black drop-shadow-sm truncate px-1">
-                    {stage.label.split('/')[0]} {stage.current}ms
+                    {displayLabel.split('/')[0].split('-')[0]} {item.current}ms
                   </span>
                 )}
               </div>
@@ -244,14 +369,26 @@ export default function FrameFlamegraph({
       {/* ── Interactive Detail Cards / Hover Tooltip ── */}
       {hoveredStage ? (
         <div className="p-2.5 rounded-xl bg-white/5 border border-white/15 animate-in fade-in duration-150">
-          <div className="flex items-center justify-between gap-2 border-b border-white/10 pb-1.5 mb-2 font-mono text-xs">
+          <div className="flex items-center justify-between gap-2 border-b border-white/10 pb-1.5 mb-2 font-mono text-xs flex-wrap">
             <div className="flex items-center gap-2">
               <span className="h-3 w-3 rounded-full shrink-0" style={{ backgroundColor: hoveredStage.color }} />
-              <span className="font-bold text-white text-sm">{hoveredStage.label}</span>
+              <span className="font-bold text-white text-sm">
+                {hoveredStage.label}
+                {hoveredStage.model && hoveredStage.model !== hoveredStage.label && (
+                  <span className="ml-1 text-white/70 font-semibold">({hoveredStage.model})</span>
+                )}
+              </span>
               <span className="text-white/50 text-xs">({hoveredStage.sharePct}% share)</span>
             </div>
-            <div className="px-2 py-0.5 rounded text-micro font-semibold bg-white/10 text-white/90">
-              Residency: <span className="text-accent font-bold">{hoveredStage.residency}</span>
+            <div className="flex items-center gap-2">
+              {hoveredStage.category && (
+                <span className="px-2 py-0.5 rounded text-micro bg-black/40 text-white/70 border border-white/5">
+                  {hoveredStage.category}
+                </span>
+              )}
+              <div className="px-2 py-0.5 rounded text-micro font-semibold bg-white/10 text-white/90">
+                Residency: <span className="text-accent font-bold">{hoveredStage.residency}</span>
+              </div>
             </div>
           </div>
 
@@ -277,20 +414,47 @@ export default function FrameFlamegraph({
       ) : (
         /* Legend Strip when not hovering */
         <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-nano font-mono pt-1">
-          {stagesWithShare.map((s) => (
+          {activeItems.map((item) => (
             <div
-              key={s.key}
-              onMouseEnter={() => setHoveredStage(s)}
+              key={item.key || item.modelKey}
+              onMouseEnter={() => setHoveredStage(item)}
               className="flex items-center gap-1.5 text-white/70 hover:text-white cursor-pointer transition-colors"
             >
-              <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: s.color }} />
-              <span>{s.label}:</span>
-              <span className="text-white font-bold">{s.current}ms</span>
-              <span className="text-white/60">({s.sharePct}%)</span>
+              <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: item.color }} />
+              <span>{item.modelKey || item.label}:</span>
+              <span className="text-white font-bold">{item.current}ms</span>
+              <span className="text-white/60">({item.sharePct}%)</span>
             </div>
           ))}
         </div>
       )}
+
+      {/* ── Sub-panel: Per-Stage Model Timing Matrix (SCRFD-gnkps, Stabilizer, BiSeNet+XSeg, HyperSwap, LivePortrait, UltraMax, Laplacian Blend) ── */}
+      <div className="pt-2 border-t border-white/5">
+        <div className="flex items-center justify-between text-nano font-mono text-muted mb-1.5">
+          <span className="uppercase font-bold tracking-wider text-white/70">Per-Stage Model Timings:</span>
+          <span>7 Hardware-Resident Passes</span>
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-1.5 font-mono text-micro">
+          {modelsWithShare.map((m) => (
+            <div
+              key={m.modelKey}
+              onMouseEnter={() => setHoveredStage(m)}
+              onMouseLeave={() => setHoveredStage(null)}
+              className="p-1.5 rounded-lg bg-white/[0.03] border border-white/5 hover:border-white/20 transition-all cursor-pointer"
+            >
+              <div className="flex items-center gap-1 truncate text-white/80 font-bold">
+                <span className="h-1.5 w-1.5 rounded-full shrink-0" style={{ backgroundColor: m.color }} />
+                <span className="truncate">{m.modelKey}</span>
+              </div>
+              <div className="flex items-baseline justify-between mt-0.5">
+                <span className="text-white font-semibold">{m.current} ms</span>
+                <span className="text-white/50 text-nano">{m.sharePct}%</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }

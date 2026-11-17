@@ -100,15 +100,21 @@ export function useWaveform({ targetIndex, targetKey, fps, maxFrames, view, trac
     let tries = 0;
     const attempt = async () => {
       try {
-        const res = await getJSON(`/api/target/waveform?index=${targetIndex}&bins=2048`);
+        let res;
+        try {
+          res = await getJSON(`/api/media/waveform?index=${targetIndex}&buckets=2048&wait=5`);
+        } catch {
+          res = await getJSON(`/api/target/waveform?index=${targetIndex}&bins=2048`);
+        }
         if (cancelled) return;
         if (res.state === 'none') { setState('none'); return; }
-        if (!res.ready) {
+        if (!res.ready && res.state === 'building') {
           if (++tries > 40) { setState('error'); return; }
           timer = setTimeout(attempt, 1500);
           return;
         }
-        setCoarse({ t0: 0, t1: res.duration, peaks: decodePeaks(res.peaks) });
+        const peaks = Array.isArray(res.peaks) ? new Uint8Array(res.peaks) : decodePeaks(res.peaks);
+        setCoarse({ t0: Number(res.t0) || 0, t1: Number(res.duration) || res.t1 || duration, peaks });
         setState('ready');
       } catch {
         if (!cancelled) setState('error');
@@ -116,7 +122,7 @@ export function useWaveform({ targetIndex, targetKey, fps, maxFrames, view, trac
     };
     attempt();
     return () => { cancelled = true; clearTimeout(timer); };
-  }, [targetKey, targetIndex, maxFrames, enabled]);
+  }, [targetKey, targetIndex, maxFrames, enabled, duration]);
 
   // Fine window.
   useEffect(() => {
@@ -138,10 +144,16 @@ export function useWaveform({ targetIndex, targetKey, fps, maxFrames, view, trac
     const ctrl = new AbortController();
     const id = setTimeout(async () => {
       try {
-        const res = await getJSON(`/api/target/waveform?index=${targetIndex}&t0=${a}&t1=${b}&bins=${bins}`, { signal: ctrl.signal });
-        if (!res.ready) return;
+        let res;
+        try {
+          res = await getJSON(`/api/media/waveform?index=${targetIndex}&t0=${a}&t1=${b}&buckets=${bins}&wait=5`, { signal: ctrl.signal });
+        } catch {
+          res = await getJSON(`/api/target/waveform?index=${targetIndex}&t0=${a}&t1=${b}&bins=${bins}`, { signal: ctrl.signal });
+        }
+        if (!res.ready && !res.peaks) return;
         fineKeyRef.current = key;
-        setFine({ t0: a, t1: b, peaks: decodePeaks(res.peaks) });
+        const peaks = Array.isArray(res.peaks) ? new Uint8Array(res.peaks) : decodePeaks(res.peaks);
+        setFine({ t0: a, t1: b, peaks });
       } catch { /* the coarse envelope keeps drawing */ }
     }, 220);
     return () => { clearTimeout(id); ctrl.abort(); };

@@ -302,21 +302,21 @@ export function extractWarningTicks(
             frame,
             trackId,
             type: 'pose',
-            severity: yaw > 60 || pitch > 40 ? 'warning' : 'info',
+            severity: yaw > 50 || pitch > 40 ? 'warning' : 'info',
             message: `Extreme head angle on Track #${trackId + 1}: yaw ${yaw.toFixed(0)}°, pitch ${pitch.toFixed(0)}°`,
             value: yaw,
           });
         }
       }
 
-      // High occlusion check
+      // High occlusion check (> 25%)
       const occl = face.occlusion_coverage_pct;
-      if (typeof occl === 'number' && occl > 35) {
+      if (typeof occl === 'number' && occl > 25) {
         warnings.push({
           frame,
           trackId,
           type: 'occlusion',
-          severity: occl > 60 ? 'warning' : 'info',
+          severity: occl > 25 ? 'warning' : 'info',
           message: `Heavy occlusion on Track #${trackId + 1}: ${occl.toFixed(0)}% occluded`,
           value: occl,
         });

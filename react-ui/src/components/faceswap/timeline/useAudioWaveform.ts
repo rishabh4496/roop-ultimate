@@ -78,8 +78,8 @@ export function useAudioWaveform({
     const maxTries = 30;
 
     const query = mediaId
-      ? `media_id=${encodeURIComponent(mediaId)}&buckets=${buckets}`
-      : `index=${targetIndex}&buckets=${buckets}`;
+      ? `media_id=${encodeURIComponent(mediaId)}&buckets=${buckets}&wait=5`
+      : `index=${targetIndex}&buckets=${buckets}&wait=5`;
 
     const fetchStep = async () => {
       if (!aliveRef.current) return;
@@ -99,7 +99,7 @@ export function useAudioWaveform({
           return;
         }
 
-        if (res.state === 'building' || !res.ready) {
+        if (res.state === 'building' || (!res.ready && !res.peaks)) {
           if (++tries > maxTries) {
             setData((prev) => ({ ...prev, state: 'error' }));
             return;
@@ -108,16 +108,26 @@ export function useAudioWaveform({
           return;
         }
 
+        let peaksArr: number[] = [];
+        if (Array.isArray(res.peaks)) {
+          peaksArr = res.peaks;
+        } else if (typeof res.peaks === 'string') {
+          const bin = atob(res.peaks);
+          for (let i = 0; i < bin.length; i++) {
+            peaksArr.push(bin.charCodeAt(i));
+          }
+        }
+
         cacheKeyRef.current = currentKey;
         setData({
-          peaks: Array.isArray(res.peaks) ? res.peaks : [],
+          peaks: peaksArr,
           duration: Number(res.duration) || 0,
-          buckets: Number(res.buckets) || (res.peaks ? res.peaks.length : 0),
+          buckets: Number(res.buckets) || peaksArr.length,
           t0: Number(res.t0) || 0,
           t1: Number(res.t1) || -1,
           state: 'ready',
         });
-      } catch (err) {
+      } catch {
         // Fallback to /api/target/waveform if /api/media/waveform failed
         if (targetIndex !== null && targetIndex >= 0) {
           try {

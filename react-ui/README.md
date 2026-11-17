@@ -349,10 +349,11 @@ Target media, the people found in it and their captured angles.
 | POST | `/api/target/group` | PersonGroups |
 | POST | `/api/target/name` | PersonGroups |
 | GET | `/api/target/preview_grid` | FaceSwap |
+| POST | `/api/target/prescan` | PipelinePill |
 | GET | `/api/target/scene_cuts` | FaceSwap |
 | GET | `/api/target/timeline_tracks` | Timeline |
 | GET | `/api/target/waveform` | Timeline |
-| GET | `/api/media/waveform` | (backend contract for the NLE timeline; no UI caller yet) |
+| GET | `/api/media/waveform` | NleTimeline, useAudioWaveform |
 | GET | /api/audio/waveform | FaceSwap, Extras |
 | POST | `/api/target/remove` | BatchSwap, FaceSwap |
 | POST | `/api/target/remove_face` | PersonGroups |

@@ -255,3 +255,38 @@ export function presenceHit(row, frame) {
   for (const it of row.intervals) if (frame >= it[0] && frame <= it[1]) return it;
   return null;
 }
+
+// ── ByteTrack lanes ─────────────────────────────────────────────────────────
+
+/**
+ * Normalise ByteTrack spans into rows the lane can draw and hit-test.
+ * Each lane contains { trackId, label, color, ranges, active, suggestedFsz }.
+ */
+export function byteTrackRows(tracks, maxFrames) {
+  return (tracks || []).map((t, i) => {
+    const trackId = t.trackId ?? t.track ?? i;
+    const first = t.firstFrame ?? t.first ?? 1;
+    const last = t.lastFrame ?? t.last ?? maxFrames;
+    const rawRanges = t.ranges && t.ranges.length > 0 ? t.ranges : [[first, last]];
+    return {
+      trackId,
+      label: t.label || `Track #${trackId + 1}`,
+      color: t.color || personColor(trackId),
+      firstFrame: first,
+      lastFrame: last,
+      ranges: mergeIntervals(rawRanges, 1, maxFrames),
+      active: t.active !== false,
+      suggestedFsz: t.suggestedFsz || null,
+    };
+  });
+}
+
+/** Check if a frame hits an active range in a ByteTrack lane */
+export function byteTrackHit(track, frame) {
+  if (!track || !track.ranges) return false;
+  for (const [s, e] of track.ranges) {
+    if (frame >= s && frame <= e) return true;
+  }
+  return false;
+}
+

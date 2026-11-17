@@ -1269,6 +1269,24 @@ export default function FaceSwap({
       } catch (e) {
         notify?.(e.message, 'error');
       }
+    } else if (action === 'clamp_vram_budget') {
+      setSettings((s) => ({ ...s, ultramax_batch_size: 1 }));
+      try {
+        await postJSON('/api/settings', { ultramax_batch_size: 1 });
+        notify?.('Clamped UltraMax batch size to 1 to fit 12 GB VRAM budget');
+      } catch (e) {
+        notify?.(e.message, 'error');
+      }
+    } else if (action === 'enable_segment_retention') {
+      setSettings((s) => ({ ...s, keep_segments: true }));
+      try {
+        await postJSON('/api/settings', { keep_segments: true });
+        notify?.('Enabled segment retention for chunked renders');
+      } catch (e) {
+        notify?.(e.message, 'error');
+      }
+    } else if (action === 'open_facemgr') {
+      window.location.hash = '#/facemgr';
     }
   }, [notify, postJSON, setSettings]);
 
@@ -5154,6 +5172,10 @@ export default function FaceSwap({
                       runBarSync.handleAssignTrackFaceset(trackId, sourceIndex, source.id);
                     }}
                     onPreScanClick={runBarSync.handlePreScan}
+                    onRangeLockClick={() => runBarSync.handleStepClick('rangelock')}
+                    onRenderClick={runBarSync.handleRenderMux}
+                    onBatchClick={() => { window.location.hash = '#/batch'; }}
+                    stagedJobsCount={runBarSync.stagedJobs.length}
                     isPreScanActive={runBarSync.isPreScanning}
                     isRangeLockActive={runBarSync.activeStep === 2}
                     isRenderActive={!!progress.processing}

@@ -105,6 +105,12 @@ console.log('── extractWarningTicks (pose, occlusion, gaps) ─────�
   ok('identifies tracking gap warning tick', ticks.some((t) => t.type === 'gap' && t.frame === 41));
   ok('identifies extreme pose angle tick', ticks.some((t) => t.type === 'pose' && t.frame === 15));
   ok('identifies heavy occlusion tick', ticks.some((t) => t.type === 'occlusion' && t.frame === 20));
+
+  const hardYawTick = ticks.find((t) => t.type === 'pose' && t.frame === 15);
+  ok('hard yaw (|yaw| > 50) marked with warning severity', hardYawTick?.severity === 'warning' && hardYawTick?.value > 50);
+
+  const occlusionTick = ticks.find((t) => t.type === 'occlusion' && t.frame === 20);
+  ok('foreign occlusion (> 25%) marked with warning severity', occlusionTick?.severity === 'warning' && occlusionTick?.value > 25);
 }
 
 console.log('── bridgePreviewExportParity ───────────────────────────────────────');

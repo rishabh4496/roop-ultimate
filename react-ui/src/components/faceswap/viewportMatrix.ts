@@ -279,7 +279,7 @@ export class ViewportMatrix {
   /**
    * Computes split wipe divider coordinates in both screen and media space.
    */
-  public getSplitDivider(wipePct: number = 50, angleDeg: number = 0): {
+  public getSplitDivider(wipePct: number = 50, _angleDeg: number = 0): {
     screenX: number;
     mediaX: number;
     wipePctClamped: number;
@@ -291,6 +291,89 @@ export class ViewportMatrix {
       screenX: screenPoint.x,
       mediaX,
       wipePctClamped: clamped,
+    };
+  }
+
+  /**
+   * Screen Box -> Media Box (Inverse Transform).
+   */
+  public screenBoxToMediaBox(box: ScreenBox): MediaBox {
+    const p0 = this.screenToMedia(box.left, box.top);
+    const p1 = this.screenToMedia(box.right, box.bottom);
+    const x0 = Math.max(0, Math.min(p0.x, p1.x));
+    const y0 = Math.max(0, Math.min(p0.y, p1.y));
+    const x1 = Math.min(this.metrics.mediaWidth, Math.max(p0.x, p1.x));
+    const y1 = Math.min(this.metrics.mediaHeight, Math.max(p0.y, p1.y));
+    return {
+      x0,
+      y0,
+      x1,
+      y1,
+      width: Math.max(0, x1 - x0),
+      height: Math.max(0, y1 - y0),
+    };
+  }
+
+  /**
+   * Unified Comparison Layout parameters (Split Wipe, Alpha Blend, Diff Map, Heatmap).
+   */
+  public getComparisonLayout(
+    mode: 'slider' | 'blend' | 'diff' | 'heatmap' | 'quad' | string = 'slider',
+    wipePct: number = 50,
+    angleDeg: number = 0
+  ) {
+    const divider = this.getSplitDivider(wipePct, angleDeg);
+    const clampedPct = divider.wipePctClamped;
+    return {
+      mode,
+      divider,
+      blendAlpha: clampedPct / 100,
+      isSplit: mode === 'slider' || mode === 'split',
+      isBlend: mode === 'blend',
+      isDiff: mode === 'diff' || mode === 'heatmap',
+      isQuad: mode === 'quad',
+      wipePct: clampedPct,
+      angleDeg,
+    };
+  }
+
+  /**
+   * Derive a child ViewportMatrix for floating PiP mini-viewport (Stage 26).
+   */
+  public getPipChildMatrix(pipWidth: number, pipHeight: number): ViewportMatrix {
+    return new ViewportMatrix({
+      containerWidth: pipWidth,
+      containerHeight: pipHeight,
+      mediaWidth: this.metrics.mediaWidth,
+      mediaHeight: this.metrics.mediaHeight,
+      zoom: 1.0,
+      pan: { x: 0, y: 0 },
+      objectFit: 'contain',
+    });
+  }
+
+  /**
+   * Derive quadrant coordinates for A/B/C/D snapshot slots (Stage 23).
+   */
+  public getSlotQuadrant(slotIndex: number): {
+    screenLeft: number;
+    screenTop: number;
+    screenWidth: number;
+    screenHeight: number;
+    slotId: string;
+  } {
+    const idx = Math.max(0, Math.min(3, Math.floor(slotIndex)));
+    const slotNames = ['A', 'B', 'C', 'D'];
+    const halfW = this.metrics.containerWidth / 2;
+    const halfH = this.metrics.containerHeight / 2;
+    const col = idx % 2;
+    const row = Math.floor(idx / 2);
+    return {
+      screenLeft: col * halfW,
+      screenTop: row * halfH,
+      screenWidth: halfW,
+      screenHeight: halfH,
+      slotId: slotNames[idx],
     };
   }
 }
@@ -369,7 +452,7 @@ export class LruFrameCache<K = number, V = ImageBitmap> {
   public maxEntries: number;
 
   constructor(maxEntries: number = 64) {
-    this.maxEntries = Math.max(4, maxEntries);
+    this.maxEntries = Math.max(1, maxEntries);
   }
 
   public get(key: K): V | undefined {

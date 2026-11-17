@@ -1,12 +1,34 @@
 export const FLAMEGRAPH_STAGES = [
-  { key: 'decode', label: 'Decode', color: '#06b6d4', bgClass: 'bg-cyan-400', textClass: 'text-cyan-400', residency: 'CPU (Worker / NVDEC)' },
-  { key: 'detect', label: 'Detect/Align', color: '#a855f7', bgClass: 'bg-purple-500', textClass: 'text-purple-400', residency: 'GPU (TensorRT/CUDA)' },
-  { key: 'swap', label: 'Swap', color: '#10b981', bgClass: 'bg-emerald-500', textClass: 'text-emerald-400', residency: 'GPU (TensorRT/CUDA)' },
-  { key: 'mask', label: 'Mask/Roto', color: '#3b82f6', bgClass: 'bg-blue-500', textClass: 'text-blue-400', residency: 'GPU (TensorRT/CUDA)' },
-  { key: 'restore', label: 'Restore Ultra', color: '#f59e0b', bgClass: 'bg-amber-500', textClass: 'text-amber-400', residency: 'GPU (TensorRT/CUDA)' },
-  { key: 'blend', label: 'Relight/LUT', color: '#ec4899', bgClass: 'bg-pink-500', textClass: 'text-pink-400', residency: 'GPU (Color Warp)' },
-  { key: 'encode', label: 'Encode', color: '#64748b', bgClass: 'bg-slate-500', textClass: 'text-slate-400', residency: 'GPU (NVENC / Direct)' },
+  { key: 'decode', label: 'Decode', model: 'Stabilizer', color: '#06b6d4', bgClass: 'bg-cyan-400', textClass: 'text-cyan-400', residency: 'CPU (Worker / NVDEC)' },
+  { key: 'detect', label: 'Detect/Align', model: 'SCRFD-gnkps', color: '#a855f7', bgClass: 'bg-purple-500', textClass: 'text-purple-400', residency: 'GPU (TensorRT/CUDA)' },
+  { key: 'swap', label: 'Swap', model: 'HyperSwap', color: '#10b981', bgClass: 'bg-emerald-500', textClass: 'text-emerald-400', residency: 'GPU (TensorRT/CUDA)' },
+  { key: 'mask', label: 'Mask/Roto', model: 'BiSeNet+XSeg', color: '#3b82f6', bgClass: 'bg-blue-500', textClass: 'text-blue-400', residency: 'GPU (TensorRT/CUDA)' },
+  { key: 'restore', label: 'Restore Ultra', model: 'UltraMax', color: '#f59e0b', bgClass: 'bg-amber-500', textClass: 'text-amber-400', residency: 'GPU (TensorRT/CUDA)' },
+  { key: 'blend', label: 'Relight/LUT', model: 'Laplacian Blend', color: '#ec4899', bgClass: 'bg-pink-500', textClass: 'text-pink-400', residency: 'GPU (Color Warp)' },
+  { key: 'encode', label: 'Encode', model: 'NVENC', color: '#64748b', bgClass: 'bg-slate-500', textClass: 'text-slate-400', residency: 'GPU (NVENC / Direct)' },
 ];
+
+/** Canonical per-stage model timings (Tech Requirement 3d / Stage 27) */
+export const MODEL_PASS_STAGES = [
+  { key: 'detect_scrfd', modelKey: 'SCRFD-gnkps', label: 'SCRFD-gnkps', stageKey: 'detect', category: 'Detect / 5-Point Align', color: '#a855f7', bgClass: 'bg-purple-500', textClass: 'text-purple-400', residency: 'GPU (TensorRT FP16)', defaultMs: 7.8 },
+  { key: 'decode_stabilizer', modelKey: 'Stabilizer', label: 'Stabilizer', stageKey: 'decode', category: 'Temporal Flow / Work-Steal', color: '#06b6d4', bgClass: 'bg-cyan-400', textClass: 'text-cyan-400', residency: 'CPU / NVDEC Work-Steal', defaultMs: 2.4 },
+  { key: 'mask_bisenet_xseg', modelKey: 'BiSeNet+XSeg', label: 'BiSeNet+XSeg', stageKey: 'mask', category: 'Dual Occlusion Masking', color: '#3b82f6', bgClass: 'bg-blue-500', textClass: 'text-blue-400', residency: 'GPU (TensorRT FP16)', defaultMs: 4.2 },
+  { key: 'swap_hyperswap', modelKey: 'HyperSwap', label: 'HyperSwap', stageKey: 'swap', category: 'High-Fidelity Swapper Base', color: '#10b981', bgClass: 'bg-emerald-500', textClass: 'text-emerald-400', residency: 'GPU (TensorRT FP16)', defaultMs: 13.5 },
+  { key: 'swap_liveportrait', modelKey: 'LivePortrait', label: 'LivePortrait', stageKey: 'swap', category: 'Expression & Dynamics Warp', color: '#14b8a6', bgClass: 'bg-teal-500', textClass: 'text-teal-400', residency: 'GPU (TensorRT FP16)', defaultMs: 8.6 },
+  { key: 'restore_ultramax', modelKey: 'UltraMax', label: 'UltraMax', stageKey: 'restore', category: 'GPEN-512 + CodeFormer Texture', color: '#f59e0b', bgClass: 'bg-amber-500', textClass: 'text-amber-400', residency: 'GPU (TensorRT Mixed)', defaultMs: 18.2 },
+  { key: 'blend_laplacian', modelKey: 'Laplacian Blend', label: 'Laplacian Blend', stageKey: 'blend', category: 'Pyramid Multi-Band Blend', color: '#ec4899', bgClass: 'bg-pink-500', textClass: 'text-pink-400', residency: 'GPU (CUDA Kernel)', defaultMs: 3.1 },
+];
+
+export const STAGE_MODEL_MAPPING = Object.freeze({
+  detect: 'SCRFD-gnkps',
+  decode: 'Stabilizer',
+  mask: 'BiSeNet+XSeg',
+  swap: 'HyperSwap',
+  liveportrait: 'LivePortrait',
+  restore: 'UltraMax',
+  blend: 'Laplacian Blend',
+  encode: 'NVENC',
+});
 
 export const DEFAULT_LATENCY_MS = {
   decode: 2.4,
@@ -16,6 +38,16 @@ export const DEFAULT_LATENCY_MS = {
   restore: 18.2,
   blend: 3.1,
   encode: 1.6,
+};
+
+export const DEFAULT_MODEL_LATENCY_MS = {
+  'SCRFD-gnkps': 7.8,
+  'Stabilizer': 2.4,
+  'BiSeNet+XSeg': 4.2,
+  'HyperSwap': 13.5,
+  'LivePortrait': 8.6,
+  'UltraMax': 18.2,
+  'Laplacian Blend': 3.1,
 };
 
 export const calcPercentile = (sortedArr, p) => {
@@ -36,6 +68,21 @@ export const computeStageMetrics = (stageKey, historySamples = []) => {
   const vals = (historySamples || []).map((h) => (typeof h === 'number' ? h : h?.[stageKey])).filter((v) => typeof v === 'number' && Number.isFinite(v));
   if (!vals.length) {
     const d = DEFAULT_LATENCY_MS[stageKey] || 0;
+    return { min: d, avg: d, p95: d, max: d };
+  }
+  const sorted = [...vals].sort((a, b) => a - b);
+  const min = sorted[0];
+  const max = sorted[sorted.length - 1];
+  const sum = sorted.reduce((a, b) => a + b, 0);
+  const avg = Number((sum / sorted.length).toFixed(2));
+  const p95 = calcPercentile(sorted, 0.95);
+  return { min, avg, p95, max };
+};
+
+export const computeModelMetrics = (modelKey, historySamples = []) => {
+  const vals = (historySamples || []).map((h) => (typeof h === 'number' ? h : h?.[modelKey])).filter((v) => typeof v === 'number' && Number.isFinite(v));
+  if (!vals.length) {
+    const d = DEFAULT_MODEL_LATENCY_MS[modelKey] || 0;
     return { min: d, avg: d, p95: d, max: d };
   }
   const sorted = [...vals].sort((a, b) => a - b);
@@ -68,6 +115,9 @@ export const exportTelemetryReport = ({ jobId, recipe, history, summary }) => {
     summary: summary || {},
     stage_metrics: Object.fromEntries(
       FLAMEGRAPH_STAGES.map((s) => [s.key, computeStageMetrics(s.key, history)])
+    ),
+    model_metrics: Object.fromEntries(
+      MODEL_PASS_STAGES.map((m) => [m.modelKey, computeModelMetrics(m.modelKey, history)])
     ),
   };
 };

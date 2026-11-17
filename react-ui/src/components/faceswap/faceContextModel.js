@@ -208,3 +208,36 @@ export function warmthDeltaFor(plate, swap) {
 export function nextWarmth(current, delta) {
   return Math.round(clamp((finite(current) ? Number(current) : 0) + delta, -100, 100));
 }
+
+// ── pose bucket and angles (Stage 25) ─────────────────────────────────────────
+
+export const YAW_BUCKETS = Object.freeze(['profile_left', 'half_left', 'frontal', 'half_right', 'profile_right']);
+
+/**
+ * Return one of the five canonical .fsz yaw bins (matching roop/pose_router.py).
+ */
+export function getPoseBucket(yaw, _pitch = 0) {
+  if (yaw == null || !Number.isFinite(Number(yaw))) return 'frontal';
+  const y = Number(yaw);
+  if (Math.abs(y) < 20.0) return 'frontal';
+  if (y < -50.0) return 'profile_left';
+  if (y > 50.0) return 'profile_right';
+  return y < 0.0 ? 'half_left' : 'half_right';
+}
+
+/** Formatted angle string like +12.5° or -5.0°. */
+export function fmtDegree(val) {
+  const n = Number(val);
+  if (!Number.isFinite(n)) return '+0.0°';
+  return `${n >= 0 ? '+' : ''}${n.toFixed(1)}°`;
+}
+
+/** Format yaw, pitch, roll angles with degrees. */
+export function formatPoseAngles(pose) {
+  if (!pose) return '(yaw: 0.0°, pitch: 0.0°, roll: 0.0°)';
+  const yaw = Array.isArray(pose) ? pose[0] : (pose.yaw ?? 0);
+  const pitch = Array.isArray(pose) ? pose[1] : (pose.pitch ?? 0);
+  const roll = Array.isArray(pose) ? pose[2] : (pose.roll ?? 0);
+  return `(yaw: ${fmtDegree(yaw)}, pitch: ${fmtDegree(pitch)}, roll: ${fmtDegree(roll)})`;
+}
+

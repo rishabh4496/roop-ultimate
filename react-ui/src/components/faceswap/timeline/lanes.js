@@ -483,3 +483,73 @@ export function drawOverrides(ctx, { w, h, theme }, { view, maxFrames, overrides
     ctx.fillText(emptyNote, 8, h / 2 + 3.5);
   }
 }
+
+// ── ByteTrack lanes ─────────────────────────────────────────────────────────
+
+export const BYTE_TRACK_ROW_H = 24;
+
+/**
+ * Draw a single ByteTrack face lane.
+ * Paints:
+ *  - Background
+ *  - Range rectangles for each [start, end] presence interval, filled with the track's color
+ *  - Amber warning ticks for hard yaw (|yaw| > 50)
+ *  - Red warning ticks for foreign occlusion (> 25%)
+ *  - Tracking gap ticks
+ *  - Active/selected highlight border
+ */
+export function drawByteTrackLane(
+  ctx,
+  { w, h, theme },
+  { view, maxFrames, track, warnings = [], selected = false, active = true }
+) {
+  const v = normalizeView(view, maxFrames);
+  ctx.fillStyle = theme.surface;
+  ctx.fillRect(0, 0, w, h);
+
+  if (!track) return;
+
+  const color = track.color || '#38bdf8';
+  const rawRanges = track.ranges && track.ranges.length > 0
+    ? track.ranges
+    : (track.firstFrame != null && track.lastFrame != null ? [[track.firstFrame, track.lastFrame]] : []);
+  const ranges = visibleIntervals(rawRanges, v.start, v.end);
+
+  // Draw presence blocks
+  ctx.fillStyle = active ? color : 'rgba(255, 255, 255, 0.2)';
+  const padY = 3;
+  const barH = h - padY * 2;
+
+  for (const [s, e] of ranges) {
+    const x1 = xAtFrame(s - 0.5, w, v);
+    const x2 = xAtFrame(e + 0.5, w, v);
+    const barW = Math.max(2, x2 - x1);
+
+    roundRect(ctx, x1, padY, barW, barH, 3);
+    ctx.fill();
+  }
+
+  // Draw warning ticks (amber for hard yaw > 50, red for occlusion > 25, info for gaps)
+  for (const tick of warnings) {
+    if (tick.frame < v.start || tick.frame > v.end) continue;
+    const x = xAtFrame(tick.frame, w, v);
+    const isOcclusion = tick.type === 'occlusion' || (tick.value != null && tick.value > 25);
+    const isHardYaw = (tick.type === 'pose' && (tick.value == null || tick.value > 50)) || (tick.value != null && tick.value > 50);
+
+    ctx.fillStyle = isOcclusion ? '#f43f5e' : isHardYaw ? '#f59e0b' : '#38bdf8';
+    ctx.beginPath();
+    ctx.arc(x, h / 2, 4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#000000';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+
+  // Draw selected outline
+  if (selected) {
+    ctx.strokeStyle = theme.accent;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(1, 1, w - 2, h - 2);
+  }
+}
+

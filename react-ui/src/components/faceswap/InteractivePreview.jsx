@@ -38,6 +38,17 @@ import { MODULAR_FLOW_NODES } from './pillModel';
 import { SLOT_ACTION_IDS } from '../../shortcuts/actions';
 import { eventMatches, keyupMatches } from '../../store/shortcutStore';
 import { usePipStore } from '../../store/pipStore';
+import {
+  createViewportMatrix,
+  LruFrameCache,
+  registerVideoFrameSync,
+} from './viewportMatrix';
+import {
+  resolveFrameFromTime,
+  clampFrameIdx,
+  createMaskBrushStroke,
+} from '../../utils/ptsFrameMap';
+import { bridgePreviewExportParity } from './runBarSync';
 
 // The floating preview keeps its own copy of each picture the stage receives (store/pipStore.js); a no-op while it is off.
 const offerPipFrame = (img) => usePipStore.getState().offerFrame(img);
@@ -102,6 +113,14 @@ export default function InteractivePreview({
   liveLabel = '',
   soloStage = null,
   onSoloStage = null,
+  // Coordinate & VFR Synchronization (Tech Requirement 1)
+  videoRef = null,
+  ptsTable = null,
+  fps = 30,
+  parityState = null,
+  tracksSource = null,
+  trajectoryPlanActive = false,
+  trajectorySummary = null,
 }) {
   // ── State & Refs ──────────────────────────────────────────────────────────
   const onSlotHotkeyRef = useRef(onSlotHotkey);
@@ -319,7 +338,75 @@ export default function InteractivePreview({
   }, [faces, selectedFaceIndex]);
 
   const [imgDim, setImgDim] = useState(null);
+  const [containerDim, setContainerDim] = useState({ w: 0, h: 0 });
   const splitMode = compare && (splitView || compareMode === 'quad');
+
+  // ── Unified ViewportMatrix Instance (mediaToScreen / screenToMedia) ─────────
+  const viewportMatrix = useMemo(() => {
+    const cw = containerDim.w || containerRef.current?.clientWidth || 800;
+    const ch = containerDim.h || containerRef.current?.clientHeight || 450;
+    const mw = imgDim?.w || 1920;
+    const mh = imgDim?.h || 1080;
+    return createViewportMatrix({
+      containerWidth: cw,
+      containerHeight: ch,
+      mediaWidth: mw,
+      mediaHeight: mh,
+      zoom,
+      pan,
+      objectFit: 'contain',
+    });
+  }, [containerDim.w, containerDim.h, imgDim?.w, imgDim?.h, zoom, pan]);
+
+  // ── Exact Integer Frame Calculations (ptsFrameMap) ──────────────────────────
+  const exactFrame = useMemo(() => {
+    return clampFrameIdx(frame, 0, maxFrames);
+  }, [frame, maxFrames]);
+
+  // In-Memory ImageBitmap LRU Cache for zero-lag scrubbing and A/B split-wipe comparison
+  const lruCacheRef = useRef(new LruFrameCache(64));
+  useEffect(() => {
+    if (afterFrame) {
+      lruCacheRef.current.set(exactFrame, afterFrame);
+    } else if (beforeFrame) {
+      lruCacheRef.current.set(exactFrame, beforeFrame);
+    }
+  }, [exactFrame, afterFrame, beforeFrame]);
+
+  // Video Frame Synchronization via requestVideoFrameCallback + rAF fallback
+  useEffect(() => {
+    const vid = videoRef?.current;
+    if (!vid) return undefined;
+    const unregister = registerVideoFrameSync(vid, (info) => {
+      const resolvedFrame = resolveFrameFromTime(info.mediaTime, ptsTable, fps);
+      const clamped = clampFrameIdx(resolvedFrame, 0, maxFrames);
+      if (setFrame && isPlaying && clamped !== exactFrame) {
+        setFrame(clamped);
+      }
+    });
+    return () => unregister();
+  }, [videoRef, exactFrame, fps, isPlaying, maxFrames, ptsTable, setFrame]);
+
+  // ── Preview Export Parity State ─────────────────────────────────────────────
+  const parity = useMemo(() => {
+    if (parityState && (parityState.isParityVerified !== undefined || parityState.badgeText)) {
+      return parityState;
+    }
+    return bridgePreviewExportParity(
+      {
+        tracks_source: tracksSource || (trajectoryPlanActive ? 'trajectory_plan' : 'none'),
+        trajectory_plan_active: Boolean(trajectoryPlanActive),
+      },
+      trajectorySummary
+    );
+  }, [parityState, tracksSource, trajectoryPlanActive, trajectorySummary]);
+
+  // Attach viewportMatrix to stage DOM element for unified coordinate access
+  useEffect(() => {
+    if (stageViewportRef.current) {
+      stageViewportRef.current.viewportMatrix = viewportMatrix;
+    }
+  }, [viewportMatrix]);
 
   // Direct DOM Viewport Update (Zero-Rerender 60fps)
   const applyViewportDom = useCallback((z, p) => {
@@ -549,7 +636,24 @@ export default function InteractivePreview({
     const cy = e.clientY ?? e.touches?.[0]?.clientY;
     if (cx === undefined) return;
 
-    const sample = brushSample(rect, canvas.width, canvas.height, cx, cy, brushSize, brushFeather);
+    let sample = null;
+    if (viewportMatrix && containerRef.current) {
+      const crect = containerRef.current.getBoundingClientRect();
+      const s = uiScale(containerRef.current) || 1;
+      const sx = (cx - crect.left) / s;
+      const sy = (cy - crect.top) / s;
+      const mediaPt = viewportMatrix.screenToMedia(sx, sy);
+      const r = viewportMatrix.screenRadiusToMedia(brushSize / 2);
+      sample = {
+        x: mediaPt.x,
+        y: mediaPt.y,
+        r,
+        scale: canvas.width / (viewportMatrix.metrics.containedWidth || canvas.width),
+        onImage: mediaPt.onMedia,
+      };
+    } else {
+      sample = brushSample(rect, canvas.width, canvas.height, cx, cy, brushSize, brushFeather);
+    }
     if (!sample) return;
     const { x, y } = sample;
     const prev = isStart ? null : lastPtRef.current;
@@ -561,11 +665,24 @@ export default function InteractivePreview({
     // Record the dab. The stroke joins the history when the pointer is released (endStroke), so a
     // drag is one undo step however many dabs it laid.
     if (isStart || !strokeRef.current) {
-      strokeRef.current = { erase, feather: brushFeather, pts: [] };
+      strokeRef.current = createMaskBrushStroke({
+        frame_idx: exactFrame,
+        tool: erase ? 'eraser' : 'brush',
+        size: brushSize,
+        opacity: 1.0,
+        points: [],
+      }, maxFrames);
+      strokeRef.current.erase = erase;
+      strokeRef.current.feather = brushFeather;
+      strokeRef.current.pts = [];
       paintedDimRef.current = `${canvas.width}x${canvas.height}`;
     }
-    strokeRef.current.pts.push(normalizeSample(sample, canvas.width, canvas.height));
-  }, [brushFeather, brushMode, brushSize]);
+    const pt = normalizeSample(sample, canvas.width, canvas.height);
+    strokeRef.current.points.push(pt);
+    if (Array.isArray(strokeRef.current.pts)) {
+      strokeRef.current.pts.push(pt);
+    }
+  }, [brushFeather, brushMode, brushSize, viewportMatrix, exactFrame, maxFrames]);
 
   // Pointer released: the stroke in progress becomes a committed, undoable stroke.
   const endStroke = useCallback(() => {
@@ -673,7 +790,12 @@ export default function InteractivePreview({
     if (!el || typeof ResizeObserver === 'undefined') return undefined;
     const ro = new ResizeObserver(() => {
       const box = containerRef.current?.getBoundingClientRect();
-      if (box) setSmallStage(box.height < 300 || box.width < 560);
+      if (box) {
+        setSmallStage(box.height < 300 || box.width < 560);
+        if (box.width > 0 && box.height > 0) {
+          setContainerDim({ w: box.width, h: box.height });
+        }
+      }
       const z = zoomRef.current;
       const cur = panRef.current;
       const c = clampPan(cur, z, containerRef.current, imageRef.current);
@@ -782,14 +904,18 @@ export default function InteractivePreview({
         if (magnifierActive && containerRef.current) {
           const rect = containerRef.current.getBoundingClientRect();
           const ir = imageRef.current?.getBoundingClientRect();
-          const s = uiScale(containerRef.current);
+          const s = uiScale(containerRef.current) || 1;
+          const sx = (cx - rect.left) / s;
+          const sy = (cy - rect.top) / s;
+          const loupeCrop = viewportMatrix ? viewportMatrix.getLoupeCrop(sx, sy, 180, loupePower) : null;
           lensPendingRef.current = {
-            x: (cx - rect.left) / s,
-            y: (cy - rect.top) / s,
+            x: sx,
+            y: sy,
             imgW: (ir?.width || rect.width) / s,
             imgH: (ir?.height || rect.height) / s,
             imgX: ((ir?.left ?? rect.left) - rect.left) / s,
             imgY: ((ir?.top ?? rect.top) - rect.top) / s,
+            loupeCrop,
             visible: cx >= rect.left && cx <= rect.right && cy >= rect.top && cy <= rect.bottom,
           };
           if (!lensRafRef.current) {
@@ -1633,6 +1759,33 @@ export default function InteractivePreview({
   // ── Top Information Badges ────────────────────────────────────────────────
   const stageInfo = () => (
     <div className="absolute top-3 left-3 z-40 flex items-center gap-2 pointer-events-none">
+      {/* ── PREVIEW EXPORT PARITY INDICATOR BADGE ────────────────────────── */}
+      {(parity.isParityVerified || parity.trajectoryPlanActive || parity.badgeTone === 'verified') && (
+        <span
+          data-testid="preview-export-parity-badge"
+          data-parity-active={parity.isParityVerified ? 'true' : 'false'}
+          className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-micro font-bold shadow-lg border backdrop-blur-md select-none transition-colors ${
+            parity.isParityVerified
+              ? 'bg-emerald-950/60 text-emerald-300 border-emerald-500/50 shadow-emerald-950/30'
+              : 'bg-amber-950/50 text-amber-300 border-amber-500/40 shadow-amber-950/20'
+          }`}
+          title={
+            parity.isParityVerified
+              ? 'Preview Export Parity: 100% Locked. Current frame reads directly from active TrajectoryPlan cache.'
+              : (parity.reason || 'Preview Export Parity: Unverified. Run "1 Pre-Scan" to seal TrajectoryPlan and lock export parity.')
+          }
+        >
+          <span
+            className={`w-1.5 h-1.5 rounded-full animate-pulse ${
+              parity.isParityVerified ? 'bg-emerald-400' : 'bg-amber-400/70'
+            }`}
+          />
+          <span>{parity.isParityVerified ? '✓ Preview Export Parity' : 'Export Parity: Ad-Hoc'}</span>
+          <span className="text-nano opacity-75 font-mono">
+            {parity.isParityVerified ? '100% Frame-Identical' : 'Pre-Scan to lock parity'}
+          </span>
+        </span>
+      )}
       {imgDim && (
         <span className="rounded-lg bg-black/75 backdrop-blur-md px-2.5 py-1 font-mono text-micro tabular-nums text-white/80 border border-white/10 shadow-lg">
           {imgDim.w}×{imgDim.h}
@@ -2169,6 +2322,7 @@ export default function InteractivePreview({
       {magnifierActive && (
         <div
           ref={lensGlassRef}
+          data-testid="magnifier-loupe"
           className="absolute rounded-full border-2 border-cyan-400 shadow-[0_0_35px_rgba(6,182,212,0.7)] overflow-hidden pointer-events-none z-50 bg-black"
           style={{ width: 180, height: 180, left: 0, top: 0, display: 'none', willChange: 'transform' }}
         >

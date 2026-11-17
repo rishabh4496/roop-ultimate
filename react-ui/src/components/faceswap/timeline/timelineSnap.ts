@@ -6,9 +6,6 @@
 import {
   clampFrameIdx,
   frameToTimecode,
-  timecodeToFrame,
-  formatSeconds,
-  PtsFrameMap,
 } from '../../../utils/ptsFrameMap';
 
 export interface ChapterMarker {

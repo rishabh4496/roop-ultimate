@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import type { LruFrameCache } from './viewportMatrix';
 
 /**
  * Coalesced Preview Controller
@@ -10,10 +11,12 @@ import { useEffect, useRef } from 'react';
  * 3. Immediate Abort of Stale Work: when a newer parameter signature or frame arrives,
  *    any pending/in-flight fetch is immediately aborted via AbortController so GPU and network resources
  *    are freed without waiting for obsolete work to complete.
+ * 4. In-Memory LRU Frame Cache Hit Bypass: instant frame fulfillment on scrub without redundant GPU dispatch.
  */
 
 export interface CoalescedRequest<T = any> {
   id: string;
+  frameIdx?: number;
   dispatch: (signal: AbortSignal) => Promise<T>;
   onSuccess?: (result: T) => void;
   onError?: (error: any) => void;
@@ -25,6 +28,33 @@ export class CoalescedPreviewController<T = any> {
   private rafId: number = 0;
   private isProcessing: boolean = false;
   private lastDispatchedId: string = '';
+  private frameCache: LruFrameCache<number, T> | null = null;
+
+  /**
+   * Set or bind an in-memory LRU ImageBitmap cache for zero-latency scrub hits.
+   */
+  public setFrameCache(cache: LruFrameCache<number, T> | null): void {
+    this.frameCache = cache;
+  }
+
+  public getFrameCache(): LruFrameCache<number, T> | null {
+    return this.frameCache;
+  }
+
+  /**
+   * Request a specific frame with LRU cache check. Returns true if cache hit occurred.
+   */
+  public requestFrame(frameIdx: number, req: CoalescedRequest<T>): boolean {
+    if (this.frameCache && this.frameCache.has(frameIdx)) {
+      const cached = this.frameCache.get(frameIdx);
+      if (cached !== undefined) {
+        req.onSuccess?.(cached);
+        return true;
+      }
+    }
+    this.request({ ...req, frameIdx });
+    return false;
+  }
 
   /**
    * Submit a preview request.

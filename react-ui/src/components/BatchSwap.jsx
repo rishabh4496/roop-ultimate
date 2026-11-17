@@ -81,6 +81,28 @@ export default function BatchSwap({ settings = {}, notify, onUpdateSetting }) {
       } catch (e) {
         notify?.(e.message, 'error');
       }
+    } else if (action === 'clamp_vram_budget') {
+      if (onUpdateSetting) {
+        onUpdateSetting('ultramax_batch_size', 1);
+      }
+      try {
+        await postJSON('/api/settings', { ultramax_batch_size: 1 });
+        notify?.('Clamped UltraMax batch size to 1 to fit 12 GB VRAM budget');
+      } catch (e) {
+        notify?.(e.message, 'error');
+      }
+    } else if (action === 'enable_segment_retention') {
+      if (onUpdateSetting) {
+        onUpdateSetting('keep_segments', true);
+      }
+      try {
+        await postJSON('/api/settings', { keep_segments: true });
+        notify?.('Enabled segment retention for batch matrix renders');
+      } catch (e) {
+        notify?.(e.message, 'error');
+      }
+    } else if (action === 'open_facemgr') {
+      window.location.hash = '#/facemgr';
     }
   }, [notify, onUpdateSetting, postJSON]);
 

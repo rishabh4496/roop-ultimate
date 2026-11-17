@@ -9,7 +9,7 @@
  * menu that hangs off the screen - none of which a hand-picked example finds.
  */
 import {
-  CURVE_PARAMS, DIRECT_PARAMS, INTERPS, MAX_KEYS, addKey, applyCurveValues, clampValue, curveIneffective, evaluate,
+  ALL_CURVE_PARAMS, CURVE_PARAMS, DIRECT_PARAMS, EXTENDED_CURVE_PARAMS, INTERPS, MAX_KEYS, addKey, applyCurveValues, clampValue, curveIneffective, evaluate,
   keyFrameBounds, moveKey, morphToIdentityKeyframes, normalizeTrack, normalizeTracks, paramById, patchSettingsWithCurves,
   removeKey, segmentBezier, setInterp, setValue, tangents, valuesAt,
 } from '../src/components/faceswap/curves/curveModel.js';
@@ -17,8 +17,10 @@ import { MAX_RENDER_PIECES, bakeCurvePieces, describeBake, piecesHaveCurves } fr
 import { describeCurvesChange } from '../src/components/faceswap/curves/curveHistory.js';
 import {
   MENU_MARGIN, MIN_SKIN_SAMPLES, clampMenuPosition, cropRectFor, faceBadgeText, faceRois, isSkinPixel, nextWarmth, rgbToLab8,
-  skinStats, warmthDeltaFor,
+  skinStats, warmthDeltaFor, getPoseBucket, formatPoseAngles,
 } from '../src/components/faceswap/faceContextModel.js';
+import { BUFFER_SOLO_PASSES } from '../src/components/faceswap/PipelineNodeFlow.jsx';
+import { SWEEP_PARAMETERS } from '../src/components/faceswap/sweepParameters.js';
 import { focusPanFor } from '../src/components/faceswap/zoomPan.js';
 import { ease, normalizeKeyframes } from '../src/components/faceswap/identityKeyframes.js';
 import { overridePieces } from '../src/components/faceswap/timeline/overrides.js';
@@ -393,6 +395,39 @@ console.log('focus and zoom 200%');
   ok('a face on the left pans the picture right so it lands in the middle', left.x > 0 && Math.abs(left.y) < 1e-6);
   ok('and the pan never exposes the picture’s edge', Math.abs(left.x) <= (800 * 2 - 800) / 2 + 1e-6);
   ok('no stage or no box, no pan', focusPanFor(null, dim, stage, 2) === null && focusPanFor([1, 1, 2, 2], dim, null, 2) === null && focusPanFor([1, 1, 2, 2], null, stage, 2) === null);
+}
+
+console.log('stage 24-25 controls wiring');
+{
+  // 1. On-Canvas Face Context Menu: pose buckets & angle formatting
+  ok('getPoseBucket returns frontal for yaw in [-20, 20]', getPoseBucket(0) === 'frontal' && getPoseBucket(15) === 'frontal' && getPoseBucket(-19.9) === 'frontal');
+  ok('getPoseBucket returns profile_left / profile_right beyond 50 degrees', getPoseBucket(-55) === 'profile_left' && getPoseBucket(60) === 'profile_right');
+  ok('getPoseBucket returns half_left / half_right between 20 and 50 degrees', getPoseBucket(-35) === 'half_left' && getPoseBucket(35) === 'half_right');
+  ok('formatPoseAngles formats degrees with signs', formatPoseAngles([12, -4.5, 0]) === '(yaw: +12.0°, pitch: -4.5°, roll: +0.0°)'
+    && formatPoseAngles({ yaw: -30, pitch: 10, roll: 5 }) === '(yaw: -30.0°, pitch: +10.0°, roll: +5.0°)');
+
+  // 2. Visual Pipeline Node Flow Bar: 4 intermediate buffer solo passes
+  const requiredPasses = ['bisenet_parsing', 'xseg_3_mask', 'occlusion_alpha', 'depth_z_order'];
+  ok('all 4 buffer solo passes are registered', requiredPasses.every((id) => BUFFER_SOLO_PASSES.some((p) => p.id === id)));
+
+  // 3. Registered keyframeable, curve-editable, and sweepable parameters
+  const requiredParams = [
+    'stabilization_strength', 'yaw_erosion_bias', 'expression_restorer_weight', 'pixel_boost',
+    'temporal_restore_alpha', 'restore_identity_weight', 'grain_match_strength', 'motion_blur_match',
+  ];
+  ok('all 8 parameters are registered in ALL_CURVE_PARAMS', requiredParams.every((id) => ALL_CURVE_PARAMS.some((p) => p.id === id)));
+  ok('all 8 parameters are registered in SWEEP_PARAMETERS', requiredParams.every((id) => SWEEP_PARAMETERS.some((p) => p.id === id)));
+
+  // Verify curve evaluation and patch for each registered parameter
+  for (const id of requiredParams) {
+    const p = paramById(id);
+    ok(`paramById resolves ${id} with valid key and bounds`, p && typeof p.key === 'string' && p.min < p.max);
+    const tr = [key(1, p.min), key(10, p.max)];
+    const mid = evaluate(tr, 5.5);
+    ok(`evaluates curve for ${id}`, near(mid, (p.min + p.max) / 2, 0.05));
+    const patched = patchSettingsWithCurves({}, { [id]: [key(1, p.base)] }, 1);
+    ok(`patches setting ${p.key} for ${id}`, patched[p.key] === p.base);
+  }
 }
 
 globalThis.__RENDER_CHECK_FAILURES__ = failures;

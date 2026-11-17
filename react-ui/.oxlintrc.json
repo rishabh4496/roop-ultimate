@@ -60,7 +60,8 @@
     },
     {
       "files": [
-        "scripts/**"
+        "scripts/**",
+        ".render-check/**"
       ],
       "env": {
         "node": true
@@ -80,7 +81,10 @@
         "src/motion.jsx",
         "src/icons.jsx",
         "src/components/confirm.jsx",
-        "src/components/QualityProfilesModal.jsx"
+        "src/components/QualityProfilesModal.jsx",
+        "src/components/FaceManager.jsx",
+        "src/components/faceswap/StereoVRViewport.jsx",
+        "src/components/faceswap/PipelineNodeFlow.jsx"
       ],
       "rules": {
         "react/only-export-components": "off"
@@ -95,6 +99,8 @@
         "src/components/PersonGroups.jsx",
         "src/components/faceswap/FacesetLibrary.jsx",
         "src/components/faceswap/InteractivePreview.jsx",
+        "src/components/faceswap/PreviewViewport.tsx",
+        "src/components/faceswap/NleTimeline.tsx",
         "src/components/faceswap/MediaTabSessionBar.jsx",
         "src/components/faceswap/PresetStudioModal.jsx"
       ],
@@ -135,7 +141,8 @@
     {
       "files": [
         "src/components/PersonGroups.jsx",
-        "src/components/faceswap/CompareGrid.jsx"
+        "src/components/faceswap/CompareGrid.jsx",
+        "src/components/faceswap/NleTimeline.tsx"
       ],
       "rules": {
         "jsx-a11y/no-noninteractive-tabindex": "off"
@@ -150,11 +157,14 @@
         "src/components/PersonGroups.jsx",
         "src/components/faceswap/FacesetLibrary.jsx",
         "src/components/faceswap/InteractivePreview.jsx",
+        "src/components/faceswap/PreviewViewport.tsx",
+        "src/components/faceswap/NleTimeline.tsx",
         "src/components/faceswap/MediaTabSessionBar.jsx",
         "src/components/faceswap/PresetStudioModal.jsx"
       ],
       "rules": {
-        "jsx-a11y/no-static-element-interactions": "off"
+        "jsx-a11y/no-static-element-interactions": "off",
+        "jsx-a11y/no-autofocus": "off"
       }
     }
   ]

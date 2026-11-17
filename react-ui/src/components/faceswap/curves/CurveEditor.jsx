@@ -3,7 +3,7 @@ import NumericInput from '../../NumericInput';
 import { useLaneCanvas } from '../timeline/useLaneCanvas';
 import { frameAtX, normalizeView, viewSpan } from '../timeline/viewMath';
 import {
-  CURVE_PARAMS, DEFAULT_INTERP, INTERPS, INTERP_LABELS, clampValue, curveIneffective, keyFrameBounds, makeEvaluator, paramById,
+  ALL_CURVE_PARAMS, CURVE_PARAMS, DEFAULT_INTERP, INTERPS, INTERP_LABELS, clampValue, curveIneffective, keyFrameBounds, makeEvaluator, paramById,
 } from './curveModel';
 
 // The Curve Editor: one parameter's value against the frame, on the timeline's own x-axis.
@@ -44,7 +44,7 @@ export default function CurveEditor({
 }) {
   const v = normalizeView(view, maxFrames);
   const span = viewSpan(v);
-  const [paramId, setParamId] = useState(() => CURVE_PARAMS.find((p) => tracks?.[p.id]?.length)?.id || CURVE_PARAMS[0].id);
+  const [paramId, setParamId] = useState(() => ALL_CURVE_PARAMS.find((p) => tracks?.[p.id]?.length)?.id || ALL_CURVE_PARAMS[0].id);
   const param = paramById(paramId);
   const list = tracks?.[paramId] || EMPTY;
   const [sel, setSel] = useState(null);                       // the selected key's frame
@@ -206,7 +206,7 @@ export default function CurveEditor({
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 pt-1.5">
         <span className="text-nano font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">Curve editor</span>
         <div className="flex flex-wrap items-center gap-0.5" role="tablist" aria-label="Parameter">
-          {CURVE_PARAMS.map((p) => {
+          {ALL_CURVE_PARAMS.map((p) => {
             const on = p.id === paramId;
             const n = tracks?.[p.id]?.length || 0;
             return (

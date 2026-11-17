@@ -171,6 +171,11 @@ export interface NleTimelineProps {
   onUpdateKeyframes?: (keyframes: NleKeyframe[]) => void;
   onAssignFsz?: (trackId: number, fszFileName: string) => void;
   onPreScanClick?: () => void;
+  onRangeLockClick?: () => void;
+  onRenderClick?: () => void;
+  onBatchClick?: () => void;
+  stagedJobsCount?: number;
+  batchStrategy?: string;
 
   // Step indicators & UI flags
   isPreScanActive?: boolean;
@@ -257,6 +262,11 @@ export const NleTimeline: React.FC<NleTimelineProps> = ({
   onUpdateKeyframes,
   onAssignFsz,
   onPreScanClick,
+  onRangeLockClick,
+  onRenderClick,
+  onBatchClick,
+  stagedJobsCount = 0,
+  batchStrategy = '',
   isPreScanActive = false,
   isRangeLockActive = false,
   isRenderActive = false,
@@ -986,6 +996,7 @@ export const NleTimeline: React.FC<NleTimelineProps> = ({
           {/* Step 1 Pre-Scan Badge */}
           <button
             type="button"
+            data-testid="nle-step-prescan"
             onClick={onPreScanClick}
             disabled={isPreScanActive}
             title="Step 1: Run or inspect Pre-Scan ByteTrack spans"
@@ -1012,14 +1023,19 @@ export const NleTimeline: React.FC<NleTimelineProps> = ({
             </span>
           </button>
 
+          <span aria-hidden="true" className="text-white/25">→</span>
+
           {/* Step 2 Range Lock Badge */}
-          <div
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-mini font-medium border ${
-              lockedIntervalsCount > 0
+          <button
+            type="button"
+            data-testid="nle-step-rangelock"
+            onClick={onRangeLockClick}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-mini font-medium border transition-colors ${
+              isRangeLockActive || lockedIntervalsCount > 0
                 ? 'border-[var(--accent,#e94560)]/50 bg-[var(--accent,#e94560)]/10 text-rose-300'
-                : 'border-white/10 bg-white/5 text-neutral-400'
+                : 'border-white/10 bg-white/5 text-neutral-400 hover:text-white'
             }`}
-            title="Step 2: Active Range Lock Intervals"
+            title="Step 2: Trim active track intervals and bind facesets (Batch Matrix sync)"
           >
             <span
               className={`w-2 h-2 rounded-full ${
@@ -1030,7 +1046,49 @@ export const NleTimeline: React.FC<NleTimelineProps> = ({
             <span className="font-mono text-micro opacity-80">
               ({lockedIntervalsCount} {lockedIntervalsCount === 1 ? 'Interval' : 'Intervals'})
             </span>
-          </div>
+          </button>
+
+          <span aria-hidden="true" className="text-white/25">→</span>
+
+          {/* Step 3 Render & Mux Badge */}
+          <button
+            type="button"
+            data-testid="nle-step-render"
+            onClick={onRenderClick}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-mini font-medium border transition-colors ${
+              isRenderActive
+                ? 'border-emerald-500/50 bg-emerald-500/15 text-emerald-300 shadow-[0_0_8px_rgba(16,185,129,0.3)] animate-pulse'
+                : 'border-white/10 bg-white/5 text-neutral-400 hover:text-white'
+            }`}
+            title="Step 3: Main Swap Render & Audio Remux"
+          >
+            <span
+              className={`w-2 h-2 rounded-full ${
+                isRenderActive ? 'bg-emerald-400 animate-ping' : 'bg-neutral-500'
+              }`}
+            />
+            <span>3 Render &amp; Mux</span>
+          </button>
+
+          {/* Batch Matrix Strategies Link / Badge */}
+          <button
+            type="button"
+            data-testid="nle-batch-matrix-btn"
+            onClick={() => {
+              if (onBatchClick) {
+                onBatchClick();
+              } else if (typeof window !== 'undefined') {
+                window.location.hash = '#/batch';
+              }
+            }}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-mini font-medium border border-sky-400/30 bg-sky-400/10 text-sky-200 hover:border-sky-400/50 transition-colors"
+            title="Batch Matrix Strategies: Staged track ranges and matrix jobs"
+          >
+            <span>#/batch</span>
+            {stagedJobsCount > 0 ? (
+              <span className="font-mono text-micro opacity-90">({stagedJobsCount} staged)</span>
+            ) : null}
+          </button>
 
           {/* Snap Magnet Toggle */}
           <button
@@ -1879,8 +1937,8 @@ export const NleTimeline: React.FC<NleTimelineProps> = ({
                         const tickX = frameToFraction(tick.frame) * 100;
                         if (tickX < 0 || tickX > 100) return null;
 
-                        const isOcclusion = tick.type === 'occlusion' || (tick.value && tick.value > 25);
-                        const isHardYaw = tick.type === 'pose' || (tick.value && tick.value > 50);
+                        const isOcclusion = tick.type === 'occlusion' || (tick.value != null && tick.value > 25);
+                        const isHardYaw = (tick.type === 'pose' && (tick.value == null || tick.value > 50)) || (tick.value != null && tick.value > 50);
 
                         // Red for foreign occlusion (>25%), Amber for hard yaw (>50)
                         const dotColor = isOcclusion ? '#f43f5e' : isHardYaw ? '#f59e0b' : '#38bdf8';

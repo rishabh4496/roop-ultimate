@@ -7281,6 +7281,65 @@ def render_preflight(payload: dict = Body(default=None)):
         "auto_fix": "enable_restore_ultra" if resolution_mismatch else None,
     }
 
+    # Check 5: 12 GB VRAM Budget (Pixel Boost + UltraMax batch size)
+    pixel_boost = int(p.get("pixel_boost") or getattr(getattr(roop_globals, "CFG", None), "pixel_boost", 256) or 256)
+    ultramax_batch = max(1, int(p.get("ultramax_batch_size") or getattr(getattr(roop_globals, "CFG", None), "ultramax_batch_size", 1) or 1))
+    tile_factor = 9 if pixel_boost >= 768 else (4 if pixel_boost >= 512 else 1)
+    is_um = "ultramax" in enhancer.lower()
+    est_vram_gb = round(4.5 + (tile_factor * 0.45) + (ultramax_batch * (2.3 if is_um else 1.4)), 1)
+    vram_warn = est_vram_gb > 12.0
+    vram_check = {
+        "ok": not vram_warn,
+        "estimated_vram_gb": est_vram_gb,
+        "budget_gb": 12.0,
+        "pixel_boost": pixel_boost,
+        "ultramax_batch_size": ultramax_batch,
+        "warning": (
+            f"Estimated VRAM ({est_vram_gb} GB) exceeds 12 GB budget (Pixel Boost {pixel_boost}px + UltraMax batch {ultramax_batch})."
+            if vram_warn else None
+        ),
+        "auto_fix": "clamp_vram_budget" if vram_warn else None,
+    }
+
+    # Check 6: Missing .fsz profile angles
+    fsz_file = str(p.get("faceset_file") or getattr(getattr(roop_globals, "CFG", None), "faceset_file", "") or "")
+    missing_angles = []
+    if fsz_file:
+        try:
+            from roop import identity_lab
+            # Quick query from active radar if available
+            r = identity_lab.radar(identity_lab.face_rows([], []))
+            missing_angles = r.get("missing") or []
+        except Exception:
+            missing_angles = []
+    fsz_warn = bool(fsz_file and missing_angles)
+    fsz_check = {
+        "ok": not fsz_warn,
+        "faceset_file": fsz_file,
+        "missing_angles": missing_angles,
+        "warning": (
+            f"Active faceset is missing profile angles ({', '.join(missing_angles)}). Swaps at extreme yaw will drift."
+            if fsz_warn else None
+        ),
+        "auto_fix": "open_facemgr" if fsz_warn else None,
+    }
+
+    # Check 7: Segment retention paths
+    is_chunked = batch_count > 1 or max_frames > 600
+    keep_segs = bool(p.get("keep_segments", getattr(getattr(roop_globals, "CFG", None), "keep_segments", True)))
+    ret_path = str(p.get("segment_retention_path") or getattr(getattr(roop_globals, "CFG", None), "segment_retention_path", ".segments/"))
+    seg_warn = is_chunked and not keep_segs
+    segments_check = {
+        "ok": not seg_warn,
+        "keep_segments": keep_segs,
+        "retention_path": ret_path,
+        "warning": (
+            f"Segment retention is disabled; chunked render segments in '{ret_path}' will not be retained."
+            if seg_warn else None
+        ),
+        "auto_fix": "enable_segment_retention" if seg_warn else None,
+    }
+
     warnings = []
     auto_fixes = []
     if disk_check["warning"]:
@@ -7293,6 +7352,15 @@ def render_preflight(payload: dict = Body(default=None)):
     if resolution_check["warning"]:
         warnings.append({"check": "resolution", "message": resolution_check["warning"]})
         auto_fixes.append({"action": "enable_restore_ultra", "label": "Enable Restore Ultra", "enhancer": "Restore Ultra"})
+    if vram_check["warning"]:
+        warnings.append({"check": "vram", "message": vram_check["warning"]})
+        auto_fixes.append({"action": "clamp_vram_budget", "label": "Clamp UltraMax Batch to 1", "batch_size": 1})
+    if fsz_check["warning"]:
+        warnings.append({"check": "fsz", "message": fsz_check["warning"]})
+        auto_fixes.append({"action": "open_facemgr", "label": "Inspect in Face Manager", "route": "#/facemgr"})
+    if segments_check["warning"]:
+        warnings.append({"check": "segments", "message": segments_check["warning"]})
+        auto_fixes.append({"action": "enable_segment_retention", "label": "Retain Segment Chunks", "keep_segments": True})
 
     status = "ready" if not warnings else "warning"
     return {
@@ -7302,6 +7370,9 @@ def render_preflight(payload: dict = Body(default=None)):
             "encoder": encoder_check,
             "trt": trt_check,
             "resolution": resolution_check,
+            "vram": vram_check,
+            "fsz": fsz_check,
+            "segments": segments_check,
         },
         "warnings": warnings,
         "auto_fixes": auto_fixes,

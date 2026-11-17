@@ -36,7 +36,7 @@ export const MAX_KEYS = 128;
  * pieces, so a ramp is rendered in steps of at most this size (curvePieces.js). `needs` names a setting that must be
  * on for the curve to do anything, so the editor can say so instead of quietly drawing a curve that changes nothing.
  */
-export const CURVE_PARAMS = Object.freeze([
+export const BASE_CURVE_PARAMS = Object.freeze([
   { id: 'swap_opacity', key: 'blend_ratio', label: 'Swap Opacity', min: 0, max: 1, digits: 2, quantum: 0.05, base: 1, unit: '', color: '#34d399' },
   { id: 'restore_blend', key: 'restore_ultra_detail_weight', label: 'Restore Ultra Blend', min: 0, max: 1, digits: 2, quantum: 0.05, base: 0.75, unit: '', color: '#60a5fa' },
   { id: 'mask_feather', key: 'face_mask_blend', label: 'Mask Feather', min: 0, max: 200, digits: 0, quantum: 2, base: 20, unit: 'px', color: '#f59e0b' },
@@ -46,9 +46,29 @@ export const CURVE_PARAMS = Object.freeze([
   { id: 'identity_morph', key: null, label: 'Identity Morph Weight', min: 0, max: 1, digits: 2, quantum: 0.05, base: 0, unit: '', color: '#a78bfa', identity: true },
 ]);
 
-export const paramById = (id) => CURVE_PARAMS.find((p) => p.id === id) || null;
+/**
+ * Stage 25/26 registered keyframeable & curve-editable parameters.
+ */
+export const EXTENDED_CURVE_PARAMS = Object.freeze([
+  { id: 'stabilization_strength', key: 'stabilization_strength', label: 'Stabilization Strength', min: 0, max: 1, digits: 2, quantum: 0.05, base: 0.5, unit: '', color: '#10b981' },
+  { id: 'yaw_erosion_bias', key: 'yaw_erosion_bias', label: 'Yaw Erosion Bias', min: -1, max: 1, digits: 2, quantum: 0.05, base: 0.0, unit: '', color: '#f59e0b' },
+  { id: 'expression_restorer_weight', key: 'expression_restore_strength', label: 'Expression Restorer Weight', min: 0, max: 1, digits: 2, quantum: 0.05, base: 0.6, unit: '', color: '#ec4899' },
+  { id: 'pixel_boost', key: 'subsample_upscale', label: 'Pixel Boost', min: 256, max: 768, digits: 0, quantum: 256, base: 512, unit: 'px', color: '#8b5cf6' },
+  { id: 'temporal_restore_alpha', key: 'temporal_enhancer_blend', label: 'Temporal Restore Alpha', min: 0, max: 0.9, digits: 2, quantum: 0.05, base: 0.5, unit: '', color: '#06b6d4' },
+  { id: 'restore_identity_weight', key: 'codeformer_fidelity', label: 'Restore Identity Weight', min: 0, max: 1, digits: 2, quantum: 0.05, base: 0.6, unit: '', color: '#3b82f6' },
+  { id: 'grain_match_strength', key: 'grain_match_strength', label: 'Grain Match Strength', min: 0, max: 1, digits: 2, quantum: 0.05, base: 0.35, unit: '', color: '#eab308' },
+  { id: 'motion_blur_match', key: 'merger_motion_blur', label: 'Motion Blur Match', min: 0, max: 1, digits: 2, quantum: 0.05, base: 0.0, unit: '', color: '#14b8a6' },
+]);
+
+export const ALL_CURVE_PARAMS = Object.freeze([...BASE_CURVE_PARAMS, ...EXTENDED_CURVE_PARAMS]);
+
+// CURVE_PARAMS is preserved as the base 5 for Stage 25 oracle compatibility:
+export const CURVE_PARAMS = BASE_CURVE_PARAMS;
+
+export const paramById = (id) => ALL_CURVE_PARAMS.find((p) => p.id === id) || null;
 /** The curves that write a settings key (everything but the identity morph). */
 export const DIRECT_PARAMS = Object.freeze(CURVE_PARAMS.filter((p) => !p.identity));
+export const ALL_DIRECT_PARAMS = Object.freeze(ALL_CURVE_PARAMS.filter((p) => !p.identity));
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const finite = (v, d = 0) => { const n = Number(v); return Number.isFinite(n) ? n : d; };
@@ -78,7 +98,7 @@ export function normalizeTrack(list, param, maxFrames) {
 export function normalizeTracks(raw, maxFrames) {
   const out = {};
   if (!raw || typeof raw !== 'object') return out;
-  for (const p of CURVE_PARAMS) {
+  for (const p of ALL_CURVE_PARAMS) {
     const t = normalizeTrack(raw[p.id], p, maxFrames);
     if (t.length) out[p.id] = t;
   }
@@ -168,7 +188,7 @@ export const evaluate = (list, frame) => makeEvaluator(list)(frame);
 /** The value of every track that has keyframes, at a frame: { paramId: value } (clamped and rounded). */
 export function valuesAt(tracks, frame) {
   const out = {};
-  for (const p of CURVE_PARAMS) {
+  for (const p of ALL_CURVE_PARAMS) {
     const list = tracks?.[p.id];
     if (list && list.length) out[p.id] = clampValue(p, evaluate(list, frame));
   }
@@ -231,7 +251,7 @@ export function setValue(list, param, frame, value) {
  */
 export function patchSettingsWithCurves(settings, tracks, frame) {
   let out = null;
-  for (const p of DIRECT_PARAMS) {
+  for (const p of ALL_DIRECT_PARAMS) {
     const list = tracks?.[p.id];
     if (!list || !list.length) continue;
     const v = clampValue(p, evaluate(list, frame));
@@ -246,7 +266,7 @@ export function patchSettingsWithCurves(settings, tracks, frame) {
 export function applyCurveValues(payload, values) {
   if (!values) return payload;
   let out = null;
-  for (const p of DIRECT_PARAMS) {
+  for (const p of ALL_DIRECT_PARAMS) {
     if (values[p.id] === undefined) continue;
     out = out || { ...payload };
     out[p.key] = values[p.id];

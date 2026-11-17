@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef } from 'react';
 import { useLaneCanvas } from './useLaneCanvas';
 import {
   LANE_H, MAX_PRESENCE_ROWS, drawAudioTrack, drawCacheStrip, drawFilmstrip, drawIdentityConfidence, drawOverrides, drawRuler,
-  drawScenes, identityLaneHeight, sceneLaneHeight, MAX_IDENTITY_ROWS, IDENTITY_ROW_H,
+  drawScenes, drawByteTrackLane, BYTE_TRACK_ROW_H, identityLaneHeight, sceneLaneHeight, MAX_IDENTITY_ROWS, IDENTITY_ROW_H,
 } from './lanes';
 import { laneCells } from '../identityLock';
 import { overrideLaneHit, sceneLaneHit } from './hit';
@@ -284,3 +284,40 @@ export function OverrideLane({
     />
   );
 }
+
+export function ByteTrackLane({
+  view,
+  maxFrames,
+  track,
+  warnings = [],
+  selected = false,
+  active = true,
+  onSeek,
+  onSelectTrack,
+}) {
+  const ref = useLaneCanvas(
+    (ctx, g) => {
+      drawByteTrackLane(ctx, g, { view, maxFrames, track, warnings, selected, active });
+    },
+    [view.start, view.end, maxFrames, track, warnings, selected, active]
+  );
+
+  return (
+    <canvas
+      ref={ref}
+      data-testid={`lane-track-${track?.trackId ?? 0}`}
+      role="img"
+      aria-label={`ByteTrack Lane ${track?.label || ''}`}
+      onClick={(e) => {
+        if (!ref.current) return;
+        const rect = ref.current.getBoundingClientRect();
+        const f = frameAtX(e.clientX - rect.left, rect.width, normalizeView(view, maxFrames), maxFrames);
+        onSelectTrack?.(track?.trackId);
+        onSeek?.(f);
+      }}
+      className="block w-full cursor-pointer"
+      style={{ height: BYTE_TRACK_ROW_H }}
+    />
+  );
+}
+
