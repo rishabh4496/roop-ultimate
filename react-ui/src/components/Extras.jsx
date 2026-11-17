@@ -18,6 +18,7 @@ import ParameterSweepModal from './faceswap/ParameterSweepModal';
 import { SLOT_ACTION_IDS } from '../shortcuts/actions';
 import { eventMatches } from '../store/shortcutStore';
 import StereoVRViewport, { DEFAULT_VR_PARAMS } from './faceswap/StereoVRViewport';
+import ExtrasMediaViewport from './extras/ExtrasMediaViewport';
 import { drawZebraOverlay } from './faceswap/falseColorZebra';
 import {
   createReferenceChannel,
@@ -58,6 +59,7 @@ export default function Extras({ notify, registerFileListener, meta, settings, s
   const patchOpts = (patch) => setOpts((o) => ({ ...o, ...patch }));
   const [uploadingAudio, setUploadingAudio] = useState(false);
   const [scopeActive, setScopeActive] = useState(false);
+  const [mediaSize, setMediaSize] = useState({ width: 0, height: 0 });
   const [zebraActive, setZebraActive] = useState(false);
   const [monitorActive, setMonitorActive] = useState(false);
   const [vrActive, setVrActive] = useState(false);
@@ -233,6 +235,7 @@ export default function Extras({ notify, registerFileListener, meta, settings, s
     if (f) {
       setFile(f);
       setFileName(f.name);
+      setMediaSize({ width: 0, height: 0 });
       setResult(null);
       if (fileUrlSrcRef.current) URL.revokeObjectURL(fileUrlSrcRef.current);
       const url = URL.createObjectURL(f);
@@ -249,6 +252,7 @@ export default function Extras({ notify, registerFileListener, meta, settings, s
       if (f) {
         setFile(f);
         setFileName(f.name);
+        setMediaSize({ width: 0, height: 0 });
         setResult(null);
         if (fileUrlSrcRef.current) URL.revokeObjectURL(fileUrlSrcRef.current);
         const url = URL.createObjectURL(f);
@@ -280,13 +284,13 @@ export default function Extras({ notify, registerFileListener, meta, settings, s
   };
 
   return (
-    <div className="space-y-4">
+    <div className="extras-studio">
       <Section>
         <h2 className="text-lg font-bold">Media editor</h2>
         <p className="text-sm text-white/50">Resize, rotate, crop and re-time images or videos.</p>
       </Section>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 3xl:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(340px,24vw)] gap-4 items-start">
         <Section title="Input & transform" icon={Icon.editor}>
           <label className="block cursor-pointer focus-within:outline focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-[var(--accent)]">
             <div className="px-4 py-5 rounded-lg border-2 border-dashed border-white/15 hover:border-[var(--accent)]/50 text-center text-sm text-white/60 mb-4">
@@ -302,9 +306,15 @@ export default function Extras({ notify, registerFileListener, meta, settings, s
           )}
 
           {file && fileUrlSrc && (
-            <div className="relative overflow-hidden rounded-xl bg-black/45 border border-white/10 aspect-video flex items-center justify-center mb-4 max-h-[300px]">
-              {/* Stage 12 & Stage 18 Broadcast Scopes & Zebra overlay controls */}
-              <div className="absolute top-2 right-2 flex items-center gap-1 z-30">
+            <ExtrasMediaViewport
+              key={`${fileName}_${file?.lastModified || ''}`}
+              mediaSize={mediaSize}
+              onMediaSize={setMediaSize}
+              mediaRef={mediaElemRef}
+              chrome={(
+                <div className="extras-media-viewport__chrome">
+                  {/* Broadcast scopes, exposure, clean feed and 3D tools */}
+                  <div className="extras-media-viewport__actions">
                 <button
                   type="button"
                   onClick={() => setScopeActive((a) => !a)}
@@ -367,36 +377,42 @@ export default function Extras({ notify, registerFileListener, meta, settings, s
                   Parameter Sweep (3×3 Grid)
                 </button>
               </div>
-
+                </div>
+              )}
+              overlays={(
+                <>
+                  {zebraActive && <canvas ref={zebraCanvasRef} className="absolute inset-0 z-10 h-full w-full object-contain pointer-events-none" />}
+                  <div
+                    className="absolute z-20 border-2 border-dashed border-[var(--accent)] shadow-[0_0_0_9999px_rgba(0,0,0,0.6)] pointer-events-none"
+                    style={{ left: `${opts.crop_left}%`, right: `${opts.crop_right}%`, top: `${opts.crop_top}%`, bottom: `${opts.crop_bottom}%` }}
+                  />
+                </>
+              )}
+              scopes={(
+                <>
+                  <BroadcastScopesDock
+                    active={scopeActive}
+                    onClose={() => setScopeActive(false)}
+                    sourceCanvas={mediaElemRef.current}
+                    renderedCanvas={mediaElemRef.current}
+                    className="absolute bottom-14 right-3 z-40"
+                  />
+                  <StereoVRViewport
+                    active={vrActive}
+                    onClose={() => setVrActive(false)}
+                    mediaSource={mediaElemRef.current}
+                    params={vrParams}
+                    onChange={setVrParams}
+                  />
+                </>
+              )}
+            >
               {file.type?.startsWith('video') || /\.(mp4|mkv|mov|avi|webm|gif)$/i.test(fileName) ? (
-                <video ref={mediaElemRef} src={fileUrlSrc} muted loop autoPlay className="max-w-full max-h-full object-contain pointer-events-none" />
+                <video src={fileUrlSrc} muted loop autoPlay playsInline className="h-full w-full object-contain pointer-events-none" />
               ) : (
-                <img ref={mediaElemRef} src={fileUrlSrc} alt="Input source" className="max-w-full max-h-full object-contain pointer-events-none" />
+                <img src={fileUrlSrc} alt="Input source" className="h-full w-full object-contain pointer-events-none" />
               )}
-
-                            {vrActive && (
-                <StereoVRViewport
-                  active={vrActive}
-                  onClose={() => setVrActive(false)}
-                  mediaSource={mediaElemRef.current}
-                  params={vrParams}
-                  onChange={setVrParams}
-                />
-              )}
-              {zebraActive && (
-                <canvas ref={zebraCanvasRef} className="absolute inset-0 w-full h-full object-contain pointer-events-none z-10" />
-              )}
-              {/* Bounding box crop overlay dims the cropped regions */}
-              <div 
-                className="absolute border-2 border-dashed border-[var(--accent)] shadow-[0_0_0_9999px_rgba(0,0,0,0.6)] pointer-events-none z-20"
-                style={{
-                  left: `${opts.crop_left}%`,
-                  right: `${opts.crop_right}%`,
-                  top: `${opts.crop_top}%`,
-                  bottom: `${opts.crop_bottom}%`
-                }}
-              />
-            </div>
+            </ExtrasMediaViewport>
           )}
 
           <Select label="Resize width" value={opts.resolution} onChange={(v) => set('resolution', v)} options={RESOLUTIONS} />
@@ -498,14 +514,6 @@ export default function Extras({ notify, registerFileListener, meta, settings, s
       </Section>
 
       {/* ── Stage 18 Broadcast Scopes Dock ── */}
-      <BroadcastScopesDock
-        active={scopeActive}
-        onClose={() => setScopeActive(false)}
-        sourceCanvas={mediaElemRef.current}
-        renderedCanvas={mediaElemRef.current}
-        className="fixed bottom-6 right-6 z-50 shadow-2xl"
-      />
-
       {/* ── Stage 24 Parameter Sweep (3×3 Grid) Modal ── */}
       <ParameterSweepModal
         isOpen={showSweepModal}

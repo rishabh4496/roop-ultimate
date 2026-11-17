@@ -10,8 +10,8 @@
  * Everything is a pure function of the stage element plus the current state.
  */
 
-export const ZOOM_MIN = 0.1;
-export const ZOOM_MAX = 16.0;
+export const ZOOM_MIN = 0.25;
+export const ZOOM_MAX = 8.0;
 
 /**
  * The visual scale the app-level CSS `zoom` is currently applying to `el`.
@@ -99,7 +99,7 @@ export function panCenteringAt(client, stage, zoom, content) {
 }
 
 /**
- * One wheel notch, as a MULTIPLICATIVE step from min (0.1x) to max (16x).
+ * One wheel notch, as a MULTIPLICATIVE step from min (25%) to max (800%) by default.
  *
  * Returns null when the wheel cannot move the zoom any further.
  */
@@ -112,7 +112,7 @@ export function wheelZoom(deltaY, zoom, max = ZOOM_MAX, min = ZOOM_MIN, step = 0
 /**
  * One wheel EVENT, scaled by how far it actually turned (what pro viewers do), instead of a fixed
  * step per event. A fixed 15% per event made a trackpad - which fires dozens of 1-4px events per
- * swipe - fly from 1x to 16x in one gesture, while a mouse notch (deltaY 100) felt right. Here a
+ * swipe - fly from 1x to 8x in one gesture, while a mouse notch (deltaY 100) felt right. Here a
  * 100px notch is still ~15%, a 4px trackpad tick is ~0.6%, and no single event moves more than 35%.
  *
  * Crossing 100% (fit) in either direction lands exactly ON fit first, so the picture is easy to

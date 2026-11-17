@@ -1,3 +1,15 @@
+## 2026-11-18 — VFX viewport inspection tools (Stage 3)
+
+The FaceSwap preview adds 25–800% cursor-centered zoom, pixel inspection, a top-center
+comparison HUD, adjustable split loupe with RGB/HEX sampling, brush radius/feather and
+mask preview controls, face pose gizmo and landmark mesh. Ultra-Wide Dual Stage syncs
+source and output pan/zoom and mirrors the active loupe coordinate. Extras now uses a
+full-height pan/zoom media viewport with frame-fit presets and an in-viewport live RGB
+parade/luma histogram scopes drawer. The FaceSwap scope can analyze a selected face crop.
+
+**Validation:** no build, test suite or browser session was run for this stage. The
+implementation is therefore unverified in a running UI.
+
 ## 2026-11-18 ? UI overhaul Stage 2: full-viewport shell and reusable docking
 
 The React shell fills the viewport on every hash route, with a 38px studio header,

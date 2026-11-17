@@ -56,6 +56,10 @@ import {
 } from './viewportMatrix';
 // @ts-ignore
 import { drawAmplifiedHeatmap } from './heatmap';
+import FacePoseGizmo from './FacePoseGizmo';
+import BroadcastScopesDock from './BroadcastScopesDock';
+import CompareSlider from './CompareSlider';
+import { clampPan, panAnchoredAt, uiScale, wheelZoomDelta } from './zoomPan';
 
 // ── Types & Interfaces ─────────────────────────────────────────────────────────
 
@@ -163,6 +167,7 @@ export interface PreviewViewportProps {
   onViewModeChange?: (mode: ViewportViewMode) => void;
   showLoupe?: boolean;
   onToggleLoupe?: () => void;
+  onLoupeCoordinates?: ((point: { x: number; y: number } | null) => void) | null;
   isPeekingOriginal?: boolean;
   isPeekingRaw?: boolean;
 
@@ -204,9 +209,12 @@ export interface PreviewViewportProps {
   setZoom?: (z: number | ((prev: number) => number)) => void;
   pan?: { x: number; y: number };
   setPan?: (p: { x: number; y: number } | ((prev: { x: number; y: number }) => { x: number; y: number })) => void;
+  onViewportTransform?: (zoom: number, pan: { x: number; y: number }) => void;
+  viewportApiRef?: React.MutableRefObject<any> | null;
   wipe?: number; // 0..100
   setWipe?: (w: number) => void;
   wipeAngle?: number;
+  setWipeAngle?: (angle: number) => void;
   compare?: boolean;
   compareMode?: 'slider' | 'split' | 'diff' | 'heatmap';
   onToggleCompare?: () => void;
@@ -224,10 +232,10 @@ export interface PreviewViewportProps {
 
 // ── Constants & Helpers ───────────────────────────────────────────────────────
 
-const ZOOM_MIN = 0.1;
-const ZOOM_MAX = 16.0;
+const ZOOM_MIN = 0.25;
+const ZOOM_MAX = 8.0;
 const LOUPE_DIAMETER = 180;
-const LOUPE_MAGNIFICATION = 3.5;
+const LOUPE_MAGNIFICATION_DEFAULT = 3.5;
 
 function extractPoint(pt: any): { x: number; y: number } {
   if (Array.isArray(pt)) {
@@ -289,10 +297,11 @@ export const PreviewViewport: React.FC<PreviewViewportProps> = ({
   onAssignFaceset,
 
   // View Mode & Comparison
-  viewMode: controlledViewMode = 'Composite',
+  viewMode: controlledViewMode,
   onViewModeChange,
-  showLoupe: controlledShowLoupe = false,
+  showLoupe: controlledShowLoupe,
   onToggleLoupe,
+  onLoupeCoordinates,
   isPeekingOriginal = false,
   isPeekingRaw = false,
 
@@ -324,9 +333,12 @@ export const PreviewViewport: React.FC<PreviewViewportProps> = ({
   setZoom: controlledSetZoom,
   pan: controlledPan,
   setPan: controlledSetPan,
-  wipe: controlledWipe = 50,
+  onViewportTransform,
+  viewportApiRef,
+  wipe: controlledWipe,
   setWipe: controlledSetWipe,
-  wipeAngle = 0,
+  wipeAngle: controlledWipeAngle = 0,
+  setWipeAngle: controlledSetWipeAngle,
   compare = false,
   compareMode = 'slider',
   onToggleCompare,
@@ -357,7 +369,7 @@ export const PreviewViewport: React.FC<PreviewViewportProps> = ({
 
   // View mode state
   const [internalViewMode, setInternalViewMode] = useState<ViewportViewMode>('Composite');
-  const viewMode = (controlledViewMode as ViewportViewMode) || internalViewMode;
+  const viewMode = (controlledViewMode as ViewportViewMode | undefined) ?? internalViewMode;
   const setViewMode = useCallback(
     (mode: ViewportViewMode) => {
       if (onViewModeChange) {
@@ -380,6 +392,10 @@ export const PreviewViewport: React.FC<PreviewViewportProps> = ({
     }
   }, [onToggleLoupe]);
 
+  useEffect(() => {
+    if (!showLoupe) onLoupeCoordinates?.(null);
+  }, [showLoupe, onLoupeCoordinates]);
+
   // Zoom and Pan
   const [internalZoom, setInternalZoom] = useState<number>(1.0);
   const zoom = controlledZoom !== undefined ? controlledZoom : internalZoom;
@@ -393,7 +409,17 @@ export const PreviewViewport: React.FC<PreviewViewportProps> = ({
   const [internalWipe, setInternalWipe] = useState<number>(50);
   const wipe = controlledWipe !== undefined ? controlledWipe : internalWipe;
   const setWipe = controlledSetWipe || setInternalWipe;
+  const [internalWipeAngle, setInternalWipeAngle] = useState(0);
+  const wipeAngle = controlledSetWipeAngle ? controlledWipeAngle : internalWipeAngle;
+  const setWipeAngle = controlledSetWipeAngle || setInternalWipeAngle;
+  const [wipeDirection, setWipeDirection] = useState<'vertical' | 'horizontal'>('vertical');
   const [isDraggingWipe, setIsDraggingWipe] = useState<boolean>(false);
+  const compareCanvasApi = useMemo(() => ({ current: { setWipe, setWipeAngle } }), [setWipe, setWipeAngle]);
+  const [scopesOpen, setScopesOpen] = useState(false);
+  const [pixelGridActive, setPixelGridActive] = useState(false);
+  const [loupeMagnification, setLoupeMagnification] = useState(LOUPE_MAGNIFICATION_DEFAULT);
+  const [loupeSplit, setLoupeSplit] = useState(true);
+  const [loupePixel, setLoupePixel] = useState<{ r: number; g: number; b: number; hex: string } | null>(null);
 
   // Brush controls
   const [internalBrushMode, setInternalBrushMode] = useState<'paint' | 'erase'>('paint');
@@ -407,6 +433,8 @@ export const PreviewViewport: React.FC<PreviewViewportProps> = ({
   const [internalBrushFeather, setInternalBrushFeather] = useState<number>(0.35);
   const brushFeather = controlledBrushFeather !== undefined ? controlledBrushFeather : internalBrushFeather;
   const setBrushFeather = controlledSetBrushFeather || setInternalBrushFeather;
+  const [brushPreviewMode, setBrushPreviewMode] = useState<'ruby' | 'checkerboard' | 'matte'>('ruby');
+  const [brushPreviewOpacity, setBrushPreviewOpacity] = useState(0.45);
 
   // Mask strokes and undo/redo history stack
   const [internalMaskStrokes, setInternalMaskStrokes] = useState<MaskBrushStroke[]>([]);
@@ -491,6 +519,40 @@ export const PreviewViewport: React.FC<PreviewViewportProps> = ({
       objectFit: 'contain',
     });
   }, [containerDim, naturalDim, zoom, pan]);
+
+  const mediaContentBounds = useMemo(() => {
+    const scale = Math.min(containerDim.w / naturalDim.w, containerDim.h / naturalDim.h);
+    return { offsetWidth: naturalDim.w * scale, offsetHeight: naturalDim.h * scale };
+  }, [containerDim, naturalDim]);
+
+  const viewportApi = useMemo(() => ({
+    getZoom: () => zoom,
+    getPan: () => ({ ...pan }),
+    setPan: (next: { x: number; y: number }) => setPan(clampPan(next, zoom, containerRef.current, mediaContentBounds)),
+    zoomAtNormalized: (deltaY: number, deltaMode: number, xRatio: number, yRatio: number) => {
+      const stage = containerRef.current;
+      if (!stage) return false;
+      const next = wheelZoomDelta(deltaY, deltaMode, zoom, ZOOM_MAX, ZOOM_MIN);
+      if (next == null) return false;
+      const rect = stage.getBoundingClientRect();
+      const anchor = { x: rect.left + rect.width * xRatio, y: rect.top + rect.height * yRatio };
+      const nextPan = next === 1 ? { x: 0, y: 0 } : clampPan(panAnchoredAt(anchor, stage, zoom, next, pan), next, stage, mediaContentBounds);
+      setZoom(next);
+      setPan(nextPan);
+      return true;
+    },
+    fit: () => { setZoom(1); setPan({ x: 0, y: 0 }); },
+  }), [zoom, pan, setZoom, setPan, mediaContentBounds]);
+
+  useEffect(() => {
+    onViewportTransform?.(zoom, pan);
+  }, [zoom, pan, onViewportTransform]);
+
+  useEffect(() => {
+    if (!viewportApiRef) return undefined;
+    viewportApiRef.current = viewportApi;
+    return () => { if (viewportApiRef.current === viewportApi) viewportApiRef.current = null; };
+  }, [viewportApiRef, viewportApi]);
 
   // ── Exact Integer Frame Calculations (ptsFrameMap) ──────────────────────────
   const exactFrame = useMemo(() => {
@@ -610,7 +672,7 @@ export const PreviewViewport: React.FC<PreviewViewportProps> = ({
       // Amplified Thermal Heatmap Difference
       if (activeBase && activeTop) {
         try {
-          drawAmplifiedHeatmap(ctx, activeBase, activeTop, canvas.width, canvas.height, 4.0, 'turbo');
+          drawAmplifiedHeatmap(ctx, activeBase, activeTop, canvas.width, canvas.height, 4.0, 'edge');
         } catch {
           // Fallback simple difference
           ctx.drawImage(activeTop, 0, 0);
@@ -624,36 +686,31 @@ export const PreviewViewport: React.FC<PreviewViewportProps> = ({
       // Split Wipe between Base and Top
       const dividerX = (wipe / 100) * canvas.width;
       if (activeBase) {
-        // Draw base frame on the left side
-        ctx.save();
-        ctx.beginPath();
-        ctx.rect(0, 0, dividerX, canvas.height);
-        ctx.clip();
         ctx.drawImage(activeBase, 0, 0);
-        ctx.restore();
       }
       if (activeTop) {
-        // Draw top frame on the right side
         ctx.save();
         ctx.beginPath();
-        ctx.rect(dividerX, 0, canvas.width - dividerX, canvas.height);
+        if (wipeAngle !== 0) {
+          const rad = (wipeAngle * Math.PI) / 180;
+          const diag = Math.hypot(canvas.width, canvas.height) * 2;
+          const d = (wipe / 100 - 0.5) * Math.hypot(canvas.width, canvas.height);
+          const px = canvas.width / 2 + d * Math.cos(rad);
+          const py = canvas.height / 2 + d * Math.sin(rad);
+          ctx.translate(px, py);
+          ctx.rotate(rad);
+          ctx.rect(0, -diag, diag, diag * 2);
+        } else if (wipeDirection === 'horizontal') {
+          ctx.rect(0, 0, canvas.width, (wipe / 100) * canvas.height);
+        } else {
+          ctx.rect(dividerX, 0, canvas.width - dividerX, canvas.height);
+        }
         ctx.clip();
         ctx.drawImage(activeTop, 0, 0);
         ctx.restore();
       } else if (!activeBase && activeTop) {
         ctx.drawImage(activeTop, 0, 0);
       }
-      // Divider line
-      ctx.save();
-      ctx.strokeStyle = '#38bdf8';
-      ctx.lineWidth = 2;
-      ctx.shadowColor = 'rgba(56, 189, 248, 0.8)';
-      ctx.shadowBlur = 8;
-      ctx.beginPath();
-      ctx.moveTo(dividerX, 0);
-      ctx.lineTo(dividerX, canvas.height);
-      ctx.stroke();
-      ctx.restore();
     } else {
       // Composite or Normal render
       if (activeTop) {
@@ -662,7 +719,7 @@ export const PreviewViewport: React.FC<PreviewViewportProps> = ({
         ctx.drawImage(activeBase, 0, 0);
       }
     }
-  }, [topFrame, baseFrame, exactFrame, viewMode, wipe, isPeekingOriginal, isPeekingRaw, naturalDim, canvasRef]);
+  }, [topFrame, baseFrame, exactFrame, viewMode, wipe, wipeDirection, wipeAngle, isPeekingOriginal, isPeekingRaw, naturalDim, canvasRef]);
 
   // ── Loupe Rendering (3.5x Magnifier Lens) ───────────────────────────────────
   useEffect(() => {
@@ -677,7 +734,7 @@ export const PreviewViewport: React.FC<PreviewViewportProps> = ({
       cursorPos.x,
       cursorPos.y,
       LOUPE_DIAMETER,
-      LOUPE_MAGNIFICATION
+      loupeMagnification
     );
 
     const activeTop = topFrame || lruCacheRef.current.get(exactFrame) || null;
@@ -691,10 +748,11 @@ export const PreviewViewport: React.FC<PreviewViewportProps> = ({
       ctx.arc(LOUPE_DIAMETER / 2, LOUPE_DIAMETER / 2, LOUPE_DIAMETER / 2 - 1, 0, Math.PI * 2);
       ctx.clip();
 
-      // Render magnified crop with zero drift
+      // Render magnified crop with zero drift. The split lens uses the same
+      // crop coordinates for both plates, so its divider stays pixel-locked.
       try {
-        ctx.drawImage(
-          sourceImage as any,
+        const drawCrop = (image: CanvasImageSource) => ctx.drawImage(
+          image,
           crop.sourceX,
           crop.sourceY,
           crop.sourceWidth,
@@ -704,6 +762,29 @@ export const PreviewViewport: React.FC<PreviewViewportProps> = ({
           LOUPE_DIAMETER,
           LOUPE_DIAMETER
         );
+        const original = activeBase || videoRef.current || canvasRef.current;
+        if (loupeSplit && activeTop && original && activeTop !== original) {
+          drawCrop(original);
+          ctx.save();
+          ctx.beginPath();
+          ctx.rect(LOUPE_DIAMETER / 2, 0, LOUPE_DIAMETER / 2, LOUPE_DIAMETER);
+          ctx.clip();
+          drawCrop(activeTop);
+          ctx.restore();
+        } else {
+          drawCrop(sourceImage as CanvasImageSource);
+        }
+        const sample = ctx.getImageData(LOUPE_DIAMETER / 2, LOUPE_DIAMETER / 2, 1, 1).data;
+        const hex = `#${[sample[0], sample[1], sample[2]].map((value) => value.toString(16).padStart(2, '0')).join('').toUpperCase()}`;
+        setLoupePixel({ r: sample[0], g: sample[1], b: sample[2], hex });
+        if (loupeSplit && activeTop && original && activeTop !== original) {
+          ctx.strokeStyle = 'rgba(56, 189, 248, 0.9)';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(LOUPE_DIAMETER / 2, 0);
+          ctx.lineTo(LOUPE_DIAMETER / 2, LOUPE_DIAMETER);
+          ctx.stroke();
+        }
       } catch {
         // ignore cross-origin or video decoding frame delay
       }
@@ -720,7 +801,7 @@ export const PreviewViewport: React.FC<PreviewViewportProps> = ({
 
       ctx.restore();
     }
-  }, [showLoupe, cursorPos, exactFrame, topFrame, baseFrame, viewportMatrix, canvasRef, videoRef]);
+  }, [showLoupe, cursorPos, exactFrame, topFrame, baseFrame, viewportMatrix, canvasRef, videoRef, loupeMagnification, loupeSplit]);
 
   // ── Mask Canvas Replay for Exact Frame ──────────────────────────────────────
   const activeFrameStrokes = useMemo(() => {
@@ -913,17 +994,24 @@ export const PreviewViewport: React.FC<PreviewViewportProps> = ({
     const screenY = e.clientY - containerRect.top;
 
     setCursorPos({ x: screenX, y: screenY });
+    if (showLoupe && onLoupeCoordinates) {
+      onLoupeCoordinates({ x: screenX / containerRect.width, y: screenY / containerRect.height });
+    }
 
     // Handle Split Wipe dragging
     if (isDraggingWipe) {
-      const newWipe = Math.max(0, Math.min(100, (screenX / containerRect.width) * 100));
+      const position = wipeDirection === 'horizontal' ? screenY / containerRect.height : screenX / containerRect.width;
+      const newWipe = Math.max(0, Math.min(100, position * 100));
       setWipe(newWipe);
       return;
     }
 
     // Update dual-concentric brush cursor
     if (maskBrushActive && brushCursorRef.current) {
-      brushCursorRef.current.style.transform = `translate3d(${screenX}px, ${screenY}px, 0)`;
+      const diameter = brushSize;
+      brushCursorRef.current.style.width = `${diameter}px`;
+      brushCursorRef.current.style.height = `${diameter}px`;
+      brushCursorRef.current.style.transform = `translate3d(${screenX - diameter / 2}px, ${screenY - diameter / 2}px, 0)`;
     }
 
     // Active brush stroke drawing
@@ -940,7 +1028,7 @@ export const PreviewViewport: React.FC<PreviewViewportProps> = ({
           const rMedia = viewportMatrix.screenRadiusToMedia(brushSize / 2);
           ctx.save();
           ctx.globalCompositeOperation = brushMode === 'erase' ? 'destination-out' : 'source-over';
-          ctx.strokeStyle = brushMode === 'erase' ? 'rgba(0,0,0,1)' : 'rgba(236,72,153,0.7)';
+          ctx.strokeStyle = brushMode === 'erase' ? 'rgba(0,0,0,1)' : 'rgba(34,211,238,0.7)';
           ctx.lineWidth = rMedia * 2;
           ctx.lineCap = 'round';
           ctx.lineJoin = 'round';
@@ -955,12 +1043,13 @@ export const PreviewViewport: React.FC<PreviewViewportProps> = ({
     }
 
     if (isPanning) {
-      const dx = e.clientX - panStartRef.current.x;
-      const dy = e.clientY - panStartRef.current.y;
-      setPan({
+      const scale = uiScale(containerRef.current);
+      const dx = (e.clientX - panStartRef.current.x) / scale;
+      const dy = (e.clientY - panStartRef.current.y) / scale;
+      setPan(clampPan({
         x: panStartRef.current.startPanX + dx,
         y: panStartRef.current.startPanY + dy,
-      });
+      }, zoom, containerRef.current, mediaContentBounds));
     }
   };
 
@@ -1017,16 +1106,20 @@ export const PreviewViewport: React.FC<PreviewViewportProps> = ({
   };
 
   const handleWheel = (e: React.WheelEvent<HTMLDivElement>) => {
-    if (e.ctrlKey || e.metaKey || !maskBrushActive) {
-      e.preventDefault();
-      const delta = -e.deltaY;
-      const factor = delta > 0 ? 1.15 : 1 / 1.15;
-      setZoom((z) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z * factor)));
-    } else if (maskBrushActive) {
+    if (e.ctrlKey || e.metaKey) return;
+    if (e.altKey && maskBrushActive) {
       e.preventDefault();
       const delta = e.deltaY < 0 ? 4 : -4;
       setBrushSize(Math.max(4, Math.min(200, brushSize + delta)));
+      return;
     }
+    const next = wheelZoomDelta(e.deltaY, e.deltaMode, zoom, ZOOM_MAX, ZOOM_MIN);
+    if (next == null) return;
+    e.preventDefault();
+    const stage = containerRef.current;
+    const anchored = panAnchoredAt({ x: e.clientX, y: e.clientY }, stage, zoom, next, pan);
+    setZoom(next);
+    setPan(next === 1 ? { x: 0, y: 0 } : clampPan(anchored, next, stage, mediaContentBounds));
   };
 
   // Preset Zoom Controls
@@ -1035,18 +1128,27 @@ export const PreviewViewport: React.FC<PreviewViewportProps> = ({
     setPan({ x: 0, y: 0 });
   };
   const handlePresetFill = () => {
-    setZoom(1.25);
+    const scale = Math.min(containerDim.w / naturalDim.w, containerDim.h / naturalDim.h);
+    const fill = Math.max(containerDim.w / naturalDim.w, containerDim.h / naturalDim.h);
+    setZoom(Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, fill / Math.max(scale, 1e-6))));
     setPan({ x: 0, y: 0 });
   };
   const handlePreset1to1 = () => {
-    setZoom(1.0);
+    const fit = Math.min(containerDim.w / naturalDim.w, containerDim.h / naturalDim.h);
+    setZoom(Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, 1 / Math.max(fit, 1e-6))));
     setPan({ x: 0, y: 0 });
   };
   const handlePreset200 = () => {
-    setZoom(2.0);
+    const fit = Math.min(containerDim.w / naturalDim.w, containerDim.h / naturalDim.h);
+    setZoom(Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, 2 / Math.max(fit, 1e-6))));
   };
   const handlePreset400 = () => {
-    setZoom(4.0);
+    const fit = Math.min(containerDim.w / naturalDim.w, containerDim.h / naturalDim.h);
+    setZoom(Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, 4 / Math.max(fit, 1e-6))));
+  };
+  const handlePreset800 = () => {
+    setZoom(ZOOM_MAX);
+    setPan({ x: 0, y: 0 });
   };
 
   // ── Face Detection Bounding Boxes & Interactive Studio Track Badges ─────────
@@ -1110,11 +1212,27 @@ export const PreviewViewport: React.FC<PreviewViewportProps> = ({
       // Track metadata & roles
       const trackText = formatTrackLabel(trackId);
       const sourceName = face.sourceName || face.source_name || face.facesetPath || face.faceset_path || '';
+      const similarity = Number(face.cosine_similarity ?? face.cosineSimilarity ?? face.similarity ?? face.score);
       const role = face.role || (faceRoles && (faceRoles as any)[faceIndex]?.role);
       const isExcluded = Boolean(face.excluded || (faceRoles && (faceRoles as any)[faceIndex]?.excluded));
 
       // BiSeNet semantic parsing or landmark points
       const landmarks = face.landmarks || face.kps;
+      const landmarkPositions = Array.isArray(landmarks) ? landmarks.map((landmark: any) => {
+        const point = extractPoint(landmark);
+        const box = face.bbox as any;
+        const x0 = Array.isArray(box) ? box[0] : box?.x ?? 0;
+        const y0 = Array.isArray(box) ? box[1] : box?.y ?? 0;
+        const x1 = Array.isArray(box) ? box[2] : (box?.x ?? 0) + (box?.width ?? 0);
+        const y1 = Array.isArray(box) ? box[3] : (box?.y ?? 0) + (box?.height ?? 0);
+        return {
+          x: point.x <= 1 ? point.x * 100 : ((point.x - x0) / Math.max(1e-6, x1 - x0)) * 100,
+          y: point.y <= 1 ? point.y * 100 : ((point.y - y0) / Math.max(1e-6, y1 - y0)) * 100,
+        };
+      }) : [];
+      const landmarkMesh = landmarkPositions.length >= 68
+        ? [[...Array(17).keys()], [17, 18, 19, 20, 21], [22, 23, 24, 25, 26], [27, 28, 29, 30], [31, 32, 33, 34, 35], [36, 37, 38, 39, 40, 41, 36], [42, 43, 44, 45, 46, 47, 42], [48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 48], [60, 61, 62, 63, 64, 65, 66, 67, 60]]
+        : [[0, 1], [0, 2], [1, 2], [2, 3], [2, 4], [3, 4]];
 
       return (
         <div
@@ -1157,10 +1275,17 @@ export const PreviewViewport: React.FC<PreviewViewportProps> = ({
               </span>
             )}
             <span>
-              {isSelected ? `★ ${trackText}` : trackText}
+              {`#${faceIndex + 1} · ${isSelected ? '★ ' : ''}${trackText}`}
               {sourceName ? ` → ${sourceName}` : isExcluded ? ' (Excluded)' : ''}
             </span>
+            {Number.isFinite(similarity) && similarity >= 0 && similarity <= 1 && (
+              <span className="rounded bg-emerald-950/90 px-1 py-0.5 font-mono text-nano text-emerald-200">COS {similarity.toFixed(3)}</span>
+            )}
           </div>
+          <span className="vfx-face-bracket vfx-face-bracket--tl" />
+          <span className="vfx-face-bracket vfx-face-bracket--tr" />
+          <span className="vfx-face-bracket vfx-face-bracket--bl" />
+          <span className="vfx-face-bracket vfx-face-bracket--br" />
 
           {/* ── Interactive Studio Face Inspector Popover (Active when Selected) ── */}
           {isSelected && (
@@ -1304,10 +1429,15 @@ export const PreviewViewport: React.FC<PreviewViewportProps> = ({
           {/* BiSeNet Parsing / Landmark Points Overlay */}
           {showLandmarks && landmarks && Array.isArray(landmarks) && landmarks.length > 0 && (
             <div className="absolute inset-0 pointer-events-none">
+              <svg className="absolute inset-0 h-full w-full overflow-visible" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+                {landmarkMesh.map((indices: number[], meshIndex: number) => (
+                  <polyline key={`mesh_${faceIndex}_${meshIndex}`} points={indices.map((index) => landmarkPositions[index] ? `${landmarkPositions[index].x},${landmarkPositions[index].y}` : '').filter(Boolean).join(' ')} fill="none" stroke="#67e8f9" strokeWidth="0.35" opacity="0.55" />
+                ))}
+              </svg>
               {landmarks.map((lm: any, lIdx: number) => {
-                const pt = extractPoint(lm);
-                const px = pt.x <= 1 ? pt.x * 100 : ((pt.x - (face.bbox as any)?.[0]) / ((face.bbox as any)?.[2] - (face.bbox as any)?.[0])) * 100;
-                const py = pt.y <= 1 ? pt.y * 100 : ((pt.y - (face.bbox as any)?.[1]) / ((face.bbox as any)?.[3] - (face.bbox as any)?.[1])) * 100;
+                const point = landmarkPositions[lIdx];
+                const px = point?.x ?? 0;
+                const py = point?.y ?? 0;
                 return (
                   <span
                     key={`lm_${faceIndex}_${lIdx}`}
@@ -1343,11 +1473,16 @@ export const PreviewViewport: React.FC<PreviewViewportProps> = ({
   // ── Render Component ────────────────────────────────────────────────────────
   const isVideoSource = playbackSource === 'video' || (playbackSource === 'auto' && Boolean(videoSrc));
   const { centerScreenX, centerScreenY, effectiveScale } = viewportMatrix.metrics;
+  const activeFace = faces[selectedFaceIndex ?? 0];
+  const loupeDisplayCenter = {
+    x: Math.max(LOUPE_DIAMETER / 2, Math.min(containerDim.w - LOUPE_DIAMETER / 2, cursorPos.x)),
+    y: Math.max(LOUPE_DIAMETER / 2, Math.min(containerDim.h - LOUPE_DIAMETER / 2, cursorPos.y)),
+  };
 
   return (
     <div
       ref={containerRef}
-      className={`relative w-full h-full min-h-[360px] bg-[var(--bg-void,#050507)] select-none overflow-hidden flex items-center justify-center font-sans ${className}`}
+      className={`relative w-full h-full min-h-[360px] bg-[var(--bg-void,#050507)] select-none overflow-hidden flex items-center justify-center font-sans ${zoom >= 3 ? 'vfx-pixelated' : ''} ${className}`}
       style={style}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
@@ -1356,10 +1491,33 @@ export const PreviewViewport: React.FC<PreviewViewportProps> = ({
       onMouseEnter={() => setCursorOnViewport(true)}
       onMouseLeave={() => {
         setCursorOnViewport(false);
+        onLoupeCoordinates?.(null);
         if (isDraggingWipe) setIsDraggingWipe(false);
       }}
       data-testid="preview-viewport-container"
     >
+      {faces.length > 0 && (
+        <FacePoseGizmo
+          pose={activeFace?.pose ?? pose?.[selectedFaceIndex ?? 0]}
+          faceIndex={selectedFaceIndex ?? 0}
+          similarity={activeFace?.cosine_similarity ?? activeFace?.similarity ?? activeFace?.score}
+        />
+      )}
+      {showHUD && (
+        <div className="absolute top-3 left-1/2 z-40 flex max-w-[calc(100%-24px)] -translate-x-1/2 items-center gap-1 overflow-x-auto rounded-xl border border-white/20 bg-black/85 p-1.5 text-white shadow-2xl backdrop-blur-md" role="toolbar" aria-label="Viewport comparison modes" data-testid="viewport-mode-switcher">
+          {(['Composite', 'Split Wipe', 'Diff Heatmap', 'BiSeNet Parsing', 'Occlusion Mask'] as ViewportViewMode[]).map((mode) => (
+            <button
+              key={mode}
+              type="button"
+              onClick={() => setViewMode(mode)}
+              className={`flex-none rounded-lg px-2 py-1 text-micro font-bold transition-all ${viewMode === mode ? 'bg-cyan-500 text-black shadow-[0_0_10px_rgba(6,182,212,0.6)]' : 'text-white/70 hover:bg-white/10 hover:text-white'}`}
+              title={mode === 'Diff Heatmap' ? 'False-color difference map: blue untouched, green subtle blend, red/white high pixel delta' : `Switch to ${mode} mode`}
+            >
+              {mode === 'Diff Heatmap' ? 'Edge / Diff Map' : mode}
+            </button>
+          ))}
+        </div>
+      )}
       {/* ── Main Unified Media Transform Stage (Zero-Drift ViewportMatrix) ──── */}
       {(isPeekingOriginal || isPeekingRaw) && (
         <div className="absolute top-4 left-1/2 -translate-x-1/2 px-3 py-1 rounded-full bg-amber-500/95 text-black font-mono font-bold text-micro shadow-[0_0_20px_rgba(245,158,11,0.8)] z-50 flex items-center gap-1.5 animate-pulse select-none">
@@ -1383,6 +1541,7 @@ export const PreviewViewport: React.FC<PreviewViewportProps> = ({
             src={videoSrc}
             playsInline
             muted
+            style={{ imageRendering: zoom >= 3 ? 'pixelated' : 'auto' }}
             className={`w-full h-full object-contain pointer-events-none rounded shadow-2xl ${
               viewMode === 'Split Wipe' || viewMode === 'Diff Heatmap' || topFrame || afterSrc ? 'hidden' : 'block'
             }`}
@@ -1401,6 +1560,7 @@ export const PreviewViewport: React.FC<PreviewViewportProps> = ({
           ref={canvasRef}
           width={naturalDim.w}
           height={naturalDim.h}
+          style={{ imageRendering: zoom >= 3 ? 'pixelated' : 'auto' }}
           className={`w-full h-full object-contain pointer-events-none rounded shadow-2xl ${
             viewMode === 'Split Wipe' || viewMode === 'Diff Heatmap' || topFrame || (!isVideoSource && (afterSrc || beforeSrc || baseFrame))
               ? 'block'
@@ -1413,6 +1573,7 @@ export const PreviewViewport: React.FC<PreviewViewportProps> = ({
           <img
             src={afterSrc || beforeSrc || rawUrl}
             alt="Preview Frame"
+            style={{ imageRendering: zoom >= 3 ? 'pixelated' : 'auto' }}
             className="w-full h-full object-contain pointer-events-none rounded shadow-2xl"
             onLoad={(e) => {
               const img = e.currentTarget;
@@ -1420,6 +1581,14 @@ export const PreviewViewport: React.FC<PreviewViewportProps> = ({
                 setNaturalDim({ w: img.naturalWidth, h: img.naturalHeight });
               }
             }}
+          />
+        )}
+
+        {zoom >= 3 && pixelGridActive && (
+          <div
+            className="vfx-subpixel-grid"
+            aria-hidden="true"
+            style={{ '--vfx-pixel-cell': '1px' }}
           />
         )}
 
@@ -1444,52 +1613,91 @@ export const PreviewViewport: React.FC<PreviewViewportProps> = ({
           className="hidden"
           aria-hidden
         />
+
+        {viewMode === 'Split Wipe' && (
+          <CompareSlider
+            canvasRef={compareCanvasApi}
+            direction={wipeDirection}
+            angle={wipeAngle}
+            onAngleChange={setWipeAngle}
+            defaultPosition={wipe}
+            onCommit={setWipe}
+            labelA="Original target"
+            labelB="Swapped output"
+            accent="var(--accent-cyan)"
+            className="absolute inset-0 z-40 pointer-events-none"
+          />
+        )}
       </div>
 
-      {/* ── Dual Concentric Circle Mask Brush Cursor ───────────────────────── */}
+      {/* ── Live RGB/luma scopes, sampled from the active target face ──────── */}
+      <BroadcastScopesDock
+        active={scopesOpen}
+        onClose={() => setScopesOpen(false)}
+        sourceCanvas={baseFrame || videoRef.current || canvasRef.current}
+        renderedCanvas={topFrame || canvasRef.current || videoRef.current}
+        faceBbox={activeFace?.bbox ?? null}
+        className="absolute bottom-20 right-3"
+      />
+
+      {/* ── Feather-aware paint / erase brush HUD ──────────────────────────── */}
       {maskBrushActive && cursorOnViewport && (
         <div
           ref={brushCursorRef}
-          className="absolute pointer-events-none z-50 -translate-x-1/2 -translate-y-1/2"
+          className="absolute pointer-events-none z-50"
           style={{ width: brushSize, height: brushSize, willChange: 'transform' }}
           data-testid="mask-brush-cursor"
         >
-          <div className="absolute inset-0 rounded-full border border-dashed border-pink-400 shadow-[0_0_8px_rgba(236,72,153,0.6)]" />
-          <div
-            className="absolute rounded-full border border-pink-300 left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2"
-            style={{
-              width: Math.max(2, brushSize * (1 - brushFeather)),
-              height: Math.max(2, brushSize * (1 - brushFeather)),
-            }}
-          />
-          <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-1.5 h-1.5 rounded-full bg-pink-200" />
+          <svg viewBox="0 0 100 100" width="100%" height="100%" aria-hidden="true">
+            <defs>
+              <pattern id="preview-mask-checker" width="8" height="8" patternUnits="userSpaceOnUse">
+                <rect width="4" height="4" fill="#fff" fillOpacity=".25" />
+                <rect x="4" y="4" width="4" height="4" fill="#fff" fillOpacity=".25" />
+              </pattern>
+              <radialGradient id="preview-mask-matte">
+                <stop offset={`${Math.max(0, (1 - brushFeather) * 100)}%`} stopColor="#fff" stopOpacity={brushPreviewOpacity} />
+                <stop offset="100%" stopColor="#000" stopOpacity=".2" />
+              </radialGradient>
+            </defs>
+            <circle cx="50" cy="50" r="48" fill={brushPreviewMode === 'checkerboard' ? 'url(#preview-mask-checker)' : brushPreviewMode === 'matte' ? 'url(#preview-mask-matte)' : `rgba(244,63,94,${brushPreviewOpacity})`} />
+            <circle cx="50" cy="50" r="48" fill="none" stroke={brushMode === 'erase' ? '#f43f5e' : '#22d3ee'} strokeWidth="1.5" strokeDasharray="3 2" />
+            <circle cx="50" cy="50" r={Math.max(2, 48 * (1 - brushFeather))} fill="none" stroke={brushMode === 'erase' ? '#fda4af' : '#a5f3fc'} strokeWidth="1.5" />
+            <path d="M44 50h12M50 44v12" stroke={brushMode === 'erase' ? '#fb7185' : '#67e8f9'} strokeWidth="1" />
+          </svg>
         </div>
       )}
 
-      {/* ── 3.5x Magnifier Loupe Floating Lens ─────────────────────────────── */}
+      {/* ── Adjustable glass loupe with synchronized split and pixel sample ── */}
       {showLoupe && cursorOnViewport && (
-        <div
-          className="absolute pointer-events-none z-50 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-cyan-400 bg-black/90 shadow-[0_0_25px_rgba(34,211,238,0.7)] overflow-hidden"
-          style={{
-            width: `${LOUPE_DIAMETER}px`,
-            height: `${LOUPE_DIAMETER}px`,
-            left: `${cursorPos.x}px`,
-            top: `${cursorPos.y}px`,
-          }}
-          data-testid="magnifier-loupe"
-        >
-          <canvas
-            ref={loupeCanvasRef}
-            width={LOUPE_DIAMETER}
-            height={LOUPE_DIAMETER}
-            className="w-full h-full"
-          />
-          <div className="absolute bottom-2 inset-x-0 flex items-center justify-center pointer-events-none">
-            <span className="px-2 py-0.5 rounded-full bg-black/80 border border-cyan-400/50 text-cyan-300 font-mono text-nano font-bold tracking-tight shadow">
-              3.5x Loupe
-            </span>
+        <>
+          <div
+            className="absolute pointer-events-none z-50 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-cyan-400 bg-black/90 shadow-[0_0_25px_rgba(34,211,238,0.7)] overflow-hidden"
+            style={{
+              width: `${LOUPE_DIAMETER}px`,
+              height: `${LOUPE_DIAMETER}px`,
+              left: `${loupeDisplayCenter.x}px`,
+              top: `${loupeDisplayCenter.y}px`,
+            }}
+            data-testid="magnifier-loupe"
+          >
+            <canvas
+              ref={loupeCanvasRef}
+              width={LOUPE_DIAMETER}
+              height={LOUPE_DIAMETER}
+              className="w-full h-full"
+            />
+            <div className="absolute top-2 inset-x-0 flex items-center justify-center pointer-events-none">
+              <span className="px-2 py-0.5 rounded-full bg-black/80 border border-cyan-400/50 text-cyan-100 font-mono text-nano font-bold tracking-tight shadow">
+                {loupePixel ? `${loupePixel.hex} · ${loupePixel.r},${loupePixel.g},${loupePixel.b}` : 'RGB sampling'}
+              </span>
+            </div>
+            <div className="absolute bottom-2 inset-x-0 flex items-center justify-center pointer-events-none">
+              <span className="px-2 py-0.5 rounded-full bg-black/80 border border-cyan-400/50 text-cyan-300 font-mono text-nano font-bold tracking-tight shadow">
+                {loupeMagnification.toFixed(1)}× Loupe
+              </span>
+            </div>
           </div>
-        </div>
+        </>
       )}
 
       {/* ── Floating Studio Viewport HUD ─────────────────────────────────────── */}
@@ -1497,36 +1705,6 @@ export const PreviewViewport: React.FC<PreviewViewportProps> = ({
         <div className="absolute inset-x-0 bottom-0 z-40 flex flex-col items-start gap-2 p-3 pointer-events-none">
           {/* ── Top Pill Row: Mode Switcher, Zoom, Frame Readout & Parity Badge ── */}
           <div className="flex flex-wrap items-center gap-2 max-w-full pointer-events-auto">
-            {/* View Mode Switcher */}
-            <div
-              className="flex items-center gap-1 p-1 rounded-xl bg-black/90 backdrop-blur-md border border-white/20 shadow-2xl select-none text-white"
-              data-testid="viewport-mode-switcher"
-            >
-              {(
-                [
-                  'Composite',
-                  'Split Wipe',
-                  'Diff Heatmap',
-                  'BiSeNet Parsing',
-                  'Occlusion Mask',
-                ] as ViewportViewMode[]
-              ).map((mode) => (
-                <button
-                  key={mode}
-                  type="button"
-                  onClick={() => setViewMode(mode)}
-                  className={`px-2 py-0.5 rounded-lg text-micro font-bold transition-all ${
-                    viewMode === mode
-                      ? 'bg-cyan-500 text-black shadow-[0_0_10px_rgba(6,182,212,0.6)]'
-                      : 'text-white/70 hover:text-white hover:bg-white/10'
-                  }`}
-                  title={`Switch to ${mode} mode`}
-                >
-                  {mode}
-                </button>
-              ))}
-            </div>
-
             {/* 3.5x Loupe Toggle Button */}
             <button
               type="button"
@@ -1538,7 +1716,27 @@ export const PreviewViewport: React.FC<PreviewViewportProps> = ({
               }`}
               title="Toggle 3.5x Magnifier Loupe"
             >
-              <span>🔍 3.5x Loupe</span>
+              <span>🔍 {loupeMagnification.toFixed(1)}× Loupe</span>
+            </button>
+            {showLoupe && (
+              <div className="vfx-loupe-hud-controls" onPointerDown={(event) => event.stopPropagation()} onPointerMove={(event) => event.stopPropagation()}>
+                <label title="Loupe magnification">
+                  <span>{loupeMagnification.toFixed(1)}×</span>
+                  <input aria-label="Loupe magnification" type="range" min="2" max="8" step="0.5" value={loupeMagnification} onChange={(event) => setLoupeMagnification(Number(event.target.value))} />
+                </label>
+                <button type="button" aria-pressed={loupeSplit} onClick={() => setLoupeSplit((value) => !value)} title="Split original and swapped inside the loupe">
+                  {loupeSplit ? 'A | B' : 'Single'}
+                </button>
+              </div>
+            )}
+            <button
+              type="button"
+              onClick={() => setScopesOpen((open) => !open)}
+              aria-pressed={scopesOpen}
+              className={`px-2 py-1 rounded-xl border backdrop-blur-md text-micro font-bold shadow-2xl transition-all ${scopesOpen ? 'bg-cyan-950/90 border-cyan-400 text-cyan-300' : 'bg-black/85 border-white/20 text-white/80 hover:border-cyan-400/50'}`}
+              title="Toggle RGB parade and luma scopes"
+            >
+              RGB SCOPES
             </button>
 
             {/* Viewport Zoom & Preset Controls */}
@@ -1587,6 +1785,8 @@ export const PreviewViewport: React.FC<PreviewViewportProps> = ({
               >
                 400%
               </button>
+              <button type="button" onClick={handlePreset800} className="px-1.5 py-0.5 rounded text-micro font-mono font-bold bg-white/10 hover:bg-white/20 text-white/90 hover:text-white transition-colors" title="800% pixel inspection">800%</button>
+              {zoom >= 3 && <button type="button" onClick={() => setPixelGridActive((value) => !value)} aria-pressed={pixelGridActive} className={`px-1.5 py-0.5 rounded text-micro font-mono font-bold transition-colors ${pixelGridActive ? 'bg-cyan-500/20 text-cyan-200' : 'bg-white/10 text-white/90'}`} title="Toggle sub-pixel grid">GRID</button>}
             </div>
 
             {/* Exact Integer Frame Readout Pill */}
@@ -1667,8 +1867,8 @@ export const PreviewViewport: React.FC<PreviewViewportProps> = ({
                 onClick={onToggleMaskBrush}
                 className={`px-2.5 py-1 rounded-xl border backdrop-blur-md text-micro font-bold flex items-center gap-1.5 shadow-2xl transition-all ${
                   maskBrushActive
-                    ? 'bg-pink-950/90 border-pink-500/80 text-pink-300 shadow-[0_0_12px_rgba(236,72,153,0.5)]'
-                    : 'bg-black/85 border-white/20 text-white/80 hover:border-pink-500/50 hover:text-white'
+                    ? 'bg-cyan-950/90 border-cyan-500/80 text-cyan-300 shadow-[0_0_12px_rgba(34,211,238,0.5)]'
+                    : 'bg-black/85 border-white/20 text-white/80 hover:border-cyan-500/50 hover:text-white'
                 }`}
                 title="Toggle Sub-Pixel Mask Brush (B)"
               >
@@ -1697,6 +1897,11 @@ export const PreviewViewport: React.FC<PreviewViewportProps> = ({
                 <span className="px-1.5 py-0.5 rounded bg-white/10">RAW: 0..{Math.round(wipe)}%</span>
                 <span className="px-1.5 py-0.5 rounded bg-white/10">SWAP: {Math.round(wipe)}..100%</span>
               </div>
+              <button type="button" onClick={() => setWipeDirection((value) => value === 'vertical' ? 'horizontal' : 'vertical')} className="rounded bg-white/10 px-1.5 py-1 text-nano font-mono text-white/80" title="Toggle vertical / horizontal wipe">{wipeDirection === 'vertical' ? 'VERT' : 'HORIZ'}</button>
+              <label className="flex items-center gap-1 text-nano font-mono text-cyan-100" title="Rotate the wipe from 0° to 360°">
+                ROT <input aria-label="Split wipe angle" type="range" min="0" max="359" value={wipeAngle} onChange={(event) => setWipeAngle(Number(event.target.value))} className="w-16 accent-cyan-400" /> {wipeAngle}°
+              </label>
+              <button type="button" onClick={() => setWipeAngle(0)} className="rounded bg-white/10 px-1.5 py-1 text-nano text-cyan-200" title="Reset wipe rotation">↺</button>
             </div>
           )}
 
@@ -1711,7 +1916,7 @@ export const PreviewViewport: React.FC<PreviewViewportProps> = ({
                 onClick={() => setBrushMode('paint')}
                 className={`px-2 py-0.5 rounded text-micro font-bold transition-all ${
                   brushMode === 'paint'
-                    ? 'bg-pink-600 text-white shadow-md'
+                    ? 'bg-cyan-500 text-black shadow-md'
                     : 'bg-white/10 text-white/70 hover:bg-white/20'
                 }`}
               >
@@ -1722,7 +1927,7 @@ export const PreviewViewport: React.FC<PreviewViewportProps> = ({
                 onClick={() => setBrushMode('erase')}
                 className={`px-2 py-0.5 rounded text-micro font-bold transition-all ${
                   brushMode === 'erase'
-                    ? 'bg-amber-500 text-black shadow-md'
+                    ? 'bg-rose-500 text-white shadow-md'
                     : 'bg-white/10 text-white/70 hover:bg-white/20'
                 }`}
               >
@@ -1738,9 +1943,9 @@ export const PreviewViewport: React.FC<PreviewViewportProps> = ({
                   max="160"
                   value={brushSize}
                   onChange={(e) => setBrushSize(Number(e.target.value))}
-                  className="w-20 accent-pink-500 cursor-pointer"
+                  className="w-20 accent-cyan-400 cursor-pointer"
                 />
-                <span className="text-micro font-mono text-pink-300 tabular-nums w-8">
+                <span className="text-micro font-mono text-cyan-200 tabular-nums w-8">
                   {brushSize}px
                 </span>
               </div>
@@ -1755,11 +1960,22 @@ export const PreviewViewport: React.FC<PreviewViewportProps> = ({
                   step="0.05"
                   value={brushFeather}
                   onChange={(e) => setBrushFeather(Number(e.target.value))}
-                  className="w-16 accent-pink-500 cursor-pointer"
+                  className="w-16 accent-cyan-400 cursor-pointer"
                 />
-                <span className="text-micro font-mono text-pink-300 tabular-nums w-8">
+                <span className="text-micro font-mono text-cyan-200 tabular-nums w-8">
                   {Math.round(brushFeather * 100)}%
                 </span>
+              </div>
+              <span className="w-px h-3.5 bg-white/20" />
+              <div className="flex items-center gap-1" aria-label="Mask preview style">
+                <span className="text-nano font-mono text-white/70">Preview:</span>
+                {(['ruby', 'checkerboard', 'matte'] as const).map((mode) => (
+                  <button key={mode} type="button" aria-pressed={brushPreviewMode === mode} onClick={() => setBrushPreviewMode(mode)} className={`rounded px-1.5 py-0.5 text-nano font-mono font-bold ${brushPreviewMode === mode ? 'bg-rose-500/30 text-rose-100' : 'bg-white/10 text-white/60'}`}>
+                    {mode === 'checkerboard' ? 'CHK' : mode.toUpperCase()}
+                  </button>
+                ))}
+                <input type="range" min="0.05" max="0.8" step="0.05" value={brushPreviewOpacity} onChange={(event) => setBrushPreviewOpacity(Number(event.target.value))} className="w-14 accent-rose-400" aria-label="Brush opacity preview" />
+                <span className="text-nano font-mono text-rose-100">{Math.round(brushPreviewOpacity * 100)}%</span>
               </div>
               <span className="w-px h-3.5 bg-white/20" />
               {/* Undo / Redo Buttons */}

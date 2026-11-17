@@ -29,9 +29,10 @@ import {
 } from '../monitor/referenceChannel';
 import {
   ZOOM_MIN, ZOOM_MAX, clampPan, panAnchoredAt, panCenteringAt,
-  transformFor, uiScale, wheelZoomDelta, faceTrackingTarget, focusPanFor,
+  transformFor, uiScale, wheelZoomDelta, faceTrackingTarget, focusPanFor, screenToMedia,
 } from './zoomPan';
 import FaceContextMenu from './FaceContextMenu';
+import FacePoseGizmo from './FacePoseGizmo';
 import { cropRectFor, faceBadgeText, warmthDeltaFor } from './faceContextModel';
 import { cropToPng, loadStageImage, sampleFaceSkin } from './faceSample';
 import { MODULAR_FLOW_NODES } from './pillModel';
@@ -104,6 +105,9 @@ export default function InteractivePreview({
   colorBadge = '',
   notify = null,
   onGradingChange = null,
+  onViewportTransform = null,
+  onLoupeCoordinates = null,
+  viewportApiRef = null,
   // Stage 23. Keys 1-4 call onSlotHotkey(n). referenceFrame, when given, replaces the raw "original"
   // as the left side of the compare wipe (a snapshot slot assigned as the split-wipe reference), and
   // the two labels name the sides of the wipe. The frames are owned by the slot store, never closed here.
@@ -137,7 +141,7 @@ export default function InteractivePreview({
   const [compareDir, setCompareDir] = useState('vertical'); // 'vertical' | 'horizontal'
   const [wipeAngle, setWipeAngle] = useState(0);            // 0..360 vector wipe angle
   const [diffGain, setDiffGain] = useState(3.0);            // 1.0..10.0 amplified diff gain
-  const [diffColorMap, setDiffColorMap] = useState('turbo');// 'turbo' | 'inferno'
+  const [diffColorMap, setDiffColorMap] = useState('edge');// 'edge' | 'turbo' | 'inferno'
   const [autoSwipe, setAutoSwipe] = useState(false);
 
   const containerRef = useRef(null);
@@ -156,7 +160,7 @@ export default function InteractivePreview({
   const paintedRef = useRef(strokes);
   const paintedDimRef = useRef('');
 
-  // ── Zero-Rerender Viewport Controller (0.1x to 16x) ──────────────────────
+  // ── Zero-Rerender Viewport Controller (25% to 800%) ──────────────────────
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const zoomRef = useRef(1);
@@ -170,6 +174,7 @@ export default function InteractivePreview({
   const [, setIsPanning] = useState(false);
   const [showBoxes, setShowBoxes] = useState(true);
   const [showDebug, setShowDebug] = useState(false);
+  const [pixelGridActive, setPixelGridActive] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   // The stage is often a small box (the centre column is ~420px wide at 1440px). Its two floating toolbars
   // are ~150px tall when they wrap there - over half the picture. On a small stage the main toolbar stays
@@ -185,7 +190,9 @@ export default function InteractivePreview({
   // Feature: 3.5x–8x Floating Magnifier Loupe
   const [magnifierActive, setMagnifierActive] = useState(false);
   const [loupePower, setLoupePower] = useState(3.5); // 3.5x | 5.0x | 8.0x
-  const [loupeSplit] = useState(true); // Split Before/After inside loupe
+  const [loupeSplit, setLoupeSplit] = useState(true);
+  const [loupePixel, setLoupePixel] = useState(null);
+  const lastLoupeSampleRef = useRef(0);
   const lensGlassRef = useRef(null);
   const lensBeforeImgRef = useRef(null);
   const lensAfterImgRef = useRef(null);
@@ -198,6 +205,10 @@ export default function InteractivePreview({
   const [brushMode, setBrushMode] = useState('paint'); // 'paint' | 'erase'
   const [brushSize, setBrushSize] = useState(30);
   const [brushFeather, setBrushFeather] = useState(0.35); // 0.0 (hard) .. 1.0 (soft)
+  const [brushPreviewMode, setBrushPreviewMode] = useState('ruby');
+  const [brushOpacity, setBrushOpacity] = useState(0.45);
+  const brushSizeRef = useRef(brushSize);
+  brushSizeRef.current = brushSize;
   const [, setIsDrawingMask] = useState(false);
   const brushCursorRef = useRef(null);
 
@@ -418,7 +429,14 @@ export default function InteractivePreview({
     if (zoomReadoutRef.current) {
       zoomReadoutRef.current.textContent = `${Math.round(z * 100)}%`;
     }
-  }, []);
+    if (imageRef.current && brushCursorRef.current && canvasApiRef.current?.canvas) {
+      const sourceWidth = canvasApiRef.current.canvas()?.width || imageRef.current.offsetWidth || 1;
+      const diameter = Math.max(4, brushSizeRef.current * (imageRef.current.offsetWidth / sourceWidth) * z);
+      brushCursorRef.current.style.width = `${diameter}px`;
+      brushCursorRef.current.style.height = `${diameter}px`;
+    }
+    onViewportTransform?.(z, p);
+  }, [onViewportTransform]);
 
   const scheduleSettle = useCallback((z, p) => {
     if (settleTimeoutRef.current) clearTimeout(settleTimeoutRef.current);
@@ -437,6 +455,35 @@ export default function InteractivePreview({
       scheduleSettle(z, p);
     }
   }, [applyViewportDom, scheduleSettle]);
+
+  const viewportApi = useMemo(() => ({
+    getZoom: () => zoomRef.current,
+    getPan: () => ({ ...panRef.current }),
+    setPan: (next) => {
+      const z = zoomRef.current;
+      updateViewport(z, clampPan(next, z, containerRef.current, imageRef.current), true);
+    },
+    zoomAtNormalized: (deltaY, deltaMode, xRatio, yRatio) => {
+      const stage = containerRef.current;
+      if (!stage) return false;
+      const next = wheelZoomDelta(deltaY, deltaMode, zoomRef.current, ZOOM_MAX, ZOOM_MIN);
+      if (next == null) return false;
+      const rect = stage.getBoundingClientRect();
+      const client = { x: rect.left + rect.width * xRatio, y: rect.top + rect.height * yRatio };
+      const anchored = panAnchoredAt(client, stage, zoomRef.current, next, panRef.current);
+      setLockTargetFace(false);
+      updateViewport(next, clampPan(anchored, next, stage, imageRef.current), true);
+      return true;
+    },
+    fit: () => updateViewport(1, { x: 0, y: 0 }, true),
+  }), [updateViewport]);
+
+  useEffect(() => {
+    if (!viewportApiRef) return undefined;
+    viewportApiRef.current = viewportApi;
+    onViewportTransform?.(zoomRef.current, panRef.current);
+    return () => { if (viewportApiRef.current === viewportApi) viewportApiRef.current = null; };
+  }, [viewportApiRef, viewportApi, onViewportTransform]);
 
   // Inertial momentum pan decay
   const stopInertia = useCallback(() => {
@@ -538,6 +585,12 @@ export default function InteractivePreview({
     stopInertia();
     setLockTargetFace(false);
     updateViewport(4.0, { x: 0, y: 0 }, true);
+  }, [stopInertia, updateViewport]);
+
+  const handlePreset800 = useCallback(() => {
+    stopInertia();
+    setLockTargetFace(false);
+    updateViewport(ZOOM_MAX, { x: 0, y: 0 }, true);
   }, [stopInertia, updateViewport]);
 
   const zoomBy = useCallback((factor) => {
@@ -758,7 +811,7 @@ export default function InteractivePreview({
         return;
       }
 
-      // Cursor-centred zoom (0.1x to 16x), proportional to how far the wheel turned and magnetic at fit.
+      // Cursor-centred zoom (25% to 800%), proportional to how far the wheel turned and magnetic at fit.
       const next = wheelZoomDelta(e.deltaY, e.deltaMode, zoomRef.current, ZOOM_MAX, ZOOM_MIN);
       // At either end of the range the stage has nothing to do with this event,
       // so it must NOT swallow it — otherwise scrolling the settings column
@@ -898,11 +951,17 @@ export default function InteractivePreview({
           const x = (cx - rect.left) / s;
           const y = (cy - rect.top) / s;
           brushCursorRef.current.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+          const sourceWidth = canvasApiRef.current?.canvas?.()?.width || imageRef.current?.offsetWidth || 1;
+          const diameter = Math.max(4, brushSizeRef.current * ((imageRef.current?.offsetWidth || sourceWidth) / sourceWidth) * zoomRef.current);
+          brushCursorRef.current.style.width = `${diameter}px`;
+          brushCursorRef.current.style.height = `${diameter}px`;
         }
 
         // Update Magnifier Loupe position
         if (magnifierActive && containerRef.current) {
           const rect = containerRef.current.getBoundingClientRect();
+          const visible = cx >= rect.left && cx <= rect.right && cy >= rect.top && cy <= rect.bottom;
+          onLoupeCoordinates?.(visible ? { x: (cx - rect.left) / rect.width, y: (cy - rect.top) / rect.height } : null);
           const ir = imageRef.current?.getBoundingClientRect();
           const s = uiScale(containerRef.current) || 1;
           const sx = (cx - rect.left) / s;
@@ -931,7 +990,7 @@ export default function InteractivePreview({
 
               const LENS_R = 90;
               glass.style.transform = `translate3d(${p.x - LENS_R}px, ${p.y - LENS_R}px, 0)`;
-              const box = `${p.imgW}x${p.imgH}`;
+              const box = `${p.imgW}x${p.imgH}@${loupePower}`;
               if (box !== lensBoxRef.current) {
                 lensBoxRef.current = box;
                 if (bImg) {
@@ -949,6 +1008,24 @@ export default function InteractivePreview({
               const ty = -((p.y - p.imgY) * loupePower - LENS_R) - glass.clientTop;
               if (bImg) bImg.style.transform = `translate3d(${tx}px, ${ty}px, 0)`;
               if (aImg) aImg.style.transform = `translate3d(${tx}px, ${ty}px, 0)`;
+
+              const now = performance.now();
+              if (now - lastLoupeSampleRef.current >= 90) {
+                const point = imgDim && screenToMedia(cx, cy, containerRef.current, imgDim, zoomRef.current, panRef.current);
+                const canvas = canvasApiRef.current?.canvas?.();
+                if (point?.onImage && canvas) {
+                  try {
+                    const px = Math.max(0, Math.min(canvas.width - 1, Math.floor(point.x)));
+                    const py = Math.max(0, Math.min(canvas.height - 1, Math.floor(point.y)));
+                    const data = canvas.getContext('2d', { willReadFrequently: true })?.getImageData(px, py, 1, 1).data;
+                    if (data) {
+                      const [r, g, b] = data;
+                      setLoupePixel({ r, g, b, hex: `#${[r, g, b].map((v) => v.toString(16).padStart(2, '0')).join('').toUpperCase()}` });
+                      lastLoupeSampleRef.current = now;
+                    }
+                  } catch { /* a temporarily unavailable video frame keeps the last sample */ }
+                }
+              }
             });
           }
         }
@@ -959,6 +1036,10 @@ export default function InteractivePreview({
       eventOptions: { passive: false },
     }
   );
+
+  useEffect(() => {
+    if (!magnifierActive) onLoupeCoordinates?.(null);
+  }, [magnifierActive, onLoupeCoordinates]);
 
   // Switching the floating preview ON while a picture is already up: frames are offered as the stage decodes them, so
   // without this it would stay empty until the next frame change.
@@ -1221,6 +1302,7 @@ export default function InteractivePreview({
       const personLabel = (personIds[i] ?? i) + 1;
       const selected = selectedFaceIndex === i;
       const info = faceRoles[i] || null;
+      const similarity = Number(info?.cosine_similarity ?? info?.cosineSimilarity ?? info?.similarity ?? info?.score);
       const roleLabel = !info ? null
         : info.role === 'target' ? 'Target'
           : info.role === 'swapped' ? 'Swapped'
@@ -1238,7 +1320,7 @@ export default function InteractivePreview({
       return (
         <div
           key={i}
-          className={`absolute border-2 ${selected ? 'border-white bg-white/15 ring-2 ring-[var(--accent)]' : 'border-[var(--accent)] hover:border-white/80'} shadow-[0_0_10px_var(--accent-glow)] z-20 ${
+          className={`absolute border border-cyan-300/45 ${selected ? 'bg-white/10 ring-2 ring-[var(--accent)]' : 'hover:border-white/80'} shadow-[0_0_10px_var(--accent-glow)] z-20 ${
             interactive
               ? `pointer-events-auto group/face hover:bg-[var(--accent)]/10 transition-colors ${selectable ? 'cursor-pointer' : ''}`
               : 'pointer-events-none'
@@ -1260,9 +1342,18 @@ export default function InteractivePreview({
               {faceBadgeText({ faceIndex: i, personId: personIds[i] ?? null, sourceName: faceMenu.sourceNames?.[i] || null, role: info?.role, excluded: !!info?.excluded })}
             </span>
           )}
-          <span className="absolute -top-6 left-0 bg-[var(--accent)] text-white text-micro font-bold px-1.5 py-0.5 rounded whitespace-nowrap">
-            Face {i + 1}
+          <span className="vfx-face-bracket vfx-face-bracket--tl" />
+          <span className="vfx-face-bracket vfx-face-bracket--tr" />
+          <span className="vfx-face-bracket vfx-face-bracket--bl" />
+          <span className="vfx-face-bracket vfx-face-bracket--br" />
+          <span className="absolute -top-6 left-0 rounded bg-cyan-950/95 px-1.5 py-0.5 font-mono text-micro font-bold text-cyan-100 whitespace-nowrap border border-cyan-400/40">
+            #{i + 1}
           </span>
+          {Number.isFinite(similarity) && similarity >= 0 && similarity <= 1 && (
+            <span className="absolute -top-6 right-0 rounded bg-emerald-950/95 px-1.5 py-0.5 font-mono text-nano font-bold text-emerald-200 whitespace-nowrap border border-emerald-400/30">
+              COS {similarity.toFixed(3)}
+            </span>
+          )}
           {roleLabel && (
             <span
               data-face-role-label={i}
@@ -1321,8 +1412,14 @@ export default function InteractivePreview({
           if (!k || k.length < 5) return null;
           const [eyeL, eyeR, nose, mL, mR] = k;
           const p = pose[i];
+          const mesh = k.length >= 68
+            ? [[...Array(17).keys()], [17, 18, 19, 20, 21], [22, 23, 24, 25, 26], [27, 28, 29, 30], [31, 32, 33, 34, 35], [36, 37, 38, 39, 40, 41, 36], [42, 43, 44, 45, 46, 47, 42], [48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 48], [60, 61, 62, 63, 64, 65, 66, 67, 60]]
+            : [[0, 1], [0, 2], [1, 2], [2, 3], [2, 4], [3, 4]];
           return (
             <g key={i}>
+              {mesh.map((indices, meshIndex) => (
+                <polyline key={meshIndex} points={indices.map((index) => k[index]?.join(',')).filter(Boolean).join(' ')} fill="none" stroke="#67e8f9" strokeWidth={r * 0.28} opacity="0.48" />
+              ))}
               <line x1={eyeL[0]} y1={eyeL[1]} x2={eyeR[0]} y2={eyeR[1]} stroke="#38bdf8" strokeWidth={r * 0.5} opacity="0.75" />
               <line x1={mL[0]} y1={mL[1]} x2={mR[0]} y2={mR[1]} stroke="#f472b6" strokeWidth={r * 0.5} opacity="0.75" />
               <line
@@ -1429,6 +1526,28 @@ export default function InteractivePreview({
       >
         400% (⇧4)
       </button>
+
+      <button
+        type="button"
+        onClick={handlePreset800}
+        className="px-1.5 py-0.5 rounded text-note font-mono font-bold bg-white/10 hover:bg-white/20 text-white/80 hover:text-white transition-colors"
+        title="800% pixel inspection"
+        aria-label="800% pixel inspection"
+      >
+        800%
+      </button>
+
+      {zoom >= 3 && (
+        <button
+          type="button"
+          onClick={() => setPixelGridActive((value) => !value)}
+          aria-pressed={pixelGridActive}
+          className={`px-1.5 py-0.5 rounded text-note font-mono font-bold transition-colors ${pixelGridActive ? 'text-cyan-200 bg-cyan-500/20' : 'bg-white/10 text-white/80 hover:bg-white/20'}`}
+          title="Toggle sub-pixel grid"
+        >
+          GRID
+        </button>
+      )}
 
       <span className="w-px h-3.5 bg-white/15" />
 
@@ -1579,14 +1698,28 @@ export default function InteractivePreview({
               Loupe ({loupePower}×)
             </button>
             {magnifierActive && (
-              <button
-                type="button"
-                onClick={() => setLoupePower((p) => (p === 3.5 ? 5.0 : p === 5.0 ? 8.0 : 3.5))}
-                className="px-1.5 h-7 rounded-r-lg text-nano font-mono font-bold bg-cyan-500/30 text-cyan-200 border-y border-r border-cyan-400/40"
-                title="Cycle Loupe Magnification: 3.5x, 5.0x, 8.0x"
-              >
-                {loupePower}×
-              </button>
+              <>
+                <input
+                  type="range"
+                  min="2"
+                  max="8"
+                  step="0.5"
+                  value={loupePower}
+                  onChange={(event) => setLoupePower(Number(event.target.value))}
+                  className="h-7 w-20 accent-cyan-400 bg-cyan-500/20 border-y border-cyan-400/40"
+                  aria-label="Loupe magnification"
+                  title="Loupe magnification: 2× to 8×"
+                />
+                <button
+                  type="button"
+                  onClick={() => setLoupeSplit((split) => !split)}
+                  aria-pressed={loupeSplit}
+                  className="h-7 rounded-r-lg px-1.5 text-nano font-mono font-bold bg-cyan-500/20 text-cyan-200 border border-cyan-400/40"
+                  title="Toggle original / swapped split inside the loupe"
+                >
+                  {loupeSplit ? 'A/B' : 'SINGLE'}
+                </button>
+              </>
             )}
           </div>
         )}
@@ -1912,7 +2045,7 @@ export default function InteractivePreview({
                 compareMode === m ? 'bg-[var(--accent)] text-white shadow-md' : 'bg-white/10 text-white/70 hover:text-white'
               }`}
             >
-              {m}
+              {m === 'heatmap' ? 'Edge Map' : m}
             </button>
           ))}
         </div>
@@ -1937,7 +2070,7 @@ export default function InteractivePreview({
       ref={containerRef}
       className={`relative w-full max-h-[var(--stage-max-h,65vh)] min-h-[150px] rounded-2xl overflow-hidden preview-stage contain-panel select-none group border border-white/10 shadow-2xl ${
         isFullscreen ? 'h-screen w-screen max-h-none' : ''
-      } ${displayRatio ? '' : 'aspect-video'}`}
+      } ${displayRatio ? '' : 'aspect-video'} ${zoom >= 3 ? 'vfx-pixelated' : ''}`}
       onDoubleClick={handleDoubleClick}
       style={{
         touchAction: 'none',
@@ -1970,6 +2103,13 @@ export default function InteractivePreview({
 
       {stageInfo()}
       {faceMenuNode}
+      {faces.length > 0 && (
+        <FacePoseGizmo
+          pose={pose[selectedFaceIndex ?? 0] ?? faces[selectedFaceIndex ?? 0]?.pose}
+          faceIndex={selectedFaceIndex ?? 0}
+          similarity={faceRoles[selectedFaceIndex ?? 0]?.cosine_similarity ?? faceRoles[selectedFaceIndex ?? 0]?.similarity ?? faceRoles[selectedFaceIndex ?? 0]?.score}
+        />
+      )}
 
       {/* ── 5 Instant Comparison Toolbar Modes ─────────────────────────────── */}
       {compare && !splitMode && !maskBrushActive && (
@@ -2010,9 +2150,9 @@ export default function InteractivePreview({
             className={`px-2.5 py-1 rounded-lg text-micro font-bold transition-all ${
               compareMode === 'heatmap' ? 'bg-[var(--accent)] text-white shadow-md' : 'bg-white/10 text-white/70 hover:text-white'
             }`}
-            title="Amplified Turbo Difference Heatmap"
+            title="Edge-blending difference map: blue untouched, green subtle, red/white high pixel delta"
           >
-            Heatmap
+            Edge Map
           </button>
           <button
             type="button"
@@ -2037,16 +2177,19 @@ export default function InteractivePreview({
               >
                 {compareDir === 'vertical' ? '↔ Vert' : '↕ Horiz'}
               </button>
-              {wipeAngle !== 0 && (
-                <button
-                  type="button"
-                  onClick={() => setWipeAngle(0)}
-                  className="px-1.5 py-0.5 rounded text-nano font-mono font-bold bg-accent/20 text-accent hover:bg-accent/30"
-                  title="Reset rotation angle to 0°"
-                >
-                  {wipeAngle}° ↺
-                </button>
-              )}
+              <label className="flex items-center gap-1 text-nano font-mono text-cyan-100" title="Rotate the split line from 0° to 360°">
+                <span>ROT</span>
+                <input aria-label="Split wipe angle" type="range" min="0" max="359" value={wipeAngle} onChange={(event) => setWipeAngle(Number(event.target.value))} className="w-16 accent-cyan-400" />
+                <span className="w-8 tabular-nums">{wipeAngle}°</span>
+              </label>
+              <button
+                type="button"
+                onClick={() => setWipeAngle(0)}
+                className="px-1.5 py-0.5 rounded text-nano font-mono font-bold bg-accent/20 text-accent hover:bg-accent/30"
+                title="Reset rotation angle to 0°"
+              >
+                ↺
+              </button>
             </>
           )}
 
@@ -2069,9 +2212,9 @@ export default function InteractivePreview({
               </div>
               <button
                 type="button"
-                onClick={() => setDiffColorMap((c) => (c === 'turbo' ? 'inferno' : 'turbo'))}
+                onClick={() => setDiffColorMap((c) => (c === 'edge' ? 'turbo' : c === 'turbo' ? 'inferno' : 'edge'))}
                 className="px-1.5 py-0.5 rounded text-nano font-mono font-bold bg-white/10 hover:bg-white/20 text-white/80"
-                title="Toggle false-color map: Turbo vs Inferno"
+                title="False color: blue untouched · green subtle · red/white high delta; click for Turbo / Inferno"
               >
                 {diffColorMap.toUpperCase()}
               </button>
@@ -2134,12 +2277,12 @@ export default function InteractivePreview({
 
       {/* ── Sub-Pixel Mask Brush Toolbar ───────────────────────────────────── */}
       {maskBrushActive && (
-        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 px-3 py-1.5 rounded-xl bg-black/85 backdrop-blur-md border border-white/15 shadow-2xl">
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 flex max-w-[calc(100%-1rem)] items-center gap-2 overflow-x-auto px-3 py-1.5 rounded-xl bg-black/85 backdrop-blur-md border border-white/15 shadow-2xl">
           <button
             type="button"
             onClick={() => setBrushMode('paint')}
             className={`px-2.5 py-1 rounded-lg text-micro font-bold transition-colors ${
-              brushMode === 'paint' ? 'bg-pink-500 text-white' : 'bg-white/10 text-white/70'
+              brushMode === 'paint' ? 'bg-cyan-400 text-black' : 'bg-white/10 text-white/70'
             }`}
           >
             Paint
@@ -2148,7 +2291,7 @@ export default function InteractivePreview({
             type="button"
             onClick={() => setBrushMode('erase')}
             className={`px-2.5 py-1 rounded-lg text-micro font-bold transition-colors ${
-              brushMode === 'erase' ? 'bg-amber-500 text-black' : 'bg-white/10 text-white/70'
+              brushMode === 'erase' ? 'bg-rose-500 text-white' : 'bg-white/10 text-white/70'
             }`}
           >
             Erase
@@ -2161,7 +2304,7 @@ export default function InteractivePreview({
               max={120}
               value={brushSize}
               onChange={(e) => setBrushSize(parseInt(e.target.value, 10))}
-              className="w-16 h-1 accent-pink-500 cursor-pointer"
+              className="w-16 h-1 accent-cyan-400 cursor-pointer"
             />
             <span className="text-micro font-mono font-bold text-white/80 tabular-nums">{brushSize}px</span>
           </div>
@@ -2175,10 +2318,19 @@ export default function InteractivePreview({
               step={0.05}
               value={brushFeather}
               onChange={(e) => setBrushFeather(parseFloat(e.target.value))}
-              className="w-14 h-1 accent-pink-400 cursor-pointer"
+              className="w-14 h-1 accent-rose-400 cursor-pointer"
               title="Adjust edge feather falloff (Shift + [ / ])"
             />
             <span className="text-micro font-mono font-bold text-white/80 tabular-nums">{Math.round(brushFeather * 100)}%</span>
+          </div>
+
+          <div className="flex items-center gap-1 border-l border-white/10 pl-2">
+            <span className="text-nano font-mono text-white/50 uppercase font-bold">Preview:</span>
+            {['checkerboard', 'ruby', 'matte'].map((mode) => (
+              <button key={mode} type="button" aria-pressed={brushPreviewMode === mode} onClick={() => setBrushPreviewMode(mode)} className={`rounded px-1.5 py-0.5 text-nano font-mono font-bold ${brushPreviewMode === mode ? 'bg-rose-500/30 text-rose-100' : 'bg-white/10 text-white/60'}`}>{mode === 'checkerboard' ? 'CHK' : mode.toUpperCase()}</button>
+            ))}
+            <input type="range" min="0.05" max="0.8" step="0.05" value={brushOpacity} onChange={(event) => setBrushOpacity(Number(event.target.value))} className="w-14 accent-rose-400" aria-label="Brush opacity preview" title={`Mask preview opacity ${Math.round(brushOpacity * 100)}%`} />
+            <span className="text-nano font-mono text-rose-100">{Math.round(brushOpacity * 100)}%</span>
           </div>
 
           <button
@@ -2228,6 +2380,7 @@ export default function InteractivePreview({
             onDimensions={setImgDim}
             onTopFrame={offerPipFrame}
             className="relative z-[1] w-full h-full object-contain pointer-events-none"
+            style={{ imageRendering: zoom >= 3 ? 'pixelated' : 'auto' }}
           />
 
           {playbackSource && (
@@ -2235,6 +2388,14 @@ export default function InteractivePreview({
               source={playbackSource}
               label="Playback frame"
               className="absolute inset-0 z-[2] w-full h-full pointer-events-none"
+            />
+          )}
+
+          {zoom >= 3 && pixelGridActive && (
+            <div
+              className="vfx-subpixel-grid"
+              aria-hidden="true"
+              style={{ '--vfx-pixel-cell': `${Math.max(1, (imageRef.current?.offsetWidth || 1) / (imgDim?.w || 1920))}px` }}
             />
           )}
 
@@ -2295,6 +2456,7 @@ export default function InteractivePreview({
               }}
               labelA={referenceFrame && referenceLabel ? referenceLabel : 'Target original'}
               labelB={referenceFrame && liveLabel ? liveLabel : 'Swapped result'}
+              accent="var(--accent-cyan)"
               className="absolute inset-0 z-40 pointer-events-none"
             />
           )}
@@ -2306,22 +2468,20 @@ export default function InteractivePreview({
         <div
           ref={brushCursorRef}
           className="absolute pointer-events-none z-50 -translate-x-1/2 -translate-y-1/2"
-          style={{ width: brushSize, height: brushSize, willChange: 'transform' }}
+          style={{ width: Math.max(4, brushSize * ((imageRef.current?.offsetWidth || 1) / (canvasApiRef.current?.canvas?.()?.width || imageRef.current?.offsetWidth || 1)) * zoom), height: Math.max(4, brushSize * ((imageRef.current?.offsetWidth || 1) / (canvasApiRef.current?.canvas?.()?.width || imageRef.current?.offsetWidth || 1)) * zoom), willChange: 'transform' }}
         >
-          {/* Outer dashed ring (radius) */}
-          <div
-            className="absolute inset-0 rounded-full border border-dashed border-pink-400 shadow-[0_0_6px_rgba(236,72,153,0.5)]"
-          />
-          {/* Inner solid ring (feather core) */}
-          <div
-            className="absolute rounded-full border border-pink-300 left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2"
-            style={{
-              width: Math.max(2, brushSize * (1 - brushFeather)),
-              height: Math.max(2, brushSize * (1 - brushFeather)),
-            }}
-          />
-          {/* Center pinpoint */}
-          <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-1 h-1 rounded-full bg-pink-200" />
+          <svg className="h-full w-full overflow-visible" viewBox="0 0 100 100" aria-hidden="true">
+            <defs>
+              <pattern id="mask-preview-checker" width="8" height="8" patternUnits="userSpaceOnUse">
+                <rect width="8" height="8" fill="#222" /><rect width="4" height="4" fill="#bbb" /><rect x="4" y="4" width="4" height="4" fill="#bbb" />
+              </pattern>
+              <radialGradient id="mask-preview-matte"><stop offset={`${Math.max(0, (1 - brushFeather) * 100)}%`} stopColor="#fff" stopOpacity={brushOpacity} /><stop offset="100%" stopColor="#000" stopOpacity="0.2" /></radialGradient>
+            </defs>
+            <circle cx="50" cy="50" r="48" fill={brushPreviewMode === 'checkerboard' ? 'url(#mask-preview-checker)' : brushPreviewMode === 'matte' ? 'url(#mask-preview-matte)' : `rgba(244,63,94,${brushOpacity})`} />
+            <circle cx="50" cy="50" r="48" fill="none" stroke={brushMode === 'erase' ? '#f43f5e' : '#22d3ee'} strokeWidth="1.5" strokeDasharray="3 2" />
+            <circle cx="50" cy="50" r={Math.max(2, 48 * (1 - brushFeather))} fill="none" stroke={brushMode === 'erase' ? '#fda4af' : '#a5f3fc'} strokeWidth="1.5" />
+            <path d="M44 50h12M50 44v12" stroke={brushMode === 'erase' ? '#fb7185' : '#67e8f9'} strokeWidth="1" />
+          </svg>
         </div>
       )}
 
@@ -2377,6 +2537,9 @@ export default function InteractivePreview({
           <span className="absolute top-1.5 left-1/2 -translate-x-1/2 px-1.5 py-0.5 rounded bg-black/80 backdrop-blur border border-cyan-400/40 text-nano font-mono font-bold text-cyan-300 tracking-wider">
             {loupePower}× LOUPE
           </span>
+          <span className="absolute bottom-1 left-1/2 -translate-x-1/2 whitespace-nowrap rounded bg-black/85 px-1.5 py-0.5 text-[9px] font-mono font-bold text-cyan-100 shadow">
+            {loupePixel ? `RGB ${loupePixel.r} ${loupePixel.g} ${loupePixel.b} · ${loupePixel.hex}` : 'RGB — · HEX —'}
+          </span>
         </div>
       )}
 
@@ -2397,7 +2560,7 @@ export default function InteractivePreview({
         onClose={() => setScopeActive(false)}
         sourceCanvas={canvasApiRef.current?.canvas?.()}
         renderedCanvas={canvasApiRef.current?.canvas?.()}
-        faceBbox={faces[selectedFaceIndex ?? 0]}
+        faceBbox={faces[selectedFaceIndex ?? 0]?.bbox ?? null}
         className="absolute bottom-16 right-3"
       />
 

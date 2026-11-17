@@ -2,10 +2,9 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 export { default as SkinToneScope } from './SkinToneScope';
 
 /**
- * Stage 18: Broadcast Scopes Dock (RGB Parade, Luma Waveform, Chroma Vectorscope).
+ * Broadcast Scopes Dock (RGB Parade, Luma Histogram/Waveform, Chroma Vectorscope).
  *
- * Driven by off-thread / downsampled OffscreenCanvas WebGL2 readbacks throttled
- * via requestAnimationFrame to preserve Stage 8 UI performance.
+ * Uses a small OffscreenCanvas/HTML canvas downsample, refreshed at 10Hz while open.
  *
  * Features:
  *   - Luma Waveform & RGB Parade with 10-bit IRE graticules (0..1023 / -7..109 IRE)
@@ -30,15 +29,14 @@ export default function BroadcastScopesDock({
   onClose,
   sourceCanvas = null,
   renderedCanvas = null,
-  _faceBbox = null,
+  faceBbox = null,
   className = '',
 }) {
   const canvasRef = useRef(null);
   const offscreenRef = useRef(null);
   const rafRef = useRef(0);
-  const inFlightRef = useRef(false);
 
-  const [mode, setMode] = useState('parade'); // 'luma' | 'parade' | 'vectorscope'
+  const [mode, setMode] = useState('parade'); // 'parade' | 'histogram' | 'luma' | 'vectorscope'
   const [viewTarget, setViewTarget] = useState('rendered'); // 'source' | 'rendered'
   const [collapsed, setCollapsed] = useState(false);
   const [stats, setStats] = useState({
@@ -48,7 +46,7 @@ export default function BroadcastScopesDock({
     avgIRE: 52,
   });
 
-  // Initialize downsample canvas (256x144 is optimal for 60fps real-time scope readbacks)
+  // A 256x144 downsample keeps the scope readback small at its 10Hz refresh rate.
   const getDownsampler = useCallback(() => {
     if (!offscreenRef.current) {
       const w = 256;
@@ -89,7 +87,7 @@ export default function BroadcastScopesDock({
       return;
     }
 
-    // Downsample using offscreen canvas to avoid blocking main UI thread
+    // Downsample before readback to keep per-refresh pixel work bounded.
     const down = getDownsampler();
     if (!down) return;
     const dCtx = down.getContext('2d', { willReadFrequently: true });
@@ -99,7 +97,28 @@ export default function BroadcastScopesDock({
     const dh = down.height;
     dCtx.clearRect(0, 0, dw, dh);
     try {
-      dCtx.drawImage(activeSrc, 0, 0, dw, dh);
+    const sourceWidth = activeSrc.videoWidth || activeSrc.naturalWidth || activeSrc.width;
+    const sourceHeight = activeSrc.videoHeight || activeSrc.naturalHeight || activeSrc.height;
+    let crop = null;
+    if (faceBbox && sourceWidth > 0 && sourceHeight > 0) {
+      let x0; let y0; let x1; let y1;
+      if (Array.isArray(faceBbox) && faceBbox.length >= 4) [x0, y0, x1, y1] = faceBbox;
+      else if (typeof faceBbox === 'object') {
+        x0 = faceBbox.x; y0 = faceBbox.y; x1 = x0 + faceBbox.width; y1 = y0 + faceBbox.height;
+      }
+      if ([x0, y0, x1, y1].every(Number.isFinite)) {
+        if ([x0, y0, x1, y1].every((value) => value >= 0 && value <= 1)) {
+          x0 *= sourceWidth; x1 *= sourceWidth; y0 *= sourceHeight; y1 *= sourceHeight;
+        }
+        const left = Math.max(0, Math.min(x0, x1));
+        const top = Math.max(0, Math.min(y0, y1));
+        const right = Math.min(sourceWidth, Math.max(x0, x1));
+        const bottom = Math.min(sourceHeight, Math.max(y0, y1));
+        if (right > left && bottom > top) crop = { left, top, width: right - left, height: bottom - top };
+      }
+    }
+    if (crop) dCtx.drawImage(activeSrc, crop.left, crop.top, crop.width, crop.height, 0, 0, dw, dh);
+    else dCtx.drawImage(activeSrc, 0, 0, dw, dh);
     } catch {
       return;
     }
@@ -109,8 +128,9 @@ export default function BroadcastScopesDock({
     if (!pixels || pixels.length === 0) return;
 
     // ── Scope 1: Luma Waveform or RGB Parade ──────────────────────────────
-    if (mode === 'luma' || mode === 'parade') {
+    if (mode === 'luma' || mode === 'parade' || mode === 'histogram') {
       const isParade = mode === 'parade';
+      const isHistogram = mode === 'histogram';
       const marginL = 40;
       const marginR = 10;
       const marginT = 12;
@@ -149,7 +169,29 @@ export default function BroadcastScopesDock({
       let sumVal = 0;
       let countVal = 0;
 
-      if (!isParade) {
+      if (isHistogram) {
+        const bins = new Uint32Array(64);
+        for (let y = 0; y < dh; y += 2) {
+          for (let x = 0; x < dw; x += 2) {
+            const idx = (y * dw + x) * 4;
+            const luma8 = 0.2126 * pixels[idx] + 0.7152 * pixels[idx + 1] + 0.0722 * pixels[idx + 2];
+            const code10 = (luma8 / 255) * 876 + 64;
+            const bin = Math.min(bins.length - 1, Math.floor((code10 - 64) / 876 * bins.length));
+            bins[bin] += 1;
+            minVal = Math.min(minVal, code10);
+            maxVal = Math.max(maxVal, code10);
+            sumVal += code10;
+            countVal += 1;
+          }
+        }
+        const peak = Math.max(1, ...bins);
+        ctx.fillStyle = 'rgba(52, 211, 153, 0.72)';
+        bins.forEach((count, index) => {
+          const barHeight = (count / peak) * plotH;
+          const barWidth = plotW / bins.length;
+          ctx.fillRect(marginL + index * barWidth, marginT + plotH - barHeight, Math.max(1, barWidth - 1), barHeight);
+        });
+      } else if (!isParade) {
         // ── Single Luma Waveform (Rec.709) ──
         ctx.fillStyle = 'rgba(52, 211, 153, 0.45)'; // Amber/Green phosphor
         for (let y = 0; y < dh; y += 2) {
@@ -324,23 +366,23 @@ export default function BroadcastScopesDock({
         }));
       }
     }
-  }, [active, collapsed, mode, viewTarget, sourceCanvas, renderedCanvas, getDownsampler]);
-
-  const requestDraw = useCallback(() => {
-    if (inFlightRef.current || !active || collapsed) return;
-    inFlightRef.current = true;
-    rafRef.current = requestAnimationFrame(() => {
-      inFlightRef.current = false;
-      drawScopes();
-    });
-  }, [active, collapsed, drawScopes]);
+  }, [active, collapsed, mode, viewTarget, sourceCanvas, renderedCanvas, faceBbox, getDownsampler]);
 
   useEffect(() => {
-    requestDraw();
+    if (!active || collapsed) return undefined;
+    let lastDraw = 0;
+    const tick = (timestamp) => {
+      if (timestamp - lastDraw >= 100) {
+        drawScopes();
+        lastDraw = timestamp;
+      }
+      rafRef.current = requestAnimationFrame(tick);
+    };
+    rafRef.current = requestAnimationFrame(tick);
     return () => {
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
     };
-  }, [requestDraw]);
+  }, [active, collapsed, drawScopes]);
 
   if (!active) return null;
 
@@ -408,9 +450,10 @@ export default function BroadcastScopesDock({
       {!collapsed && (
         <>
           {/* Mode Selector Tabs */}
-          <div className="flex items-center justify-between rounded-lg bg-black/40 p-1 text-micro font-mono">
+          <div className="grid grid-cols-2 gap-1 rounded-lg bg-black/40 p-1 text-micro font-mono">
             {[
               ['parade', 'RGB Parade'],
+              ['histogram', 'Luma Histogram'],
               ['luma', 'Luma Waveform'],
               ['vectorscope', 'Vectorscope'],
             ].map(([id, label]) => (

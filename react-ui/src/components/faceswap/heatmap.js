@@ -24,6 +24,22 @@ function infernoRgb(x) {
 // Precomputed 256-entry 32-bit packed RGBA LUTs for sub-millisecond lookup
 export const TURBO_LUT_32 = new Uint32Array(256);
 export const INFERNO_LUT_32 = new Uint32Array(256);
+export const EDGE_BLEND_LUT_32 = new Uint32Array(256);
+
+function edgeBlendRgb(x) {
+  const stops = [
+    [0.00, [8, 32, 116]],
+    [0.12, [31, 112, 232]],
+    [0.38, [34, 197, 94]],
+    [0.68, [244, 63, 94]],
+    [1.00, [255, 255, 255]],
+  ];
+  const index = stops.findIndex(([at]) => at >= x);
+  const next = stops[Math.max(1, index)];
+  const prev = stops[Math.max(0, index - 1)];
+  const t = Math.max(0, Math.min(1, (x - prev[0]) / Math.max(1e-6, next[0] - prev[0])));
+  return prev[1].map((channel, i) => Math.round(channel + (next[1][i] - channel) * t));
+}
 
 for (let i = 0; i < 256; i++) {
   const t = i / 255;
@@ -33,6 +49,9 @@ for (let i = 0; i < 256; i++) {
 
   const [ir, ig, ib] = infernoRgb(t);
   INFERNO_LUT_32[i] = (255 << 24) | (ib << 16) | (ig << 8) | ir;
+
+  const [er, eg, eb] = edgeBlendRgb(t);
+  EDGE_BLEND_LUT_32[i] = (255 << 24) | (eb << 16) | (eg << 8) | er;
 }
 
 // Reusable scratch canvases to avoid per-frame DOM allocation
@@ -79,7 +98,7 @@ export function drawAmplifiedHeatmap(ctx, baseImg, topImg, w, h, gain = 3.0, col
 
   const outputImgData = ctx.createImageData(w, h);
   const out32 = new Uint32Array(outputImgData.data.buffer);
-  const lut = colormap === 'inferno' ? INFERNO_LUT_32 : TURBO_LUT_32;
+  const lut = colormap === 'inferno' ? INFERNO_LUT_32 : colormap === 'edge' ? EDGE_BLEND_LUT_32 : TURBO_LUT_32;
 
   const len = dataA.length;
   const pixelCount = len >> 2;

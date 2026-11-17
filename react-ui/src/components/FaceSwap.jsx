@@ -218,6 +218,45 @@ export default function FaceSwap({
   const previewCanvasRef = useRef(null);
   const previewMaskCanvasRef = useRef(null);
   const previewMaskExportRef = useRef(null);
+  const dualViewportApiRef = useRef(null);
+  const dualSourceImageRef = useRef(null);
+  const dualLoupeMarkerRef = useRef(null);
+  const dualSourceDragRef = useRef(null);
+  const dualSpaceDownRef = useRef(false);
+  const syncDualViewport = useCallback((zoom, pan) => {
+    const image = dualSourceImageRef.current;
+    if (!image) return;
+    image.style.transform = `scale(${zoom}) translate(${pan.x / zoom}px, ${pan.y / zoom}px)`;
+    image.style.imageRendering = zoom >= 3 ? 'pixelated' : 'auto';
+  }, []);
+  const syncDualLoupeCoordinates = useCallback((point) => {
+    const marker = dualLoupeMarkerRef.current;
+    if (!marker) return;
+    if (!point) {
+      marker.style.display = 'none';
+      return;
+    }
+    marker.style.left = `${point.x * 100}%`;
+    marker.style.top = `${point.y * 100}%`;
+    marker.style.display = 'block';
+  }, []);
+
+  useEffect(() => {
+    const isTextEntry = (target) => target?.closest?.('input,textarea,select,[contenteditable="true"]');
+    const onKeyDown = (event) => {
+      if (event.code === 'Space' && !isTextEntry(event.target)) dualSpaceDownRef.current = true;
+    };
+    const onKeyUp = (event) => { if (event.code === 'Space') dualSpaceDownRef.current = false; };
+    const onBlur = () => { dualSpaceDownRef.current = false; dualSourceDragRef.current = null; };
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('blur', onBlur);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('blur', onBlur);
+    };
+  }, []);
   const [studioBrushActive, setStudioBrushActive] = useState(false);
   // Single-frame AI-upscale spot-check (result shown in a modal).
   const [upscaledSrc, setUpscaledSrc] = useState('');
@@ -5202,7 +5241,59 @@ export default function FaceSwap({
                     />
               ) : (
                 <div className={workspaceMode === 'dual' ? 'workspace-ab' : 'workspace-single-preview relative rounded-2xl'}>
-                  {workspaceMode === 'dual' && <figure aria-label="Source A"><figcaption>A / SOURCE</figcaption>{rawUrl ? <img src={rawUrl} alt="Original source frame" /> : <span>Load source media</span>}</figure>}
+                  {workspaceMode === 'dual' && (
+                    <figure
+                      aria-label="Source A synchronized viewport"
+                      tabIndex={0}
+                      onWheel={(event) => {
+                        const stage = event.currentTarget;
+                        const rect = stage.getBoundingClientRect();
+                        if (dualViewportApiRef.current?.zoomAtNormalized(
+                          event.deltaY,
+                          event.deltaMode,
+                          (event.clientX - rect.left) / Math.max(1, rect.width),
+                          (event.clientY - rect.top) / Math.max(1, rect.height),
+                        )) event.preventDefault();
+                      }}
+                      onPointerDown={(event) => {
+                        if (event.button !== 1 && !(event.button === 0 && dualSpaceDownRef.current)) return;
+                        const api = dualViewportApiRef.current;
+                        if (!api) return;
+                        event.preventDefault();
+                        dualSourceDragRef.current = {
+                          pointerId: event.pointerId,
+                          x: event.clientX,
+                          y: event.clientY,
+                          pan: api.getPan(),
+                        };
+                        event.currentTarget.setPointerCapture?.(event.pointerId);
+                      }}
+                      onPointerMove={(event) => {
+                        const drag = dualSourceDragRef.current;
+                        const api = dualViewportApiRef.current;
+                        if (!drag || drag.pointerId !== event.pointerId || !api) return;
+                        const stage = event.currentTarget;
+                        const rect = stage.getBoundingClientRect();
+                        const scale = rect.width / Math.max(1, stage.offsetWidth);
+                        api.setPan({
+                          x: drag.pan.x + (event.clientX - drag.x) / scale,
+                          y: drag.pan.y + (event.clientY - drag.y) / scale,
+                        });
+                      }}
+                      onPointerUp={(event) => {
+                        if (dualSourceDragRef.current?.pointerId !== event.pointerId) return;
+                        dualSourceDragRef.current = null;
+                        event.currentTarget.releasePointerCapture?.(event.pointerId);
+                      }}
+                      onPointerCancel={() => { dualSourceDragRef.current = null; }}
+                      onDoubleClick={() => dualViewportApiRef.current?.fit()}
+                      onContextMenu={(event) => event.preventDefault()}
+                    >
+                      <figcaption>A / SOURCE · A/B LOCK</figcaption>
+                      {rawUrl ? <img ref={dualSourceImageRef} src={rawUrl} alt="Original source frame" draggable="false" /> : <span>Load source media</span>}
+                      <div ref={dualLoupeMarkerRef} className="workspace-ab__loupe-link" aria-hidden="true"><span>LOUPE</span></div>
+                    </figure>
+                  )}
                   <div className="relative min-w-0 h-full">{workspaceMode === 'dual' && <span className="workspace-b-label">B / LIVE PREVIEW</span>}
                   <AmbilightGlow
                     previewSrc={previewSrc || rawUrl}
@@ -5266,6 +5357,9 @@ export default function FaceSwap({
                       trajectoryPlanActive={runBarSync.parityState.trajectoryPlanActive}
                       compare={workspaceMode === 'dual' ? false : compare}
                       compareMode={workspaceMode === 'dual' || splitView ? 'split' : 'slider'}
+                      onViewportTransform={syncDualViewport}
+                      onLoupeCoordinates={syncDualLoupeCoordinates}
+                      viewportApiRef={dualViewportApiRef}
                       onToggleCompare={() => setCompare((v) => { const n = !v; if (n) { setComparingEnhancers(false); setComparingMasks(false); setComparingSwappers(false); setComparingUpscalers(false); } return n; })}
                       isPeekingOriginal={isPeekingOriginal}
                       soloStage={soloStage}
@@ -5310,6 +5404,9 @@ export default function FaceSwap({
                       notify={notify}
                       splitView={workspaceMode === 'dual' ? false : splitView}
                       compare={workspaceMode === 'dual' ? false : compare}
+                      onViewportTransform={syncDualViewport}
+                      onLoupeCoordinates={syncDualLoupeCoordinates}
+                      viewportApiRef={dualViewportApiRef}
                       onToggleCompare={() => setCompare((v) => { const n = !v; if (n) { setComparingEnhancers(false); setComparingMasks(false); setComparingSwappers(false); setComparingUpscalers(false); } return n; })}
                       sliderEffectEnabled={sliderEffectEnabled}
                       onToggleSliderEffect={toggleSliderEffect}
