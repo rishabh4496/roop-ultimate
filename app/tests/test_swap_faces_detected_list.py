@@ -30,6 +30,10 @@ ALLOWED = {
     "recovered",
     "_tracker.update(faces, frame_idx)",
     "list(faces) + list(_coasted)",
+    # faces_for_frame clones the frame's faces and stamps plan geometry on the
+    # clones (trajectory_cache.py "Clone faces and stamp plan geometry"), so the
+    # result is still this frame's faces, not a source.
+    "_apply_trajectory(faces)",
 }
 
 

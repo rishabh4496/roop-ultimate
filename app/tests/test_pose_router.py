@@ -66,3 +66,12 @@ def test_solvepnp_returns_canonical_angles_in_degrees():
     got = estimate_head_pose(image_points.reshape(5, 2), (height, width, 3))
     assert got is not None
     np.testing.assert_allclose(got, [yaw, pitch, roll], atol=2.5)
+
+
+def load_tests(loader, tests, pattern):
+    """Expose this module's bare `test_*` functions to `unittest discover`."""
+    try:
+        from tests.unittest_shim import load_tests_for
+    except ImportError:  # discovery started from inside tests/
+        from unittest_shim import load_tests_for
+    return load_tests_for(globals())

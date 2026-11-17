@@ -4032,7 +4032,11 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             try:
                 from roop.trajectory_cache import active as _active_trajectory
                 _trajectory_plan = _active_trajectory()
-            except Exception:
+            except Exception as _traj_error:
+                # Reported, not silent: without a plan the render proceeds on
+                # per-frame detection, which is the documented fallback.
+                _swallowed("roop/ProcessMgr.py:4035", _traj_error,
+                           "trajectory plan unavailable; using per-frame detection")
                 _trajectory_plan = None
         _source_video = (getattr(self, '_trajectory_source_video', None)
                          or getattr(roop.globals, 'target_path', None))

@@ -530,3 +530,12 @@ def test_debug_channels_are_published_only_on_request(monkeypatch):
     _run_paste(monkeypatch, 30.0, debug_mask_channels=True)
     ch = take_debug()
     assert set(ch) == {'parsing_overlay', 'final_alpha_mask'} and ch['final_alpha_mask'].max() > 200
+
+
+def load_tests(loader, tests, pattern):
+    """Expose this module's bare `test_*` functions to `unittest discover`."""
+    try:
+        from tests.unittest_shim import load_tests_for
+    except ImportError:  # discovery started from inside tests/
+        from unittest_shim import load_tests_for
+    return load_tests_for(globals())

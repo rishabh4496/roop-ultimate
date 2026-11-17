@@ -20,7 +20,7 @@ import {
   clampRangeLockInterval,
 } from '../../utils/ptsFrameMap';
 import { stageRangeLockTracks } from './batchMatrix.js';
-import { getJSON, API } from '../../api.js';
+import { getJSON, API, timeoutFor } from '../../api.js';
 
 export type { RangeLockInterval };
 
@@ -133,7 +133,7 @@ export async function fetchTrajectorySummary(apiBase?: string): Promise<Trajecto
   const base = apiBase || '';
   const url = `${base}/api/trajectory/summary`;
   try {
-    const res = await getJSON(url);
+    const res = await getJSON(url, { timeout: timeoutFor('GET', '/api/trajectory/summary') });
     return res as TrajectorySummary;
   } catch (err: any) {
     return {
@@ -154,7 +154,7 @@ export async function fetchTrajectorySpans(
   const base = apiBase || '';
   const url = `${base}/api/trajectory/spans?relative=${relative ? 1 : 0}&max_gap=${maxGap}`;
   try {
-    const res = await getJSON(url);
+    const res = await getJSON(url, { timeout: timeoutFor('GET', '/api/trajectory/spans') });
     return res as TrajectorySpansResponse;
   } catch (err: any) {
     return {
@@ -176,7 +176,7 @@ export async function fetchTrajectoryPose(
   const base = apiBase || '';
   const url = `${base}/api/trajectory/pose?frame=${Math.max(0, Math.round(frame))}&absolute=${absolute ? 1 : 0}`;
   try {
-    return await getJSON(url);
+    return await getJSON(url, { timeout: timeoutFor('GET', '/api/trajectory/pose') });
   } catch (err: any) {
     return {
       available: false,

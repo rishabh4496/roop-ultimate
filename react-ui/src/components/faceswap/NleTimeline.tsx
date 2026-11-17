@@ -987,7 +987,7 @@ export const NleTimeline: React.FC<NleTimelineProps> = ({
             onClick={onPreScanClick}
             disabled={isPreScanActive}
             title="Step 1: Run or inspect Pre-Scan ByteTrack spans"
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium border transition-colors ${
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-mini font-medium border transition-colors ${
               trackLanes.length > 0
                 ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
                 : isPreScanActive
@@ -1005,14 +1005,14 @@ export const NleTimeline: React.FC<NleTimelineProps> = ({
               }`}
             />
             <span>1 Pre-Scan</span>
-            <span className="font-mono text-[10px] opacity-80">
+            <span className="font-mono text-micro opacity-80">
               ({trackLanes.length} {trackLanes.length === 1 ? 'Track' : 'Tracks'})
             </span>
           </button>
 
           {/* Step 2 Range Lock Badge */}
           <div
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium border ${
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-mini font-medium border ${
               lockedIntervalsCount > 0
                 ? 'border-[var(--accent,#e94560)]/50 bg-[var(--accent,#e94560)]/10 text-rose-300'
                 : 'border-white/10 bg-white/5 text-neutral-400'
@@ -1025,7 +1025,7 @@ export const NleTimeline: React.FC<NleTimelineProps> = ({
               }`}
             />
             <span>2 Range Lock</span>
-            <span className="font-mono text-[10px] opacity-80">
+            <span className="font-mono text-micro opacity-80">
               ({lockedIntervalsCount} {lockedIntervalsCount === 1 ? 'Interval' : 'Intervals'})
             </span>
           </div>
@@ -1034,7 +1034,7 @@ export const NleTimeline: React.FC<NleTimelineProps> = ({
           <button
             type="button"
             onClick={() => setSnapEnabled((prev) => !prev)}
-            className={`flex items-center gap-1 px-2 py-0.5 rounded border text-[11px] transition ${
+            className={`flex items-center gap-1 px-2 py-0.5 rounded border text-mini transition ${
               snapEnabled
                 ? 'border-sky-500/50 bg-sky-500/15 text-sky-300'
                 : 'border-white/10 bg-white/5 text-neutral-400 hover:text-white'
@@ -1054,7 +1054,7 @@ export const NleTimeline: React.FC<NleTimelineProps> = ({
         <div className="flex items-center gap-3">
           {/* Exact Timecode and Seconds Display */}
           <div className="flex items-center gap-2 px-3 py-1 bg-black/40 border border-white/10 rounded-lg font-mono">
-            <span className="text-[10px] uppercase text-neutral-400 font-semibold tracking-wider">
+            <span className="text-micro uppercase text-neutral-400 font-semibold tracking-wider">
               TC:
             </span>
             <span className="text-sm font-bold text-white tracking-wider tabular-nums">
@@ -1076,7 +1076,7 @@ export const NleTimeline: React.FC<NleTimelineProps> = ({
             <button
               type="button"
               onClick={() => handleSeekFrame(trimIn)}
-              className="flex items-center gap-1 px-2 py-0.5 bg-white/5 border border-white/10 hover:border-amber-400/40 rounded text-[11px] font-mono text-neutral-300 transition"
+              className="flex items-center gap-1 px-2 py-0.5 bg-white/5 border border-white/10 hover:border-amber-400/40 rounded text-mini font-mono text-neutral-300 transition"
               title="Click to jump to Trim In point ('I' sets at playhead)"
             >
               <span className="text-amber-400 font-bold">IN:</span>
@@ -1085,7 +1085,7 @@ export const NleTimeline: React.FC<NleTimelineProps> = ({
             <button
               type="button"
               onClick={() => handleSeekFrame(trimOut)}
-              className="flex items-center gap-1 px-2 py-0.5 bg-white/5 border border-white/10 hover:border-amber-400/40 rounded text-[11px] font-mono text-neutral-300 transition"
+              className="flex items-center gap-1 px-2 py-0.5 bg-white/5 border border-white/10 hover:border-amber-400/40 rounded text-mini font-mono text-neutral-300 transition"
               title="Click to jump to Trim Out point ('O' sets at playhead)"
             >
               <span className="text-amber-400 font-bold">OUT:</span>
@@ -1097,14 +1097,14 @@ export const NleTimeline: React.FC<NleTimelineProps> = ({
           <button
             type="button"
             onClick={handleAddMarkerAtCurrentFrame}
-            className="flex items-center gap-1 px-2 py-1 bg-white/5 border border-white/10 hover:border-sky-400/50 rounded text-[11px] text-neutral-300 hover:text-white transition"
+            className="flex items-center gap-1 px-2 py-1 bg-white/5 border border-white/10 hover:border-sky-400/50 rounded text-mini text-neutral-300 hover:text-white transition"
             title="Add Chapter Marker at playhead ('M')"
           >
             <svg className="w-3.5 h-3.5 text-sky-400" viewBox="0 0 24 24" fill="currentColor">
               <path d="M17 3H7c-1.1 0-1.99.9-1.99 2L5 21l7-3 7 3V5c0-1.1-.9-2-2-2z" />
             </svg>
             <span>+ Marker</span>
-            <span className="font-mono text-[10px] text-neutral-500">({markers.length})</span>
+            <span className="font-mono text-micro text-neutral-500">({markers.length})</span>
           </button>
 
           {/* Zoom Controls */}
@@ -1139,7 +1139,7 @@ export const NleTimeline: React.FC<NleTimelineProps> = ({
             <button
               type="button"
               onClick={handleResetZoom}
-              className="px-2 py-0.5 text-[10px] font-medium hover:bg-white/10 rounded text-neutral-300 hover:text-white transition"
+              className="px-2 py-0.5 text-micro font-medium hover:bg-white/10 rounded text-neutral-300 hover:text-white transition"
               title="Fit entire clip to window"
             >
               Fit
@@ -1219,7 +1219,7 @@ export const NleTimeline: React.FC<NleTimelineProps> = ({
         {/* Global Warning Bar (if warning ticks exist) */}
         {showWarningTicks && warningTicks.length > 0 && (
           <div className="relative w-full h-5 bg-black/40 border-b border-white/5 flex items-center px-2">
-            <span className="text-[10px] text-amber-400 font-semibold uppercase tracking-wider mr-2 shrink-0">
+            <span className="text-micro text-amber-400 font-semibold uppercase tracking-wider mr-2 shrink-0">
               Warnings ({warningTicks.length}):
             </span>
             <div className="relative flex-1 h-full overflow-hidden">
@@ -1255,9 +1255,9 @@ export const NleTimeline: React.FC<NleTimelineProps> = ({
         {/* ── Ruler & Timecode Lane ─────────────────────────────────────────── */}
         <div className="flex w-full h-7 bg-[var(--surface-2,#1a1d26)] border-b border-white/10">
           {/* Header spacer column */}
-          <div className="w-56 shrink-0 flex items-center justify-between px-3 border-r border-white/10 text-[11px] font-semibold text-neutral-400 uppercase tracking-wider bg-[var(--surface-2,#1a1d26)] z-10">
+          <div className="w-56 shrink-0 flex items-center justify-between px-3 border-r border-white/10 text-mini font-semibold text-neutral-400 uppercase tracking-wider bg-[var(--surface-2,#1a1d26)] z-10">
             <span>Ruler</span>
-            <span className="text-[10px] text-neutral-500 font-mono">
+            <span className="text-micro text-neutral-500 font-mono">
               fps: {fps}
             </span>
           </div>
@@ -1283,7 +1283,7 @@ export const NleTimeline: React.FC<NleTimelineProps> = ({
                     }`}
                   />
                   {tick.major && (
-                    <span className="text-[9px] font-mono text-neutral-400 -translate-x-1/2 select-none">
+                    <span className="text-nano font-mono text-neutral-400 -translate-x-1/2 select-none">
                       {tick.label}
                     </span>
                   )}
@@ -1307,7 +1307,7 @@ export const NleTimeline: React.FC<NleTimelineProps> = ({
                   title={`[Frame #${m.frame}] ${m.label} (Click to jump)`}
                 >
                   <div className="w-3 h-4 bg-sky-400 text-black flex items-center justify-center rounded-b-sm shadow-md group-hover:scale-125 transition-transform">
-                    <span className="text-[8px] font-bold">M</span>
+                    <span className="text-nano font-bold">M</span>
                   </div>
                 </div>
               );
@@ -1321,7 +1321,7 @@ export const NleTimeline: React.FC<NleTimelineProps> = ({
                 style={{ left: `${frameToFraction(trimIn) * 100}%` }}
                 title={`Trim In Handle: #${trimIn} (drag to trim, or press 'I')`}
               >
-                <div className="w-1.5 h-5 bg-amber-400 rounded-l group-hover:scale-110 shadow-md flex items-center justify-center text-[9px] font-bold text-black">
+                <div className="w-1.5 h-5 bg-amber-400 rounded-l group-hover:scale-110 shadow-md flex items-center justify-center text-nano font-bold text-black">
                   [
                 </div>
               </div>
@@ -1335,7 +1335,7 @@ export const NleTimeline: React.FC<NleTimelineProps> = ({
                 style={{ left: `${frameToFraction(trimOut) * 100}%` }}
                 title={`Trim Out Handle: #${trimOut} (drag to trim, or press 'O')`}
               >
-                <div className="w-1.5 h-5 bg-amber-400 rounded-r group-hover:scale-110 shadow-md flex items-center justify-center text-[9px] font-bold text-black">
+                <div className="w-1.5 h-5 bg-amber-400 rounded-r group-hover:scale-110 shadow-md flex items-center justify-center text-nano font-bold text-black">
                   ]
                 </div>
               </div>
@@ -1352,13 +1352,13 @@ export const NleTimeline: React.FC<NleTimelineProps> = ({
           >
             {/* Left Header */}
             <div className="w-56 shrink-0 flex items-center justify-between px-3 border-r border-white/10 bg-[var(--surface-2,#1a1d26)]/90 z-10">
-              <div className="flex items-center gap-1.5 font-bold text-white text-[11px]">
-                <span className="px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-400 text-[10px] font-mono">
+              <div className="flex items-center gap-1.5 font-bold text-white text-mini">
+                <span className="px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-400 text-micro font-mono">
                   V1
                 </span>
                 <span>Video Filmstrip</span>
               </div>
-              <span className="text-[10px] font-mono text-neutral-500">
+              <span className="text-micro font-mono text-neutral-500">
                 {filmstrip.slots.length} stills
               </span>
             </div>
@@ -1391,7 +1391,7 @@ export const NleTimeline: React.FC<NleTimelineProps> = ({
                         className="w-full h-full object-cover opacity-80 group-hover/film:opacity-100 transition-opacity"
                       />
                     ) : (
-                      <div className="flex flex-col items-center justify-center text-[9px] font-mono text-neutral-600">
+                      <div className="flex flex-col items-center justify-center text-nano font-mono text-neutral-600">
                         <span>#{slot.frame}</span>
                       </div>
                     )}
@@ -1416,13 +1416,13 @@ export const NleTimeline: React.FC<NleTimelineProps> = ({
           >
             {/* Left Header */}
             <div className="w-56 shrink-0 flex items-center justify-between px-3 border-r border-white/10 bg-[var(--surface-2,#1a1d26)]/90 z-10">
-              <div className="flex items-center gap-1.5 font-bold text-white text-[11px]">
-                <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 text-[10px] font-mono">
+              <div className="flex items-center gap-1.5 font-bold text-white text-mini">
+                <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 text-micro font-mono">
                   A1
                 </span>
                 <span>Audio Peaks</span>
               </div>
-              <span className="text-[10px] font-mono text-neutral-500">
+              <span className="text-micro font-mono text-neutral-500">
                 {waveform.state === 'ready'
                   ? 'ready'
                   : waveform.state === 'none'
@@ -1492,11 +1492,11 @@ export const NleTimeline: React.FC<NleTimelineProps> = ({
                   className="w-full h-full"
                 />
               ) : waveform.state === 'none' ? (
-                <div className="flex items-center px-4 text-[10px] font-mono text-neutral-500 italic">
+                <div className="flex items-center px-4 text-micro font-mono text-neutral-500 italic">
                   (No audio track detected in source media)
                 </div>
               ) : (
-                <div className="flex items-center px-4 text-[10px] font-mono text-sky-400 animate-pulse">
+                <div className="flex items-center px-4 text-micro font-mono text-sky-400 animate-pulse">
                   Rendering waveform envelope from /api/media/waveform…
                 </div>
               )}
@@ -1517,13 +1517,13 @@ export const NleTimeline: React.FC<NleTimelineProps> = ({
               className="w-56 shrink-0 flex items-center justify-between px-3 border-r border-white/10 bg-[var(--surface-2,#1a1d26)]/90 z-10"
             >
               <div className="flex items-center gap-1.5">
-                <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 text-[10px] font-mono font-bold">
+                <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 text-micro font-mono font-bold">
                   KF
                 </span>
                 <select
                   value={activeParam}
                   onChange={(e) => setActiveParam(e.target.value as TimelineParamType)}
-                  className="bg-black/60 border border-white/15 rounded px-1.5 py-0.5 text-[10px] font-medium text-white focus:outline-none focus:border-amber-400/60"
+                  className="bg-black/60 border border-white/15 rounded px-1.5 py-0.5 text-micro font-medium text-white focus:outline-none focus:border-amber-400/60"
                   title="Active Keyframe Parameter"
                 >
                   <option value="Swap Opacity">Swap Opacity</option>
@@ -1635,7 +1635,7 @@ export const NleTimeline: React.FC<NleTimelineProps> = ({
                   onClick={(e) => e.stopPropagation()}
                   className="absolute right-4 top-1/2 -translate-y-1/2 z-30 flex items-center gap-1.5 px-2 py-0.5 bg-black/80 border border-white/20 rounded shadow-lg backdrop-blur"
                 >
-                  <span className="text-[10px] font-mono text-neutral-300">
+                  <span className="text-micro font-mono text-neutral-300">
                     #{selectedKeyframe.frame_idx}:
                   </span>
                   {(['Linear', 'Ease In/Out', 'Hold'] as TimelineCurveType[]).map((c) => (
@@ -1643,7 +1643,7 @@ export const NleTimeline: React.FC<NleTimelineProps> = ({
                       key={c}
                       type="button"
                       onClick={() => handleCurveChange(selectedKeyframe.id, c)}
-                      className={`px-1.5 py-0.5 rounded text-[9px] font-medium transition ${
+                      className={`px-1.5 py-0.5 rounded text-nano font-medium transition ${
                         selectedKeyframe.curve === c
                           ? 'bg-amber-400 text-black font-bold'
                           : 'bg-white/10 text-neutral-300 hover:text-white'
@@ -1685,7 +1685,7 @@ export const NleTimeline: React.FC<NleTimelineProps> = ({
               <p className="text-xs font-medium text-neutral-300">
                 No ByteTrack Lanes Found
               </p>
-              <p className="text-[11px] text-neutral-500 max-w-sm mt-0.5">
+              <p className="text-mini text-neutral-500 max-w-sm mt-0.5">
                 Run Step 1 Pre-Scan to detect face trajectories, populate ByteTrack lanes,
                 and extract pose/occlusion warning ticks.
               </p>
@@ -1734,7 +1734,7 @@ export const NleTimeline: React.FC<NleTimelineProps> = ({
                           className="w-2.5 h-2.5 rounded-full shrink-0 shadow-sm"
                           style={{ backgroundColor: trackColor }}
                         />
-                        <span className="font-bold text-white text-[12px] truncate">
+                        <span className="font-bold text-white text-mini truncate">
                           {track.label}
                         </span>
                       </div>
@@ -1773,12 +1773,12 @@ export const NleTimeline: React.FC<NleTimelineProps> = ({
                             onAssignFsz?.(track.trackId, fszLabel);
                           }}
                           title={`Assigned/Suggested Faceset: ${fszLabel} (${track.via})`}
-                          className="flex items-center gap-1 max-w-[170px] px-1.5 py-0.5 rounded bg-black/40 border border-white/10 hover:border-white/20 text-[10px] font-mono text-neutral-300 truncate transition"
+                          className="flex items-center gap-1 max-w-[170px] px-1.5 py-0.5 rounded bg-black/40 border border-white/10 hover:border-white/20 text-micro font-mono text-neutral-300 truncate transition"
                         >
                           <span style={{ color: trackColor }}>●</span>
                           <span className="truncate">{fszLabel}</span>
                         </button>
-                        <span className="text-[9px] font-mono text-neutral-500">
+                        <span className="text-nano font-mono text-neutral-500">
                           {track.totalFrames}f
                         </span>
                       </div>
@@ -1823,12 +1823,12 @@ export const NleTimeline: React.FC<NleTimelineProps> = ({
                           title={`Click to Range Lock [${start}–${end}] (${end - start + 1} frames)`}
                         >
                           {/* Range Bar Label */}
-                          <div className="flex items-center gap-1.5 overflow-hidden text-[10px] font-mono font-semibold text-black/90">
+                          <div className="flex items-center gap-1.5 overflow-hidden text-micro font-mono font-semibold text-black/90">
                             <span className="truncate">
                               {start}–{end}
                             </span>
                             {isIntervalLocked && (
-                              <span className="text-[9px] px-1 bg-black/40 text-white rounded">
+                              <span className="text-nano px-1 bg-black/40 text-white rounded">
                                 LOCKED
                               </span>
                             )}
@@ -1841,7 +1841,7 @@ export const NleTimeline: React.FC<NleTimelineProps> = ({
                                 onMouseDown={(e) =>
                                   handleRangeTrimDrag(activeInterval.id, 'start', e)
                                 }
-                                className="absolute left-0 top-0 bottom-0 w-2.5 bg-black/40 hover:bg-black/80 rounded-l cursor-ew-resize flex items-center justify-center text-[8px] text-white font-bold"
+                                className="absolute left-0 top-0 bottom-0 w-2.5 bg-black/40 hover:bg-black/80 rounded-l cursor-ew-resize flex items-center justify-center text-nano text-white font-bold"
                                 title="Trim start of interval"
                               >
                                 |
@@ -1850,7 +1850,7 @@ export const NleTimeline: React.FC<NleTimelineProps> = ({
                                 onMouseDown={(e) =>
                                   handleRangeTrimDrag(activeInterval.id, 'end', e)
                                 }
-                                className="absolute right-0 top-0 bottom-0 w-2.5 bg-black/40 hover:bg-black/80 rounded-r cursor-ew-resize flex items-center justify-center text-[8px] text-white font-bold"
+                                className="absolute right-0 top-0 bottom-0 w-2.5 bg-black/40 hover:bg-black/80 rounded-r cursor-ew-resize flex items-center justify-center text-nano text-white font-bold"
                                 title="Trim end of interval"
                               >
                                 |
@@ -1911,7 +1911,7 @@ export const NleTimeline: React.FC<NleTimelineProps> = ({
             }}
           >
             <div className="w-px h-full border-l border-dashed border-sky-400 opacity-80" />
-            <div className="absolute top-1 -translate-x-1/2 px-1 py-0.5 bg-sky-500 text-black text-[8px] font-mono font-bold rounded shadow">
+            <div className="absolute top-1 -translate-x-1/2 px-1 py-0.5 bg-sky-500 text-black text-nano font-mono font-bold rounded shadow">
               SNAP #{snapIndicatorFrame}
             </div>
           </div>
@@ -1926,10 +1926,10 @@ export const NleTimeline: React.FC<NleTimelineProps> = ({
             }}
           >
             <div className="px-2 py-1 bg-black/90 border border-white/20 rounded shadow-xl flex flex-col items-center gap-0.5">
-              <span className="text-[10px] font-mono font-bold text-white">
+              <span className="text-micro font-mono font-bold text-white">
                 {frameToTimecode(hoverFrame, fps)}
               </span>
-              <span className="text-[9px] font-mono text-[var(--accent,#e94560)]">
+              <span className="text-nano font-mono text-[var(--accent,#e94560)]">
                 Frame #{hoverFrame}
               </span>
             </div>
@@ -1954,7 +1954,7 @@ export const NleTimeline: React.FC<NleTimelineProps> = ({
             <div className="w-0.5 h-full bg-[var(--accent,#e94560)] shadow-[0_0_8px_rgba(233,69,96,0.8)]" />
 
             {/* Frame Badge Tooltip */}
-            <div className="absolute -top-6 -translate-x-1/2 px-1.5 py-0.5 bg-[var(--accent,#e94560)] text-white text-[9px] font-mono font-bold rounded shadow whitespace-nowrap">
+            <div className="absolute -top-6 -translate-x-1/2 px-1.5 py-0.5 bg-[var(--accent,#e94560)] text-white text-nano font-mono font-bold rounded shadow whitespace-nowrap">
               #{activeFrame}
             </div>
           </div>
@@ -1962,7 +1962,7 @@ export const NleTimeline: React.FC<NleTimelineProps> = ({
       </div>
 
       {/* ── Bottom Footer Status Bar ────────────────────────────────────────── */}
-      <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-1.5 bg-[var(--surface-2,#1a1d26)] border-t border-white/5 text-[11px] text-neutral-400">
+      <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-1.5 bg-[var(--surface-2,#1a1d26)] border-t border-white/5 text-mini text-neutral-400">
         <div className="flex items-center gap-3">
           <span>
             Visible: <span className="font-mono text-white">#{viewStart}</span> –{' '}
@@ -1984,7 +1984,7 @@ export const NleTimeline: React.FC<NleTimelineProps> = ({
               Selected: Track #{typeof selectedTrackId === 'number' ? selectedTrackId + 1 : selectedTrackId}
             </span>
           )}
-          <span className="text-neutral-500 text-[10px]">
+          <span className="text-neutral-500 text-micro">
             Shortcuts: <kbd className="px-1 bg-black/40 rounded border border-white/10">I</kbd> Trim In ·{' '}
             <kbd className="px-1 bg-black/40 rounded border border-white/10">O</kbd> Trim Out ·{' '}
             <kbd className="px-1 bg-black/40 rounded border border-white/10">M</kbd> Marker ·{' '}

@@ -770,7 +770,9 @@ class TrajectoryPlan(TrajectoryCache):
         for i, face in enumerate(faces):
             try:
                 clone = type(face)(face)
-            except Exception:
+            except Exception as _clone_error:
+                _swallowed("roop/trajectory_cache.py:773", _clone_error,
+                           "face copy fell back to a shallow copy")
                 clone = dict(face) if isinstance(face, dict) else face
             if isinstance(clone, dict):
                 for key, value in tuple(clone.items()):

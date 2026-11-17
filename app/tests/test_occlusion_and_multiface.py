@@ -247,3 +247,12 @@ def test_prepass_reid_cannot_steal_a_track_already_matched_this_frame():
     _, tracks = _run_scan(script)
     assert len(tracks) == 2
     assert sorted(len(t['obs']) for t in tracks) == [3, 23]
+
+
+def load_tests(loader, tests, pattern):
+    """Expose this module's bare `test_*` functions to `unittest discover`."""
+    try:
+        from tests.unittest_shim import load_tests_for
+    except ImportError:  # discovery started from inside tests/
+        from unittest_shim import load_tests_for
+    return load_tests_for(globals())

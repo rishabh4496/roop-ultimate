@@ -23,12 +23,15 @@ from roop import degrade  # noqa: E402
 
 
 def _production_files():
+    # Source only: the top-level app/*.py and the roop/ package. app/output/ holds
+    # gitignored generated copies of roop/ (see app/.gitignore) and is not code
+    # that ships, so scanning it reports handlers that do not exist in the source.
     return sorted(
         path for path in APP.rglob("*.py")
         if "env" not in path.parts
         and "tests" not in path.parts
         and "__pycache__" not in path.parts
-        and (path.parent == APP or "roop" in path.parts)
+        and (path.parent == APP or (path.relative_to(APP).parts[0] == "roop"))
     )
 
 

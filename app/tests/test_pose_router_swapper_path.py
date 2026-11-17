@@ -37,3 +37,12 @@ def test_pose_routed_embedding_is_projected_for_emap_models():
     latent = FaceSwapInsightFace._compute_source_input(
         processor, {}, {"_pose_routed_embedding": routed})
     np.testing.assert_allclose(latent, routed.reshape(1, -1), atol=1e-6)
+
+
+def load_tests(loader, tests, pattern):
+    """Expose this module's bare `test_*` functions to `unittest discover`."""
+    try:
+        from tests.unittest_shim import load_tests_for
+    except ImportError:  # discovery started from inside tests/
+        from unittest_shim import load_tests_for
+    return load_tests_for(globals())

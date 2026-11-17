@@ -96,3 +96,12 @@ def test_trajectory_plan_reads_are_bit_identical_across_worker_counts(tmp_path):
         parallel = list(pool.map(render_geometry, range(12)))
     for one, four in zip(single, parallel):
         assert all(np.array_equal(a, b) for a, b in zip(one, four))
+
+
+def load_tests(loader, tests, pattern):
+    """Expose this module's bare `test_*` functions to `unittest discover`."""
+    try:
+        from tests.unittest_shim import load_tests_for
+    except ImportError:  # discovery started from inside tests/
+        from unittest_shim import load_tests_for
+    return load_tests_for(globals())
