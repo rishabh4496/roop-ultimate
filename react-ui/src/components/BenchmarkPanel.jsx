@@ -3,6 +3,7 @@ import { useApi } from '../useApi';
 import { AnimatedNumber, Button, Section } from './ui';
 import { Icon } from '../icons';
 import { reportFailure } from '../failureLog';
+import ThreadScalingChart from './diagnostics/ThreadScalingChart';
 
 const WORKLOAD_OPTIONS = [
   { value: '1', mode: 'solo', label: '1 Face (Solo)', desc: 'Single face swap pipeline throughput' },
@@ -736,6 +737,8 @@ export default function BenchmarkPanel({ notify, onSettingsApplied }) {
                 )}
 
                 {/* Settings Comparison Table */}
+                {/* Pool / thread scaling from the sweep the benchmark already ran (result.stages[].scaling). */}
+                <ThreadScalingChart result={result} />
                 {result.comparison && result.comparison.length > 0 && (
                   <div className="rounded-xl border border-white/10 overflow-hidden bg-white/[0.02]">
                     <div className="px-3.5 py-2.5 bg-white/[0.04] border-b border-white/10 flex items-center justify-between">

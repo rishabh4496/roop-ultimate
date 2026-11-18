@@ -7,7 +7,7 @@ import os
 import json
 
 import numpy as np
-from fastapi import APIRouter
+from fastapi import APIRouter, Body
 from fastapi.responses import JSONResponse
 
 import project_checkpoint as checkpoints
@@ -224,6 +224,35 @@ def project_validate(project_id: str):
     if reasons:
         return _failure(record, reasons)
     return {"project": checkpoints.summarize(record), "valid": True}
+
+
+@router.post("/api/projects/{project_id}/relink")
+def project_relink(project_id: str, payload: dict = Body(default=None)):
+    """Point a missing input at its new location. Accepted only for the same file (SHA-256 or pending size)."""
+    payload = payload or {}
+    try:
+        record = checkpoints.load(project_id)
+    except (OSError, ValueError, json.JSONDecodeError):
+        return JSONResponse(status_code=404, content={"message": "project not found"})
+    record = _recover_stale(record)
+    # A project whose worker holds its files open must not change under it. The runtime decides, not the record:
+    # a crash can leave a stored state that says PROCESSING for a worker that no longer exists.
+    api = _api()
+    if (getattr(api, "_active_project_id", "") == project_id and
+            getattr(api, "_progress", {}).get("processing")):
+        return JSONResponse(status_code=409, content={
+            "message": "the project is rendering; relink it after the render stops"})
+    index = payload.get("index")
+    try:
+        index = None if index is None else int(index)
+    except (TypeError, ValueError):
+        return JSONResponse(status_code=400, content={"message": "index must be a whole number"})
+    try:
+        record = checkpoints.relink_input(record, role=str(payload.get("role") or ""),
+                                          index=index, path=str(payload.get("path") or ""))
+    except (OSError, ValueError, RuntimeError) as exc:
+        return JSONResponse(status_code=400, content={"message": str(exc)})
+    return {"project": checkpoints.summarize(record, _validated(record))}
 
 
 @router.post("/api/projects/{project_id}/load")

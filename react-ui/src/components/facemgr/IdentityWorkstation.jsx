@@ -74,7 +74,8 @@ export default function IdentityWorkstation({ notify, setTab, facesetState, onFa
     notify?.(`Opened ${entry.name}`);
   });
   const loadAsSource = (entry) => run(async () => {
-    await postJSON('/api/faceset/library/load', { filename: entry.filename });
+    // Long-running by design: the archive is read and its faces re-detected (see longRunning.js).
+    await postJSON('/api/faceset/library/load', { filename: entry.filename }, { timeout: 0 });
     notify?.(`${entry.name} added to Face Swap sources`);
   });
   const importFsz = (e) => {

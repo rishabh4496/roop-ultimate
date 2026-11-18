@@ -5,6 +5,7 @@ import { Button, Card, MotionIcon } from './ui';
 import { confirmDialog } from './confirm';
 import { LABELS, CHIP_KEYS, fmtDur, fmtVal, primitives, diffSettings } from './settingsDiff';
 import CheckpointDiff from './history/CheckpointDiff';
+import ProjectCheckpoints from './history/ProjectCheckpoints';
 import { Icon } from '../icons';
 import { logFailure, reportFailure } from '../failureLog';
 import { PipelineSummaryCard } from './faceswap/PipelineReport';
@@ -187,6 +188,9 @@ export default function RunHistory({ notify, setSettings, setTab, settings }) {
 
   return (
     <div className="space-y-4">
+      {/* Persistent project checkpoints: resumable render projects, each with its input validation badge and a
+          one-click Resume Exact State in Workstation. Renders nothing when no project has been saved. */}
+      <ProjectCheckpoints notify={notify} setTab={setTab} />
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>

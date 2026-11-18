@@ -5,6 +5,8 @@ import { Button, Card } from './ui';
 import { confirmDialog } from './confirm';
 import { Icon } from '../icons';
 import OutputCompare from './OutputCompare';
+import QuadLightbox from './gallery/QuadLightbox';
+import { compareSelection, pillsFor } from './gallery/mediaMeta';
 import { reportFailure } from '../failureLog';
 import { saveReference } from './faceswap/abReference';
 import { fmtClock, scrubRatio, scrubTime } from './hoverScrub';
@@ -36,6 +38,8 @@ export default function Gallery({ notify, setSettings, setTab }) {
   // selection the bulk actions use, so "pick two, compare them" needs no
   // separate mode to enter.
   const [comparePair, setComparePair] = useState(null);
+  // Quad view (2 to 4 selected renders), opened from the toolbar.
+  const [quadOpen, setQuadOpen] = useState(false);
 
   const fetchOutputs = async () => {
     setLoading(true);
@@ -385,6 +389,24 @@ export default function Gallery({ notify, setSettings, setTab }) {
                 <span>Compare A/B</span>
               </button>
             )}
+            {selectedVisible.length >= 2 && (() => {
+              const cmp = compareSelection(selectedVisible.length);
+              return (
+                <button
+                  type="button"
+                  onClick={() => cmp.ok && setQuadOpen(true)}
+                  disabled={!cmp.ok}
+                  data-testid="quad-compare-button"
+                  className={`px-2.5 py-1 rounded border text-micro font-bold transition-all flex items-center gap-1 ${
+                    cmp.ok
+                      ? 'bg-cyan-500/15 hover:bg-cyan-500/25 border-cyan-400/40 text-white'
+                      : 'bg-white/5 border-white/10 text-white/40 cursor-not-allowed'}`}
+                  title={cmp.ok ? 'Compare these renders side by side on one clock' : cmp.reason}
+                >
+                  <span>Quad view ({selectedVisible.length})</span>
+                </button>
+              );
+            })()}
             {selectedVisible.length > 0 && (
               <button
                 type="button"
@@ -614,6 +636,44 @@ export default function Gallery({ notify, setSettings, setTab }) {
           />
         );
       })()}
+
+      {/* Quad view: 2 to 4 renders on one clock, each tile with its own metadata pills. */}
+      {quadOpen && (() => {
+        const picked = selectedVisible
+          .map((name) => files.find((f) => f.name === name))
+          .filter(Boolean)
+          .slice(0, 4)
+          .map((f) => ({
+            name: f.name,
+            kind: f.kind === 'video' ? 'video' : 'image',
+            url: fileUrl(`${outputPath}/${f.name}`),
+            entry: historyByName[f.name] || null,
+          }));
+        if (picked.length < 2) { setQuadOpen(false); return null; }
+        return (
+          <QuadLightbox
+            items={picked}
+            onClose={() => setQuadOpen(false)}
+            onRemove={(name) => toggleSelect(name)}
+          />
+        );
+      })()}
+    </div>
+  );
+}
+
+// The metadata pills on a card. Only values the run actually recorded are shown (see gallery/mediaMeta.js).
+function MetaPills({ entry }) {
+  const pills = pillsFor(entry, null);
+  if (!pills.length) return null;
+  return (
+    <div className="mt-1.5 flex flex-wrap gap-1" data-testid="card-meta-pills">
+      {pills.map((p) => (
+        <span key={p.key} title={p.title} data-pill={p.key}
+              className="rounded-full border border-white/10 bg-white/5 px-1.5 py-0.5 text-nano font-mono text-white/70 whitespace-nowrap">
+          <span className="text-white/65 mr-1">{p.label}</span>{p.value}
+        </span>
+      ))}
     </div>
   );
 }
@@ -824,6 +884,7 @@ function VideoHoverCard({ file, srcUrl, dateStr, sizeStr, onDelete, onReveal, on
             {file.name}
           </p>
           <span className="text-micro font-mono text-muted block mt-0.5">{dateStr}{sizeStr ? ` · ${sizeStr}` : ''}</span>
+          <MetaPills entry={historyEntry} />
         </div>
         <div className="flex justify-between items-center shrink-0">
           <span className="text-micro uppercase font-semibold tracking-wider text-muted">

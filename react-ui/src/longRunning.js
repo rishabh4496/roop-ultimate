@@ -70,6 +70,8 @@ export const LONG_RUNNING = {
   // ── project verbs (the path is `/api/projects/{id}/{verb}`; `validate` is quick)
   'POST /api/projects/{}/load': 'reloads the project\'s media, sources and settings',
   'POST /api/projects/{}/resume': 'reloads a project and restarts its run',
+  // Relink takes the new file's full SHA-256 (multi-GB media: seconds of disk reads) before it can say yes or no.
+  'POST /api/projects/{}/relink': 'hashes the relinked input (SHA-256) so a different file is refused, not guessed',
 };
 
 const escape = (s) => s.replace(/[.*+?^$()|[\]\\]/g, '\\$&');

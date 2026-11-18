@@ -25,6 +25,7 @@ import useRenderLite from './faceswap/useRenderLite';
 import { lastPreview } from './faceswap/lastPreview';
 import { fmtTime } from './faceswap/utils';
 import SegmentMatrix from './segments/SegmentMatrix';
+import QueueMissionControl from './processing/QueueMissionControl';
 
 /**
  * The Processing tab.
@@ -207,6 +208,10 @@ export default function Processing({ progress, settings, notify, setTab,
         {/* The 3-step pill under the run bar: Pre-Scan -> Range Lock -> Render & Mux, from /ws/telemetry only. */}
         <PipelinePill processing={!!processing} className="mt-2.5 px-1" />
       </div>
+
+      {/* Render Queue Mission Control: every job the backend holds, with live speed and stage per job, the worker
+          rack for GOP-aligned slices, and the quick actions. It reads the server's queue itself. */}
+      <QueueMissionControl notify={notify} setTab={setTab} />
 
       {/* Diagnostics HUD: the backend's three stages live, then its finished report (stage wall clocks, seek
           counts, passthrough / GPU frames, peak VRAM, Stage 4 verification, speedup estimate). Above the

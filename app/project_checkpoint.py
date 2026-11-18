@@ -813,6 +813,52 @@ def validate(record: Mapping[str, Any], cfg: Any, current_payload: Mapping[str, 
     return reasons
 
 
+def relink_input(record: Mapping[str, Any], *, role: str, index: int | None, path: str) -> dict:
+    """Point one recorded input (a source or the target) at a file that has moved.
+
+    Only the SAME file is accepted. A relink that pointed at a different clip would resume a different render
+    under this project's name, so the new file's SHA-256 must equal the recorded digest. While a digest is
+    still pending (the record was written on a request thread), the size must match instead, and the digest
+    is left pending for the worker to fill in. Raises ``ValueError`` with the reason; returns the saved record.
+
+    Whether the project is LIVE (its worker holds the files open) is the caller's to check against the runtime,
+    not this function's to guess from the stored state: a crash can leave a record in PREPARING forever."""
+    inputs = dict(record.get("inputs") or {})
+    if role == "target":
+        item = dict(inputs.get("target") or {})
+    elif role == "source":
+        sources = [dict(s) for s in (inputs.get("sources") or [])]
+        if index is None or not (0 <= int(index) < len(sources)):
+            raise ValueError("no such source in this project")
+        item = sources[int(index)]
+    else:
+        raise ValueError("role must be 'source' or 'target'")
+    wanted = str(path or "").strip()
+    if not wanted:
+        raise ValueError("a path is required")
+    candidate = os.path.abspath(os.path.expanduser(wanted))
+    if not os.path.isfile(candidate):
+        raise ValueError(f"no file at {candidate}")
+    if item.get("sha256_pending"):
+        if int(os.path.getsize(candidate)) != int(item.get("size", -1)):
+            raise ValueError("the file's size differs from the recorded file, so it is not the same file")
+        identity = file_identity(candidate, defer_hash=True)
+    else:
+        identity = file_identity(candidate)
+        recorded = str(item.get("sha256") or "")
+        if recorded and identity["sha256"] != recorded:
+            raise ValueError("the file's SHA-256 differs from the recorded file, so it is not the same file")
+    item.update(identity)
+    if role == "target":
+        inputs["target"] = item
+    else:
+        sources[int(index)] = item
+        inputs["sources"] = sources
+    updated = dict(record)
+    updated["inputs"] = inputs
+    return save(updated)
+
+
 def summarize(record: Mapping[str, Any], validation: list[str] | None = None) -> dict:
     checkpoint = record.get("checkpoint") or {}
     return {
@@ -840,6 +886,6 @@ __all__ = [
     "STAGE_CACHE_VERSION", "basis_differences", "discard_stage_cache", "record_stage", "stage_cache_basis",
     "stage_cache_key",
     "stage_sidecar_path", "usable_stage_cache", "verify_sidecar",
-    "update_checkpoint", "update_runtime", "update_state", "validate",
+    "relink_input", "update_checkpoint", "update_runtime", "update_state", "validate",
     "write_journal", "read_journal", "verify_and_recover_segments",
 ]

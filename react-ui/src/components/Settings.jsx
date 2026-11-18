@@ -9,12 +9,11 @@ import { allThemes } from '../themes';
 import { fmtVal } from './settingsDiff';
 import { FOCUS_SETTING_EVENT, SETTINGS_CATALOG } from './settingsCatalog';
 import { TAB_LABELS, tabForSetting } from './settingsTabs';
-import RuntimeSections from './RuntimeSections';
+import DiagnosticsGrid from './diagnostics/DiagnosticsGrid';
 import { SETTINGS_TABS, useWorkspaceStore } from '../store/workspaceStore';
 import { confirmDialog } from './confirm';
 import { Icon } from '../icons';
 import StorageManager from './StorageManager';
-import EnvironmentHealth from './EnvironmentHealth';
 import BenchmarkPanel from './BenchmarkPanel';
 import TrtCachePanel from './TrtCachePanel';
 import EnhancerSettings from './EnhancerSettings';
@@ -767,8 +766,14 @@ export default function Settings({ meta, settings, setSettings, notify, progress
 
         {show('diagnostics') && (
           <>
-            <RuntimeSections runtime={progress?.runtime} />
-                {/* Hardware Benchmark & Optimization Suite */}
+            {/* Stage 8: the diagnostics as one dashboard. Live 60-second sparklines, the environment verdict and
+                compatibility check, the benchmark runner with its thread-scaling chart, and the fourteen runtime
+                sections, all in one grid (DiagnosticsGrid). */}
+            <DiagnosticsGrid
+              notify={notify}
+              meta={meta}
+              runtime={progress?.runtime}
+              benchmark={(
                 <BenchmarkPanel
                   notify={notify}
                   onSettingsApplied={async () => {
@@ -783,11 +788,8 @@ export default function Settings({ meta, settings, setSettings, notify, progress
                     }
                   }}
                 />
-                {/* Standing environment evidence and the update compatibility verdict.
-                    Both were previously unreachable while idle: the runtime report only
-                    rendered inside the Processing tab, and the updater's classification
-                    only existed once you had already run the updater. */}
-                <EnvironmentHealth notify={notify} meta={meta} />
+              )}
+            />
           </>
         )}
 

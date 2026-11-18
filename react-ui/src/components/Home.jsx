@@ -4,18 +4,21 @@ import { useApi } from '../useApi';
 import { Card, Section, Skeleton, AnimatedNumber, MotionIcon } from './ui';
 import { Stagger, Reveal, motion, spring } from '../motion';
 import { CHIP_KEYS, LABELS, fmtVal, fmtDur } from './settingsDiff';
-import { TERMINAL_STATES, jobState } from './faceswap/useQueue';
+import { RUNNABLE_STATES, TERMINAL_STATES, jobState } from './faceswap/useQueue';
 import { Icon } from '../icons';
 import { LiveText, LiveValue } from './LiveTelemetry';
 import { selectProg } from '../store/telemetryStore';
 import QuickLaunch from './home/QuickLaunch';
 import ResumableCheckpoints from './home/ResumableCheckpoints';
+import LaunchpadBand from './home/LaunchpadBand';
 
-// ── Home ──────────────────────────────────────────────────────────────────
-// A launch pad and a ledger. Top to bottom: the live run when there is one,
-// the quick-launch dropzone (a source and a target, then straight into Face
-// Swap), the checkpoints a stopped render can be resumed from, and what has
-// happened so far (runs, outputs, the queue).
+// ── Home: the Studio Launchpad ────────────────────────────────────────────
+// A full-viewport command centre. Top to bottom: the live run when there is one,
+// the launchpad band (live hardware, model-weight readiness, and one click into
+// each workstation module), the quick-launch dropzone (a source and a target,
+// then straight into Face Swap), a carousel of checkpoints a stopped render can
+// be resumed from or opened in the workstation, and what has happened so far
+// (runs, outputs).
 //
 // Everything on it is data. A section that has nothing to show renders nothing
 // rather than a paragraph explaining that it will one day have something: the
@@ -121,8 +124,10 @@ export default function Home({ progress, setTab, setSettings, notify }) {
     setTab('faceswap');
   };
 
+  const queueCount = (queue || []).filter((j) => RUNNABLE_STATES.includes(jobState(j))).length;
+
   return (
-    <Stagger className="space-y-4">
+    <Stagger className="space-y-4 min-h-[calc(100vh-5.5rem)]" data-testid="studio-launchpad">
       {/* ── The live run — only while there is one ─────────────────────── */}
       {progress?.processing && (
         <Reveal>
@@ -159,8 +164,10 @@ export default function Home({ progress, setTab, setSettings, notify }) {
         </Reveal>
       )}
 
+      {/* Studio Launchpad: live hardware, model-weight readiness, and one click into each module. */}
+      <Reveal><LaunchpadBand setTab={setTab} queueCount={queueCount} /></Reveal>
       <Reveal><QuickLaunch setTab={setTab} notify={notify} /></Reveal>
-      <Reveal><ResumableCheckpoints notify={notify} /></Reveal>
+      <Reveal><ResumableCheckpoints notify={notify} setTab={setTab} /></Reveal>
 
       {/* ── Stat row ───────────────────────────────────────────────────── */}
       {loading ? (
