@@ -5,11 +5,12 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { API } from '../../../api';
-import { clampFrameIdx } from '../../../utils/ptsFrameMap';
+import { filmstripSlots, toServerFrame } from '../nle/filmstripModel';
 
 export interface ThumbnailSlot {
   slotIndex: number;
-  frame: number; // exact integer frame_idx
+  frame: number; // exact integer frame_idx (0-based)
+  stride?: number;
   leftPct: number;
   widthPct: number;
 }
@@ -38,34 +39,12 @@ export function useFilmstripThumbnails({
   const failedRef = useRef<Map<number, number>>(new Map());
   const [version, setVersion] = useState(0);
 
-  const span = Math.max(1, viewEnd - viewStart);
-
-  // Compute thumbnail slots based on track width (each thumbnail approx 90-120px wide)
-  const slots = useMemo<ThumbnailSlot[]>(() => {
-    if (trackWidth <= 0 || maxFrames <= 1) return [];
-
-    const thumbWidthPx = 100;
-    const numSlots = Math.max(2, Math.min(24, Math.floor(trackWidth / thumbWidthPx)));
-    const slotSpanFrames = span / numSlots;
-
-    const res: ThumbnailSlot[] = [];
-    for (let i = 0; i < numSlots; i++) {
-      const f = clampFrameIdx(
-        Math.round(viewStart + (i + 0.5) * slotSpanFrames),
-        0,
-        maxFrames
-      );
-      const leftPct = (i / numSlots) * 100;
-      const widthPct = (1 / numSlots) * 100;
-      res.push({
-        slotIndex: i,
-        frame: f,
-        leftPct,
-        widthPct,
-      });
-    }
-    return res;
-  }, [trackWidth, viewStart, span, maxFrames]);
+  // Slots sit on a stride grid (see nle/filmstripModel.ts): density follows pixels, and panning
+  // reuses every still already cached instead of re-requesting the whole strip.
+  const slots = useMemo<ThumbnailSlot[]>(
+    () => filmstripSlots({ viewStart, viewEnd, widthPx: trackWidth, maxFrames }),
+    [trackWidth, viewStart, viewEnd, maxFrames],
+  );
 
   // Clear cache when targetKey changes
   const prevKeyRef = useRef(targetKey);
@@ -116,7 +95,9 @@ export function useFilmstripThumbnails({
       inflightRef.current = { ctrl, frames: new Set(batch) };
 
       try {
-        const url = `${API}/api/target/preview_grid?index=${targetIndex}&frames=${batch.join(',')}&width=160`;
+        // The endpoint takes 1-based UI frames; `batch` is 0-based and ascending, which is also the
+        // order the response comes back in, so the length-prefixed stills below line up with it.
+        const url = `${API}/api/target/preview_grid?index=${targetIndex}&frames=${batch.map(toServerFrame).join(',')}&width=160`;
         const res = await fetch(url, { signal: ctrl.signal });
 
         if (!res.ok) throw new Error('Failed to fetch preview grid');
@@ -155,6 +136,11 @@ export function useFilmstripThumbnails({
           if (!hit) continue;
           cacheRef.current.set(hit.frame, hit.bmp);
         }
+        // Anything asked for that did not arrive (an undecodable still, a short response) sits out a
+        // cool-down. Without this the `version` bump below re-runs the effect, which asks for the same
+        // missing stills again, forever: measured as an unbounded stream of identical requests.
+        const missingUntil = Date.now() + 15000;
+        for (const f of batch) if (!cacheRef.current.has(f)) failedRef.current.set(f, missingUntil);
 
         // Bound LRU to 150 stills
         while (cacheRef.current.size > 150) {
@@ -182,7 +168,10 @@ export function useFilmstripThumbnails({
     }, 120);
 
     return () => clearTimeout(timer);
-  }, [slots, enabled, targetIndex, targetKey]);
+    // `version` is a dependency on purpose: one request carries at most 16 stills, so a wide strip
+    // needs the effect to run again once a batch lands to ask for the rest. It terminates: stills
+    // that arrived are cached and ones that failed sit out a cool-down.
+  }, [slots, enabled, targetIndex, targetKey, version]);
 
   /**
    * Return the cached still for `frame` or nearest within reach frames.

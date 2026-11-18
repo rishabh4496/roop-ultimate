@@ -1447,6 +1447,21 @@ async function startServer() {
   app.get('/api/trajectory/spans', (_req, res) => res.json({ available: true, relative: false,
     tracks: [0, 1].map((track) => ({ track, first: 0, last: 359, frames: 360, ranges: [[0, 359]],
       source_index: track, faceset_id: sourceInfo[track]?.id || null, faceset_path: sourceInfo[track]?.id || null, via: 'mock' })) }));
+  // One track's head pose against frame (roop/trajectory_cache.py `series`: decoder frames, decimated to `points`).
+  // Track 0 sweeps +-62 degrees of yaw so its extreme-pose stretches (|yaw| > 45) are known to the spec; track 1 is frontal.
+  app.get('/api/trajectory/series', (req, res) => {
+    const track = Math.max(0, Number(req.query.track) || 0);
+    const points = Math.max(2, Math.min(5000, Number(req.query.points) || 600));
+    const frames = 360;
+    const n = Math.min(points, frames);
+    const frame = Array.from({ length: n }, (_, i) => Math.round((i * (frames - 1)) / (n - 1)));
+    const amp = track === 0 ? 62 : 8;
+    res.json({
+      available: true, track, frame,
+      yaw: frame.map((f) => Math.round(amp * Math.sin(f / 24) * 100) / 100),
+      pitch: frame.map(() => -8.5), roll: frame.map(() => 2.25),
+    });
+  });
   app.get('/api/trajectory/pose', (req, res) => {
     const frame = Math.max(0, Number(req.query.frame) || 0);
     res.json({

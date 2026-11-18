@@ -1,3 +1,60 @@
+## 2026-11-18 — UI overhaul Stage 4: multi-lane NLE timeline (Face Swap + Extras)
+
+The Pro Studio timeline is now a stack of lanes under a sticky control group (transport deck, overview
+navigator, canvas ruler), in `react-ui/src/components/faceswap/nle/`. **Ruler:** SMPTE timecode and the
+exact `#00412` frame number on every major tick, tick density from pixels per frame. **Playhead:**
+`--accent-cyan` line through every lane, a cap that scrubs, and a floating card (still, frame number,
+timecode) above the ruler while scrubbing. **Lanes**, each with Hide / Lock / Height on its header: V1
+filmstrip (stills on a stride grid, In/Out handles, dimmed outside region, duration readout); face
+coverage heatmap (emerald tracked / amber extreme pose / rose dropout; a click on a problem run jumps to
+it, plus previous/next problem); swap rules (range locks, queue segments, per-range overrides) with
+draggable markers that carry a colour tag and a note; A1 waveform; KF; one lane per face track (the
+header's eye mutes that face's swap). **Transport deck:** start/end, previous/next frame and marker,
+Play, loop In-Out, 0.25x-4x, and J/K/L. **Overview navigator:** drag to pan, edges to zoom, click to
+recentre, wheel, arrow keys. `#/extras` gets the same component over its local video; the filmstrip is
+seeked out of the file, the waveform is Web Audio's decode, and the frame rate is measured from
+presentation timestamps (a hidden off-screen probe, so it does not depend on the player playing).
+
+**Premises in the brief that were false, and what was done:** Extras had no timeline at all (a muted
+autoplay `<video>`). `/api/extras/apply` has no trim, so In/Out in Extras only loops the PREVIEW and the
+toolbar says so; no backend trim was added (it touches audio-sync paths). `runBarSync` never passed
+telemetry faces to `extractWarningTicks`, so pose/occlusion ticks did not exist in the live app: amber now
+comes from `/api/trajectory/series` (pose only; the backend keeps no per-frame occlusion).
+
+**Existing defects found and fixed on the way:** pointer to frame ignored the 256 px header column (a click
+on frame 0 read as ~18% of the clip); Ctrl+wheel was a passive React handler, so it zoomed the track and the
+whole app (the guard in `test_ui_zoom_pan.py` now covers `NleTimeline.tsx`); filmstrip stills were requested
+0-based from a 1-based endpoint (one frame early) and re-requested forever when a still failed to decode;
+every pose tick was classified as a red "Foreign Occlusion" (`value > 25` read yaw degrees as percent);
+`useWorkstationShortcuts` reset the playback rate to 1x on every Play and cancelled an L shuttle started from a
+stopped player; the `M` key and `+ Marker` kept two separate marker lists; the Out handle was drawn outside the
+clip, so it could not be grabbed at the end; the view window stayed at [0, 1] when a clip's length arrived late;
+a scrub's `preventDefault` left focus on the previously clicked button, so Space switched the Pro Studio view
+off. The old `NleTimeline` also redrew every still and the waveform on every playhead move.
+
+**Verified (mock backend, production bundle):** the full `test:render-checks` chain exits 0 (2,156+ passes,
+0 failures; the new `nle-stage4-check.mjs` has 182 checks and the repaired `render-nle-timeline.mjs` 61). e2e
+`nle-stage4.spec.js` (22) and `nle-extras.spec.js` (9) pass, as does `studio-integration.spec.js`. Full e2e
+suite: 322 passed, 32 failed, 39 skipped. The 32 were re-run on a clean checkout of `176aa08`: 31 fail
+identically there (brush/canvas-tools, face-roles, history, frame-budget, stage8/25/26, identity-mixer,
+contrast, layout type-scale, workstation, tab-stops), one stage26 test failed only at `176aa08` (flaky), and
+ONE was mine: `studio-integration` Pre-Scan binding, caused by stabilising `trackLanes` with a key that left
+out the faceset and the swap mute, so a re-assignment looked unchanged. Fixed, with a key unit check and an
+e2e for the mute and the faceset select; it passes. `tsc --strict`: 0 errors in the files this
+stage wrote or changed (5 inherited, all in `PreviewViewport.tsx`). oxlint: 4 errors, all inherited
+(`ExtrasMediaViewport.jsx:145`, `PreviewViewport.tsx:531`, `FaceSwap.jsx` preview region); none from new files.
+`pytest app/tests/test_ui*.py`: 238 passed, 3 failed, and all 3 fail identically on a clean checkout of
+`176aa08` (`test_ui_accessibility` icon-only buttons, `test_ui_type_scale` at `InteractivePreview.jsx:2540`,
+`test_ui_zoom_pan` MagnifierLens). `render-nle-timeline.mjs` was broken and unwired at HEAD; it is repaired,
+extended and wired as `test:nle-render`.
+
+**NOT verified:** nothing here ran against the real backend (no real pre-scan, no real
+`/api/trajectory/series`, no real thumbnails, no render), so the heatmap's amber is unproven on real data.
+No fps or CPU effect was measured (only that the waveform canvas does not repaint on playhead moves). The
+Extras clip fixture is generated with ffmpeg (the spec skips without it). Marker colours and notes are stored
+per browser (`roop_marker_meta_<clip>`), not in the project. SMPTE is non-drop-frame like the rest of the
+app, so 29.97 fps timecode runs behind the wall clock (the `#frame` number is exact). Not committed.
+
 ## 2026-11-18 — VFX viewport inspection tools (Stage 3)
 
 The FaceSwap preview adds 25–800% cursor-centered zoom, pixel inspection, a top-center

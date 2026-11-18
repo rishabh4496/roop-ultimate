@@ -1,18 +1,24 @@
 /**
- * NleTimeline.tsx: Multi-Track Non-Linear Editing Timeline & Keyframe Editor.
+ * NleTimeline.tsx: the multi-lane, frame-accurate Non-Linear Editing timeline.
  *
- * Capabilities:
- *   1. Ruler & Timecode Header: 'HH:MM:SS:FF' frame-accurate ruler with zoom-to-cursor (Ctrl + Wheel),
- *      magnetic snapping to playhead, markers, In/Out trim handles ('I' / 'O'), and chapter markers ('M').
- *   2. V1 Video Filmstrip Lane: Render cached thumbnail strips from /api/target/preview_grid.
- *   3. A1 Audio Waveform Lane: Render audio peak waveform from /api/media/waveform.
- *   4. Per-Target Face Track Lanes ('Track #1', 'Track #2', ...): Horizontal presence bars for every ByteTrack ID,
- *      color-coded by assigned .fsz faceset, with amber/red micro-indicators where hard yaw (>50) or
- *      foreign occlusion (>25%) occurs so users can jump straight to challenging frames.
- *   5. Keyframe Lane ('KF'): Add, drag, copy, and delete parameter keyframes ('Swap Opacity', 'Mask Feather',
- *      'Yaw Erosion', 'Color Match') with interpolation curve selector ('Linear', 'Ease In/Out', 'Hold').
- *   6. 100% Offline Compliance: zero external URLs, CDNs, or fonts.
- *   7. Zero Scrubber Stalls: Cached drag geometry + RAF coalesced dispatch + pointer capture.
+ *   toolbar        step badges (1 Pre-Scan / 2 Range Lock / 3 Render), snap, timecode + frame readout, zoom
+ *   transport deck jump / marker / frame / play / loop / speed / J-K-L (when the host gives it playback)
+ *   overview       the whole clip with a draggable, resizable window
+ *   ruler          canvas: SMPTE timecode + exact frame number, tick density follows pixels
+ *   V1 video       adaptive filmstrip, In / Out trim handles, dimmed outside region, duration readout
+ *   face coverage  emerald / amber / rose heatmap, click a problem run to jump to it
+ *   swap segments  blocks for range locks, queue segments and per-range overrides + draggable markers
+ *   A1 audio       peaks waveform
+ *   KF             parameter keyframes
+ *   face tracks    one lane per ByteTrack id
+ *
+ * The playhead is one cyan line over every lane (`--accent-cyan`); its cap is a scrub handle, and a
+ * floating card with a still, the frame number and the timecode follows it while scrubbing.
+ *
+ * Geometry: every pixel <-> frame mapping goes through nle/nleGeometry.ts against ONE element (the lane
+ * area overlay), so what is drawn and what a click means cannot disagree. 100% offline: no CDN, font or
+ * remote URL. Keys: Space / arrows / Home / End / I / O / M / J K L belong to useWorkstationShortcuts (or
+ * the Extras adapter); this component owns only Delete for a selected keyframe.
  */
 
 import React, {
@@ -21,12 +27,11 @@ import React, {
   useCallback,
   useRef,
   useEffect,
-  type ReactNode,
-  type MouseEvent,
-  type WheelEvent,
+  useReducer,
   type KeyboardEvent,
 } from 'react';
 
+import { API } from '../../api';
 import {
   type RangeLockInterval,
   type KeyframePoint,
@@ -34,26 +39,18 @@ import {
   type PtsTableEntry,
   PtsFrameMap,
   createPtsFrameMap,
-  resolveFrameFromTime,
-  resolveTimeFromFrame,
   clampFrameIdx,
   frameToTimecode,
-  timecodeToFrame,
   formatSeconds,
   createRangeLockInterval,
   clampRangeLockInterval,
-  createKeyframePoint,
-  clampKeyframe,
-  normalizeKeyframePoints,
 } from '../../utils/ptsFrameMap';
 
 import {
   type ChapterMarker,
   type SnapTarget,
-  type SnapResult,
   snapToFrame,
   calculateZoomToCursor,
-  generateRulerTicks,
 } from './timeline/timelineSnap';
 
 import {
@@ -70,8 +67,32 @@ import {
 import { useAudioWaveform } from './timeline/useAudioWaveform';
 import { useFilmstripThumbnails } from './timeline/useFilmstripThumbnails';
 
+import { LANE_HEADER_PX, clientXToFrame, frameToLaneX } from './nle/nleGeometry';
+import { RulerCanvas, RULER_HEIGHT } from './nle/RulerCanvas';
+import { WaveformCanvas } from './nle/WaveformCanvas';
+import { FilmstripCanvas } from './nle/FilmstripCanvas';
+import { FaceHealthLane } from './nle/FaceHealthLane';
+import { SegmentLane } from './nle/SegmentLane';
+import { KeyframeLane } from './nle/KeyframeLane';
+import { FaceTrackLane } from './nle/FaceTrackLane';
+import { LaneHeader } from './nle/LaneHeader';
+import { TransportDeck } from './nle/TransportDeck';
+import { MinimapNavigator, type MinimapTrack } from './nle/MinimapNavigator';
+import { ScrubTooltip } from './nle/ScrubTooltip';
+import { MarkerPopover } from './nle/MarkerPopover';
+import { useElementSize } from './nle/useElementSize';
+import { useScrubThumbnail, serverFrameFetcher } from './nle/useScrubThumbnail';
+import { useFrameGrabber, grabberFetcher, useClientFilmstrip, useWebAudioWaveform } from './nle/clientMedia';
+import { healthSegments, summarizeHealth, problemFrames } from './nle/faceHealth';
+import { formatFrameLabel } from './nle/rulerModel';
+import { neighbourFrame, loopRegion, regionLength, formatDuration } from './nle/transportModel';
+import { wheelMinimap, spanToZoom, zoomToSpan, reconcileView } from './nle/minimapModel';
+import { COLLAPSED_PX, LANE_HEIGHTS, LANE_LABELS, laneBodyPx, loadLaneStates, reduceLanes, saveLaneStates, type LaneId } from './nle/laneLayout';
+import type { SegmentBlock } from './nle/segmentModel';
+import { DEFAULT_MARKER_COLOR } from './nle/markerModel';
+
 // Re-export core interval, keyframe, and marker interfaces
-export type { RangeLockInterval, KeyframePoint, ChapterMarker, NleKeyframe, TimelineParamType, TimelineCurveType };
+export type { RangeLockInterval, KeyframePoint, ChapterMarker, NleKeyframe, TimelineParamType, TimelineCurveType, SegmentBlock };
 
 // ── Types & Interfaces ─────────────────────────────────────────────────────────
 
@@ -99,6 +120,8 @@ export interface WarningTick {
   severity: 'warning' | 'info' | 'error';
   message: string;
   value?: number;
+  /** frames this tick stands for (a decimated pose series); the coverage lane paints its neighbourhood */
+  span?: number;
 }
 
 export interface SuggestedFszAssignment {
@@ -111,6 +134,12 @@ export interface SuggestedFszAssignment {
   confidence?: number;
 }
 
+/** A clip held in the browser (Extras): stills and peaks are built client-side, not requested. */
+export interface NleMediaSource {
+  url: string;
+  file: File;
+}
+
 export interface NleTimelineProps {
   // Current playback position
   frame?: number;
@@ -118,12 +147,16 @@ export interface NleTimelineProps {
   currentTime?: number;
   maxFrames: number;
   fps?: number;
+  /** the rate was guessed (no metadata), so timecodes are approximate */
+  fpsAssumed?: boolean;
   isPlaying?: boolean;
 
   // Media targeting (for waveform & filmstrip)
   targetIndex?: number | null;
   mediaId?: string | null;
   targetKey?: string;
+  /** build stills and peaks in the browser from this local file instead of asking the server */
+  mediaSource?: NleMediaSource | null;
 
   // PTS table & VFR exact mapping
   ptsTable?: PtsTableRawInput | PtsFrameMap | PtsTableEntry[];
@@ -146,12 +179,37 @@ export interface NleTimelineProps {
   trimIn?: number;
   trimOut?: number;
 
-  // Chapter markers ('M')
+  // Chapter markers: with `onAddMarker` the host owns them (and persists them)
   markers?: ChapterMarker[];
 
   // Identity / parameter keyframes (exact integer frame_idx)
   keyframes?: NleKeyframe[] | KeyframePoint[];
   activeKeyframeParam?: TimelineParamType;
+
+  // Swap-rule / segment blocks for the segment lane (0-based inclusive frames)
+  segmentBlocks?: SegmentBlock[];
+  onSegmentClick?: (block: SegmentBlock) => void;
+  /** the lane's name: "Swap rules" in the workstation, "Markers" where there are no swap rules (Extras) */
+  segmentLaneTitle?: string;
+  /** shown beside the In-Out duration when the region does not drive anything but the preview */
+  regionNote?: string;
+  /**
+   * Keys for hosts with no global shortcut layer (Extras). Called first with a key pressed while the
+   * timeline has focus; return true when handled. FaceSwap leaves it unset: useWorkstationShortcuts owns
+   * Space / arrows / I / O / M / J K L there, and a second handler would double-fire (M would add then toggle off).
+   */
+  hostKeys?: (e: KeyboardEvent<HTMLDivElement>) => boolean;
+
+  // Transport deck: shown when the host supplies `onTogglePlay`
+  playbackRate?: number;
+  isLooping?: boolean;
+  onTogglePlay?: () => void;
+  onStep?: (delta: number) => void;
+  onPlaybackRateChange?: (rate: number) => void;
+  onToggleLoop?: () => void;
+  onShuttle?: (key: 'j' | 'k' | 'l') => void;
+  shuttleLabel?: string;
+  shuttleDir?: number;
 
   // Snapping toggle
   snapEnabled?: boolean;
@@ -181,11 +239,16 @@ export interface NleTimelineProps {
   isPreScanActive?: boolean;
   isRangeLockActive?: boolean;
   isRenderActive?: boolean;
+  /** hide the 1 / 2 / 3 pipeline badges (Extras has no swap pipeline) */
+  showPipelineSteps?: boolean;
   showWarningTicks?: boolean;
   showSuggestedFsz?: boolean;
   showFilmstripLane?: boolean;
   showWaveformLane?: boolean;
   showKeyframeLane?: boolean;
+  showHealthLane?: boolean;
+  showSegmentLane?: boolean;
+  showFaceTrackLanes?: boolean;
 
   // Customization
   className?: string;
@@ -221,6 +284,84 @@ export function getFacesetColor(facesetName?: string | null, fallback = '#38bdf8
   return TRACK_PALETTE[Math.abs(hash) % TRACK_PALETTE.length];
 }
 
+// ── helpers ────────────────────────────────────────────────────────────────────
+
+const SNAP_RADIUS_PX = 6;
+const WHEEL_ZOOM_RATE = 0.002;
+const clampN = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n));
+
+/** localStorage can throw on access (blocked storage); the layout simply does not persist then. */
+function safeStorage(): Storage | null {
+  try {
+    return typeof window !== 'undefined' ? window.localStorage : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Returns the previous reference while `key` is unchanged, so an unstable caller array does not bust memos. */
+function useStableBy<T>(value: T, key: string): T {
+  const ref = useRef<{ key: string; value: T }>({ key, value });
+  if (ref.current.key !== key) ref.current = { key, value };
+  return ref.current.value;
+}
+
+const warningsKey = (ticks: ReadonlyArray<WarningTick>) => {
+  let h = ticks.length;
+  for (const t of ticks) h = (h * 31 + t.frame * 7 + (t.type === 'pose' ? 1 : t.type === 'occlusion' ? 2 : 3) + t.trackId + (t.span ?? 1) * 13) | 0;
+  return `${ticks.length}:${h}`;
+};
+// Every field a lane RENDERS must be in the key, not just the ranges the coverage heatmap reads: a key of ids +
+// ranges alone made a faceset re-assignment or a swap mute (same ranges) look unchanged, so the lane kept
+// showing the old value.
+export const tracksKey = (tracks: ReadonlyArray<ByteTrackLane>) =>
+  tracks
+    .map((t) => [t.trackId, t.label, t.active, t.color, t.facesetId, t.facesetPath, t.suggestedFsz, t.sourceIndex, t.totalFrames, t.via, t.ranges.join(',')].join('~'))
+    .join('|');
+
+interface LaneRowProps {
+  id: LaneId;
+  testId?: string;
+  badge: string;
+  badgeClass: string;
+  title: string;
+  state: ReturnType<typeof loadLaneStates>[LaneId];
+  onToggleHidden?: () => void;
+  onToggleLocked?: () => void;
+  onCycleHeight?: () => void;
+  extra?: React.ReactNode;
+  status?: React.ReactNode;
+  titleVisible?: boolean;
+  children?: React.ReactNode;
+  heightPx: number;
+  className?: string;
+}
+
+/** One `[header | lane area]` row. A hidden lane keeps its header strip but renders no body. */
+function LaneRow({ id, testId, badge, badgeClass, title, state, onToggleHidden, onToggleLocked, onCycleHeight, extra, status, children, heightPx, className = '' }: LaneRowProps) {
+  return (
+    <div className={`flex w-full border-b border-white/5 ${className}`} data-testid={testId} data-lane={id} data-hidden={state.hidden ? '1' : '0'} data-height={state.height} data-locked={state.locked ? '1' : '0'} style={{ height: heightPx }}>
+      <LaneHeader
+        laneId={id}
+        badge={badge}
+        badgeClass={badgeClass}
+        title={title}
+        state={state}
+        onToggleHidden={onToggleHidden}
+        onToggleLocked={onToggleLocked}
+        onCycleHeight={onCycleHeight}
+        extra={extra}
+        status={status}
+        width={LANE_HEADER_PX}
+        height={heightPx}
+      />
+      <div className="relative flex-1 overflow-hidden bg-black/25" data-testid={testId ? `${testId}-body` : undefined}>
+        {state.hidden ? null : children}
+      </div>
+    </div>
+  );
+}
+
 // ── Component Implementation ──────────────────────────────────────────────────
 
 export const NleTimeline: React.FC<NleTimelineProps> = ({
@@ -229,24 +370,39 @@ export const NleTimeline: React.FC<NleTimelineProps> = ({
   currentTime,
   maxFrames: rawMaxFrames,
   fps = 30,
+  fpsAssumed = false,
   isPlaying = false,
   targetIndex = null,
   mediaId = null,
   targetKey = '',
+  mediaSource = null,
   ptsTable,
   ptsFrameMap: customPtsFrameMap,
-  trackLanes = [],
-  warningTicks = [],
+  trackLanes: trackLanesProp = [],
+  warningTicks: warningTicksProp = [],
   suggestedAssignments = [],
   rangeLockIntervals = [],
   selectedTrackId = null,
-  selectedRangeId = null,
   trimIn: trimInProp,
   trimOut: trimOutProp,
   markers: markersProp = [],
   keyframes: keyframesProp = [],
   activeKeyframeParam: activeParamProp = 'Swap Opacity',
   facesets = [],
+  segmentBlocks = [],
+  onSegmentClick,
+  segmentLaneTitle = 'Swap rules',
+  regionNote = '',
+  hostKeys,
+  playbackRate = 1,
+  isLooping = false,
+  onTogglePlay,
+  onStep,
+  onPlaybackRateChange,
+  onToggleLoop,
+  onShuttle,
+  shuttleLabel = '',
+  shuttleDir = 0,
   snapEnabled: initialSnapEnabled = true,
   onSeek,
   onSelectTrack,
@@ -266,78 +422,92 @@ export const NleTimeline: React.FC<NleTimelineProps> = ({
   onRenderClick,
   onBatchClick,
   stagedJobsCount = 0,
-  batchStrategy = '',
   isPreScanActive = false,
   isRangeLockActive = false,
   isRenderActive = false,
+  showPipelineSteps = true,
   showWarningTicks = true,
   showSuggestedFsz = true,
   showFilmstripLane = true,
   showWaveformLane = true,
   showKeyframeLane = true,
+  showHealthLane = true,
+  showSegmentLane = true,
+  showFaceTrackLanes = true,
   className = '',
   style,
 }) => {
   const maxFrames = Math.max(1, Math.round(rawMaxFrames));
+  const lastFrame = maxFrames - 1;
+  const trackLanes = useStableBy(trackLanesProp, tracksKey(trackLanesProp));
+  const warningTicks = useStableBy(warningTicksProp, warningsKey(warningTicksProp));
+  const clientMode = !!mediaSource;
 
   // Initialize or memoize PTS Frame Map
   const frameMap = useMemo(() => {
-    if (customPtsFrameMap instanceof PtsFrameMap) {
-      return customPtsFrameMap;
-    }
-    if (ptsTable) {
-      return createPtsFrameMap(ptsTable, fps);
-    }
+    if (customPtsFrameMap instanceof PtsFrameMap) return customPtsFrameMap;
+    if (ptsTable) return createPtsFrameMap(ptsTable, fps);
     return createPtsFrameMap(null, fps);
   }, [customPtsFrameMap, ptsTable, fps]);
 
   // Resolve current active integer frame index
   const activeFrame = useMemo(() => {
-    if (typeof frameProp === 'number' && Number.isFinite(frameProp)) {
-      return clampFrameIdx(frameProp, 0, maxFrames);
-    }
-    if (typeof currentFrameProp === 'number' && Number.isFinite(currentFrameProp)) {
-      return clampFrameIdx(currentFrameProp, 0, maxFrames);
-    }
-    if (typeof currentTime === 'number' && Number.isFinite(currentTime)) {
-      return frameMap.resolveFrameFromTime(currentTime);
-    }
+    if (typeof frameProp === 'number' && Number.isFinite(frameProp)) return clampFrameIdx(frameProp, 0, maxFrames);
+    if (typeof currentFrameProp === 'number' && Number.isFinite(currentFrameProp)) return clampFrameIdx(currentFrameProp, 0, maxFrames);
+    if (typeof currentTime === 'number' && Number.isFinite(currentTime)) return frameMap.resolveFrameFromTime(currentTime);
     return 0;
   }, [frameProp, currentFrameProp, currentTime, maxFrames, frameMap]);
 
   // Trim In / Out points (exact integer frames)
-  const trimIn = useMemo(() => {
-    const raw = typeof trimInProp === 'number' ? trimInProp : 0;
-    return clampFrameIdx(raw, 0, maxFrames);
-  }, [trimInProp, maxFrames]);
+  const trimIn = useMemo(() => clampFrameIdx(typeof trimInProp === 'number' ? trimInProp : 0, 0, maxFrames), [trimInProp, maxFrames]);
+  const trimOut = useMemo(() => clampFrameIdx(typeof trimOutProp === 'number' ? trimOutProp : maxFrames - 1, trimIn, maxFrames), [trimOutProp, trimIn, maxFrames]);
+  const region = useMemo(() => loopRegion(trimIn, trimOut, maxFrames), [trimIn, trimOut, maxFrames]);
+  const regionIsWhole = region.in === 0 && region.out === lastFrame;
 
-  const trimOut = useMemo(() => {
-    const raw = typeof trimOutProp === 'number' ? trimOutProp : maxFrames - 1;
-    return clampFrameIdx(raw, trimIn, maxFrames);
-  }, [trimOutProp, trimIn, maxFrames]);
+  // ── Lane state (hide / lock / height), persisted per viewer ──────────────────
+  const [lanes, dispatchLanes] = useReducer(reduceLanes, undefined, () => loadLaneStates(safeStorage()));
+  useEffect(() => { saveLaneStates(safeStorage(), lanes); }, [lanes]);
+  const laneActions = (id: LaneId) => ({
+    onToggleHidden: () => dispatchLanes({ type: 'toggleHidden', id }),
+    onToggleLocked: () => dispatchLanes({ type: 'toggleLocked', id }),
+    onCycleHeight: () => dispatchLanes({ type: 'cycleHeight', id }),
+  });
 
-  // Chapter markers state (internal fallback if not controlled)
+  // ── Chapter markers ──────────────────────────────────────────────────────────
+  // Host-owned when it hands an `onAddMarker`; otherwise an in-memory list so the component stands alone.
   const [internalMarkers, setInternalMarkers] = useState<ChapterMarker[]>([]);
-  const markers = useMemo(() => {
-    return markersProp.length > 0 ? markersProp : internalMarkers;
-  }, [markersProp, internalMarkers]);
+  const markersControlled = !!onAddMarker;
+  const markers = markersControlled ? markersProp : internalMarkers;
+  const [popover, setPopover] = useState<{ id: string; anchor: { left: number; top: number } } | null>(null);
+  const popoverMarker = popover ? markers.find((m) => m.id === popover.id) || null : null;
+
+  const addMarkerAt = useCallback((f: number) => {
+    if (markers.some((m) => m.frame === f)) return;
+    const marker: ChapterMarker = { id: `marker_${f + 1}`, frame: f, label: 'Marker', color: DEFAULT_MARKER_COLOR, note: '', createdAt: Date.now() };
+    if (markersControlled) onAddMarker?.(marker);
+    else setInternalMarkers((prev) => [...prev, { ...marker, id: `marker_${f}_${Date.now()}` }].sort((a, b) => a.frame - b.frame));
+  }, [markers, markersControlled, onAddMarker]);
+
+  const updateMarker = useCallback((marker: ChapterMarker) => {
+    if (markersControlled) onUpdateMarker?.(marker);
+    else setInternalMarkers((prev) => prev.map((m) => (m.id === marker.id ? marker : m)).sort((a, b) => a.frame - b.frame));
+  }, [markersControlled, onUpdateMarker]);
+
+  const deleteMarker = useCallback((id: string) => {
+    if (markersControlled) onDeleteMarker?.(id);
+    else setInternalMarkers((prev) => prev.filter((m) => m.id !== id));
+    setPopover(null);
+  }, [markersControlled, onDeleteMarker]);
 
   // Active Keyframe Parameter Selection
   const [activeParam, setActiveParam] = useState<TimelineParamType>(activeParamProp);
-  useEffect(() => {
-    if (activeParamProp) {
-      setActiveParam(activeParamProp);
-    }
-  }, [activeParamProp]);
+  useEffect(() => { if (activeParamProp) setActiveParam(activeParamProp); }, [activeParamProp]);
 
   // Normalized parameter keyframes
   const nleKeyframes = useMemo<NleKeyframe[]>(() => {
     if (!keyframesProp || keyframesProp.length === 0) return [];
     return keyframesProp.map((k: any) => {
-      if ('param' in k && 'curve' in k) {
-        return k as NleKeyframe;
-      }
-      // Convert legacy KeyframePoint
+      if ('param' in k && 'curve' in k) return k as NleKeyframe;
       return {
         id: k.id || `kf_${k.frame_idx}`,
         frame_idx: clampFrameIdx(k.frame_idx, 0, maxFrames),
@@ -348,91 +518,76 @@ export const NleTimeline: React.FC<NleTimelineProps> = ({
       };
     });
   }, [keyframesProp, maxFrames]);
-
+  const activeParamKeyframes = useMemo(() => nleKeyframes.filter((k) => k.param === activeParam), [nleKeyframes, activeParam]);
   const [selectedKeyframeId, setSelectedKeyframeId] = useState<string | null>(null);
 
-  // Snapping enabled state
+  // Snapping
   const [snapEnabled, setSnapEnabled] = useState(initialSnapEnabled);
   const [snapIndicatorFrame, setSnapIndicatorFrame] = useState<number | null>(null);
 
-  // ── Viewport Window & Zoom State ─────────────────────────────────────────────
-  // view: [viewStart, viewEnd] in integer frame numbers [0, maxFrames - 1]
-  const [viewRange, setViewRange] = useState<[number, number]>([0, maxFrames - 1]);
-
-  // Adjust view range when maxFrames changes significantly
+  // ── Viewport window ──────────────────────────────────────────────────────────
+  const [viewRange, setViewRange] = useState<[number, number]>([0, lastFrame]);
+  // A window that showed the whole clip keeps showing the whole clip when its length changes (see
+  // reconcileView); a different clip always starts fitted.
+  const prevLastRef = useRef(lastFrame);
+  const clipIdRef = useRef(`${targetKey}|${mediaSource?.url || ''}`);
   useEffect(() => {
-    setViewRange((prev) => {
-      const start = clampFrameIdx(prev[0], 0, maxFrames);
-      const end = clampFrameIdx(prev[1], start + 1, maxFrames);
-      return [start, end];
-    });
-  }, [maxFrames]);
-
+    const clipId = `${targetKey}|${mediaSource?.url || ''}`;
+    const sameClip = clipIdRef.current === clipId;
+    clipIdRef.current = clipId;
+    const prevLast = prevLastRef.current;
+    prevLastRef.current = lastFrame;
+    setViewRange((prev) => (sameClip ? reconcileView(prev, prevLast, lastFrame) : [0, lastFrame]));
+  }, [lastFrame, targetKey, mediaSource?.url]);
   const [viewStart, viewEnd] = viewRange;
   const viewSpan = Math.max(1, viewEnd - viewStart);
 
-  // Runway DOM Container Ref & Track Width
-  const runwayRef = useRef<HTMLDivElement>(null);
-  const [runwayWidth, setRunwayWidth] = useState(1000);
+  // The lane area: one element every pixel <-> frame mapping reads (see nle/nleGeometry.ts).
+  const rootRef = useRef<HTMLDivElement>(null);
+  const areaRef = useRef<HTMLDivElement>(null);
+  const { width: areaWidth } = useElementSize(areaRef);
+  const pxPerFrame = areaWidth > 0 ? areaWidth / viewSpan : 1;
 
-  useEffect(() => {
-    if (!runwayRef.current) return;
-    const updateWidth = () => {
-      if (runwayRef.current) {
-        setRunwayWidth(Math.max(200, runwayRef.current.clientWidth));
-      }
-    };
-    updateWidth();
-    const ro = new ResizeObserver(updateWidth);
-    ro.observe(runwayRef.current);
-    return () => ro.disconnect();
-  }, []);
-
-  // ── Audio Waveform & Video Filmstrip Hooks ──────────────────────────────────
-  const waveform = useAudioWaveform({
-    targetIndex,
-    mediaId,
-    targetKey,
-    buckets: Math.min(2000, Math.max(200, Math.round(runwayWidth * 1.5))),
-    enabled: showWaveformLane,
+  // ── Media: stills + peaks from the server, or built in the browser for a local file ─────────
+  const waveServer = useAudioWaveform({
+    targetIndex, mediaId, targetKey,
+    buckets: Math.min(2000, Math.max(200, Math.round(areaWidth * 1.5))),
+    enabled: showWaveformLane && !clientMode && !lanes.a1.hidden,
   });
+  const waveClient = useWebAudioWaveform(mediaSource?.file ?? null, showWaveformLane && clientMode && !lanes.a1.hidden);
+  const wave = clientMode
+    ? { peaks: waveClient.peaks, duration: waveClient.duration, state: waveClient.state, reason: waveClient.reason }
+    : { peaks: waveServer.peaks, duration: waveServer.duration, state: waveServer.state, reason: undefined as string | undefined };
 
-  const filmstrip = useFilmstripThumbnails({
-    targetIndex,
-    targetKey,
-    viewStart,
-    viewEnd,
-    maxFrames,
-    trackWidth: runwayWidth,
-    enabled: showFilmstripLane,
+  const grabber = useFrameGrabber(mediaSource?.url, fps);
+  const filmServer = useFilmstripThumbnails({
+    targetIndex, targetKey, viewStart, viewEnd, maxFrames, trackWidth: areaWidth,
+    enabled: showFilmstripLane && !clientMode && !lanes.v1.hidden,
   });
+  const filmClient = useClientFilmstrip({
+    grabber, mediaKey: mediaSource?.url || '', viewStart, viewEnd, maxFrames, trackWidth: areaWidth,
+    enabled: showFilmstripLane && clientMode && !lanes.v1.hidden,
+  });
+  const film = clientMode ? filmClient : filmServer;
 
-  // ── Coordinate Conversions ───────────────────────────────────────────────────
-  const frameToFraction = useCallback(
-    (frameIdx: number) => {
-      const clamped = clampFrameIdx(frameIdx, 0, maxFrames);
-      if (viewSpan <= 0) return 0;
-      return (clamped - viewStart) / viewSpan;
-    },
-    [viewStart, viewSpan, maxFrames]
+  const frameFetcher = useMemo(() => {
+    if (clientMode) return grabberFetcher(grabber);
+    return targetIndex !== null && targetIndex >= 0 ? serverFrameFetcher(API, targetIndex) : null;
+  }, [clientMode, grabber, targetIndex]);
+
+  // ── Face coverage ────────────────────────────────────────────────────────────
+  const healthSegs = useMemo(
+    () => healthSegments({ maxFrames, trackRanges: trackLanes.flatMap((t) => t.ranges), warnings: warningTicks, scanned: trackLanes.length > 0 }),
+    [maxFrames, trackLanes, warningTicks],
+  );
+  const healthSummary = useMemo(() => summarizeHealth(healthSegs), [healthSegs]);
+  const problems = useMemo(() => problemFrames(healthSegs), [healthSegs]);
+  const minimapTracks = useMemo<MinimapTrack[]>(
+    () => trackLanes.map((t) => ({ trackId: t.trackId, color: getFacesetColor(t.facesetPath || t.suggestedFsz, getTrackColor(t.trackId, t.color)), ranges: t.ranges })),
+    [trackLanes],
   );
 
-  // Cached drag rect for zero-stall scrubbing
-  const dragRectRef = useRef<{ left: number; width: number } | null>(null);
-
-  const xToFrame = useCallback(
-    (clientX: number, cachedRect?: { left: number; width: number } | null) => {
-      const rect = cachedRect || dragRectRef.current || runwayRef.current?.getBoundingClientRect();
-      if (!rect || rect.width <= 0) return viewStart;
-      const x = Math.max(0, Math.min(rect.width, clientX - rect.left));
-      const ratio = x / rect.width;
-      const rawFrame = viewStart + ratio * viewSpan;
-      return clampFrameIdx(rawFrame, 0, maxFrames);
-    },
-    [viewStart, viewSpan, maxFrames]
-  );
-
-  // Snap Targets calculation
+  // ── Snap targets ─────────────────────────────────────────────────────────────
   const snapTargets = useMemo<SnapTarget[]>(() => {
     if (!snapEnabled) return [];
     const targets: SnapTarget[] = [
@@ -440,1628 +595,957 @@ export const NleTimeline: React.FC<NleTimelineProps> = ({
       { frame: trimIn, type: 'trim_in', label: 'Trim In' },
       { frame: trimOut, type: 'trim_out', label: 'Trim Out' },
     ];
-
-    markers.forEach((m) => {
-      targets.push({ frame: m.frame, type: 'marker', label: m.label });
-    });
-
-    nleKeyframes
-      .filter((k) => k.param === activeParam)
-      .forEach((k) => {
-        targets.push({ frame: k.frame_idx, type: 'keyframe', label: `${k.param} Keyframe` });
-      });
-
-    trackLanes.forEach((t) => {
-      t.ranges.forEach(([start, end]) => {
-        targets.push({ frame: start, type: 'range_edge', label: `${t.label} Start` });
-        targets.push({ frame: end, type: 'range_edge', label: `${t.label} End` });
-      });
-    });
-
+    markers.forEach((m) => targets.push({ frame: m.frame, type: 'marker', label: m.label }));
+    activeParamKeyframes.forEach((k) => targets.push({ frame: k.frame_idx, type: 'keyframe', label: `${k.param} Keyframe` }));
+    trackLanes.forEach((t) => t.ranges.forEach(([s, e]) => {
+      targets.push({ frame: s, type: 'range_edge', label: `${t.label} Start` });
+      targets.push({ frame: e, type: 'range_edge', label: `${t.label} End` });
+    }));
     return targets;
-  }, [snapEnabled, activeFrame, trimIn, trimOut, markers, nleKeyframes, activeParam, trackLanes]);
+  }, [snapEnabled, activeFrame, trimIn, trimOut, markers, activeParamKeyframes, trackLanes]);
+  const snapThreshold = Math.max(0, Math.round(SNAP_RADIUS_PX / pxPerFrame));
 
-  // ── Seek & Navigation (Coalesced & Zero-Stall) ────────────────────────────────
+  // ── Pointer <-> frame ────────────────────────────────────────────────────────
+  const dragAreaRef = useRef<{ left: number; width: number } | null>(null);
+  const readArea = () => {
+    const rect = areaRef.current?.getBoundingClientRect();
+    return rect ? { left: rect.left, width: rect.width } : null;
+  };
+  const xToFrame = useCallback(
+    (clientX: number, area: { left: number; width: number } | null = dragAreaRef.current || readArea()) =>
+      clientXToFrame(clientX, area, viewStart, viewEnd, maxFrames),
+    [viewStart, viewEnd, maxFrames],
+  );
+  const snapFrame = useCallback((f: number) => snapToFrame(f, snapTargets, snapThreshold), [snapTargets, snapThreshold]);
+
+  // ── Seek (coalesced to one dispatch per animation frame while dragging) ─────────────────────
   const rafSeekRef = useRef<number | null>(null);
   const pendingSeekFrameRef = useRef<number | null>(null);
-
-  const handleSeekFrame = useCallback(
-    (targetFrame: number, immediate = true) => {
-      const exactFrame = clampFrameIdx(targetFrame, 0, maxFrames);
-
-      if (immediate) {
-        if (rafSeekRef.current !== null) {
-          cancelAnimationFrame(rafSeekRef.current);
-          rafSeekRef.current = null;
-        }
-        const timeSec = frameMap.resolveTimeFromFrame(exactFrame);
-        onSeek?.(exactFrame, timeSec);
-      } else {
-        pendingSeekFrameRef.current = exactFrame;
-        if (rafSeekRef.current === null) {
-          rafSeekRef.current = requestAnimationFrame(() => {
-            rafSeekRef.current = null;
-            if (pendingSeekFrameRef.current !== null) {
-              const f = pendingSeekFrameRef.current;
-              pendingSeekFrameRef.current = null;
-              const timeSec = frameMap.resolveTimeFromFrame(f);
-              onSeek?.(f, timeSec);
-            }
-          });
-        }
-      }
-    },
-    [maxFrames, frameMap, onSeek]
-  );
-
-  // Scrubber Dragging with Pointer Capture & Magnetic Snapping
-  const [isScrubbing, setIsScrubbing] = useState(false);
-
-  const handleScrubberMouseDown = useCallback(
-    (e: MouseEvent<HTMLDivElement>) => {
-      e.preventDefault();
-      setIsScrubbing(true);
-
-      const rect = runwayRef.current?.getBoundingClientRect();
-      if (rect) {
-        dragRectRef.current = { left: rect.left, width: rect.width };
-      }
-
-      const rawFrame = xToFrame(e.clientX, dragRectRef.current);
-      const snapRes = snapToFrame(rawFrame, snapTargets, Math.max(2, Math.round(viewSpan / 200)));
-
-      if (snapRes.snapped) {
-        setSnapIndicatorFrame(snapRes.frame);
-      } else {
-        setSnapIndicatorFrame(null);
-      }
-
-      handleSeekFrame(snapRes.frame, true);
-
-      const onMouseMove = (ev: globalThis.MouseEvent) => {
-        const nextRaw = xToFrame(ev.clientX, dragRectRef.current);
-        const sRes = snapToFrame(nextRaw, snapTargets, Math.max(2, Math.round(viewSpan / 200)));
-
-        if (sRes.snapped) {
-          setSnapIndicatorFrame(sRes.frame);
-        } else {
-          setSnapIndicatorFrame(null);
-        }
-
-        handleSeekFrame(sRes.frame, false);
-      };
-
-      const onMouseUp = () => {
-        setIsScrubbing(false);
-        setSnapIndicatorFrame(null);
-        dragRectRef.current = null;
-        window.removeEventListener('mousemove', onMouseMove);
-        window.removeEventListener('mouseup', onMouseUp);
-      };
-
-      window.addEventListener('mousemove', onMouseMove);
-      window.addEventListener('mouseup', onMouseUp);
-    },
-    [xToFrame, snapTargets, viewSpan, handleSeekFrame]
-  );
-
-  // ── Zoom-to-Cursor & Pan ────────────────────────────────────────────────────
-  const handleZoom = useCallback(
-    (factor: number, anchorFraction = 0.5) => {
-      setViewRange((prev) => calculateZoomToCursor(prev, factor, anchorFraction, maxFrames, 4));
-    },
-    [maxFrames]
-  );
-
-  const handleResetZoom = useCallback(() => {
-    setViewRange([0, maxFrames - 1]);
-  }, [maxFrames]);
-
-  const handleWheel = useCallback(
-    (e: WheelEvent<HTMLDivElement>) => {
-      const rect = runwayRef.current?.getBoundingClientRect();
-      const cursorX = rect ? e.clientX - rect.left : 0;
-      const fraction = rect && rect.width > 0 ? Math.max(0, Math.min(1, cursorX / rect.width)) : 0.5;
-
-      if (e.ctrlKey || e.metaKey) {
-        // Zoom to exact cursor position
-        e.preventDefault();
-        const factor = e.deltaY > 0 ? 1.25 : 0.8;
-        handleZoom(factor, fraction);
-      } else if (e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
-        // Horizontal Pan
-        e.preventDefault();
-        const deltaFrames = Math.round((e.deltaX || e.deltaY) * (viewSpan / 1000));
-        setViewRange(([s, end]) => {
-          const span = end - s;
-          let newS = s + deltaFrames;
-          let newE = newS + span;
-          if (newS < 0) {
-            newS = 0;
-            newE = Math.min(maxFrames - 1, span);
-          } else if (newE >= maxFrames) {
-            newE = maxFrames - 1;
-            newS = Math.max(0, newE - span);
-          }
-          return [clampFrameIdx(newS, 0, maxFrames), clampFrameIdx(newE, 0, maxFrames)];
-        });
-      }
-    },
-    [handleZoom, viewSpan, maxFrames]
-  );
-
-  // ── In/Out Trim Handles Dragging ─────────────────────────────────────────────
-  const handleGlobalTrimDrag = useCallback(
-    (handle: 'in' | 'out', e: MouseEvent<HTMLDivElement>) => {
-      e.stopPropagation();
-      e.preventDefault();
-
-      const rect = runwayRef.current?.getBoundingClientRect();
-      if (rect) {
-        dragRectRef.current = { left: rect.left, width: rect.width };
-      }
-
-      const onMouseMove = (ev: globalThis.MouseEvent) => {
-        const rawF = xToFrame(ev.clientX, dragRectRef.current);
-        const sRes = snapToFrame(rawF, snapTargets, Math.max(2, Math.round(viewSpan / 200)));
-        const f = sRes.frame;
-
-        if (handle === 'in') {
-          const newIn = Math.min(f, trimOut);
-          onUpdateTrim?.(clampFrameIdx(newIn, 0, maxFrames), trimOut);
-          onSetTrimIn?.(clampFrameIdx(newIn, 0, maxFrames));
-        } else {
-          const newOut = Math.max(f, trimIn);
-          onUpdateTrim?.(trimIn, clampFrameIdx(newOut, trimIn, maxFrames));
-          onSetTrimOut?.(clampFrameIdx(newOut, trimIn, maxFrames));
-        }
-      };
-
-      const onMouseUp = () => {
-        dragRectRef.current = null;
-        window.removeEventListener('mousemove', onMouseMove);
-        window.removeEventListener('mouseup', onMouseUp);
-      };
-
-      window.addEventListener('mousemove', onMouseMove);
-      window.addEventListener('mouseup', onMouseUp);
-    },
-    [xToFrame, snapTargets, viewSpan, trimIn, trimOut, maxFrames, onUpdateTrim, onSetTrimIn, onSetTrimOut]
-  );
-
-  // ── Chapter Markers ('M') ───────────────────────────────────────────────────
-  const handleAddMarkerAtCurrentFrame = useCallback(() => {
-    const existing = markers.find((m) => m.frame === activeFrame);
-    if (existing) {
+  const handleSeekFrame = useCallback((target: number, immediate = true) => {
+    const exact = clampFrameIdx(target, 0, maxFrames);
+    if (immediate) {
+      if (rafSeekRef.current !== null) { cancelAnimationFrame(rafSeekRef.current); rafSeekRef.current = null; }
+      onSeek?.(exact, frameMap.resolveTimeFromFrame(exact));
       return;
     }
-    const newMarker: ChapterMarker = {
-      id: `marker_${activeFrame}_${Date.now()}`,
-      frame: activeFrame,
-      label: `Marker #${markers.length + 1} (${frameToTimecode(activeFrame, fps)})`,
-      color: '#38bdf8',
-      createdAt: Date.now(),
-    };
-
-    if (onAddMarker) {
-      onAddMarker(newMarker);
-    } else {
-      setInternalMarkers((prev) => [...prev, newMarker]);
+    pendingSeekFrameRef.current = exact;
+    if (rafSeekRef.current === null) {
+      rafSeekRef.current = requestAnimationFrame(() => {
+        rafSeekRef.current = null;
+        const f = pendingSeekFrameRef.current;
+        pendingSeekFrameRef.current = null;
+        if (f !== null) onSeek?.(f, frameMap.resolveTimeFromFrame(f));
+      });
     }
-  }, [markers, activeFrame, fps, onAddMarker]);
+  }, [maxFrames, frameMap, onSeek]);
+  useEffect(() => () => { if (rafSeekRef.current !== null) cancelAnimationFrame(rafSeekRef.current); }, []);
 
-  const handleDeleteMarker = useCallback(
-    (markerId: string) => {
-      if (onDeleteMarker) {
-        onDeleteMarker(markerId);
-      } else {
-        setInternalMarkers((prev) => prev.filter((m) => m.id !== markerId));
-      }
-    },
-    [onDeleteMarker]
-  );
+  // ── Scrubbing + the tooltip that follows it ──────────────────────────────────
+  const [scrub, setScrub] = useState<{ frame: number; x: number; top: number } | null>(null);
+  const [hoverTip, setHoverTip] = useState<{ frame: number; x: number; top: number } | null>(null);
+  const tip = scrub || hoverTip;
+  const exactThumb = useScrubThumbnail(!!tip, tip ? tip.frame : null, frameFetcher, `${targetKey}|${mediaSource?.url || ''}`);
+  const nearThumb = tip ? film.getThumbnail(tip.frame, 1_000_000) : null;
 
-  // ── Keyboard Shortcuts ('I', 'O', 'M', 'Delete') ────────────────────────────
-  const handleKeyDown = useCallback(
-    (e: KeyboardEvent<HTMLDivElement>) => {
-      // Don't intercept if typing in an input
-      const target = e.target as HTMLElement;
-      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) {
+  const tipAt = (frame: number, area: { left: number; width: number }) => ({
+    frame,
+    x: area.left + frameToLaneX(frame, viewStart, viewEnd, area.width),
+    // the card rises above the RULER (always on screen: it is sticky), not above the timeline's own top,
+    // which can be scrolled out of the dock
+    top: areaRef.current?.getBoundingClientRect().top ?? 0,
+  });
+
+  const handleScrubDown = useCallback((e: React.PointerEvent<HTMLElement>) => {
+    if (e.button !== 0) return;
+    // preventDefault stops text selection, but it also stops the browser moving focus: without the explicit
+    // focus below, focus stays on whatever was clicked before (e.g. the Pro Studio toggle) and the next Space
+    // press activates THAT button instead of playing / pausing.
+    e.preventDefault();
+    rootRef.current?.focus({ preventScroll: true });
+    const area = readArea();
+    if (!area) return;
+    dragAreaRef.current = area;
+    const step = (clientX: number, immediate: boolean) => {
+      const s = snapFrame(xToFrame(clientX, area));
+      setSnapIndicatorFrame(s.snapped ? s.frame : null);
+      setScrub(tipAt(s.frame, area));
+      handleSeekFrame(s.frame, immediate);
+    };
+    step(e.clientX, true);
+    const move = (ev: PointerEvent) => step(ev.clientX, false);
+    const up = () => {
+      setScrub(null);
+      setSnapIndicatorFrame(null);
+      dragAreaRef.current = null;
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', up);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', up);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- tipAt/readArea read refs and the view window captured below
+  }, [snapFrame, xToFrame, handleSeekFrame, viewStart, viewEnd]);
+
+  const handleRulerHover = (e: React.PointerEvent<HTMLElement>) => {
+    if (scrub) return;
+    const area = readArea();
+    if (!area) return;
+    setHoverTip(tipAt(xToFrame(e.clientX, area), area));
+  };
+
+  // ── Zoom / pan ───────────────────────────────────────────────────────────────
+  const handleZoom = useCallback((factor: number, anchorFraction = 0.5) => {
+    setViewRange((prev) => calculateZoomToCursor(prev, factor, anchorFraction, maxFrames, 4));
+  }, [maxFrames]);
+  const handleResetZoom = useCallback(() => setViewRange([0, lastFrame]), [lastFrame]);
+
+  // Wheel must be NATIVE and non-passive: React's onWheel is registered passive, so preventDefault there
+  // is ignored (the page scrolled / browser-zoomed behind the timeline). Two listeners, like Timeline.jsx:
+  // `onWheel` stays a pure yield to the app zoom (App.jsx, on window) and `onZoomWheel` claims Ctrl/Cmd
+  // for THIS timeline and stops the event so one notch never zooms the track AND the whole UI.
+  const wheelCtx = useRef({ viewRange, maxFrames, lastFrame });
+  wheelCtx.current = { viewRange, maxFrames, lastFrame };
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el) return undefined;
+    const onWheel = (e: WheelEvent) => {
+      if (e.ctrlKey || e.metaKey) return;
+      const W = wheelCtx.current;
+      if (W.maxFrames < 2) return;
+      const minimap = (e.target as HTMLElement | null)?.closest?.('[data-testid="nle-minimap-area"]') as HTMLElement | null;
+      if (minimap) {
+        const rect = minimap.getBoundingClientRect();
+        if (!rect.width) return;
+        e.preventDefault();
+        const ratio = clampN((e.clientX - rect.left) / rect.width, 0, 1);
+        setViewRange(wheelMinimap(W.viewRange, ratio, Math.exp(clampN(e.deltaY, -240, 240) * WHEEL_ZOOM_RATE), W.maxFrames));
         return;
       }
-
-      if (e.key === 'i' || e.key === 'I') {
-        e.preventDefault();
-        onSetTrimIn?.(activeFrame);
-        onUpdateTrim?.(activeFrame, Math.max(activeFrame, trimOut));
-      } else if (e.key === 'o' || e.key === 'O') {
-        e.preventDefault();
-        onSetTrimOut?.(activeFrame);
-        onUpdateTrim?.(Math.min(trimIn, activeFrame), activeFrame);
-      } else if (e.key === 'm' || e.key === 'M') {
-        e.preventDefault();
-        handleAddMarkerAtCurrentFrame();
-      } else if (e.key === 'Delete' || e.key === 'Backspace') {
-        if (selectedKeyframeId) {
-          e.preventDefault();
-          const nextKfs = nleKeyframes.filter((k) => k.id !== selectedKeyframeId);
-          onUpdateKeyframes?.(nextKfs);
-          setSelectedKeyframeId(null);
-        }
-      }
-    },
-    [
-      activeFrame,
-      trimIn,
-      trimOut,
-      selectedKeyframeId,
-      nleKeyframes,
-      onSetTrimIn,
-      onSetTrimOut,
-      onUpdateTrim,
-      handleAddMarkerAtCurrentFrame,
-      onUpdateKeyframes,
-    ]
-  );
-
-  // ── Track & Range Lock Interactivity ─────────────────────────────────────────
-  const handleTrackOrRangeClick = useCallback(
-    (track: ByteTrackLane, range?: [number, number], e?: MouseEvent) => {
-      if (e) {
-        e.stopPropagation();
-      }
-
-      onSelectTrack?.(track.trackId);
-
-      const targetStart = range ? range[0] : track.firstFrame;
-      const targetEnd = range ? range[1] : track.lastFrame;
-
-      const existingIdx = rangeLockIntervals.findIndex(
-        (iv) =>
-          iv.track_id === track.trackId &&
-          Math.max(iv.frame_start, targetStart) <= Math.min(iv.frame_end, targetEnd)
-      );
-
-      let updated: RangeLockInterval[];
-
-      if (existingIdx >= 0) {
-        const existing = rangeLockIntervals[existingIdx];
-        const toggled: RangeLockInterval = {
-          ...existing,
-          locked: existing.locked !== false ? false : true,
-        };
-        updated = [
-          ...rangeLockIntervals.slice(0, existingIdx),
-          toggled,
-          ...rangeLockIntervals.slice(existingIdx + 1),
-        ];
-        onSelectRange?.(toggled);
-      } else {
-        const newInterval = createRangeLockInterval(
-          {
-            id: `rl_${track.trackId}_${targetStart}_${targetEnd}_${Date.now()}`,
-            track_id: track.trackId,
-            frame_start: clampFrameIdx(targetStart, 0, maxFrames),
-            frame_end: clampFrameIdx(targetEnd, targetStart, maxFrames),
-            label: `${track.label} [${targetStart}–${targetEnd}]`,
-            faceset_id: track.facesetId,
-            source_index: track.sourceIndex,
-            color: getTrackColor(track.trackId, track.color),
-            locked: true,
-          },
-          maxFrames
-        );
-        updated = [...rangeLockIntervals, newInterval];
-        onSelectRange?.(newInterval);
-      }
-
-      onUpdateRangeLockIntervals?.(updated);
-    },
-    [rangeLockIntervals, maxFrames, onSelectTrack, onSelectRange, onUpdateRangeLockIntervals]
-  );
-
-  // Range Trim Dragging
-  const handleRangeTrimDrag = useCallback(
-    (intervalId: string, handle: 'start' | 'end', e: MouseEvent<HTMLDivElement>) => {
+      // a vertical wheel is the dock's scroll; only a horizontal swipe / Shift+wheel pans the lanes
+      if (!(e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY))) return;
+      const rect = areaRef.current?.getBoundingClientRect();
+      if (!rect || !rect.width) return;
+      e.preventDefault();
+      const d = e.shiftKey && Math.abs(e.deltaX) < Math.abs(e.deltaY) ? e.deltaY : e.deltaX;
+      setViewRange(([s, en]) => {
+        const span = en - s;
+        const delta = Math.round((d / rect.width) * span);
+        const start = clampN(s + delta, 0, Math.max(0, W.lastFrame - span));
+        return [start, start + span];
+      });
+    };
+    const onZoomWheel = (e: WheelEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      const W = wheelCtx.current;
+      const rect = areaRef.current?.getBoundingClientRect();
+      if (W.maxFrames < 2 || !rect || !rect.width) return;
+      e.preventDefault();
       e.stopPropagation();
-      e.preventDefault();
-
-      const rect = runwayRef.current?.getBoundingClientRect();
-      if (rect) {
-        dragRectRef.current = { left: rect.left, width: rect.width };
-      }
-
-      const onMouseMove = (ev: globalThis.MouseEvent) => {
-        const currentFrame = xToFrame(ev.clientX, dragRectRef.current);
-        const nextIntervals = rangeLockIntervals.map((item) => {
-          if (item.id !== intervalId) return item;
-          if (handle === 'start') {
-            const newStart = Math.min(currentFrame, item.frame_end);
-            return clampRangeLockInterval({ ...item, frame_start: newStart }, 0, maxFrames);
-          } else {
-            const newEnd = Math.max(currentFrame, item.frame_start);
-            return clampRangeLockInterval({ ...item, frame_end: newEnd }, 0, maxFrames);
-          }
-        });
-        onUpdateRangeLockIntervals?.(nextIntervals);
-      };
-
-      const onMouseUp = () => {
-        dragRectRef.current = null;
-        window.removeEventListener('mousemove', onMouseMove);
-        window.removeEventListener('mouseup', onMouseUp);
-      };
-
-      window.addEventListener('mousemove', onMouseMove);
-      window.addEventListener('mouseup', onMouseUp);
-    },
-    [rangeLockIntervals, xToFrame, maxFrames, onUpdateRangeLockIntervals]
-  );
-
-  // ── Keyframe Lane Operations (Add, Drag, Copy, Delete, Curves) ───────────────
-  const handleAddKeyframeAtCurrent = useCallback(() => {
-    const val = evaluateKeyframeValue(nleKeyframes, activeParam, activeFrame);
-    const newKf = createNleKeyframe(activeParam, activeFrame, val, 'Ease In/Out', maxFrames);
-    const updated = sortAndNormalizeKeyframes([...nleKeyframes, newKf], maxFrames);
-    onUpdateKeyframes?.(updated);
-    setSelectedKeyframeId(newKf.id);
-  }, [activeParam, activeFrame, nleKeyframes, maxFrames, onUpdateKeyframes]);
-
-  const handleKeyframeDrag = useCallback(
-    (kfId: string, e: MouseEvent<HTMLDivElement>) => {
-      e.stopPropagation();
-      e.preventDefault();
-
-      const isCopy = e.altKey; // Alt + Drag = Copy
-      setSelectedKeyframeId(kfId);
-
-      const targetKf = nleKeyframes.find((k) => k.id === kfId);
-      if (!targetKf) return;
-
-      const rect = runwayRef.current?.getBoundingClientRect();
-      if (rect) {
-        dragRectRef.current = { left: rect.left, width: rect.width };
-      }
-
-      const onMouseMove = (ev: globalThis.MouseEvent) => {
-        const rawF = xToFrame(ev.clientX, dragRectRef.current);
-        const sRes = snapToFrame(rawF, snapTargets, Math.max(2, Math.round(viewSpan / 200)));
-        const f = sRes.frame;
-
-        if (isCopy) {
-          // Keep original, create duplicate
-          const dup = duplicateKeyframe(targetKf, f - targetKf.frame_idx, maxFrames);
-          const updated = sortAndNormalizeKeyframes([...nleKeyframes, dup], maxFrames);
-          onUpdateKeyframes?.(updated);
-        } else {
-          const updatedKfs = nleKeyframes.map((k) =>
-            k.id === kfId ? { ...k, frame_idx: clampFrameIdx(f, 0, maxFrames) } : k
-          );
-          onUpdateKeyframes?.(sortAndNormalizeKeyframes(updatedKfs, maxFrames));
-        }
-      };
-
-      const onMouseUp = () => {
-        dragRectRef.current = null;
-        window.removeEventListener('mousemove', onMouseMove);
-        window.removeEventListener('mouseup', onMouseUp);
-      };
-
-      window.addEventListener('mousemove', onMouseMove);
-      window.addEventListener('mouseup', onMouseUp);
-    },
-    [nleKeyframes, snapTargets, viewSpan, xToFrame, maxFrames, onUpdateKeyframes]
-  );
-
-  const handleCurveChange = useCallback(
-    (kfId: string, newCurve: TimelineCurveType) => {
-      const updated = nleKeyframes.map((k) => (k.id === kfId ? { ...k, curve: newCurve } : k));
-      onUpdateKeyframes?.(updated);
-    },
-    [nleKeyframes, onUpdateKeyframes]
-  );
-
-  const handleDeleteKeyframe = useCallback(
-    (kfId: string) => {
-      const updated = nleKeyframes.filter((k) => k.id !== kfId);
-      onUpdateKeyframes?.(updated);
-      if (selectedKeyframeId === kfId) {
-        setSelectedKeyframeId(null);
-      }
-    },
-    [nleKeyframes, selectedKeyframeId, onUpdateKeyframes]
-  );
-
-  // ── Minimap Panning ─────────────────────────────────────────────────────────
-  const minimapRef = useRef<HTMLDivElement>(null);
-
-  const handleMinimapMouseDown = useCallback(
-    (e: MouseEvent<HTMLDivElement>) => {
-      e.preventDefault();
-      if (!minimapRef.current) return;
-      const rect = minimapRef.current.getBoundingClientRect();
-      const clickRatio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-      const targetFrame = Math.round(clickRatio * (maxFrames - 1));
-
-      const span = viewSpan;
-      let newStart = Math.round(targetFrame - span / 2);
-      let newEnd = newStart + span;
-      if (newStart < 0) {
-        newStart = 0;
-        newEnd = Math.min(maxFrames - 1, span);
-      } else if (newEnd >= maxFrames) {
-        newEnd = maxFrames - 1;
-        newStart = Math.max(0, newEnd - span);
-      }
-      setViewRange([clampFrameIdx(newStart, 0, maxFrames), clampFrameIdx(newEnd, 0, maxFrames)]);
-    },
-    [maxFrames, viewSpan]
-  );
-
-  // ── Adaptive Ruler Ticks ────────────────────────────────────────────────────
-  const rulerTicks = useMemo(() => {
-    return generateRulerTicks(viewStart, viewEnd, fps);
-  }, [viewStart, viewEnd, fps]);
-
-  // Suggested assignment map
-  const assignmentMap = useMemo(() => {
-    const map = new Map<number, SuggestedFszAssignment>();
-    suggestedAssignments.forEach((item) => {
-      map.set(item.trackId, item);
-    });
-    return map;
-  }, [suggestedAssignments]);
-
-  // Warning ticks by track
-  const warningsByTrack = useMemo(() => {
-    const map = new Map<number, WarningTick[]>();
-    warningTicks.forEach((tick) => {
-      const list = map.get(tick.trackId) || [];
-      list.push(tick);
-      map.set(tick.trackId, list);
-    });
-    return map;
-  }, [warningTicks]);
-
-  // Filter keyframes for active parameter
-  const activeParamKeyframes = useMemo(() => {
-    return nleKeyframes.filter((k) => k.param === activeParam);
-  }, [nleKeyframes, activeParam]);
-
-  const selectedKeyframe = useMemo(() => {
-    return nleKeyframes.find((k) => k.id === selectedKeyframeId);
-  }, [nleKeyframes, selectedKeyframeId]);
-
-  // Active playhead time string
-  const activeTimecode = useMemo(() => frameToTimecode(activeFrame, fps), [activeFrame, fps]);
-  const activeSeconds = useMemo(
-    () => formatSeconds(frameMap.resolveTimeFromFrame(activeFrame)),
-    [activeFrame, frameMap]
-  );
-
-  const lockedIntervalsCount = useMemo(
-    () => rangeLockIntervals.filter((iv) => iv.locked !== false).length,
-    [rangeLockIntervals]
-  );
-
-  // Hover loupe state for filmstrip
-  const [hoverFrame, setHoverFrame] = useState<number | null>(null);
-  const [hoverClientX, setHoverClientX] = useState<number | null>(null);
-
-  const handleRunwayMouseMove = useCallback(
-    (e: MouseEvent<HTMLDivElement>) => {
-      if (isScrubbing) return;
-      const rect = runwayRef.current?.getBoundingClientRect();
-      if (!rect) return;
-      const f = xToFrame(e.clientX, { left: rect.left, width: rect.width });
-      setHoverFrame(f);
-      setHoverClientX(e.clientX - rect.left);
-    },
-    [isScrubbing, xToFrame]
-  );
-
-  const handleRunwayMouseLeave = useCallback(() => {
-    setHoverFrame(null);
-    setHoverClientX(null);
+      const fraction = clampN((e.clientX - rect.left) / rect.width, 0, 1);
+      const factor = Math.exp(clampN(e.deltaY, -240, 240) * WHEEL_ZOOM_RATE);
+      setViewRange((prev) => calculateZoomToCursor(prev, factor, fraction, W.maxFrames, 4));
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    el.addEventListener('wheel', onZoomWheel, { passive: false });
+    return () => {
+      el.removeEventListener('wheel', onWheel);
+      el.removeEventListener('wheel', onZoomWheel);
+    };
   }, []);
 
+  // ── In / Out trim handles ────────────────────────────────────────────────────
+  const commitTrim = useCallback((nextIn: number, nextOut: number) => {
+    onUpdateTrim?.(nextIn, nextOut);
+    if (nextIn !== trimIn) onSetTrimIn?.(nextIn);
+    if (nextOut !== trimOut) onSetTrimOut?.(nextOut);
+  }, [onUpdateTrim, onSetTrimIn, onSetTrimOut, trimIn, trimOut]);
+
+  const handleTrimDrag = useCallback((handle: 'in' | 'out', e: React.PointerEvent<HTMLElement>) => {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    e.preventDefault();
+    (e.currentTarget as HTMLElement).focus?.({ preventScroll: true }); // see handleScrubDown: keep focus on the handle
+    const area = readArea();
+    if (area) dragAreaRef.current = area;
+    const move = (ev: PointerEvent) => {
+      const f = snapFrame(xToFrame(ev.clientX)).frame;
+      if (handle === 'in') commitTrim(clampFrameIdx(Math.min(f, trimOut), 0, maxFrames), trimOut);
+      else commitTrim(trimIn, clampFrameIdx(Math.max(f, trimIn), trimIn, maxFrames));
+    };
+    const up = () => {
+      dragAreaRef.current = null;
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', up);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', up);
+  }, [snapFrame, xToFrame, commitTrim, trimIn, trimOut, maxFrames]);
+
+  const handleTrimKey = (handle: 'in' | 'out', e: KeyboardEvent<HTMLElement>) => {
+    const dir = e.key === 'ArrowLeft' ? -1 : e.key === 'ArrowRight' ? 1 : 0;
+    if (!dir) return;
+    e.preventDefault();
+    e.stopPropagation(); // arrows step the playhead globally; on a focused handle they move the handle
+    const delta = dir * (e.shiftKey ? 10 : 1);
+    if (handle === 'in') commitTrim(clampFrameIdx(Math.min(trimIn + delta, trimOut), 0, maxFrames), trimOut);
+    else commitTrim(trimIn, clampFrameIdx(Math.max(trimOut + delta, trimIn), trimIn, maxFrames));
+  };
+
+  // ── Track & Range Lock interactivity ─────────────────────────────────────────
+  const handleTrackOrRangeClick = useCallback((track: ByteTrackLane, range?: [number, number], e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    onSelectTrack?.(track.trackId);
+    const targetStart = range ? range[0] : track.firstFrame;
+    const targetEnd = range ? range[1] : track.lastFrame;
+    const existingIdx = rangeLockIntervals.findIndex(
+      (iv) => iv.track_id === track.trackId && Math.max(iv.frame_start, targetStart) <= Math.min(iv.frame_end, targetEnd),
+    );
+    let updated: RangeLockInterval[];
+    if (existingIdx >= 0) {
+      const existing = rangeLockIntervals[existingIdx];
+      const toggled: RangeLockInterval = { ...existing, locked: existing.locked !== false ? false : true };
+      updated = [...rangeLockIntervals.slice(0, existingIdx), toggled, ...rangeLockIntervals.slice(existingIdx + 1)];
+      onSelectRange?.(toggled);
+    } else {
+      const created = createRangeLockInterval({
+        id: `rl_${track.trackId}_${targetStart}_${targetEnd}_${Date.now()}`,
+        track_id: track.trackId,
+        frame_start: clampFrameIdx(targetStart, 0, maxFrames),
+        frame_end: clampFrameIdx(targetEnd, targetStart, maxFrames),
+        label: `${track.label} [${targetStart}–${targetEnd}]`,
+        faceset_id: track.facesetId,
+        source_index: track.sourceIndex,
+        color: getTrackColor(track.trackId, track.color),
+        locked: true,
+      }, maxFrames);
+      updated = [...rangeLockIntervals, created];
+      onSelectRange?.(created);
+    }
+    onUpdateRangeLockIntervals?.(updated);
+  }, [rangeLockIntervals, maxFrames, onSelectTrack, onSelectRange, onUpdateRangeLockIntervals]);
+
+  const handleRangeTrimDrag = useCallback((intervalId: string, handle: 'start' | 'end', e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    e.preventDefault();
+    const area = readArea();
+    if (area) dragAreaRef.current = area;
+    const move = (ev: PointerEvent) => {
+      const f = xToFrame(ev.clientX);
+      onUpdateRangeLockIntervals?.(rangeLockIntervals.map((item) => {
+        if (item.id !== intervalId) return item;
+        return handle === 'start'
+          ? clampRangeLockInterval({ ...item, frame_start: Math.min(f, item.frame_end) }, 0, maxFrames)
+          : clampRangeLockInterval({ ...item, frame_end: Math.max(f, item.frame_start) }, 0, maxFrames);
+      }));
+    };
+    const up = () => {
+      dragAreaRef.current = null;
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', up);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', up);
+  }, [rangeLockIntervals, xToFrame, maxFrames, onUpdateRangeLockIntervals]);
+
+  // Keyboard twin of the edge drag above: ←/→ on a focused Range Lock handle nudges that edge.
+  const handleRangeNudge = useCallback((intervalId: string, handle: 'start' | 'end', delta: number) => {
+    onUpdateRangeLockIntervals?.(rangeLockIntervals.map((item) => {
+      if (item.id !== intervalId) return item;
+      return handle === 'start'
+        ? clampRangeLockInterval({ ...item, frame_start: Math.min(item.frame_start + delta, item.frame_end) }, 0, maxFrames)
+        : clampRangeLockInterval({ ...item, frame_end: Math.max(item.frame_end + delta, item.frame_start) }, 0, maxFrames);
+    }));
+  }, [rangeLockIntervals, maxFrames, onUpdateRangeLockIntervals]);
+
+  // ── Keyframes (the lane lock refuses every edit) ─────────────────────────────
+  const kfLocked = lanes.kf.locked;
+  const handleAddKeyframeAtCurrent = useCallback(() => {
+    if (kfLocked) return;
+    const val = evaluateKeyframeValue(nleKeyframes, activeParam, activeFrame);
+    const created = createNleKeyframe(activeParam, activeFrame, val, 'Ease In/Out', maxFrames);
+    onUpdateKeyframes?.(sortAndNormalizeKeyframes([...nleKeyframes, created], maxFrames));
+    setSelectedKeyframeId(created.id);
+  }, [kfLocked, activeParam, activeFrame, nleKeyframes, maxFrames, onUpdateKeyframes]);
+
+  const handleKeyframeDrag = useCallback((kfId: string, e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    e.preventDefault();
+    const isCopy = e.altKey; // Alt + Drag = Copy
+    setSelectedKeyframeId(kfId);
+    const target = nleKeyframes.find((k) => k.id === kfId);
+    if (!target) return;
+    const area = readArea();
+    if (area) dragAreaRef.current = area;
+    const move = (ev: PointerEvent) => {
+      const f = snapFrame(xToFrame(ev.clientX)).frame;
+      if (isCopy) {
+        const dup = duplicateKeyframe(target, f - target.frame_idx, maxFrames);
+        onUpdateKeyframes?.(sortAndNormalizeKeyframes([...nleKeyframes, dup], maxFrames));
+      } else {
+        onUpdateKeyframes?.(sortAndNormalizeKeyframes(nleKeyframes.map((k) => (k.id === kfId ? { ...k, frame_idx: clampFrameIdx(f, 0, maxFrames) } : k)), maxFrames));
+      }
+    };
+    const up = () => {
+      dragAreaRef.current = null;
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', up);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', up);
+  }, [nleKeyframes, snapFrame, xToFrame, maxFrames, onUpdateKeyframes]);
+
+  const patchKeyframe = useCallback((id: string, patch: Partial<NleKeyframe>) => {
+    if (kfLocked) return;
+    onUpdateKeyframes?.(nleKeyframes.map((k) => (k.id === id ? { ...k, ...patch } : k)));
+  }, [kfLocked, nleKeyframes, onUpdateKeyframes]);
+
+  const deleteKeyframe = useCallback((id: string) => {
+    if (kfLocked) return;
+    onUpdateKeyframes?.(nleKeyframes.filter((k) => k.id !== id));
+    setSelectedKeyframeId((cur) => (cur === id ? null : cur));
+  }, [kfLocked, nleKeyframes, onUpdateKeyframes]);
+
+  // The only key this component owns (everything else is useWorkstationShortcuts / the host).
+  const handleKeyDown = useCallback((e: KeyboardEvent<HTMLDivElement>) => {
+    const t = e.target as HTMLElement;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT')) return;
+    if (hostKeys?.(e)) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    if ((e.key === 'Delete' || e.key === 'Backspace') && selectedKeyframeId && !kfLocked) {
+      e.preventDefault();
+      deleteKeyframe(selectedKeyframeId);
+    }
+  }, [hostKeys, selectedKeyframeId, kfLocked, deleteKeyframe]);
+
+  // ── Derived display values ───────────────────────────────────────────────────
+  const assignmentMap = useMemo(() => new Map(suggestedAssignments.map((s) => [s.trackId, s])), [suggestedAssignments]);
+  const warningsByTrack = useMemo(() => {
+    const map = new Map<number, WarningTick[]>();
+    warningTicks.forEach((tick) => { const list = map.get(tick.trackId) || []; list.push(tick); map.set(tick.trackId, list); });
+    return map;
+  }, [warningTicks]);
+  const activeTimecode = useMemo(() => frameToTimecode(activeFrame, fps), [activeFrame, fps]);
+  const activeSeconds = useMemo(() => formatSeconds(frameMap.resolveTimeFromFrame(activeFrame)), [activeFrame, frameMap]);
+  const lockedIntervalsCount = useMemo(() => rangeLockIntervals.filter((iv) => iv.locked !== false).length, [rangeLockIntervals]);
+  const markerFrames = useMemo(() => markers.map((m) => m.frame), [markers]);
+  const regionLabel = regionIsWhole ? 'whole clip' : formatDuration(regionLength(region), fps);
+
+  const segmentLaneBlocks = useMemo<SegmentBlock[]>(() => [
+    ...rangeLockIntervals.filter((iv) => iv.locked !== false).map((iv) => ({
+      id: `rl_${iv.id}`, start: iv.frame_start, end: iv.frame_end, label: iv.label || `Track ${iv.track_id + 1}`, kind: 'range' as const, color: iv.color,
+    })),
+    ...segmentBlocks,
+  ], [rangeLockIntervals, segmentBlocks]);
+
+  const faceCount = trackLanes.length;
+  const faceGroupHeight = lanes.faces.height;
+  const faceLaneHeightPx = LANE_HEIGHTS.faces[faceGroupHeight];
+  const hv = (id: LaneId) => laneBodyPx(id, lanes[id]);
+  const toPct = (f: number) => ((f - viewStart) / viewSpan) * 100;
+  const inOutVisibleIn = trimIn >= viewStart && trimIn <= viewEnd;
+  const inOutVisibleOut = trimOut >= viewStart && trimOut <= viewEnd;
+  const showTransport = !!onTogglePlay;
+  const pct1 = (n: number) => (healthSummary.total ? Math.round((n / healthSummary.total) * 100) : 0);
+
+  // ── Render ───────────────────────────────────────────────────────────────────
   return (
     <div
+      ref={rootRef}
       tabIndex={0}
       onKeyDown={handleKeyDown}
-      className={`nle-timeline-root flex flex-col w-full bg-[var(--surface-1,#12141a)] border border-[var(--border-color,rgba(255,255,255,0.08))] rounded-xl overflow-hidden shadow-2xl select-none font-sans text-xs outline-none focus:ring-1 focus:ring-[var(--accent,#e94560)]/40 ${className}`}
-      style={style}
-      onWheel={handleWheel}
+      className={`nle-timeline-root flex flex-col w-full bg-[var(--surface-1,#12141a)] border border-[var(--border-color,rgba(255,255,255,0.08))] rounded-xl shadow-2xl select-none font-sans text-xs outline-none focus-visible:ring-1 focus-visible:ring-[var(--accent-cyan,#00F0FF)]/50 ${className}`}
+      // `clip`, not `hidden`: hidden makes the root a scroll container, which would pin the sticky controls to
+      // the root instead of to the dock that actually scrolls. clip still rounds the corners.
+      style={{ overflow: 'clip', ...style }}
       data-testid="nle-timeline"
+      data-view-start={viewStart}
+      data-view-end={viewEnd}
     >
-      {/* ── Top Header Toolbar ──────────────────────────────────────────────── */}
+      {/* ── Toolbar ──────────────────────────────────────────────────────────── */}
       <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-2 bg-[var(--surface-2,#1a1d26)] border-b border-[var(--border-color,rgba(255,255,255,0.08))]">
-        {/* Step Status Badges & Title */}
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1.5 font-bold tracking-wide text-white text-sm">
-            <svg
-              className="w-4 h-4 text-[var(--accent,#e94560)]"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-            >
-              <rect x="2" y="4" width="20" height="16" rx="2" />
-              <path d="M10 4v16" />
-              <path d="M14 4v16" />
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-1.5 font-bold tracking-wide text-white text-plain">
+            <svg className="w-4 h-4 text-[var(--accent-cyan,#00F0FF)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+              <rect x="2" y="4" width="20" height="16" rx="2" /><path d="M10 4v16" /><path d="M14 4v16" />
             </svg>
             <span>NLE Timeline</span>
           </div>
 
-          {/* Step 1 Pre-Scan Badge */}
-          <button
-            type="button"
-            data-testid="nle-step-prescan"
-            onClick={onPreScanClick}
-            disabled={isPreScanActive}
-            title="Step 1: Run or inspect Pre-Scan ByteTrack spans"
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-mini font-medium border transition-colors ${
-              trackLanes.length > 0
-                ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
-                : isPreScanActive
-                ? 'border-sky-500/50 bg-sky-500/10 text-sky-300 animate-pulse'
-                : 'border-white/10 bg-white/5 text-neutral-400 hover:text-white'
-            }`}
-          >
-            <span
-              className={`w-2 h-2 rounded-full ${
-                trackLanes.length > 0
-                  ? 'bg-emerald-400'
-                  : isPreScanActive
-                  ? 'bg-sky-400 animate-ping'
-                  : 'bg-neutral-500'
-              }`}
-            />
-            <span>1 Pre-Scan</span>
-            <span className="font-mono text-micro opacity-80">
-              ({trackLanes.length} {trackLanes.length === 1 ? 'Track' : 'Tracks'})
-            </span>
-          </button>
+          {showPipelineSteps && (
+            <>
+              <button
+                type="button"
+                data-testid="nle-step-prescan"
+                onClick={onPreScanClick}
+                disabled={isPreScanActive}
+                title="Step 1: Run or inspect Pre-Scan ByteTrack spans"
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-mini font-medium border transition-colors ${trackLanes.length > 0 ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300' : isPreScanActive ? 'border-sky-500/50 bg-sky-500/10 text-sky-300 animate-pulse' : 'border-white/10 bg-white/5 text-neutral-400 hover:text-white'}`}
+              >
+                <span className={`w-2 h-2 rounded-full ${trackLanes.length > 0 ? 'bg-emerald-400' : isPreScanActive ? 'bg-sky-400 animate-ping' : 'bg-neutral-500'}`} />
+                <span>1 Pre-Scan</span>
+                <span className="font-mono text-micro opacity-80">({trackLanes.length} {trackLanes.length === 1 ? 'Track' : 'Tracks'})</span>
+              </button>
+              <span aria-hidden="true" className="text-white/25">→</span>
+              <button
+                type="button"
+                data-testid="nle-step-rangelock"
+                onClick={onRangeLockClick}
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-mini font-medium border transition-colors ${isRangeLockActive || lockedIntervalsCount > 0 ? 'border-[var(--accent,#e94560)]/50 bg-[var(--accent,#e94560)]/10 text-rose-300' : 'border-white/10 bg-white/5 text-neutral-400 hover:text-white'}`}
+                title="Step 2: Trim active track intervals and bind facesets (Batch Matrix sync)"
+              >
+                <span className={`w-2 h-2 rounded-full ${lockedIntervalsCount > 0 ? 'bg-[var(--accent,#e94560)]' : 'bg-neutral-500'}`} />
+                <span>2 Range Lock</span>
+                <span className="font-mono text-micro opacity-80">({lockedIntervalsCount} {lockedIntervalsCount === 1 ? 'Interval' : 'Intervals'})</span>
+              </button>
+              <span aria-hidden="true" className="text-white/25">→</span>
+              <button
+                type="button"
+                data-testid="nle-step-render"
+                onClick={onRenderClick}
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-mini font-medium border transition-colors ${isRenderActive ? 'border-emerald-500/50 bg-emerald-500/15 text-emerald-300 shadow-[0_0_8px_rgba(16,185,129,0.3)] animate-pulse' : 'border-white/10 bg-white/5 text-neutral-400 hover:text-white'}`}
+                title="Step 3: Main Swap Render & Audio Remux"
+              >
+                <span className={`w-2 h-2 rounded-full ${isRenderActive ? 'bg-emerald-400 animate-ping' : 'bg-neutral-500'}`} />
+                <span>3 Render &amp; Mux</span>
+              </button>
+              <button
+                type="button"
+                data-testid="nle-batch-matrix-btn"
+                onClick={() => { if (onBatchClick) onBatchClick(); else if (typeof window !== 'undefined') window.location.hash = '#/batch'; }}
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-mini font-medium border border-sky-400/30 bg-sky-400/10 text-sky-200 hover:border-sky-400/50 transition-colors"
+                title="Batch Matrix Strategies: Staged track ranges and matrix jobs"
+              >
+                <span>#/batch</span>
+                {stagedJobsCount > 0 ? <span className="font-mono text-micro opacity-90">({stagedJobsCount} staged)</span> : null}
+              </button>
+            </>
+          )}
 
-          <span aria-hidden="true" className="text-white/25">→</span>
-
-          {/* Step 2 Range Lock Badge */}
-          <button
-            type="button"
-            data-testid="nle-step-rangelock"
-            onClick={onRangeLockClick}
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-mini font-medium border transition-colors ${
-              isRangeLockActive || lockedIntervalsCount > 0
-                ? 'border-[var(--accent,#e94560)]/50 bg-[var(--accent,#e94560)]/10 text-rose-300'
-                : 'border-white/10 bg-white/5 text-neutral-400 hover:text-white'
-            }`}
-            title="Step 2: Trim active track intervals and bind facesets (Batch Matrix sync)"
-          >
-            <span
-              className={`w-2 h-2 rounded-full ${
-                lockedIntervalsCount > 0 ? 'bg-[var(--accent,#e94560)]' : 'bg-neutral-500'
-              }`}
-            />
-            <span>2 Range Lock</span>
-            <span className="font-mono text-micro opacity-80">
-              ({lockedIntervalsCount} {lockedIntervalsCount === 1 ? 'Interval' : 'Intervals'})
-            </span>
-          </button>
-
-          <span aria-hidden="true" className="text-white/25">→</span>
-
-          {/* Step 3 Render & Mux Badge */}
-          <button
-            type="button"
-            data-testid="nle-step-render"
-            onClick={onRenderClick}
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-mini font-medium border transition-colors ${
-              isRenderActive
-                ? 'border-emerald-500/50 bg-emerald-500/15 text-emerald-300 shadow-[0_0_8px_rgba(16,185,129,0.3)] animate-pulse'
-                : 'border-white/10 bg-white/5 text-neutral-400 hover:text-white'
-            }`}
-            title="Step 3: Main Swap Render & Audio Remux"
-          >
-            <span
-              className={`w-2 h-2 rounded-full ${
-                isRenderActive ? 'bg-emerald-400 animate-ping' : 'bg-neutral-500'
-              }`}
-            />
-            <span>3 Render &amp; Mux</span>
-          </button>
-
-          {/* Batch Matrix Strategies Link / Badge */}
-          <button
-            type="button"
-            data-testid="nle-batch-matrix-btn"
-            onClick={() => {
-              if (onBatchClick) {
-                onBatchClick();
-              } else if (typeof window !== 'undefined') {
-                window.location.hash = '#/batch';
-              }
-            }}
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-mini font-medium border border-sky-400/30 bg-sky-400/10 text-sky-200 hover:border-sky-400/50 transition-colors"
-            title="Batch Matrix Strategies: Staged track ranges and matrix jobs"
-          >
-            <span>#/batch</span>
-            {stagedJobsCount > 0 ? (
-              <span className="font-mono text-micro opacity-90">({stagedJobsCount} staged)</span>
-            ) : null}
-          </button>
-
-          {/* Snap Magnet Toggle */}
           <button
             type="button"
             onClick={() => setSnapEnabled((prev) => !prev)}
-            className={`flex items-center gap-1 px-2 py-0.5 rounded border text-mini transition ${
-              snapEnabled
-                ? 'border-sky-500/50 bg-sky-500/15 text-sky-300'
-                : 'border-white/10 bg-white/5 text-neutral-400 hover:text-white'
-            }`}
+            aria-pressed={snapEnabled}
+            className={`flex items-center gap-1 px-2 py-0.5 rounded border text-mini transition ${snapEnabled ? 'border-sky-500/50 bg-sky-500/15 text-sky-300' : 'border-white/10 bg-white/5 text-neutral-400 hover:text-white'}`}
             title={snapEnabled ? 'Magnetic Snapping ON (Playhead, In/Out, Markers, KF)' : 'Magnetic Snapping OFF'}
           >
-            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M4 14v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4" />
-              <polyline points="7 9 12 4 17 9" />
-              <line x1="12" y1="4" x2="12" y2="16" />
-            </svg>
+            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M4 14v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4" /><polyline points="7 9 12 4 17 9" /><line x1="12" y1="4" x2="12" y2="16" /></svg>
             <span>Snap</span>
           </button>
         </div>
 
-        {/* Timecode & Frame Readout */}
-        <div className="flex items-center gap-3">
-          {/* Exact Timecode and Seconds Display */}
-          <div className="flex items-center gap-2 px-3 py-1 bg-black/40 border border-white/10 rounded-lg font-mono">
-            <span className="text-micro uppercase text-neutral-400 font-semibold tracking-wider">
-              TC:
-            </span>
-            <span className="text-sm font-bold text-white tracking-wider tabular-nums">
-              {activeTimecode}
-            </span>
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-2 px-3 py-1 bg-black/40 border border-white/10 rounded-lg font-mono" data-testid="nle-readout">
+            <span className="text-micro uppercase text-neutral-400 font-semibold tracking-wider">TC:</span>
+            <span className="text-plain font-bold text-white tracking-wider tabular-nums" data-testid="nle-readout-tc">{fpsAssumed ? '≈' : ''}{activeTimecode}</span>
             <span className="text-neutral-500">|</span>
-            <span className="text-xs text-neutral-300 tabular-nums">
-              {activeSeconds}
-            </span>
+            <span className="text-mini text-neutral-300 tabular-nums">{activeSeconds}</span>
             <span className="text-neutral-500">|</span>
-            <span className="text-xs text-[var(--accent,#e94560)] font-semibold tabular-nums">
-              #{activeFrame}
-              <span className="text-neutral-500 font-normal"> / {maxFrames - 1}</span>
+            <span className="text-mini text-[var(--accent-cyan,#00F0FF)] font-semibold tabular-nums" data-testid="nle-readout-frame">
+              {formatFrameLabel(activeFrame)}<span className="text-neutral-500 font-normal"> / {lastFrame}</span>
             </span>
           </div>
 
-          {/* In / Out Chips */}
           <div className="hidden sm:flex items-center gap-1.5">
-            <button
-              type="button"
-              onClick={() => handleSeekFrame(trimIn)}
-              className="flex items-center gap-1 px-2 py-0.5 bg-white/5 border border-white/10 hover:border-amber-400/40 rounded text-mini font-mono text-neutral-300 transition"
-              title="Click to jump to Trim In point ('I' sets at playhead)"
-            >
-              <span className="text-amber-400 font-bold">IN:</span>
-              <span className="tabular-nums">#{trimIn}</span>
+            <button type="button" onClick={() => handleSeekFrame(trimIn)} className="flex items-center gap-1 px-2 py-0.5 bg-white/5 border border-white/10 hover:border-amber-400/40 rounded text-mini font-mono text-neutral-300 transition" title="Click to jump to Trim In point ('I' sets at playhead, '[' sets the range start)">
+              <span className="text-amber-400 font-bold">IN:</span><span className="tabular-nums">#{trimIn}</span>
             </button>
-            <button
-              type="button"
-              onClick={() => handleSeekFrame(trimOut)}
-              className="flex items-center gap-1 px-2 py-0.5 bg-white/5 border border-white/10 hover:border-amber-400/40 rounded text-mini font-mono text-neutral-300 transition"
-              title="Click to jump to Trim Out point ('O' sets at playhead)"
-            >
-              <span className="text-amber-400 font-bold">OUT:</span>
-              <span className="tabular-nums">#{trimOut}</span>
+            <button type="button" onClick={() => handleSeekFrame(trimOut)} className="flex items-center gap-1 px-2 py-0.5 bg-white/5 border border-white/10 hover:border-amber-400/40 rounded text-mini font-mono text-neutral-300 transition" title="Click to jump to Trim Out point ('O' sets at playhead, ']' sets the range end)">
+              <span className="text-amber-400 font-bold">OUT:</span><span className="tabular-nums">#{trimOut}</span>
             </button>
+            <span className="px-2 py-0.5 rounded border border-amber-400/30 bg-amber-400/10 text-mini font-mono text-amber-200 tabular-nums" data-testid="nle-region-duration" title={regionNote ? `Duration of the In–Out region (${regionNote})` : 'Duration of the In–Out region'}>{regionLabel}</span>
+            {regionNote ? <span className="text-mini text-neutral-400" data-testid="nle-region-note">{regionNote}</span> : null}
           </div>
 
-          {/* Chapter Marker Button ('M') */}
           <button
             type="button"
-            onClick={handleAddMarkerAtCurrentFrame}
-            className="flex items-center gap-1 px-2 py-1 bg-white/5 border border-white/10 hover:border-sky-400/50 rounded text-mini text-neutral-300 hover:text-white transition"
-            title="Add Chapter Marker at playhead ('M')"
+            onClick={() => addMarkerAt(activeFrame)}
+            disabled={lanes.segments.locked}
+            className="flex items-center gap-1 px-2 py-1 bg-white/5 border border-white/10 hover:border-sky-400/50 rounded text-mini text-neutral-300 hover:text-white transition disabled:opacity-40"
+            title={lanes.segments.locked ? 'The markers lane is locked' : "Add Chapter Marker at playhead ('M')"}
+            data-testid="nle-add-marker"
           >
-            <svg className="w-3.5 h-3.5 text-sky-400" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M17 3H7c-1.1 0-1.99.9-1.99 2L5 21l7-3 7 3V5c0-1.1-.9-2-2-2z" />
-            </svg>
+            <svg className="w-3.5 h-3.5 text-sky-400" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M17 3H7c-1.1 0-1.99.9-1.99 2L5 21l7-3 7 3V5c0-1.1-.9-2-2-2z" /></svg>
             <span>+ Marker</span>
             <span className="font-mono text-micro text-neutral-500">({markers.length})</span>
           </button>
 
-          {/* Zoom Controls */}
           <div className="flex items-center gap-1 bg-black/30 border border-white/10 rounded-lg p-0.5">
-            <button
-              type="button"
-              onClick={() => handleZoom(0.7, 0.5)}
-              className="p-1 hover:bg-white/10 rounded text-neutral-300 hover:text-white transition"
-              title="Zoom In (Ctrl + Wheel Up)"
-              aria-label="Zoom In"
-            >
-              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <circle cx="11" cy="11" r="8" />
-                <line x1="21" y1="21" x2="16.65" y2="16.65" />
-                <line x1="11" y1="8" x2="11" y2="14" />
-                <line x1="8" y1="11" x2="14" y2="11" />
-              </svg>
+            <button type="button" onClick={() => handleZoom(0.7, 0.5)} className="p-1 hover:bg-white/10 rounded text-neutral-300 hover:text-white transition" title="Zoom In (Ctrl + Wheel Up)" aria-label="Zoom In" data-testid="nle-zoom-in">
+              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /><line x1="11" y1="8" x2="11" y2="14" /><line x1="8" y1="11" x2="14" y2="11" /></svg>
             </button>
-            <button
-              type="button"
-              onClick={() => handleZoom(1.4, 0.5)}
-              className="p-1 hover:bg-white/10 rounded text-neutral-300 hover:text-white transition"
-              title="Zoom Out (Ctrl + Wheel Down)"
-              aria-label="Zoom Out"
-            >
-              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <circle cx="11" cy="11" r="8" />
-                <line x1="21" y1="21" x2="16.65" y2="16.65" />
-                <line x1="8" y1="11" x2="14" y2="11" />
-              </svg>
+            <button type="button" onClick={() => handleZoom(1.4, 0.5)} className="p-1 hover:bg-white/10 rounded text-neutral-300 hover:text-white transition" title="Zoom Out (Ctrl + Wheel Down)" aria-label="Zoom Out" data-testid="nle-zoom-out">
+              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /><line x1="8" y1="11" x2="14" y2="11" /></svg>
             </button>
-            <button
-              type="button"
-              onClick={handleResetZoom}
-              className="px-2 py-0.5 text-micro font-medium hover:bg-white/10 rounded text-neutral-300 hover:text-white transition"
-              title="Fit entire clip to window"
-            >
-              Fit
-            </button>
+            <input
+              type="range"
+              aria-label="Timeline zoom"
+              data-testid="nle-zoom-slider"
+              min={0}
+              max={100}
+              value={spanToZoom(viewSpan, lastFrame)}
+              onChange={(e) => {
+                // 0 = whole clip, 100 = 4 frames across, log scale; zooms about the window's centre
+                const span = zoomToSpan(Number(e.target.value), lastFrame);
+                const centre = (viewStart + viewEnd) / 2;
+                const start = clampN(Math.round(centre - span / 2), 0, Math.max(0, lastFrame - span));
+                setViewRange([start, Math.min(lastFrame, start + span)]);
+              }}
+              className="w-24 accent-cyan-400"
+              title="Zoom (Ctrl + Scroll)"
+            />
+            <button type="button" onClick={handleResetZoom} className="px-2 py-0.5 text-mini font-medium hover:bg-white/10 rounded text-neutral-300 hover:text-white transition" title="Fit entire clip to window" data-testid="nle-zoom-fit">Fit</button>
           </div>
         </div>
       </div>
 
-      {/* ── Minimap Overview Strip ──────────────────────────────────────────── */}
-      <div
-        ref={minimapRef}
-        onClick={handleMinimapMouseDown}
-        className="relative w-full h-4 bg-black/60 border-b border-white/10 cursor-pointer overflow-hidden"
-        title="Full Clip Minimap (click to center view)"
-      >
-        {/* Track presence lines in minimap */}
-        {trackLanes.map((track) => {
-          const color = getTrackColor(track.trackId, track.color);
-          return (
-            <React.Fragment key={`mini_t_${track.trackId}`}>
-              {track.ranges.map(([start, end], rIdx) => {
-                const leftPct = (clampFrameIdx(start, 0, maxFrames) / maxFrames) * 100;
-                const widthPct =
-                  ((clampFrameIdx(end, start, maxFrames) - clampFrameIdx(start, 0, maxFrames)) /
-                    maxFrames) *
-                  100;
-                return (
-                  <div
-                    key={`mini_r_${track.trackId}_${rIdx}`}
-                    className="absolute top-0 bottom-0 opacity-40"
-                    style={{
-                      left: `${leftPct}%`,
-                      width: `${Math.max(0.2, widthPct)}%`,
-                      backgroundColor: color,
-                    }}
-                  />
-                );
-              })}
-            </React.Fragment>
-          );
-        })}
-
-        {/* Chapter markers in minimap */}
-        {markers.map((m) => (
-          <div
-            key={`mini_m_${m.id}`}
-            className="absolute top-0 bottom-0 w-1 bg-sky-400 z-10 opacity-70"
-            style={{ left: `${(m.frame / maxFrames) * 100}%` }}
-          />
-        ))}
-
-        {/* Shaded View Window Highlight in Minimap */}
-        {maxFrames > 1 && (
-          <div
-            className="absolute top-0 bottom-0 border-x-2 border-white/70 bg-white/15 pointer-events-none transition-all duration-75"
-            style={{
-              left: `${(viewStart / maxFrames) * 100}%`,
-              width: `${(viewSpan / maxFrames) * 100}%`,
-            }}
-          />
-        )}
-
-        {/* Minimap Playhead Indicator */}
-        <div
-          className="absolute top-0 bottom-0 w-0.5 bg-[var(--accent,#e94560)] shadow-sm pointer-events-none"
-          style={{ left: `${(activeFrame / maxFrames) * 100}%` }}
+      {/* ── Sticky controls: transport, overview and ruler stay put while the lanes scroll under them.
+            The dock that hosts the timeline is a short scrolling window (260 px by default) and the full
+            stack is taller than that; without this the controls you scrub with scroll out of sight. ── */}
+      <div className="sticky top-0 z-40 bg-[var(--surface-1,#12141a)]" data-testid="nle-sticky">
+      {showTransport && (
+        <TransportDeck
+          frame={activeFrame}
+          maxFrames={maxFrames}
+          fps={fps}
+          isPlaying={isPlaying}
+          playbackRate={playbackRate}
+          loop={isLooping}
+          trimIn={trimIn}
+          trimOut={trimOut}
+          markerFrames={markerFrames}
+          shuttleLabel={shuttleLabel}
+          shuttleDir={shuttleDir}
+          onSeek={(f) => handleSeekFrame(f)}
+          onStep={(d) => (onStep ? onStep(d) : handleSeekFrame(activeFrame + d))}
+          onTogglePlay={onTogglePlay!}
+          onRate={(r) => onPlaybackRateChange?.(r)}
+          onToggleLoop={() => onToggleLoop?.()}
+          onShuttle={onShuttle}
         />
-      </div>
+      )}
 
-      {/* ── Main Runway Container (Ruler + Lanes Stack) ────────────────────── */}
-      <div
-        ref={runwayRef}
-        onMouseMove={handleRunwayMouseMove}
-        onMouseLeave={handleRunwayMouseLeave}
-        className="relative flex flex-col w-full overflow-hidden bg-black/20"
-      >
-        {/* Global Warning Bar (if warning ticks exist) */}
-        {showWarningTicks && warningTicks.length > 0 && (
-          <div className="relative w-full h-5 bg-black/40 border-b border-white/5 flex items-center px-2">
-            <span className="text-micro text-amber-400 font-semibold uppercase tracking-wider mr-2 shrink-0">
-              Warnings ({warningTicks.length}):
-            </span>
-            <div className="relative flex-1 h-full overflow-hidden">
-              {warningTicks.map((tick, idx) => {
-                const tickX = frameToFraction(tick.frame) * 100;
-                if (tickX < 0 || tickX > 100) return null;
-                const isOcclusion = tick.type === 'occlusion' || (tick.value && tick.value > 25);
-                const isPose = tick.type === 'pose' || (tick.value && tick.value > 50);
-                const tickColor = isOcclusion ? '#f43f5e' : isPose ? '#f59e0b' : '#38bdf8';
+      {/* ── Overview navigator ───────────────────────────────────────────────── */}
+      <MinimapNavigator
+        maxFrames={maxFrames}
+        view={viewRange}
+        onViewChange={setViewRange}
+        frame={activeFrame}
+        trimIn={trimIn}
+        trimOut={trimOut}
+        health={healthSegs}
+        tracks={minimapTracks}
+        markers={markers}
+        headerWidth={LANE_HEADER_PX}
+      />
 
-                return (
-                  <button
-                    key={`warn_${tick.trackId}_${tick.frame}_${idx}`}
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleSeekFrame(tick.frame);
-                      onSelectTrack?.(tick.trackId);
-                    }}
-                    title={`[Frame #${tick.frame}] ${tick.message}`}
-                    className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-2 h-3.5 rounded-sm hover:scale-125 transition-transform cursor-pointer"
-                    style={{
-                      left: `${tickX}%`,
-                      backgroundColor: tickColor,
-                    }}
-                  />
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* ── Ruler & Timecode Lane ─────────────────────────────────────────── */}
-        <div className="flex w-full h-7 bg-[var(--surface-2,#1a1d26)] border-b border-white/10">
-          {/* Header spacer column */}
-          <div className="w-56 shrink-0 flex items-center justify-between px-3 border-r border-white/10 text-mini font-semibold text-neutral-400 uppercase tracking-wider bg-[var(--surface-2,#1a1d26)] z-10">
+        {/* Ruler */}
+        <div className="relative flex w-full border-b border-white/10 bg-[var(--surface-2,#1a1d26)]" style={{ height: RULER_HEIGHT }}>
+          <div className="shrink-0 flex items-center justify-between px-3 border-r border-white/10 text-mini font-semibold text-neutral-400 uppercase tracking-wider z-10" style={{ width: LANE_HEADER_PX }}>
             <span>Ruler</span>
-            <span className="text-micro text-neutral-500 font-mono">
-              fps: {fps}
-            </span>
+            <span className="text-mini text-neutral-400 font-mono normal-case" title={fpsAssumed ? 'Frame rate not read yet: it is measured while the clip plays, and 30 fps is assumed until then (timecodes and frame counts are approximate)' : 'Frame rate'}>{fpsAssumed ? '≈ ' : ''}{Number.isInteger(fps) ? fps : fps.toFixed(3)} fps</span>
           </div>
-
-          {/* Time/Frame Ruler Track */}
           <div
-            onClick={handleScrubberMouseDown}
-            className="relative flex-1 h-full cursor-pointer overflow-hidden"
+            className="relative flex-1 cursor-col-resize"
+            onPointerDown={handleScrubDown}
+            onPointerMove={handleRulerHover}
+            onPointerLeave={() => setHoverTip(null)}
+            data-testid="nle-ruler"
           >
-            {/* Tick lines and labels */}
-            {rulerTicks.map((tick) => {
-              const leftPct = frameToFraction(tick.frame) * 100;
-              if (leftPct < 0 || leftPct > 100) return null;
-              return (
-                <div
-                  key={`tick_${tick.frame}`}
-                  className="absolute top-0 bottom-0 pointer-events-none select-none flex flex-col justify-end pb-0.5"
-                  style={{ left: `${leftPct}%` }}
-                >
-                  <div
-                    className={`w-px ${
-                      tick.major ? 'h-3 bg-white/40' : 'h-1.5 bg-white/20'
-                    }`}
-                  />
-                  {tick.major && (
-                    <span className="text-nano font-mono text-neutral-400 -translate-x-1/2 select-none">
-                      {tick.label}
-                    </span>
-                  )}
-                </div>
-              );
-            })}
-
-            {/* Chapter Markers ('M') on Ruler */}
-            {markers.map((m) => {
-              const leftPct = frameToFraction(m.frame) * 100;
-              if (leftPct < 0 || leftPct > 100) return null;
-              return (
-                <div
-                  key={`marker_${m.id}`}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleSeekFrame(m.frame);
-                  }}
-                  className="absolute top-0 w-3 -translate-x-1/2 cursor-pointer z-30 group"
-                  style={{ left: `${leftPct}%` }}
-                  title={`[Frame #${m.frame}] ${m.label} (Click to jump)`}
-                >
-                  <div className="w-3 h-4 bg-sky-400 text-black flex items-center justify-center rounded-b-sm shadow-md group-hover:scale-125 transition-transform">
-                    <span className="text-nano font-bold">M</span>
-                  </div>
-                </div>
-              );
-            })}
-
-            {/* Global Trim In Bracket Marker */}
-            {trimIn >= viewStart && trimIn <= viewEnd && (
+            <RulerCanvas viewStart={viewStart} viewEnd={viewEnd} fps={fps} />
+            {markers.map((m) => (m.frame >= viewStart && m.frame <= viewEnd ? (
+              <span key={m.id} className="absolute top-0 w-0 h-0 pointer-events-none" style={{ left: `${toPct(m.frame)}%`, borderLeft: '4px solid transparent', borderRight: '4px solid transparent', borderTop: `6px solid ${m.color || DEFAULT_MARKER_COLOR}`, transform: 'translateX(-4px)' }} />
+            ) : null))}
+            {inOutVisibleIn && (
               <div
-                onMouseDown={(e) => handleGlobalTrimDrag('in', e)}
-                className="absolute top-0 bottom-0 w-3 -translate-x-full cursor-ew-resize z-20 flex items-center justify-center group"
-                style={{ left: `${frameToFraction(trimIn) * 100}%` }}
-                title={`Trim In Handle: #${trimIn} (drag to trim, or press 'I')`}
+                role="slider"
+                tabIndex={0}
+                aria-label="Trim In handle"
+                aria-valuemin={0}
+                aria-valuemax={lastFrame}
+                aria-valuenow={trimIn}
+                onPointerDown={(e) => handleTrimDrag('in', e)}
+                onKeyDown={(e) => handleTrimKey('in', e)}
+                className="absolute top-0 bottom-0 w-3 cursor-ew-resize z-20 flex items-center justify-center group focus:outline-none"
+                style={{ left: `${toPct(trimIn)}%` }}
+                title={`Trim In Handle: #${trimIn} (drag, ←/→ to nudge, or press 'I')`}
+                data-testid="nle-trim-in"
               >
-                <div className="w-1.5 h-5 bg-amber-400 rounded-l group-hover:scale-110 shadow-md flex items-center justify-center text-nano font-bold text-black">
-                  [
-                </div>
+                <div className="w-2 h-6 bg-amber-400 rounded-l group-hover:scale-110 group-focus-visible:ring-2 ring-white shadow-md flex items-center justify-center text-micro font-bold text-black">[</div>
               </div>
             )}
-
-            {/* Global Trim Out Bracket Marker */}
-            {trimOut >= viewStart && trimOut <= viewEnd && (
+            {inOutVisibleOut && (
               <div
-                onMouseDown={(e) => handleGlobalTrimDrag('out', e)}
-                className="absolute top-0 bottom-0 w-3 cursor-ew-resize z-20 flex items-center justify-center group"
-                style={{ left: `${frameToFraction(trimOut) * 100}%` }}
-                title={`Trim Out Handle: #${trimOut} (drag to trim, or press 'O')`}
+                role="slider"
+                tabIndex={0}
+                aria-label="Trim Out handle"
+                aria-valuemin={0}
+                aria-valuemax={lastFrame}
+                aria-valuenow={trimOut}
+                onPointerDown={(e) => handleTrimDrag('out', e)}
+                onKeyDown={(e) => handleTrimKey('out', e)}
+                className="absolute top-0 bottom-0 w-3 -translate-x-full cursor-ew-resize z-20 flex items-center justify-center group focus:outline-none"
+                style={{ left: `${toPct(trimOut)}%` }}
+                title={`Trim Out Handle: #${trimOut} (drag, ←/→ to nudge, or press 'O')`}
+                data-testid="nle-trim-out"
               >
-                <div className="w-1.5 h-5 bg-amber-400 rounded-r group-hover:scale-110 shadow-md flex items-center justify-center text-nano font-bold text-black">
-                  ]
-                </div>
+                <div className="w-2 h-6 bg-amber-400 rounded-r group-hover:scale-110 group-focus-visible:ring-2 ring-white shadow-md flex items-center justify-center text-micro font-bold text-black">]</div>
+              </div>
+            )}
+          </div>
+
+          {/* Ruler layer: exactly the lane area (everything right of the header column). EVERY pixel <-> frame
+              mapping reads this element's rect. It carries the playhead cap and the top of the playhead line. */}
+          <div ref={areaRef} className="absolute top-0 bottom-0 right-0 pointer-events-none z-30" style={{ left: LANE_HEADER_PX }} data-testid="nle-lane-area">
+            {activeFrame >= viewStart && activeFrame <= viewEnd && (
+              <div className="absolute top-0 bottom-0 w-0" style={{ left: `${toPct(activeFrame)}%` }}>
+                <div className="absolute top-0 bottom-0 w-px -translate-x-1/2 bg-[var(--accent-cyan,#00F0FF)]" style={{ boxShadow: '0 0 6px var(--accent-cyan,#00F0FF), 0 0 1px #fff' }} data-testid="nle-playhead-line" />
+                <div
+                  onPointerDown={handleScrubDown}
+                  className="absolute top-0 -translate-x-1/2 w-[15px] h-[17px] pointer-events-auto cursor-ew-resize bg-[var(--accent-cyan,#00F0FF)]"
+                  style={{ clipPath: 'polygon(0 0, 100% 0, 100% 58%, 50% 100%, 0 58%)', boxShadow: '0 0 8px var(--accent-cyan,#00F0FF)' }}
+                  role="presentation"
+                  data-testid="nle-playhead-cap"
+                  title="Drag to scrub"
+                />
               </div>
             )}
           </div>
         </div>
+      </div>
 
-        {/* ── V1 Video Filmstrip Lane ────────────────────────────────────────── */}
+      {/* ── Runway: the lane stack, with a layer over the lane area for the In/Out dimming, snap guide and playhead ── */}
+      <div className="relative flex flex-col w-full bg-black/20" data-testid="nle-runway">
+        {/* Lane 1: video filmstrip */}
         {showFilmstripLane && (
-          <div
-            onClick={handleScrubberMouseDown}
-            className="flex w-full h-12 bg-black/30 border-b border-white/5 group/film relative cursor-pointer"
-            data-testid="lane-v1-filmstrip"
+          <LaneRow
+            id="v1"
+            testId="lane-v1-filmstrip"
+            badge="V1"
+            badgeClass="bg-blue-500/20 text-blue-400"
+            title="Video"
+            state={lanes.v1}
+            {...laneActions('v1')}
+            onToggleLocked={undefined}
+            heightPx={hv('v1')}
+            status={<span data-testid="nle-v1-status">{film.slots.length} stills · {regionLabel}</span>}
           >
-            {/* Left Header */}
-            <div className="w-56 shrink-0 flex items-center justify-between px-3 border-r border-white/10 bg-[var(--surface-2,#1a1d26)]/90 z-10">
-              <div className="flex items-center gap-1.5 font-bold text-white text-mini">
-                <span className="px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-400 text-micro font-mono">
-                  V1
-                </span>
-                <span>Video Filmstrip</span>
-              </div>
-              <span className="text-micro font-mono text-neutral-500">
-                {filmstrip.slots.length} stills
-              </span>
-            </div>
-
-            {/* Filmstrip Runway */}
-            <div className="relative flex-1 h-full overflow-hidden bg-black/40">
-              {filmstrip.slots.map((slot) => {
-                const bmp = filmstrip.getThumbnail(slot.frame);
-                return (
-                  <div
-                    key={`slot_${slot.slotIndex}_${slot.frame}`}
-                    className="absolute top-0 bottom-0 border-r border-black/60 overflow-hidden flex items-center justify-center bg-black/50"
-                    style={{
-                      left: `${slot.leftPct}%`,
-                      width: `${slot.widthPct}%`,
-                    }}
-                  >
-                    {bmp ? (
-                      <canvas
-                        ref={(canvas) => {
-                          if (canvas && bmp) {
-                            const ctx = canvas.getContext('2d');
-                            if (ctx) {
-                              canvas.width = canvas.clientWidth || 100;
-                              canvas.height = canvas.clientHeight || 48;
-                              ctx.drawImage(bmp, 0, 0, canvas.width, canvas.height);
-                            }
-                          }
-                        }}
-                        className="w-full h-full object-cover opacity-80 group-hover/film:opacity-100 transition-opacity"
-                      />
-                    ) : (
-                      <div className="flex flex-col items-center justify-center text-nano font-mono text-neutral-600">
-                        <span>#{slot.frame}</span>
-                      </div>
-                    )}
-                    {/* Sprocket border tick */}
-                    <div className="absolute bottom-0 left-0 right-0 h-1 bg-black/60 flex justify-around">
-                      <span className="w-1 h-0.5 bg-white/20 rounded-full" />
-                      <span className="w-1 h-0.5 bg-white/20 rounded-full" />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* ── A1 Audio Waveform Lane ─────────────────────────────────────────── */}
-        {showWaveformLane && (
-          <div
-            onClick={handleScrubberMouseDown}
-            className="flex w-full h-9 bg-black/20 border-b border-white/5 relative cursor-pointer"
-            data-testid="lane-a1-waveform"
-          >
-            {/* Left Header */}
-            <div className="w-56 shrink-0 flex items-center justify-between px-3 border-r border-white/10 bg-[var(--surface-2,#1a1d26)]/90 z-10">
-              <div className="flex items-center gap-1.5 font-bold text-white text-mini">
-                <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 text-micro font-mono">
-                  A1
-                </span>
-                <span>Audio Peaks</span>
-              </div>
-              <span className="text-micro font-mono text-neutral-500">
-                {waveform.state === 'ready'
-                  ? 'ready'
-                  : waveform.state === 'none'
-                  ? 'no audio'
-                  : waveform.state}
-              </span>
-            </div>
-
-            {/* Audio Waveform Canvas Runway */}
-            <div className="relative flex-1 h-full overflow-hidden flex items-center bg-black/30">
-              {waveform.state === 'ready' && waveform.peaks.length > 0 ? (
-                <canvas
-                  ref={(canvas) => {
-                    if (!canvas) return;
-                    const ctx = canvas.getContext('2d');
-                    if (!ctx) return;
-
-                    const width = canvas.clientWidth || 800;
-                    const height = canvas.clientHeight || 36;
-                    const dpr = window.devicePixelRatio || 1;
-
-                    canvas.width = width * dpr;
-                    canvas.height = height * dpr;
-                    ctx.scale(dpr, dpr);
-                    ctx.clearRect(0, 0, width, height);
-
-                    const midY = height / 2;
-                    const peaks = waveform.peaks;
-                    const numPeaks = peaks.length;
-
-                    // Visible time window
-                    const tStart = frameMap.resolveTimeFromFrame(viewStart);
-                    const tEnd = frameMap.resolveTimeFromFrame(viewEnd);
-                    const dur = Math.max(0.001, waveform.duration || 1);
-
-                    const p0 = Math.max(0, Math.floor((tStart / dur) * numPeaks));
-                    const p1 = Math.min(numPeaks, Math.ceil((tEnd / dur) * numPeaks));
-                    const sliceLen = Math.max(1, p1 - p0);
-
-                    // Draw center baseline
-                    ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
-                    ctx.lineWidth = 1;
-                    ctx.beginPath();
-                    ctx.moveTo(0, midY);
-                    ctx.lineTo(width, midY);
-                    ctx.stroke();
-
-                    // Draw peak bars
-                    const barWidth = Math.max(1, width / sliceLen);
-                    for (let i = 0; i < sliceLen; i++) {
-                      const peakVal = peaks[p0 + i] || 0; // 0..255
-                      const norm = peakVal / 255;
-                      const h = Math.max(1, norm * (midY - 2));
-
-                      // Gradient color: Emerald/Teal to Amber/Rose on high amplitude
-                      ctx.fillStyle =
-                        norm > 0.8
-                          ? '#f43f5e'
-                          : norm > 0.5
-                          ? '#fbbf24'
-                          : '#10b981';
-
-                      const x = (i / sliceLen) * width;
-                      ctx.fillRect(x, midY - h, barWidth, h * 2);
-                    }
-                  }}
-                  className="w-full h-full"
-                />
-              ) : waveform.state === 'none' ? (
-                <div className="flex items-center px-4 text-micro font-mono text-neutral-500 italic">
-                  (No audio track detected in source media)
-                </div>
-              ) : (
-                <div className="flex items-center px-4 text-micro font-mono text-sky-400 animate-pulse">
-                  Rendering waveform envelope from /api/media/waveform…
+            <div className="absolute inset-0 cursor-col-resize" onPointerDown={handleScrubDown}>
+              <FilmstripCanvas slots={film.slots} getThumbnail={film.getThumbnail} version={film.version} />
+              {/* the clip outside In/Out is dimmed on every lane (see the overlay layer); here it is also labelled */}
+              {!regionIsWhole && (
+                <div
+                  className="absolute top-1 -translate-x-1/2 px-2 py-0.5 rounded-full bg-black/80 border border-amber-400/50 text-amber-200 text-mini font-mono tabular-nums pointer-events-none"
+                  style={{ left: `${clampN(toPct((region.in + region.out) / 2), 8, 92)}%` }}
+                >
+                  {regionLabel}
                 </div>
               )}
+              {inOutVisibleIn && (
+                <div role="presentation" onPointerDown={(e) => handleTrimDrag('in', e)} className="absolute top-0 bottom-0 w-3 cursor-ew-resize z-20 bg-amber-400/90 rounded-l flex items-center justify-center text-micro font-bold text-black" style={{ left: `${toPct(trimIn)}%` }} title={`Trim In: #${trimIn}`}>[</div>
+              )}
+              {inOutVisibleOut && (
+                <div role="presentation" onPointerDown={(e) => handleTrimDrag('out', e)} className="absolute top-0 bottom-0 w-3 -translate-x-full cursor-ew-resize z-20 bg-amber-400/90 rounded-r flex items-center justify-center text-micro font-bold text-black" style={{ left: `${toPct(trimOut)}%` }} title={`Trim Out: #${trimOut}`}>]</div>
+              )}
             </div>
-          </div>
+          </LaneRow>
         )}
 
-        {/* ── Keyframe Lane ('KF') ───────────────────────────────────────────── */}
-        {showKeyframeLane && (
-          <div
-            onClick={handleScrubberMouseDown}
-            className="flex w-full h-8 bg-black/25 border-b border-white/5 relative cursor-pointer"
-            data-testid="lane-kf-editor"
+        {/* Lane 2: face tracking & confidence heatmap */}
+        {showHealthLane && (
+          <LaneRow
+            id="health"
+            testId="lane-health"
+            badge="FT"
+            badgeClass="bg-emerald-500/20 text-emerald-400"
+            title="Face coverage"
+            state={lanes.health}
+            {...laneActions('health')}
+            onToggleLocked={undefined}
+            heightPx={hv('health')}
+            status={trackLanes.length === 0 ? 'not scanned' : <span data-testid="nle-health-status" title="Share of the clip: face tracked / extreme pose / no face (they add up to 100%)">{pct1(healthSummary.face)}% ok · {pct1(healthSummary.risk)}% risk · {pct1(healthSummary.lost)}% lost</span>}
+            extra={
+              <div className="flex items-center gap-0.5">
+                <button type="button" disabled={neighbourFrame(problems, activeFrame, -1) === null} onClick={() => { const f = neighbourFrame(problems, activeFrame, -1); if (f !== null) handleSeekFrame(f); }} aria-label="Previous problem frame" title="Jump to the previous amber / rose run" data-testid="nle-health-prev" className="w-5 h-6 rounded text-neutral-300 hover:text-white hover:bg-white/10 disabled:opacity-30">‹</button>
+                <button type="button" disabled={neighbourFrame(problems, activeFrame, 1) === null} onClick={() => { const f = neighbourFrame(problems, activeFrame, 1); if (f !== null) handleSeekFrame(f); }} aria-label="Next problem frame" title="Jump to the next amber / rose run" data-testid="nle-health-next" className="w-5 h-6 rounded text-neutral-300 hover:text-white hover:bg-white/10 disabled:opacity-30">›</button>
+              </div>
+            }
           >
-            {/* Left Header with Parameter Selector */}
-            <div
-              onClick={(e) => e.stopPropagation()}
-              className="w-56 shrink-0 flex items-center justify-between px-3 border-r border-white/10 bg-[var(--surface-2,#1a1d26)]/90 z-10"
-            >
-              <div className="flex items-center gap-1.5">
-                <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 text-micro font-mono font-bold">
-                  KF
-                </span>
+            <FaceHealthLane segments={healthSegs} viewStart={viewStart} viewEnd={viewEnd} maxFrames={maxFrames} onJump={(f) => handleSeekFrame(f)} onScrubDown={handleScrubDown} />
+          </LaneRow>
+        )}
+
+        {/* Lane 3: swap segments / overrides + markers */}
+        {showSegmentLane && (
+          <LaneRow
+            id="segments"
+            testId="lane-segments"
+            badge={segmentLaneTitle === 'Swap rules' ? 'SW' : 'MK'}
+            badgeClass="bg-violet-500/20 text-violet-300"
+            title={segmentLaneTitle}
+            state={lanes.segments}
+            {...laneActions('segments')}
+            heightPx={hv('segments')}
+            status={`${segmentLaneBlocks.length} blocks · ${markers.length} markers`}
+          >
+            <SegmentLane
+              blocks={segmentLaneBlocks}
+              markers={markers}
+              viewStart={viewStart}
+              viewEnd={viewEnd}
+              maxFrames={maxFrames}
+              locked={lanes.segments.locked}
+              selectedMarkerId={popover?.id ?? null}
+              onSeek={(f) => handleSeekFrame(f)}
+              onBlockClick={onSegmentClick}
+              onMarkerSelect={(m, anchor) => setPopover({ id: m.id, anchor })}
+              onMarkerMove={(m, f) => { setPopover(null); updateMarker({ ...m, frame: f }); }}
+              snap={(f) => snapFrame(f).frame}
+              onScrubDown={handleScrubDown}
+              emptyHint={trackLanes.length === 0 ? 'Range locks, segments and overrides appear here. Press M or "+ Marker" to flag a frame.' : undefined}
+            />
+          </LaneRow>
+        )}
+
+        {/* Lane 4: audio */}
+        {showWaveformLane && (
+          <LaneRow
+            id="a1"
+            testId="lane-a1-waveform"
+            badge="A1"
+            badgeClass="bg-emerald-500/20 text-emerald-400"
+            title="Audio"
+            state={lanes.a1}
+            {...laneActions('a1')}
+            onToggleLocked={undefined}
+            heightPx={hv('a1')}
+            status={wave.state === 'ready' ? 'peaks' : wave.state === 'none' ? 'no audio' : wave.state}
+          >
+            <div className="absolute inset-0 cursor-col-resize" onPointerDown={handleScrubDown}>
+              {wave.state === 'ready' && wave.peaks.length > 0 ? (
+                <WaveformCanvas
+                  peaks={wave.peaks}
+                  duration={wave.duration}
+                  tStart={frameMap.resolveTimeFromFrame(viewStart)}
+                  tEnd={frameMap.resolveTimeFromFrame(viewEnd)}
+                />
+              ) : wave.state === 'none' ? (
+                <div className="flex h-full items-center px-4 text-mini text-neutral-500 italic">{wave.reason ? `No waveform: ${wave.reason}` : '(No audio track detected in source media)'}</div>
+              ) : wave.state === 'error' ? (
+                <div className="flex h-full items-center px-4 text-mini text-rose-300">Waveform could not be loaded</div>
+              ) : (
+                <div className="flex h-full items-center px-4 text-mini text-sky-300 animate-pulse">{clientMode ? 'Decoding audio…' : 'Loading waveform…'}</div>
+              )}
+            </div>
+          </LaneRow>
+        )}
+
+        {/* Keyframes */}
+        {showKeyframeLane && (
+          <LaneRow
+            id="kf"
+            testId="lane-kf-editor"
+            badge="KF"
+            badgeClass="bg-amber-500/20 text-amber-400"
+            title="Keyframes"
+            state={lanes.kf}
+            {...laneActions('kf')}
+            heightPx={hv('kf')}
+            extra={
+              <>
                 <select
                   value={activeParam}
                   onChange={(e) => setActiveParam(e.target.value as TimelineParamType)}
-                  className="bg-black/60 border border-white/15 rounded px-1.5 py-0.5 text-micro font-medium text-white focus:outline-none focus:border-amber-400/60"
+                  onClick={(e) => e.stopPropagation()}
+                  className="min-w-0 max-w-[104px] bg-black/60 border border-white/15 rounded px-1 py-0.5 text-mini font-medium text-white focus:outline-none focus:border-amber-400/60"
                   title="Active Keyframe Parameter"
+                  aria-label="Active keyframe parameter"
                 >
                   {Object.values(PARAMETER_CONFIGS).map((config) => <option key={config.id} value={config.id}>{config.label}</option>)}
                 </select>
-              </div>
-
-              {/* Add Keyframe Button */}
-              <button
-                type="button"
-                onClick={handleAddKeyframeAtCurrent}
-                className="p-1 hover:bg-white/10 rounded text-amber-400 hover:text-white transition"
-                title={`Add ${activeParam} keyframe at frame #${activeFrame}`}
-              >
-                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <line x1="12" y1="5" x2="12" y2="19" />
-                  <line x1="5" y1="12" x2="19" y2="12" />
-                </svg>
-              </button>
-            </div>
-
-            {/* Keyframe Runway with Connecting Curves */}
-            <div className="relative flex-1 h-full overflow-hidden flex items-center bg-black/30">
-              {/* Connecting curve line SVG */}
-              <svg className="absolute inset-0 w-full h-full pointer-events-none">
-                {activeParamKeyframes.map((kf, idx) => {
-                  if (idx === activeParamKeyframes.length - 1) return null;
-                  const nextKf = activeParamKeyframes[idx + 1];
-
-                  const x1 = frameToFraction(kf.frame_idx) * runwayWidth;
-                  const x2 = frameToFraction(nextKf.frame_idx) * runwayWidth;
-                  const y = 16; // lane center
-
-                  if (kf.curve === 'Hold') {
-                    return (
-                      <path
-                        key={`line_${kf.id}_${nextKf.id}`}
-                        d={`M ${x1} ${y} H ${x2}`}
-                        stroke="rgba(251, 191, 36, 0.4)"
-                        strokeWidth="1.5"
-                        strokeDasharray="3 3"
-                        fill="none"
-                      />
-                    );
-                  }
-                  if (kf.curve === 'Linear') {
-                    return (
-                      <line
-                        key={`line_${kf.id}_${nextKf.id}`}
-                        x1={x1}
-                        y1={y}
-                        x2={x2}
-                        y2={y}
-                        stroke="rgba(251, 191, 36, 0.7)"
-                        strokeWidth="2"
-                      />
-                    );
-                  }
-                  // Ease In/Out smooth bezier
-                  const dx = (x2 - x1) * 0.5;
-                  return (
-                    <path
-                      key={`curve_${kf.id}_${nextKf.id}`}
-                      d={`M ${x1} ${y} C ${x1 + dx} ${y - 4}, ${x2 - dx} ${y + 4}, ${x2} ${y}`}
-                      stroke="rgba(251, 191, 36, 0.85)"
-                      strokeWidth="2"
-                      fill="none"
-                    />
-                  );
-                })}
-              </svg>
-
-              {/* Keyframe Diamonds */}
-              {activeParamKeyframes.map((kf) => {
-                const kfX = frameToFraction(kf.frame_idx) * 100;
-                if (kfX < -5 || kfX > 105) return null;
-
-                const isSelected = selectedKeyframeId === kf.id;
-                const paramColor = PARAMETER_CONFIGS[kf.param]?.color || '#fbbf24';
-
-                return (
-                  <div
-                    key={`kf_${kf.id}`}
-                    onMouseDown={(e) => handleKeyframeDrag(kf.id, e)}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setSelectedKeyframeId(kf.id);
-                      handleSeekFrame(kf.frame_idx);
-                    }}
-                    className={`absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-3.5 h-3.5 rotate-45 border shadow-md hover:scale-125 transition-transform cursor-ew-resize z-20 ${
-                      isSelected
-                        ? 'bg-white border-[var(--accent,#e94560)] ring-2 ring-[var(--accent,#e94560)]/80 scale-125'
-                        : 'border-black'
-                    }`}
-                    style={{
-                      left: `${kfX}%`,
-                      backgroundColor: isSelected ? '#ffffff' : paramColor,
-                    }}
-                    title={`Keyframe: ${kf.param} = ${kf.value} (${kf.curve}) at frame #${kf.frame_idx} (Drag to move, Alt+Drag to copy)`}
-                  />
-                );
-              })}
-
-              {/* Curve Selector Toolbar if Keyframe Selected */}
-              {selectedKeyframe && (
-                <div
-                  onClick={(e) => e.stopPropagation()}
-                  className="absolute right-4 top-1/2 -translate-y-1/2 z-30 flex items-center gap-1.5 px-2 py-0.5 bg-black/80 border border-white/20 rounded shadow-lg backdrop-blur"
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); handleAddKeyframeAtCurrent(); }}
+                  disabled={kfLocked}
+                  className="p-1 hover:bg-white/10 rounded text-amber-400 hover:text-white transition disabled:opacity-40"
+                  title={kfLocked ? 'The keyframe lane is locked' : `Add ${activeParam} keyframe at frame #${activeFrame}`}
+                  aria-label={`Add ${activeParam} keyframe`}
                 >
-                  <span className="text-micro font-mono text-neutral-300">
-                    #{selectedKeyframe.frame_idx}:
-                  </span>
-                  {PARAMETER_CONFIGS[selectedKeyframe.param].choices ? (
-                    <select aria-label="Keyframe value" value={selectedKeyframe.value} onChange={(e) => onUpdateKeyframes?.(nleKeyframes.map((k) => k.id === selectedKeyframe.id ? { ...k, value: Number(e.target.value), curve: 'Hold' } : k))}>
-                      {PARAMETER_CONFIGS[selectedKeyframe.param].choices!.map((v, i) => <option key={i} value={i}>{String(v)}</option>)}
-                    </select>
-                  ) : <input aria-label="Keyframe value" type="number" className="w-16 bg-black text-white" min={PARAMETER_CONFIGS[selectedKeyframe.param].min} max={PARAMETER_CONFIGS[selectedKeyframe.param].max} step={PARAMETER_CONFIGS[selectedKeyframe.param].step} value={selectedKeyframe.value} onChange={(e) => {
-                    const config = PARAMETER_CONFIGS[selectedKeyframe.param];
-                    const value = Number(e.target.value);
-                    if (Number.isFinite(value)) onUpdateKeyframes?.(nleKeyframes.map((k) => k.id === selectedKeyframe.id ? { ...k, value: Math.max(config.min, Math.min(config.max, value)) } : k));
-                  }} />}
-                  {(['Linear', 'Ease In/Out', 'Hold'] as TimelineCurveType[]).map((c) => (
-                    <button
-                      key={c}
-                      type="button"
-                      onClick={() => handleCurveChange(selectedKeyframe.id, c)}
-                      className={`px-1.5 py-0.5 rounded text-nano font-medium transition ${
-                        selectedKeyframe.curve === c
-                          ? 'bg-amber-400 text-black font-bold'
-                          : 'bg-white/10 text-neutral-300 hover:text-white'
-                      }`}
-                    >
-                      {c}
-                    </button>
-                  ))}
-                  <button
-                    type="button"
-                    onClick={() => handleDeleteKeyframe(selectedKeyframe.id)}
-                    className="p-1 hover:bg-rose-500/20 text-rose-400 rounded transition"
-                    title="Delete Keyframe"
-                  >
-                    <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <line x1="18" y1="6" x2="6" y2="18" />
-                      <line x1="6" y1="6" x2="18" y2="18" />
-                    </svg>
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
+                  <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>
+                </button>
+              </>
+            }
+          >
+            <KeyframeLane
+              keyframes={activeParamKeyframes}
+              viewStart={viewStart}
+              viewEnd={viewEnd}
+              widthPx={areaWidth}
+              heightPx={hv('kf')}
+              selectedId={selectedKeyframeId}
+              locked={kfLocked}
+              onSelect={setSelectedKeyframeId}
+              onSeek={(f) => handleSeekFrame(f)}
+              onDragStart={handleKeyframeDrag}
+              onPatch={patchKeyframe}
+              onDelete={deleteKeyframe}
+              onScrubDown={handleScrubDown}
+            />
+          </LaneRow>
         )}
 
-        {/* ── Per-Target Face Track Lanes Track #1..#N ────────────────────────── */}
-        <div className="flex flex-col w-full divide-y divide-white/5">
-          {trackLanes.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-8 px-4 text-center text-neutral-400">
-              <svg
-                className="w-7 h-7 mb-2 text-neutral-600"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.5"
-              >
-                <path d="M15 10l-4 4l6 6l4 -16l-18 7l4 2l2 6l3 -4" />
-              </svg>
-              <p className="text-xs font-medium text-neutral-300">
-                No ByteTrack Lanes Found
-              </p>
-              <p className="text-mini text-neutral-500 max-w-sm mt-0.5">
-                Run Step 1 Pre-Scan to detect face trajectories, populate ByteTrack lanes,
-                and extract pose/occlusion warning ticks.
-              </p>
-              <button
-                type="button"
-                onClick={onPreScanClick}
-                disabled={isPreScanActive}
-                className="mt-2.5 px-3 py-1 bg-[var(--accent,#e94560)] hover:bg-[var(--accent,#e94560)]/90 text-white rounded text-xs font-semibold shadow-lg transition"
-              >
-                {isPreScanActive ? 'Pre-Scanning…' : 'Start 1 Pre-Scan'}
-              </button>
+        {/* Per-target face track lanes */}
+        {showFaceTrackLanes && (
+          <div className="flex flex-col w-full" data-testid="nle-face-tracks" data-hidden={lanes.faces.hidden ? '1' : '0'} data-height={lanes.faces.height}>
+            <div className="flex w-full border-b border-white/5" style={{ height: COLLAPSED_PX + 12 }}>
+              <LaneHeader
+                laneId="faces"
+                badge="FS"
+                badgeClass="bg-pink-500/20 text-pink-300"
+                title={LANE_LABELS.faces}
+                state={lanes.faces}
+                {...laneActions('faces')}
+                onToggleLocked={undefined}
+                width={LANE_HEADER_PX}
+                height={COLLAPSED_PX + 12}
+                status={`${faceCount} ${faceCount === 1 ? 'track' : 'tracks'}`}
+              />
+              <div className="flex-1 bg-black/20" />
             </div>
-          ) : (
-            trackLanes.map((track) => {
-              const isSelected = selectedTrackId === track.trackId;
-              const suggested = assignmentMap.get(track.trackId);
-              const fszLabel =
-                suggested?.suggestedFileName || track.suggestedFsz || `track_${track.trackId + 1}.fsz`;
-
-              const trackColor = getFacesetColor(
-                track.facesetPath || track.suggestedFsz,
-                getTrackColor(track.trackId, track.color)
-              );
-              const trackWarnings = warningsByTrack.get(track.trackId) || [];
-
-              const isTrackLocked = rangeLockIntervals.some(
-                (iv) => iv.track_id === track.trackId && iv.locked !== false
-              );
-
-              return (
-                <div
-                  key={`track_lane_${track.trackId}`}
-                  onClick={(e) => handleTrackOrRangeClick(track, undefined, e)}
-                  className={`flex w-full min-h-[42px] transition-colors cursor-pointer group ${
-                    isSelected
-                      ? 'bg-[var(--accent,#e94560)]/10 ring-1 ring-inset ring-[var(--accent,#e94560)]/40'
-                      : 'hover:bg-white/[0.02]'
-                  }`}
-                  data-testid={`lane-track-${track.trackId}`}
-                >
-                  {/* Left Column: Track Info & Assigned / Suggested .fsz Faceset */}
-                  <div className="w-56 shrink-0 flex flex-col justify-center px-3 py-1.5 border-r border-white/10 bg-[var(--surface-2,#1a1d26)]/80">
-                    <div className="flex items-center justify-between gap-1.5">
-                      <div className="flex items-center gap-1.5">
-                        <span
-                          className="w-2.5 h-2.5 rounded-full shrink-0 shadow-sm"
-                          style={{ backgroundColor: trackColor }}
-                        />
-                        <span className="font-bold text-white text-mini truncate">
-                          {track.label}
-                        </span>
-                      </div>
-
-                      {/* Lock Toggle / Indicator */}
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleTrackOrRangeClick(track, undefined, e);
-                        }}
-                        className={`p-1 rounded transition ${
-                          isTrackLocked
-                            ? 'text-[var(--accent,#e94560)] hover:text-white'
-                            : 'text-neutral-500 hover:text-neutral-300'
-                        }`}
-                        title={isTrackLocked ? 'Range Locked (Step 2 Active)' : 'Click to Range Lock'}
-                      >
-                        <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor">
-                          {isTrackLocked ? (
-                            <path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z" />
-                          ) : (
-                            <path d="M12 17c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm6-9h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6h1.9c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm0 12H6V10h12v10z" />
-                          )}
-                        </svg>
+            {!lanes.faces.hidden && (
+              <div className="flex flex-col w-full divide-y divide-white/5">
+                {trackLanes.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-6 px-4 text-center text-neutral-400">
+                    <p className="text-compact font-medium text-neutral-300">No ByteTrack Lanes Found</p>
+                    <p className="text-mini text-neutral-500 max-w-sm mt-0.5">Run Step 1 Pre-Scan to detect face trajectories, populate ByteTrack lanes, and extract pose/occlusion warning ticks.</p>
+                    {showPipelineSteps && (
+                      <button type="button" onClick={onPreScanClick} disabled={isPreScanActive} className="mt-2.5 px-3 py-1 bg-[var(--accent,#e94560)] hover:bg-[var(--accent,#e94560)]/90 text-white rounded text-mini font-semibold shadow-lg transition">
+                        {isPreScanActive ? 'Pre-Scanning…' : 'Start 1 Pre-Scan'}
                       </button>
-                    </div>
-
-                    {facesets.length > 0 && <select aria-label={`Faceset for Track #${track.trackId + 1}`} value={track.facesetPath || track.facesetId || ''} onChange={(event) => onAssignFsz?.(track.trackId, event.target.value)} className="w-full bg-black/40 text-white text-micro">
-                      <option value="" disabled>Choose faceset</option>
-                      {facesets.map((source) => <option key={source.id} value={source.path}>{source.name}</option>)}
-                    </select>}
-                    {/* Assigned / Suggested .fsz Assignment Chip */}
-                    {showSuggestedFsz && (
-                      <div className="flex items-center justify-between gap-1 mt-0.5">
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onAssignFsz?.(track.trackId, fszLabel);
-                          }}
-                          title={`Assigned/Suggested Faceset: ${fszLabel} (${track.via})`}
-                          className="flex items-center gap-1 max-w-[170px] px-1.5 py-0.5 rounded bg-black/40 border border-white/10 hover:border-white/20 text-micro font-mono text-neutral-300 truncate transition"
-                        >
-                          <span style={{ color: trackColor }}>●</span>
-                          <span className="truncate">{fszLabel}</span>
-                        </button>
-                        <span className="text-nano font-mono text-neutral-500">
-                          {track.totalFrames}f
-                        </span>
-                      </div>
                     )}
                   </div>
+                ) : (
+                  trackLanes.map((track) => {
+                    const isTrackLocked = rangeLockIntervals.some((iv) => iv.track_id === track.trackId && iv.locked !== false);
+                    return (
+                      <FaceTrackLane
+                        key={`track_lane_${track.trackId}`}
+                        track={track}
+                        color={getFacesetColor(track.facesetPath || track.suggestedFsz, getTrackColor(track.trackId, track.color))}
+                        isSelected={selectedTrackId === track.trackId}
+                        isLocked={isTrackLocked}
+                        suggested={assignmentMap.get(track.trackId)}
+                        warnings={warningsByTrack.get(track.trackId) || []}
+                        showWarnings={showWarningTicks}
+                        showSuggested={showSuggestedFsz}
+                        facesets={facesets}
+                        intervals={rangeLockIntervals}
+                        viewStart={viewStart}
+                        viewEnd={viewEnd}
+                        maxFrames={maxFrames}
+                        height={faceGroupHeight}
+                        laneHeightPx={faceLaneHeightPx}
+                        headerWidth={LANE_HEADER_PX}
+                        onRowClick={(e) => handleTrackOrRangeClick(track, undefined, e)}
+                        onRangeClick={(range, e) => handleTrackOrRangeClick(track, range, e)}
+                        onToggleRangeLock={(e) => handleTrackOrRangeClick(track, undefined, e)}
+                        onToggleActive={onToggleTrackActive ? (active) => onToggleTrackActive(track.trackId, active) : undefined}
+                        onAssign={(fsz) => onAssignFsz?.(track.trackId, fsz)}
+                        onTrimDrag={handleRangeTrimDrag}
+                        onTrimNudge={handleRangeNudge}
+                        onWarningClick={(tick) => { handleSeekFrame(tick.frame); onSelectTrack?.(tick.trackId); }}
+                      />
+                    );
+                  })
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
-                  {/* Right Column: Track Runway & Range Bars with Yaw/Occlusion Micro-Indicators */}
-                  <div className="relative flex-1 h-full min-h-[42px] overflow-hidden flex items-center">
-                    {/* Active Range Presence Bars */}
-                    {track.ranges.map(([rStart, rEnd], rangeIndex) => {
-                      const start = clampFrameIdx(rStart, 0, maxFrames);
-                      const end = clampFrameIdx(rEnd, start, maxFrames);
+        {/* ── Lanes layer: same left / right as the ruler layer, so a frame is at the same x in both ───── */}
+        <div className="absolute top-0 bottom-0 right-0 pointer-events-none z-30" style={{ left: LANE_HEADER_PX }} data-testid="nle-lane-layer">
+          {/* the clip outside In / Out, dimmed across every lane */}
+          {!regionIsWhole && (
+            <>
+              <div className="absolute top-0 bottom-0 left-0 bg-black/45" style={{ width: `${clampN(toPct(region.in), 0, 100)}%` }} data-testid="nle-dim-before" />
+              <div className="absolute top-0 bottom-0 right-0 bg-black/45" style={{ width: `${clampN(100 - toPct(region.out), 0, 100)}%` }} data-testid="nle-dim-after" />
+            </>
+          )}
 
-                      if (end < viewStart || start > viewEnd) return null;
+          {/* snapping guide */}
+          {snapIndicatorFrame !== null && snapIndicatorFrame >= viewStart && snapIndicatorFrame <= viewEnd && (
+            <div className="absolute top-0 bottom-0" style={{ left: `${toPct(snapIndicatorFrame)}%` }}>
+              <div className="w-px h-full border-l border-dashed border-sky-400 opacity-80" />
+              <div className="absolute top-8 -translate-x-1/2 px-1 py-0.5 bg-sky-500 text-black text-micro font-mono font-bold rounded shadow">SNAP {formatFrameLabel(snapIndicatorFrame)}</div>
+            </div>
+          )}
 
-                      const leftPct = Math.max(0, frameToFraction(start) * 100);
-                      const rightPct = Math.min(100, frameToFraction(end) * 100);
-                      const widthPct = Math.max(0.5, rightPct - leftPct);
-
-                      const activeInterval = rangeLockIntervals.find(
-                        (iv) =>
-                          iv.track_id === track.trackId &&
-                          iv.frame_start === start &&
-                          iv.frame_end === end
-                      );
-                      const isIntervalLocked = activeInterval?.locked !== false && isTrackLocked;
-
-                      return (
-                        <div
-                          key={`range_bar_${track.trackId}_${rangeIndex}`}
-                          onClick={(e) => handleTrackOrRangeClick(track, [start, end], e)}
-                          className={`absolute h-7 rounded-md shadow-md flex items-center justify-between px-2 cursor-pointer transition-all border ${
-                            isIntervalLocked
-                              ? 'border-white/50 ring-2 ring-[var(--accent,#e94560)]/80 brightness-110'
-                              : 'border-white/20 hover:border-white/40'
-                          }`}
-                          style={{
-                            left: `${leftPct}%`,
-                            width: `${widthPct}%`,
-                            background: `linear-gradient(90deg, ${trackColor}cc, ${trackColor}88)`,
-                          }}
-                          title={`Click to Range Lock [${start}–${end}] (${end - start + 1} frames)`}
-                        >
-                          {/* Range Bar Label */}
-                          <div className="flex items-center gap-1.5 overflow-hidden text-micro font-mono font-semibold text-black/90">
-                            <span className="truncate">
-                              {start}–{end}
-                            </span>
-                            {isIntervalLocked && (
-                              <span className="text-nano px-1 bg-black/40 text-white rounded">
-                                LOCKED
-                              </span>
-                            )}
-                          </div>
-
-                          {/* Range Trim Handles */}
-                          {isIntervalLocked && activeInterval && (
-                            <>
-                              <div
-                                onMouseDown={(e) =>
-                                  handleRangeTrimDrag(activeInterval.id, 'start', e)
-                                }
-                                className="absolute left-0 top-0 bottom-0 w-2.5 bg-black/40 hover:bg-black/80 rounded-l cursor-ew-resize flex items-center justify-center text-nano text-white font-bold"
-                                title="Trim start of interval"
-                              >
-                                |
-                              </div>
-                              <div
-                                onMouseDown={(e) =>
-                                  handleRangeTrimDrag(activeInterval.id, 'end', e)
-                                }
-                                className="absolute right-0 top-0 bottom-0 w-2.5 bg-black/40 hover:bg-black/80 rounded-r cursor-ew-resize flex items-center justify-center text-nano text-white font-bold"
-                                title="Trim end of interval"
-                              >
-                                |
-                              </div>
-                            </>
-                          )}
-                        </div>
-                      );
-                    })}
-
-                    {/* Amber / Red Micro-Indicators on Track Runway for Hard Yaw (>50) and Occlusion (>25%) */}
-                    {showWarningTicks &&
-                      trackWarnings.map((tick, wIdx) => {
-                        const tickX = frameToFraction(tick.frame) * 100;
-                        if (tickX < 0 || tickX > 100) return null;
-
-                        const isOcclusion = tick.type === 'occlusion' || (tick.value != null && tick.value > 25);
-                        const isHardYaw = (tick.type === 'pose' && (tick.value == null || tick.value > 50)) || (tick.value != null && tick.value > 50);
-
-                        // Red for foreign occlusion (>25%), Amber for hard yaw (>50)
-                        const dotColor = isOcclusion ? '#f43f5e' : isHardYaw ? '#f59e0b' : '#38bdf8';
-                        const dotLabel = isOcclusion
-                          ? `Foreign Occlusion (>25%)`
-                          : isHardYaw
-                          ? `Hard Yaw (>50°)`
-                          : tick.message;
-
-                        return (
-                          <div
-                            key={`track_warn_${track.trackId}_${wIdx}`}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleSeekFrame(tick.frame);
-                              onSelectTrack?.(track.trackId);
-                            }}
-                            className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-2.5 h-2.5 rounded-full border border-black shadow-md hover:scale-150 transition-transform cursor-pointer z-20"
-                            style={{
-                              left: `${tickX}%`,
-                              backgroundColor: dotColor,
-                            }}
-                            title={`[Frame #${tick.frame}] ${dotLabel} - Click to jump`}
-                          />
-                        );
-                      })}
-                  </div>
-                </div>
-              );
-            })
+          {/* playhead: the cyan line continues down through every lane (cap and top of the line are in the ruler layer) */}
+          {activeFrame >= viewStart && activeFrame <= viewEnd && (
+            <div className="absolute top-0 bottom-0 w-0" style={{ left: `${toPct(activeFrame)}%` }} data-testid="nle-playhead" data-frame={activeFrame}>
+              <div className="absolute top-0 bottom-0 w-px -translate-x-1/2 bg-[var(--accent-cyan,#00F0FF)]" style={{ boxShadow: '0 0 6px var(--accent-cyan,#00F0FF), 0 0 1px #fff' }} />
+            </div>
           )}
         </div>
-
-        {/* ── Magnetic Snapping Visual Guide Line ────────────────────────────── */}
-        {snapIndicatorFrame !== null && snapIndicatorFrame >= viewStart && snapIndicatorFrame <= viewEnd && (
-          <div
-            className="absolute top-0 bottom-0 pointer-events-none z-30"
-            style={{
-              left: `calc(14rem + (100% - 14rem) * ${frameToFraction(snapIndicatorFrame)})`,
-            }}
-          >
-            <div className="w-px h-full border-l border-dashed border-sky-400 opacity-80" />
-            <div className="absolute top-1 -translate-x-1/2 px-1 py-0.5 bg-sky-500 text-black text-nano font-mono font-bold rounded shadow">
-              SNAP #{snapIndicatorFrame}
-            </div>
-          </div>
-        )}
-
-        {/* ── Hover Scrub Loupe Preview Popover ──────────────────────────────── */}
-        {hoverFrame !== null && hoverClientX !== null && (
-          <div
-            className="absolute bottom-full mb-1 z-40 pointer-events-none -translate-x-1/2 flex flex-col items-center"
-            style={{
-              left: `calc(14rem + ${hoverClientX}px)`,
-            }}
-          >
-            <div className="px-2 py-1 bg-black/90 border border-white/20 rounded shadow-xl flex flex-col items-center gap-0.5">
-              <span className="text-micro font-mono font-bold text-white">
-                {frameToTimecode(hoverFrame, fps)}
-              </span>
-              <span className="text-nano font-mono text-[var(--accent,#e94560)]">
-                Frame #{hoverFrame}
-              </span>
-            </div>
-            <div className="w-2 h-2 rotate-45 bg-black/90 border-r border-b border-white/20 -mt-1" />
-          </div>
-        )}
-
-        {/* ── Vertical Playhead Scrubber Line ─────────────────────────────────── */}
-        {activeFrame >= viewStart && activeFrame <= viewEnd && (
-          <div
-            className="absolute top-0 bottom-0 pointer-events-none z-30 transition-all duration-75"
-            style={{
-              left: `calc(14rem + (100% - 14rem) * ${frameToFraction(activeFrame)})`,
-            }}
-          >
-            {/* Scrubber Thumb Marker */}
-            <div className="absolute top-0 -translate-x-1/2 w-3.5 h-4 bg-[var(--accent,#e94560)] clip-path-triangle shadow-lg flex items-center justify-center">
-              <div className="w-1 h-1 bg-white rounded-full" />
-            </div>
-
-            {/* Glowing Scrubber Line */}
-            <div className="w-0.5 h-full bg-[var(--accent,#e94560)] shadow-[0_0_8px_rgba(233,69,96,0.8)]" />
-
-            {/* Frame Badge Tooltip */}
-            <div className="absolute -top-6 -translate-x-1/2 px-1.5 py-0.5 bg-[var(--accent,#e94560)] text-white text-nano font-mono font-bold rounded shadow whitespace-nowrap">
-              #{activeFrame}
-            </div>
-          </div>
-        )}
       </div>
 
-      {/* ── Bottom Footer Status Bar ────────────────────────────────────────── */}
+      {/* ── Footer ───────────────────────────────────────────────────────────── */}
       <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-1.5 bg-[var(--surface-2,#1a1d26)] border-t border-white/5 text-mini text-neutral-400">
         <div className="flex items-center gap-3">
-          <span>
-            Visible: <span className="font-mono text-white">#{viewStart}</span> –{' '}
-            <span className="font-mono text-white">#{viewEnd}</span> ({viewSpan + 1} frames)
-          </span>
+          <span>Visible: <span className="font-mono text-white">#{viewStart}</span> – <span className="font-mono text-white">#{viewEnd}</span> ({viewSpan + 1} frames)</span>
           <span className="text-neutral-600">|</span>
-          <span>
-            Zoom: <span className="font-mono text-white">{Math.round((maxFrames / viewSpan) * 100)}%</span>
-          </span>
+          <span>Zoom: <span className="font-mono text-white">{Math.round((maxFrames / viewSpan) * 100)}%</span></span>
           <span className="text-neutral-600">|</span>
-          <span>
-            Snap: <span className={snapEnabled ? 'text-sky-300' : 'text-neutral-500'}>{snapEnabled ? 'ON' : 'OFF'}</span>
-          </span>
+          <span>Snap: <span className={snapEnabled ? 'text-sky-300' : 'text-neutral-500'}>{snapEnabled ? 'ON' : 'OFF'}</span></span>
         </div>
-
         <div className="flex items-center gap-3">
           {selectedTrackId !== null && (
-            <span className="text-white font-medium">
-              Selected: Track #{typeof selectedTrackId === 'number' ? selectedTrackId + 1 : selectedTrackId}
-            </span>
+            <span className="text-white font-medium">Selected: Track #{typeof selectedTrackId === 'number' ? selectedTrackId + 1 : selectedTrackId}</span>
           )}
           <span className="text-neutral-500 text-micro">
-            Shortcuts: <kbd className="px-1 bg-black/40 rounded border border-white/10">I</kbd> Trim In ·{' '}
-            <kbd className="px-1 bg-black/40 rounded border border-white/10">O</kbd> Trim Out ·{' '}
+            <kbd className="px-1 bg-black/40 rounded border border-white/10">Space</kbd> Play ·{' '}
+            <kbd className="px-1 bg-black/40 rounded border border-white/10">I</kbd>/<kbd className="px-1 bg-black/40 rounded border border-white/10">O</kbd> In/Out ·{' '}
             <kbd className="px-1 bg-black/40 rounded border border-white/10">M</kbd> Marker ·{' '}
             <kbd className="px-1 bg-black/40 rounded border border-white/10">Ctrl+Wheel</kbd> Zoom
           </span>
         </div>
       </div>
+
+      {/* ── Floating: scrub card + marker editor (portalled, so overflow-hidden cannot clip them) ── */}
+      <ScrubTooltip
+        visible={!!tip}
+        clientX={tip?.x ?? 0}
+        anchorTop={tip?.top ?? 0}
+        frame={tip?.frame ?? 0}
+        timecode={tip ? frameToTimecode(tip.frame, fps) : ''}
+        seconds={tip ? formatSeconds(frameMap.resolveTimeFromFrame(tip.frame)) : ''}
+        bitmap={exactThumb || nearThumb}
+        approximate={!exactThumb}
+      />
+      {popover && popoverMarker && (
+        <MarkerPopover
+          marker={popoverMarker}
+          timecode={frameToTimecode(popoverMarker.frame, fps)}
+          anchor={popover.anchor}
+          locked={lanes.segments.locked}
+          onChange={updateMarker}
+          onDelete={deleteMarker}
+          onGoTo={(f) => handleSeekFrame(f)}
+          onClose={() => setPopover(null)}
+        />
+      )}
     </div>
   );
 };

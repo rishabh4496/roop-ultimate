@@ -44,5 +44,37 @@ export function reverseTick({ frame, carry = 0 }, dtMs, rate, fps, floor = 1) {
   return { frame: next, carry: exact - whole, atStart: next <= floor };
 }
 
+/**
+ * What the shuttle -> player sync should do this render, given the shuttle state at the LAST sync.
+ *
+ *   forward shuttle   set the player to the shuttle's rate (and start it if it is stopped)
+ *   leaving a shuttle back to 1x, once, on the transition
+ *   idle -> idle      nothing: the rate the user chose (0.25x ... 4x on the transport deck) stays
+ *
+ * The effect this replaces ran `setPlaybackRate(1)` on EVERY render where no shuttle was active, and it
+ * depends on `isPlaying`, so picking 0.5x and pressing Play flipped isPlaying, re-ran the effect and
+ * silently put the rate back to 1x: the speed selector could never take effect.
+ */
+export function shuttleSync(prev, state, isPlaying) {
+  if (state.dir > 0) return { rate: shuttleRate(state), play: !isPlaying };
+  if (state.dir === 0 && prev.dir !== 0) return { rate: 1, play: false };
+  return null;
+}
+
+/**
+ * Should a change of the player's play state cancel the shuttle? A forward shuttle ends when playback STOPS
+ * (a true -> false transition: somebody paused it), a reverse shuttle ends when playback STARTS.
+ *
+ * The check this replaces was `!isPlaying && dir > 0`, a LEVEL test. Pressing L on a stopped player sets the
+ * shuttle forward in the same commit that asks the player to start, and in that commit `isPlaying` is still
+ * false, so the shuttle was cancelled the moment it began: from a stopped player L only ever played at 1x and
+ * the 2x / 4x ladder could not be climbed (it worked only if you were already playing).
+ */
+export function shuttleEndsOnPlayChange(wasPlaying, isPlaying, state) {
+  if (state.dir > 0) return !!wasPlaying && !isPlaying;
+  if (state.dir < 0) return !!isPlaying;
+  return false;
+}
+
 /** Frames to move for a step key: `,` `.` and the arrows move 1, Shift moves 10. */
 export const stepSize = (shiftKey) => (shiftKey ? 10 : 1);

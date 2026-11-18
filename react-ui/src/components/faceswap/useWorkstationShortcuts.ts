@@ -33,8 +33,10 @@ import {
   SHUTTLE_SPEEDS,
   reverseTick,
   shuttleKey,
+  shuttleEndsOnPlayChange,
   shuttleLabel,
   shuttleRate,
+  shuttleSync,
   stepSize,
 } from './timeline/shuttle.js';
 
@@ -351,34 +353,26 @@ export function useWorkstationShortcuts({
   const shuttleRateValue = shuttleRate(shuttle);
   const shuttleLabelText = shuttleLabel(shuttle);
 
-  // Sync forward shuttle rate to video element
+  // Sync the shuttle to the player. See shuttleSync: the rate is only reset when a shuttle ENDS, not on
+  // every render where none is active (that clobbered the transport deck's 0.25x..4x choice on Play).
+  const lastShuttleRef = useRef<ShuttleState>(IDLE);
   useEffect(() => {
-    if (shuttle.dir > 0) {
-      const rate = shuttleRate(shuttle);
-      setPlaybackRate?.(rate);
-      if (videoRef?.current) {
-        videoRef.current.playbackRate = rate;
-      }
-      if (!isPlaying) {
-        setIsPlaying(true);
-      }
-    } else if (shuttle.dir === 0) {
-      setPlaybackRate?.(1);
-      if (videoRef?.current) {
-        videoRef.current.playbackRate = 1;
-      }
-    }
+    const action = shuttleSync(lastShuttleRef.current, shuttle, isPlaying);
+    lastShuttleRef.current = shuttle;
+    if (!action) return;
+    setPlaybackRate?.(action.rate);
+    if (videoRef?.current) videoRef.current.playbackRate = action.rate;
+    if (action.play) setIsPlaying(true);
   }, [shuttle, isPlaying, setIsPlaying, setPlaybackRate, videoRef]);
 
-  // When external playback stops, reset forward shuttle
+  // When playback is changed from outside, end the shuttle. See shuttleEndsOnPlayChange: a play -> stop
+  // TRANSITION ends a forward shuttle (a level test cancelled it the instant L was pressed on a stopped player).
+  const wasPlayingRef = useRef(isPlaying);
   useEffect(() => {
-    if (!isPlaying && shuttle.dir > 0) {
-      setShuttle(IDLE);
-    }
-    if (isPlaying && shuttle.dir < 0) {
-      setShuttle(IDLE);
-    }
-  }, [isPlaying, shuttle.dir]);
+    const ends = shuttleEndsOnPlayChange(wasPlayingRef.current, isPlaying, shuttle);
+    wasPlayingRef.current = isPlaying;
+    if (ends) setShuttle(IDLE);
+  }, [isPlaying, shuttle]);
 
   // ── Reverse Shuttle Clock (rAF sub-frame loop) ──────────────────────────────
   const frameRef = useRef<number>(frame);

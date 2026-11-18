@@ -42,6 +42,8 @@ import { studioPayload } from './faceswap/studioControls';
 import { serializeStudioTimeline } from './faceswap/studioProjectModel';
 import useStudioProject from './faceswap/useStudioProject';
 import useWorkstationShortcuts from './faceswap/useWorkstationShortcuts';
+import { useChapterMarkers } from './faceswap/nle/useChapterMarkers';
+import { IDLE as SHUTTLE_IDLE, shuttleKey } from './faceswap/timeline/shuttle';
 import useQueue, {
   ACTIVE_STATES, QUEUE_STATE_CLASS, QUEUE_STATE_LABEL, RETRYABLE_STATES, jobState,
 } from './faceswap/useQueue';
@@ -730,6 +732,9 @@ export default function FaceSwap({
   const studio = useStudioProject(timelineKey, notify);
   const studioTimeline = (mediaId = timelineKey) => serializeStudioTimeline(mediaId === timelineKey ? studio.project : {});
   const sceneOverrides = useSceneOverrides(timelineKey, maxFrames);
+  // The ONE owner of this clip's markers: the `M` key (useWorkstationShortcuts) and the NLE's markers lane both
+  // read and write it, so a marker made either way shows up in both (they used to keep separate lists).
+  const chapterMarkers = useChapterMarkers(timelineKey, maxFrames);
   const renderLog = useRenderLog(timelineKey);
   // Stage 25: parameter curves (keyframed settings), per clip. The preview reads them exactly; a render reads them as
   // pieces, the way it reads scene overrides. `curveOpen` is here, not in the Timeline, because the C key is owned by
@@ -2662,7 +2667,25 @@ export default function FaceSwap({
       track_id: track.trackId, label: track.label, faceset_path: track.facesetPath || track.facesetId || '', active_ranges: [], locked: false,
     }))] });
   }, [runBarSync.trackLanes, runBarSync.trackMediaKey, timelineKey, studio]);
-  const studioTracks = runBarSync.trackMediaKey === timelineKey ? runBarSync.trackLanes : studio.project.tracks || [];
+  // Stable between renders: the NLE derives its coverage heatmap from these, and `frame` re-renders this
+  // component on every playhead move.
+  const nleTrackLanes = useMemo(() => {
+    // Derived from the real inputs, not from an intermediate `tracks || []`: that expression is a NEW array every
+    // render when the project has no tracks, which defeats the memo.
+    const tracks = runBarSync.trackMediaKey === timelineKey ? runBarSync.trackLanes : studio.project.tracks || [];
+    return tracks.map((track) => {
+      const binding = studio.project.bindings.find((b) => b.track_id === track.trackId);
+      return binding ? { ...track, active: binding.enabled !== false, facesetPath: binding.faceset_path } : track;
+    });
+  }, [runBarSync.trackMediaKey, runBarSync.trackLanes, timelineKey, studio.project.tracks, studio.project.bindings]);
+  // Lane 3 of the NLE: queue segments and per-range overrides (1-based UI ranges -> the timeline's 0-based frames).
+  const nleSegmentBlocks = useMemo(() => [
+    ...segments.segments.map((s, i) => ({ id: `seg_${s.id}`, start: s.start - 1, end: s.end - 1, label: `Segment ${i + 1}`, kind: 'segment' })),
+    ...sceneOverrides.overrides.map((o) => ({
+      id: `ov_${o.id}`, start: o.start - 1, end: o.end - 1, label: o.label, kind: o.bypass ? 'bypass' : 'override',
+      color: sceneOverrides.enabled ? undefined : '#64748b',
+    })),
+  ], [segments.segments, sceneOverrides.overrides, sceneOverrides.enabled]);
 
   // ── Workstation Shortcuts, Pro Studio Mode, & Parity Wiring ───────────────
   const [isPeekingOriginal, setIsPeekingOriginal] = useState(false);
@@ -2688,6 +2711,8 @@ export default function FaceSwap({
     },
     setFrameMarkerVal,
     targetKey: activeTargetMediaId || targets[selTarget]?.name || String(selTarget),
+    markers: chapterMarkers.frames,
+    onMarkersChange: chapterMarkers.setFrames,
     isPeekingOriginal,
     setIsPeekingOriginal,
     selectedTrackId: runBarSync.selectedTrackId,
@@ -2707,6 +2732,24 @@ export default function FaceSwap({
 
   const workstationShortcutsRef = useRef(workstationShortcuts);
   workstationShortcutsRef.current = workstationShortcuts;
+
+  // The NLE transport deck drives the SAME state the keyboard does (these mirror useWorkstationShortcuts'
+  // Space / J / K / L / arrow handlers), so a click and a key press cannot disagree.
+  const nleTogglePlay = () => {
+    if (maxFrames <= 1) return;
+    workstationShortcuts.setShuttle(SHUTTLE_IDLE);
+    setIsPlaying((playing) => !playing);
+  };
+  const nleSetRate = (rate) => {
+    workstationShortcuts.setShuttle(SHUTTLE_IDLE);
+    setPlaybackRate(rate);
+  };
+  const nleShuttle = (key) => {
+    if (maxFrames <= 1) return;
+    if (key === 'k') { workstationShortcuts.setShuttle(SHUTTLE_IDLE); setIsPlaying(false); return; }
+    workstationShortcuts.setShuttle(shuttleKey(workstationShortcuts.shuttle, key));
+    if (key === 'j') setIsPlaying(false);
+  };
 
   // Hide the previous "Latest output" while a job is running so a new upload +
   // run never shows a stale result. The poll keeps reporting the old _last_output
@@ -4855,10 +4898,22 @@ export default function FaceSwap({
                     targetIndex={selTarget}
                     mediaId={activeTargetMediaId}
                     targetKey={activeTargetMediaId || targets[selTarget]?.name || String(selTarget)}
-                    trackLanes={studioTracks.map((track) => {
-                      const binding = studio.project.bindings.find((b) => b.track_id === track.trackId);
-                      return binding ? { ...track, active: binding.enabled !== false, facesetPath: binding.faceset_path } : track;
-                    })}
+                    trackLanes={nleTrackLanes}
+                    markers={chapterMarkers.markers}
+                    onAddMarker={chapterMarkers.add}
+                    onUpdateMarker={chapterMarkers.update}
+                    onDeleteMarker={chapterMarkers.remove}
+                    segmentBlocks={nleSegmentBlocks}
+                    onSegmentClick={(block) => { if (block.id.startsWith('ov_')) sceneOverrides.setSelectedId(block.id.slice(3)); }}
+                    playbackRate={playbackRate}
+                    isLooping={isLooping}
+                    onTogglePlay={nleTogglePlay}
+                    onStep={workstationShortcuts.stepFrame}
+                    onPlaybackRateChange={nleSetRate}
+                    onToggleLoop={() => setIsLooping(!isLooping)}
+                    onShuttle={nleShuttle}
+                    shuttleLabel={workstationShortcuts.shuttleLabelText}
+                    shuttleDir={workstationShortcuts.shuttle.dir}
                     facesets={sourceFacesInfo.map((source) => ({ id: source.id, name: source.name, path: source.id }))}
                     warningTicks={runBarSync.warningTicks}
                     suggestedAssignments={runBarSync.suggestedAssignments}

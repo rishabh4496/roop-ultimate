@@ -282,6 +282,7 @@ Start, watch and stop a render.
 | POST | `/api/stop` | FaceSwap, Processing |
 | POST | `/api/swap` | FaceSwap |
 | GET | `/api/trajectory/pose` | HeadPoseHud |
+| GET | `/api/trajectory/series` | runBarSync |
 | GET | `/api/trajectory/spans` | runBarSync |
 | GET | `/api/trajectory/summary` | runBarSync |
 

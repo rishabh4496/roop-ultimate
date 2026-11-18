@@ -13,6 +13,8 @@ export interface ChapterMarker {
   frame: number; // exact integer frame_idx
   label: string;
   color?: string;
+  /** free-text note shown in the marker's popover (first line doubles as the label) */
+  note?: string;
   createdAt?: number;
 }
 

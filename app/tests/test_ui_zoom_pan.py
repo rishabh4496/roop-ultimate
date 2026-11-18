@@ -32,6 +32,12 @@ GRID = os.path.join(FS, 'CompareGrid.jsx')
 PREVIEW = os.path.join(FS, 'InteractivePreview.jsx')
 APP_JSX = os.path.join(SRC, 'App.jsx')
 TIMELINE = os.path.join(FS, 'Timeline.jsx')
+NLE_TIMELINE = os.path.join(FS, 'NleTimeline.tsx')
+# Both timelines claim Ctrl/Cmd+wheel the same way. The NLE is TypeScript, so its handlers carry a parameter type
+# (`(e: WheelEvent) =>`), which the JSX file's `(e) =>` form does not.
+ON_WHEEL = re.compile(r'const onWheel = \(e(?::\s*\w+)?\) => \{')
+ON_ZOOM_WHEEL = re.compile(r'const onZoomWheel = \(e(?::\s*\w+)?\) => \{(.*?)\n    \};', re.S)
+TIMELINES = {'Timeline.jsx': TIMELINE, 'NleTimeline.tsx': NLE_TIMELINE}
 
 STAGES = {'CompareGrid.jsx': GRID, 'InteractivePreview.jsx': PREVIEW}
 
@@ -161,9 +167,9 @@ class AppZoomCompensation(unittest.TestCase):
         the modifier fires alongside it, and one gesture zooms both that
         surface and the entire UI. Every element-level wheel listener in the
         app has to stand down for the modified gesture."""
-        for name, path in list(STAGES.items()) + [('Timeline.jsx', TIMELINE)]:
+        for name, path in list(STAGES.items()) + list(TIMELINES.items()):
             src = _code(path)
-            handler = src.split('const onWheel = (e) => {', 1)
+            handler = ON_WHEEL.split(src, 1)
             self.assertEqual(len(handler), 2, f'{name}: no native wheel handler found')
             head = handler[1][:600]
             self.assertRegex(
@@ -179,18 +185,25 @@ class AppZoomCompensation(unittest.TestCase):
         App.jsx's window handler. Without `stopPropagation` the same wheel notch would zoom the
         track and the whole UI. react-ui/e2e/timeline.spec.js asserts the behaviour (the app zoom does
         not change); this pins the mechanism so a refactor cannot drop it unnoticed."""
-        src = _code(TIMELINE)
-        m = re.search(r'const onZoomWheel = \(e\) => \{(.*?)\n    \};', src, re.S)
-        self.assertIsNotNone(m, 'Timeline.jsx lost its Ctrl/Cmd+wheel zoom listener (onZoomWheel)')
-        body = m.group(1)
-        self.assertRegex(body, r'e\.ctrlKey \|\| e\.metaKey',
-                         'onZoomWheel must act only on the modified gesture')
-        self.assertIn('e.preventDefault()', body,
-                      'onZoomWheel must cancel the browser\'s own page zoom')
-        self.assertIn('e.stopPropagation()', body,
-                      'onZoomWheel must stop the event before App.jsx\'s window listener zooms the whole UI too')
-        self.assertRegex(src, r"addEventListener\('wheel',\s*onZoomWheel,\s*\{\s*passive:\s*false\s*\}\)",
-                         'onZoomWheel must be a non-passive native listener or preventDefault is ignored')
+        for name, path in TIMELINES.items():
+            src = _code(path)
+            m = ON_ZOOM_WHEEL.search(src)
+            self.assertIsNotNone(m, f'{name} lost its Ctrl/Cmd+wheel zoom listener (onZoomWheel)')
+            body = m.group(1)
+            self.assertRegex(body, r'e\.ctrlKey \|\| e\.metaKey',
+                             f'{name}: onZoomWheel must act only on the modified gesture')
+            self.assertIn('e.preventDefault()', body,
+                          f'{name}: onZoomWheel must cancel the browser\'s own page zoom')
+            self.assertIn('e.stopPropagation()', body,
+                          f'{name}: onZoomWheel must stop the event before App.jsx\'s window listener zooms the whole UI too')
+            self.assertRegex(src, r"addEventListener\('wheel',\s*onZoomWheel,\s*\{\s*passive:\s*false\s*\}\)",
+                             f'{name}: onZoomWheel must be a non-passive native listener or preventDefault is ignored')
+
+    def test_the_nle_timeline_does_not_bind_wheel_through_a_react_prop(self):
+        """NleTimeline used `onWheel={handleWheel}`: React registers that passive, so its preventDefault was a
+        no-op and Ctrl+wheel zoomed the track AND (through App.jsx's window listener) the whole UI."""
+        src = _code(NLE_TIMELINE)
+        self.assertNotRegex(src, r'onWheel\s*=\s*\{', 'NleTimeline binds wheel through the React onWheel prop')
 
 
 class PanIsBoundedToThePicture(unittest.TestCase):

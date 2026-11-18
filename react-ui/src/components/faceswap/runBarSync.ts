@@ -22,6 +22,8 @@ import {
 import { stageRangeLockTracks } from './batchMatrix.js';
 import { getJSON, postJSON, API, timeoutFor } from '../../api.js';
 import { studioPayload } from './studioControls';
+import { logFailure } from '../../failureLog.js';
+import { groupWarningRuns } from './nle/faceHealth';
 
 export type { RangeLockInterval };
 
@@ -51,6 +53,8 @@ export interface WarningTick {
   severity: 'warning' | 'info' | 'error';
   message: string;
   value?: number;
+  /** frames this tick stands for: a decimated sample represents its neighbourhood (see poseWarningsFromSeries) */
+  span?: number;
 }
 
 export interface SuggestedFszAssignment {
@@ -251,6 +255,77 @@ export function formatTrackLanes(
       color,
     };
   });
+}
+
+/** One track's smoothed head pose against frame (`GET /api/trajectory/series`; frames are decoder frames). */
+export interface TrajectorySeries {
+  available: boolean;
+  track?: number;
+  frame: number[];
+  yaw: number[];
+  pitch: number[];
+  roll?: number[];
+}
+
+/** Extreme head pose, in degrees: the thresholds extractWarningTicks already used for telemetry faces. */
+export const EXTREME_YAW_DEG = 45;
+export const EXTREME_PITCH_DEG = 30;
+
+export async function fetchTrajectorySeries(apiBase: string | undefined, track: number, points = 2000): Promise<TrajectorySeries> {
+  const url = `${apiBase || ''}/api/trajectory/series?track=${track}&points=${points}`;
+  return (await getJSON(url, { timeout: timeoutFor('GET', '/api/trajectory/series') })) as TrajectorySeries;
+}
+
+/**
+ * Pose warning ticks from one track's pose series: a tick for every sample whose |yaw| or |pitch| is
+ * past the extreme-pose thresholds.
+ *
+ * The series is decimated server-side to at most `points` rows, so on a long clip a sample stands for
+ * several frames: each tick carries `span` = the median gap between samples, and the coverage lane paints
+ * that neighbourhood (half the span either side) instead of a single frame no one could see or click.
+ * This is a SAMPLED statement ("the pose was extreme here"), not a per-frame measurement.
+ */
+export function poseWarningsFromSeries(series: TrajectorySeries | null | undefined, trackId: number): WarningTick[] {
+  if (!series || !series.available || !Array.isArray(series.frame) || series.frame.length === 0) return [];
+  const gaps: number[] = [];
+  for (let i = 1; i < series.frame.length; i++) {
+    const d = series.frame[i] - series.frame[i - 1];
+    if (d > 0) gaps.push(d);
+  }
+  gaps.sort((a, b) => a - b);
+  const span = gaps.length ? gaps[gaps.length >> 1] : 1;
+  const out: WarningTick[] = [];
+  for (let i = 0; i < series.frame.length; i++) {
+    const yaw = Math.abs(series.yaw?.[i] ?? 0);
+    const pitch = Math.abs(series.pitch?.[i] ?? 0);
+    if (!(yaw > EXTREME_YAW_DEG || pitch > EXTREME_PITCH_DEG)) continue;
+    out.push({
+      frame: Math.round(series.frame[i]),
+      trackId,
+      type: 'pose',
+      severity: yaw > 50 || pitch > 40 ? 'warning' : 'info',
+      message: `Extreme head angle on Track #${trackId + 1}: yaw ${yaw.toFixed(0)}°, pitch ${pitch.toFixed(0)}°`,
+      value: yaw,
+      span,
+    });
+  }
+  return out;
+}
+
+/**
+ * How many distinct warning EVENTS the ticks make up: consecutive ticks of one type on one track are one
+ * event (a sustained head turn sampled 180 times is one turn, not 180 warnings).
+ */
+export function countWarningEvents(ticks: ReadonlyArray<WarningTick>): number {
+  const byTrack = new Map<number, WarningTick[]>();
+  for (const t of ticks) {
+    const list = byTrack.get(t.trackId) || [];
+    list.push(t);
+    byTrack.set(t.trackId, list);
+  }
+  let n = 0;
+  for (const list of byTrack.values()) n += groupWarningRuns(list).length;
+  return n;
 }
 
 /**
@@ -512,7 +587,21 @@ export async function triggerPreScan(
   if (!summary.available || !spans.available) throw new Error(summary.reason || spans.reason || 'Pre-Scan has no trajectory');
 
   const lanes = formatTrackLanes(spans, options.sourceFacesInfo);
+  // extractWarningTicks(spans, summary) only ever produced `gap` ticks here: it takes pose / occlusion from
+  // per-frame telemetry faces, and nothing in the Pre-Scan flow passes any. The head-pose series IS the
+  // bulk pose data the backend has, so the extreme-pose ticks the coverage lane paints amber come from it.
+  // (There is no per-frame occlusion in the trajectory cache, so amber is pose only.)
   const warnings = extractWarningTicks(spans, summary);
+  const series = await Promise.all(
+    spans.tracks.slice(0, 16).map((t) =>
+      fetchTrajectorySeries(options.apiBase, Number(t.track)).then(
+        (s) => poseWarningsFromSeries(s, Number(t.track)),
+        (err) => { logFailure('Loading the head-pose series for the coverage lane', { toast: false })(err); return [] as WarningTick[]; },
+      ),
+    ),
+  );
+  warnings.push(...series.flat());
+  warnings.sort((a, b) => a.frame - b.frame);
   const suggestedAssignments = deriveSuggestedAssignments(spans, options.sourceFacesInfo);
 
   return { summary, spans, lanes, warnings, suggestedAssignments };
@@ -669,7 +758,7 @@ export function useRunBarSync({
       syncToBatch(intervals, res.lanes);
 
       const trackCount = res.lanes.length;
-      const warnCount = res.warnings.length;
+      const warnCount = countWarningEvents(res.warnings);
       notify?.(
         `Pre-Scan complete: ${trackCount} track${trackCount === 1 ? '' : 's'} locked, ${warnCount} warning${warnCount === 1 ? '' : 's'} identified`,
         'success'

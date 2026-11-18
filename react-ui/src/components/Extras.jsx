@@ -19,6 +19,7 @@ import { SLOT_ACTION_IDS } from '../shortcuts/actions';
 import { eventMatches } from '../store/shortcutStore';
 import StereoVRViewport, { DEFAULT_VR_PARAMS } from './faceswap/StereoVRViewport';
 import ExtrasMediaViewport from './extras/ExtrasMediaViewport';
+import ExtrasTimeline from './extras/ExtrasTimeline';
 import { drawZebraOverlay } from './faceswap/falseColorZebra';
 import {
   createReferenceChannel,
@@ -408,11 +409,17 @@ export default function Extras({ notify, registerFileListener, meta, settings, s
               )}
             >
               {file.type?.startsWith('video') || /\.(mp4|mkv|mov|avi|webm|gif)$/i.test(fileName) ? (
-                <video src={fileUrlSrc} muted loop autoPlay playsInline className="h-full w-full object-contain pointer-events-none" />
+                // No `loop` attribute: the timeline below loops the In-Out region (the whole clip until trimmed), which is
+                // the same default behaviour, and a native loop would fight the region wrap.
+                <video src={fileUrlSrc} muted autoPlay playsInline className="h-full w-full object-contain pointer-events-none" />
               ) : (
                 <img src={fileUrlSrc} alt="Input source" className="h-full w-full object-contain pointer-events-none" />
               )}
             </ExtrasMediaViewport>
+          )}
+
+          {file && fileUrlSrc && (file.type?.startsWith('video') || /\.(mp4|mkv|mov|avi|webm|gif)$/i.test(fileName)) && (
+            <ExtrasTimeline key={fileUrlSrc} file={file} url={fileUrlSrc} videoRef={mediaElemRef} />
           )}
 
           <Select label="Resize width" value={opts.resolution} onChange={(v) => set('resolution', v)} options={RESOLUTIONS} />
