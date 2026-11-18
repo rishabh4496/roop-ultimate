@@ -16,6 +16,10 @@ const P0 = 'legacy-target-person-0';
 const P1 = 'legacy-target-person-1';
 
 async function openTwoPeople(page) {
+  // A normal desktop window. At Playwright's default 1280x720 the stage is ~100 px tall and the detected boxes ~35 px wide, so a
+  // box's own Pin badge (wider than the box) sits over its centre - a click there pins the identity instead of selecting the
+  // person - and the stage's bottom HUD sits over the Exclude badge below it. Neither says anything about the feature.
+  await page.setViewportSize({ width: 1440, height: 900 });
   const png = makePng(FRAME.w, FRAME.h);
   const contextWrites = [];
 

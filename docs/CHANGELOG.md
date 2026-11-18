@@ -28,7 +28,8 @@ Builds on Stages 19/23/25 (curve editor, face menu, slots, undo). All `react-ui`
 - `PreviewViewport.tsx` (the dual-source workspace's own box overlay) was not given the crimson/violet brackets or the new menu.
 - Reference Only is a marker, not a render state (above). It is lost if the browser's storage is cleared, and a person excluded elsewhere (Person Groups) after being marked reads as Reference until re-excluded from the menu.
 - Quad needs rendered frames: slots captured with no rendered preview on screen are recipe-only.
-- Failing at clean HEAD, unchanged by this stage (each re-run with my work stashed where marked *): `face-roles.spec.js` x3 *, `identity-mixer.spec.js` x2 *, `stage8-virtualization` containment *, `stage25` "graph x-axis", `history.spec.js` x3, `stage26` PiP x8, `faceswap-layout` x2, `canvas-tools` x1, and `test:stage26`'s action-category check (Stage 11 added actions). `stage25` "Identity Morph needs a blender" passes alone and fails after `identity-mixer` (shared mock state).
+- (`face-roles.spec.js` x3 failed at HEAD because the default 1280x720 window leaves a ~100 px stage; the spec now runs at 1440x900 and passes.)
+- Failing at clean HEAD, unchanged by this stage (each re-run with my work stashed where marked *): `identity-mixer.spec.js` x2 *, `stage8-virtualization` containment *, `stage25` "graph x-axis", `history.spec.js` x3, `stage26` PiP x8, `faceswap-layout` x2, `canvas-tools` x1, and `test:stage26`'s action-category check (Stage 11 added actions). `stage25` "Identity Morph needs a blender" passes alone and fails after `identity-mixer` (shared mock state).
 
 ## 2026-11-19 — UI overhaul Stage 11: pipeline flow bar and the 3×3 contact sheet
 
