@@ -1436,7 +1436,7 @@ export default function App() {
           <AnimatePresence mode="wait">
             <motion.div
               key={tab}
-              className={`studio-route ${tab === 'faceswap' ? 'is-workspace' : ''}`}
+              className={`studio-route ${tab === 'faceswap' || tab === 'facemgr' ? 'is-workspace' : ''}`}
               variants={viewTransition}
               initial="initial"
               animate="animate"

@@ -894,7 +894,7 @@ async function startServer() {
       landmarks: 106,
       gender: 'female',
       age: 26,
-      bbox: [190, 60, 140, 160],
+      bbox: [190, 60, 140, 160], width: 140, height: 160,
       pose: 'Front'
     });
     res.json(getTargetFacesPayload({ count: 1 }));
@@ -929,7 +929,7 @@ async function startServer() {
       landmarks: 106,
       gender: 'female',
       age: 26,
-      bbox: [180, 50, 150, 170],
+      bbox: [180, 50, 150, 170], width: 150, height: 170,
       pose: 'Profile'
     });
     res.json(getTargetFacesPayload());
@@ -947,7 +947,7 @@ async function startServer() {
         landmarks: 106,
         gender: 'female',
         age: 26,
-        bbox: [185, 55, 145, 165],
+        bbox: [185, 55, 145, 165], width: 145, height: 165,
         pose
       });
     });
@@ -1245,7 +1245,7 @@ async function startServer() {
       y_values: yVals,
       tiles,
       face_coordinates: {
-        bbox: [190, 60, 140, 160],
+        bbox: [190, 60, 140, 160], width: 140, height: 160,
         crop_rect: [140, 30, 240, 220],
         eyes: {
           left: [240, 130],
@@ -1481,13 +1481,19 @@ async function startServer() {
 
   // ── Faceset & Face Manager ──────────────────────────────────────────
   app.get('/api/faceset/library', (req, res) => {
+    // The real shape (app/routes_faceset.py _library_entries): {entries:[{filename,name,path,size,mtime,faces,thumb}], dir}.
+    // `path` is a library-relative file; fileUrl() turns it into the mock's /api/file.
+    const thumb = createSampleFaceSvg('Thumb', 'fsz', '#2a3042', '#1b1d26', 7);
     res.json({
-      libraries: [
-        { name: 'Cinematic Actors', count: 18, modified: '2026-03-15' },
-        { name: 'Studio Cast 2026', count: 24, modified: '2026-04-01' },
+      dir: 'faceset_library',
+      entries: [
+        { filename: 'Cinematic Actors.fsz', name: 'Cinematic Actors', path: 'faceset_library/Cinematic Actors.fsz', size: 18 * 1024 * 1024, mtime: 1773532800, faces: 18, thumb },
+        { filename: 'Lead Portrait.fsz', name: 'Lead Portrait', path: 'faceset_library/Lead Portrait.fsz', size: 84 * 1024, mtime: 1775001600, faces: 1, thumb },
+        { filename: 'Studio Cast 2026.fsz', name: 'Studio Cast 2026', path: 'faceset_library/Studio Cast 2026.fsz', size: 2.4 * 1024 * 1024, mtime: 1775001700, faces: 7, thumb },
       ],
     });
   });
+  app.post('/api/faceset/library/import', upload.single('file'), (req, res) => res.json({ entries: [], dir: 'faceset_library' }));
 
   app.post('/api/faceset/library/save', (req, res) => res.json({ ok: true }));
   app.post('/api/faceset/library/load', (req, res) => res.json({ ok: true }));
@@ -1531,6 +1537,7 @@ async function startServer() {
     files.forEach(() => facemgrAddFace());
     return res.json(facemgrPayload());
   });
+  app.get('/api/facemgr/faces', (_req, res) => res.json(facemgrPayload()));
   app.get('/api/facemgr/frame', (req, res) => {
     const n = Number(req.query.frame) || 1;
     res.setHeader('Content-Type', 'image/svg+xml');
@@ -2566,10 +2573,10 @@ async function startServer() {
 
   // ── Face Manager Archive ────────────────────────────────────────────
   app.post('/api/facemgr/faceset', upload.single('file'), (req, res) => {
-    res.json({
-      faces: [],
-      count: 0,
-    });
+    // Loading an archive replaces the working set, as the real route does ({faces, scores, meta}).
+    facemgr.faces = []; facemgr.scores = []; facemgr.meta = []; facemgr.video = null;
+    for (let i = 0; i < 5; i++) facemgrAddFace();
+    res.json(facemgrPayload());
   });
 
   // ── Identity Blender ────────────────────────────────────────────────

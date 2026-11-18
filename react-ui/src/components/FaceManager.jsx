@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { postJSON, postFiles, postFile, fileUrl, API } from '../api';
+import { getJSON, postJSON, postFiles, postFile, fileUrl, API } from '../api';
 import { Section, Slider, Toggle, Button } from './ui';
 import MorphLab from './facemgr/MorphLab';
 import PoseRadar from './facemgr/PoseRadar';
+import IdentityWorkstation from './facemgr/IdentityWorkstation';
 import { VirtualGrid } from './virtual/VirtualScroll';
 import { Icon } from '../icons';
 
@@ -39,6 +40,7 @@ export const getFaceSharpness = (m = {}) => {
 
 // The two jobs this screen does: build a faceset from footage, or blend existing identities into a new one.
 const VIEWS = [
+  { id: 'workstation', label: 'Identity workstation' },
   { id: 'builder', label: 'Faceset builder' },
   { id: 'morph', label: 'Morph Lab' },
 ];
@@ -64,7 +66,7 @@ const TONE = {
 };
 
 export default function FaceManager({ notify, registerFileListener, setTab }) {
-  const [view, setView] = useState('builder');
+  const [view, setView] = useState('workstation');
   const [faces, setFaces] = useState([]);   // data-URL thumbnails
   const [scores, setScores] = useState([]); // parallel FIQA scores 0..1
   const [meta, setMeta] = useState([]);     // parallel breakdown dicts
@@ -91,6 +93,14 @@ export default function FaceManager({ notify, registerFileListener, setTab }) {
     setScores(res.scores || []);
     setMeta(res.meta || []);
   };
+
+  // The set lives on the server; this component only mirrors it. Re-read it on mount so leaving the tab and coming
+  // back (which unmounts this component) does not show an empty set while the server still holds the faces.
+  useEffect(() => {
+    let live = true;
+    getJSON('/api/facemgr/faces').then((res) => { if (live && res) applyPayload(res); }).catch(() => {});
+    return () => { live = false; };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps -- mount only; applyPayload only sets state
 
   /* eslint-disable react-hooks/exhaustive-deps -- intentional: subscribe once; notify is stable */
   useEffect(() => {
@@ -209,9 +219,11 @@ export default function FaceManager({ notify, registerFileListener, setTab }) {
     });
   }, [faces, meta]);
 
+  // The route is a full-bleed workspace (App gives facemgr `is-workspace`): the tab strip is fixed and the active view
+  // owns its own scrolling, so the workstation can fill the viewport while the builder and Morph Lab still scroll.
   return (
-    <div className="space-y-4">
-      <div role="tablist" aria-label="Face Manager" className="flex gap-1 rounded-xl border border-white/10 bg-white/[0.03] p-1 w-fit">
+    <div className="flex h-full min-h-0 flex-col" data-testid="facemgr-root">
+      <div role="tablist" aria-label="Face Manager" className="m-2 flex gap-1 rounded-xl border border-white/10 bg-white/[0.03] p-1 w-fit shrink-0">
         {VIEWS.map((v) => (
           <button
             key={v.id} type="button" role="tab" id={`facemgr-tab-${v.id}`} aria-selected={view === v.id}
@@ -225,12 +237,16 @@ export default function FaceManager({ notify, registerFileListener, setTab }) {
         ))}
       </div>
 
-      {view === 'morph' ? (
-        <div role="tabpanel" id="facemgr-panel-morph" aria-labelledby="facemgr-tab-morph">
+      {view === 'workstation' ? (
+        <div role="tabpanel" id="facemgr-panel-workstation" aria-labelledby="facemgr-tab-workstation" className="min-h-0 flex-1">
+          <IdentityWorkstation notify={notify} setTab={setTab} facesetState={{ faces, scores, meta }} onFacesetChange={applyPayload} />
+        </div>
+      ) : view === 'morph' ? (
+        <div role="tabpanel" id="facemgr-panel-morph" aria-labelledby="facemgr-tab-morph" className="min-h-0 flex-1 overflow-auto p-3">
           <MorphLab notify={notify} setTab={setTab} />
         </div>
       ) : (
-      <div role="tabpanel" id="facemgr-panel-builder" aria-labelledby="facemgr-tab-builder" className="space-y-4">
+      <div role="tabpanel" id="facemgr-panel-builder" aria-labelledby="facemgr-tab-builder" className="min-h-0 flex-1 overflow-auto p-3 space-y-4">
       <Section>
         <h2 className="text-lg font-bold">Create blending facesets</h2>
         <p className="text-sm text-white/50">

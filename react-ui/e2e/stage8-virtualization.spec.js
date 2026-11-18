@@ -156,6 +156,7 @@ test.describe('Face Manager', () => {
       },
     }));
     await openTab(page, 'facemgr');
+    await page.getByTestId('facemgr-tab-builder').click();
     await page.locator('input[type=file][accept="image/*,video/*"]').setInputFiles({ name: 'a.png', mimeType: 'image/png', buffer: PNG_1X1 });
     const grid = page.getByTestId('face-grid');
     await expect(grid).toBeVisible();

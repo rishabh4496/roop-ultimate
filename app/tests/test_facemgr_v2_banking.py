@@ -101,6 +101,21 @@ class TestFaceMgrV2Banking(unittest.TestCase):
         self.assertEqual(payload["meta"][0]["yaw"], 0.0)
         self.assertEqual(payload["meta"][1]["yaw"], -45.0)
 
+    def test_facemgr_faces_route_returns_the_held_set(self):
+        """GET /api/facemgr/faces is what the UI reads when the Face Manager tab is re-opened: it must agree with the
+        POST responses (same keys, parallel arrays) and be empty - not an error - for an empty set."""
+        empty = fm.facemgr_faces()
+        self.assertEqual((empty["faces"], empty["scores"], empty["meta"]), ([], [], []))
+
+        fm._facemgr_ingest(self._create_mock_face(yaw=-45.0, pitch=10.0), self._create_crop(), restore=False)
+        fm._facemgr_ingest(self._create_mock_face(yaw=0.0, pitch=0.0, identity_idx=1), self._create_crop(), restore=False)
+        got = fm.facemgr_faces()
+        self.assertEqual(len(got["faces"]), 2)
+        self.assertEqual(len(got["scores"]), 2)
+        self.assertEqual(len(got["meta"]), 2)
+        self.assertEqual(got["meta"][0]["yaw"], -45.0)
+        self.assertEqual(got, fm._facemgr_faces_payload())
+
     def test_facemgr_build_v2_backward_compatible_archive(self):
         # Ingest 3 multi-angle faces: Frontal, Left Profile, Right Profile
         f_front = self._create_mock_face(yaw=0.0, pitch=0.0, identity_idx=0)

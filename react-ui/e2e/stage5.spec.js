@@ -98,6 +98,7 @@ test.describe('Face Manager', () => {
   test('pose radar: counts per bucket, the one missing angle is named, Auto-Prune prices then removes', async ({ page, request }) => {
     for (let i = 0; i < 7; i++) await request.post('/api/facemgr/cut', { data: {} });
     await openTab(page, 'facemgr');
+    await page.getByTestId('facemgr-tab-builder').click();
     const radar = page.getByTestId('pose-radar');
     await expect(radar).toBeVisible();
     // every bucket has a face in the seed set -> nothing is missing, and the scatter holds all 7
@@ -124,11 +125,13 @@ test.describe('Face Manager', () => {
   test('pose radar names the angles a thin set is missing', async ({ page, request }) => {
     for (let i = 0; i < 2; i++) await request.post('/api/facemgr/cut', { data: {} });     // frontal + left profile
     await openTab(page, 'facemgr');
+    await page.getByTestId('facemgr-tab-builder').click();
     await expect(page.getByTestId('pose-missing')).toContainText('Right profile, High angle, Low angle');
   });
 
   test('an empty set says so instead of drawing an empty radar', async ({ page }) => {
     await openTab(page, 'facemgr');
+    await page.getByTestId('facemgr-tab-builder').click();
     await expect(page.getByTestId('pose-radar-empty')).toBeVisible();
   });
 });

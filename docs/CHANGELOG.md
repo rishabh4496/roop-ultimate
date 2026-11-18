@@ -1,3 +1,34 @@
+## 2026-11-18 — UI overhaul Stage 6: Identity Workstation (`#/facemgr`)
+
+**Face Manager opens on a full-viewport three-pane Identity Workstation** (`react-ui/src/components/facemgr/IdentityWorkstation.jsx`;
+the route is now a full-bleed workspace like Face Swap, so the Faceset builder and Morph Lab own their own scrolling).
+- **Left, `.fsz` library:** instant search, derived tag filter (`single` / `multi-angle` / `rich` / `large` - the library has no tag
+  field, so these are computed, not stored), size badges and a total, Open (loads into the working set through
+  `/api/facemgr/faceset`), Use as source, Export, Import.
+- **Centre, grid:** either the working faceset or the captured target people, thumbnails 64-240 px (slider, remembered), Shift =
+  range, Ctrl = toggle, drag = marquee, Delete = exclude, Ctrl+A. On target people: inline rename, **Merge identities**, **Split
+  to new identity** (both `POST /api/target/group`, re-ranked by the server), exclude, and a quality-threshold bar that dims,
+  selects or excludes outliers.
+- **Right, inspector:** `CoverageRadar.jsx`, an SVG yaw (X) x pitch (Y) plane cut into 5x3 zones with angular-distance rings. The
+  seven zones a swap needs and no photo covers are hatched and named ("Missing Left 45° profile", "Missing Upward pitch").
+  Zone maths is `identityModel.js` (pure, pinned by `.render-check/render-identity-workstation.mjs`, 49 checks).
+
+**Backend:** one additive read route, `GET /api/facemgr/faces`. The Face Manager mirrored the server's working set only in React
+state, so leaving the tab and returning showed an empty set while the server still held the faces; it now re-reads on mount.
+
+**Known limits, stated plainly.** (1) Target people only report a pose *label* (`Front` / `Left Profile` / `Up Tilt`), not degrees,
+so their dots sit at a representative angle (about 60° / 22°) and the radar says "angles estimated from pose label"; a faceset
+has real yaw/pitch. (2) **Hero thumbnail is stored in the browser** (`localStorage`, per person id), not on the server: there is
+no hero field in the backend, so it does not follow the user to another browser and it is index-based, so removing faces before
+the hero can move it (it falls back to the person's first face if the index disappears). (3) The `.fsz` library lists archives and
+sizes only; there is no per-archive embedding or pose data to show without opening it. (4) The faceset grid is a plain wrapping
+grid, not windowed: very large sets (hundreds) are not virtualised here (the Faceset builder still is). (5) Merge / split edit the
+captured *target* clusters only; a faceset is one identity, so those buttons stay disabled there. (6) The mock stands in for
+`api.py`; merge / split / rename are exercised end to end against the mock, not against a live backend render.
+
+**Existing specs changed:** the five that assumed the builder was the default Face Manager view now click `facemgr-tab-builder`
+first (`stage5.spec.js` x3, `stage8-virtualization.spec.js` x1).
+
 ## 2026-11-18 — UI overhaul Stage 5: studio scrubbers, effect rack, face routing dock, mask edge profile (+ per-person render overrides)
 
 **Scrubber (`react-ui/src/components/StudioScrubberInput.jsx`).** Every numeric parameter (`Slider` in `ui.jsx` is now a

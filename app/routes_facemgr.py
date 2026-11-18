@@ -194,6 +194,12 @@ def _facemgr_faces_payload():
         resp["mean_embedding"] = list(fm_mean_embedding)
     return resp
 
+@router.get("/api/facemgr/faces")
+def facemgr_faces():
+    """The working faceset as it stands on the server. The UI holds these only in component state, so leaving the
+    Face Manager tab and coming back would otherwise show an empty set while the server still has the faces."""
+    return _facemgr_faces_payload()
+
 @router.post("/api/facemgr/add")
 def facemgr_add(files: list[UploadFile] = File(...),
                       detector: str = Form("scrfd"),
