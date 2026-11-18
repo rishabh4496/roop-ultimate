@@ -233,10 +233,39 @@ export class ViewportMatrix {
   }
 
   /**
+   * Transforms a single landmark keypoint from media space (or normalized 0..1 space) to screen pixels.
+   */
+  public landmarkToScreen(landmark: [number, number] | { x: number; y: number }): ScreenPoint {
+    const { mediaWidth, mediaHeight } = this.metrics;
+    let mx = 0;
+    let my = 0;
+    if (Array.isArray(landmark)) {
+      const [lx, ly] = landmark;
+      mx = lx <= 1.0 ? lx * mediaWidth : lx;
+      my = ly <= 1.0 ? ly * mediaHeight : ly;
+    } else if (landmark && typeof landmark === 'object') {
+      const lx = landmark.x ?? 0;
+      const ly = landmark.y ?? 0;
+      mx = lx <= 1.0 ? lx * mediaWidth : lx;
+      my = ly <= 1.0 ? ly * mediaHeight : ly;
+    }
+    return this.mediaToScreen(mx, my);
+  }
+
+  /**
+   * Transforms an array of landmark keypoints (e.g. 5-point ArcFace or 68-point mesh)
+   * from media or normalized space to exact screen pixels.
+   */
+  public landmarksToScreen(landmarks: Array<[number, number] | { x: number; y: number }>): ScreenPoint[] {
+    if (!Array.isArray(landmarks)) return [];
+    return landmarks.map((lm) => this.landmarkToScreen(lm));
+  }
+
+  /**
    * Screen radius in visual px to Media radius in canvas px.
    */
   public screenRadiusToMedia(screenRadius: number): number {
-    return Math.max(0.5, screenRadius / this.metrics.effectiveScale);
+    return Math.max(0.5, screenRadius / Math.max(1e-6, this.metrics.effectiveScale));
   }
 
   /**
@@ -259,8 +288,9 @@ export class ViewportMatrix {
     const { effectiveScale } = this.metrics;
 
     // Desired visible size in media pixels
-    const sourceWidth = loupeDiameter / (effectiveScale * magnification);
-    const sourceHeight = loupeDiameter / (effectiveScale * magnification);
+    const effective = Math.max(1e-6, effectiveScale * magnification);
+    const sourceWidth = loupeDiameter / effective;
+    const sourceHeight = loupeDiameter / effective;
     const sourceX = mx - sourceWidth / 2;
     const sourceY = my - sourceHeight / 2;
 

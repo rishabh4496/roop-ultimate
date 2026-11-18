@@ -21,7 +21,7 @@ import WorkerRack from './WorkerRack';
 const FILTERS = ['ALL', ...Object.keys(STATE_BADGE)];
 
 /** The needle-and-arc speedometer. Reads "—" with an empty dial when there is no fps. */
-export function Speedometer({ fps, etaS, live }) {
+export const Speedometer = React.memo(function Speedometer({ fps, etaS, live }) {
   const max = gaugeMax(fps);
   const frac = gaugeFraction(fps);
   const eta = fmtEta(etaS);
@@ -49,9 +49,9 @@ export function Speedometer({ fps, etaS, live }) {
       </div>
     </div>
   );
-}
+});
 
-function StateBadge({ card }) {
+const StateBadge = React.memo(function StateBadge({ card }) {
   const tone = TONE_CLASS[card.badge.tone] || TONE_CLASS.muted;
   return (
     <span className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-nano font-bold uppercase tracking-wider ${tone.badge}`}
@@ -60,9 +60,9 @@ function StateBadge({ card }) {
       {card.badge.label}
     </span>
   );
-}
+});
 
-function StageBar({ card }) {
+const StageBar = React.memo(function StageBar({ card }) {
   if (card.pct === null) {
     return <div className="h-1.5 rounded-full bg-white/[0.06] overflow-hidden"><div className="h-full w-1/3 rounded-full bg-white/10" /></div>;
   }
@@ -82,7 +82,7 @@ function StageBar({ card }) {
       </div>
     </div>
   );
-}
+});
 
 export default function QueueMissionControl({ notify, setTab }) {
   const q = useQueue({ notify });

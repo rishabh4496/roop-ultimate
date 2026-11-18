@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getJSON, postJSON, API } from '../../../api';
 import { mergeIntervals, presenceRows, identityRows } from './laneModel';
 
@@ -270,5 +270,9 @@ export function useFilmstrip({ targetIndex, targetKey, slots, enabled, onTile })
     return best;
   }, []);
 
-  return { tileFor, version, size: () => cacheRef.current.size };
+  return useMemo(() => ({
+    tileFor,
+    version,
+    size: () => cacheRef.current.size,
+  }), [tileFor, version]);
 }

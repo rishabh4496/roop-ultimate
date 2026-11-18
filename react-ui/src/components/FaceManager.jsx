@@ -422,6 +422,69 @@ export default function FaceManager({ notify, registerFileListener, setTab }) {
   );
 }
 
+const FaceQualityTile = React.memo(function FaceQualityTile({
+  src,
+  i,
+  score,
+  metadata,
+  threshold,
+  isSelected,
+  onSelect,
+  activeBucketFilter,
+}) {
+  const has = typeof score === 'number';
+  const tone = has ? TONE[scoreTone(score)] : TONE.amber;
+  const dropped = threshold > 0 && has && score < threshold;
+  const b = metadata || {};
+  const bucketKey = getPoseBucket(b);
+  const bucketConf = POSE_BUCKET_CONFIG[bucketKey] || POSE_BUCKET_CONFIG.frontal;
+  const sharpness = getFaceSharpness(b);
+  const hasSharp = sharpness !== null;
+  const isDimmedByFilter = activeBucketFilter && bucketKey !== activeBucketFilter;
+
+  const title = has
+    ? `Face ${i + 1} · ${bucketConf.label} (Yaw: ${b.yaw ?? 0}°, Pitch: ${b.pitch ?? 0}°) · Sharpness: ${hasSharp ? `${Math.round(sharpness * 100)}%` : '—'} (var: ${b.sharp_var ?? '—'}) · Quality: ${Math.round(score * 100)}% · ${b.face_px ?? '?'}px`
+    : 'quality unknown';
+
+  return (
+    <button
+      type="button"
+      onClick={() => onSelect(i)}
+      title={title}
+      className={`relative aspect-square rounded-lg overflow-hidden border transition-all ${
+        isSelected ? 'ring-2 ring-[var(--accent)] border-[var(--accent)]/50' : 'border-white/10 hover:border-white/25'
+      } ${dropped || isDimmedByFilter ? 'opacity-30 grayscale' : ''}`}
+    >
+      <img src={src} alt={`face ${i + 1}`} className="w-full h-full object-cover" />
+      {/* Top-Left: Composite Quality Score */}
+      {has && (
+        <span className={`absolute top-1 left-1 px-1.5 py-0.5 rounded-md text-nano font-bold tabular-nums ${tone.bg} ${tone.text} backdrop-blur-sm`}>
+          {Math.round(score * 100)}%
+        </span>
+      )}
+      {/* Top-Right: Pose Bucket Badge */}
+      <span
+        className={`absolute top-1 right-1 px-1 py-0.5 rounded text-nano font-bold uppercase tracking-wider ${bucketConf.bg} ${bucketConf.text} border ${bucketConf.border} backdrop-blur-sm`}
+      >
+        {bucketConf.short}
+      </span>
+      {/* Bottom-Right: Sharpness Score */}
+      {hasSharp && (
+        <span
+          className="absolute bottom-1 right-1 px-1 py-0.5 rounded text-nano font-mono font-bold bg-black/80 text-emerald-300 border border-emerald-500/30 backdrop-blur-sm"
+        >
+          S:{Math.round(sharpness * 100)}%
+        </span>
+      )}
+      {dropped && (
+        <span className="absolute bottom-1 left-1 right-1 text-center text-nano font-bold uppercase tracking-wide text-red-300 bg-red-950/70 rounded py-0.5 z-10">
+          below gate
+        </span>
+      )}
+    </button>
+  );
+});
+
 // Faces rendered with a per-face FIQA badge, pose bucket tag, and sharpness score;
 // anything under the gate is dimmed with a "will drop" flag so the gate is legible before you commit to pruning.
 function FaceQualityGrid({ faces, scores, meta, threshold, selected, onSelect, activeBucketFilter = null }) {
@@ -445,59 +508,18 @@ function FaceQualityGrid({ faces, scores, meta, threshold, selected, onSelect, a
       className="max-h-[60vh] p-1"
       label="Faces in the faceset"
       testId="face-grid"
-      renderCell={(src, i) => {
-        const s = scores[i];
-        const has = typeof s === 'number';
-        const tone = has ? TONE[scoreTone(s)] : TONE.amber;
-        const dropped = threshold > 0 && has && s < threshold;
-        const b = meta[i] || {};
-        const bucketKey = getPoseBucket(b);
-        const bucketConf = POSE_BUCKET_CONFIG[bucketKey] || POSE_BUCKET_CONFIG.frontal;
-        const sharpness = getFaceSharpness(b);
-        const hasSharp = sharpness !== null;
-        const isDimmedByFilter = activeBucketFilter && bucketKey !== activeBucketFilter;
-
-        const title = has
-          ? `Face ${i + 1} · ${bucketConf.label} (Yaw: ${b.yaw ?? 0}°, Pitch: ${b.pitch ?? 0}°) · Sharpness: ${hasSharp ? `${Math.round(sharpness * 100)}%` : '—'} (var: ${b.sharp_var ?? '—'}) · Quality: ${Math.round(s * 100)}% · ${b.face_px ?? '?'}px`
-          : 'quality unknown';
-        return (
-          <button
-            type="button"
-            onClick={() => onSelect(i)}
-            title={title}
-            className={`relative aspect-square rounded-lg overflow-hidden border transition-all ${
-              selected === i ? 'ring-2 ring-[var(--accent)] border-[var(--accent)]/50' : 'border-white/10 hover:border-white/25'
-            } ${dropped || isDimmedByFilter ? 'opacity-30 grayscale' : ''}`}
-          >
-            <img src={src} alt={`face ${i + 1}`} className="w-full h-full object-cover" />
-            {/* Top-Left: Composite Quality Score */}
-            {has && (
-              <span className={`absolute top-1 left-1 px-1.5 py-0.5 rounded-md text-nano font-bold tabular-nums ${tone.bg} ${tone.text} backdrop-blur-sm`}>
-                {Math.round(s * 100)}%
-              </span>
-            )}
-            {/* Top-Right: Pose Bucket Badge */}
-            <span
-              className={`absolute top-1 right-1 px-1 py-0.5 rounded text-nano font-bold uppercase tracking-wider ${bucketConf.bg} ${bucketConf.text} border ${bucketConf.border} backdrop-blur-sm`}
-            >
-              {bucketConf.short}
-            </span>
-            {/* Bottom-Right: Sharpness Score */}
-            {hasSharp && (
-              <span
-                className="absolute bottom-1 right-1 px-1 py-0.5 rounded text-nano font-mono font-bold bg-black/80 text-emerald-300 border border-emerald-500/30 backdrop-blur-sm"
-              >
-                S:{Math.round(sharpness * 100)}%
-              </span>
-            )}
-            {dropped && (
-              <span className="absolute bottom-1 left-1 right-1 text-center text-nano font-bold uppercase tracking-wide text-red-300 bg-red-950/70 rounded py-0.5 z-10">
-                below gate
-              </span>
-            )}
-          </button>
-        );
-      }}
+      renderCell={(src, i) => (
+        <FaceQualityTile
+          src={src}
+          i={i}
+          score={scores[i]}
+          metadata={meta[i]}
+          threshold={threshold}
+          isSelected={selected === i}
+          onSelect={onSelect}
+          activeBucketFilter={activeBucketFilter}
+        />
+      )}
     />
   );
 }

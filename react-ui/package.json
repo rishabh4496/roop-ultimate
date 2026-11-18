@@ -14,6 +14,7 @@
     "lint:api-timeouts": "node scripts/api-callsites.mjs",
     "verify:offline": "node scripts/verify-offline-bundle.mjs",
     "test:offline-bundle": "node scripts/test-verify-offline-bundle.mjs",
+    "test:route-state": "node .render-check/route-state-preservation-check.mjs",
     "test:render": "node .render-check/run.mjs",
     "test:mapping": "node .render-check/face-mapping-check.mjs",
     "test:stage14": "node .render-check/stage14-async-check.mjs",

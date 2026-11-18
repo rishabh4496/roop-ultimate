@@ -25,6 +25,27 @@ const writeLocal = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v));
 const isTyping = (el) => !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable);
 const TAGS = ['single', 'multi-angle', 'rich', 'large'];
 
+const WorkstationFaceTile = React.memo(function WorkstationFaceTile({
+  it, thumb, selected, outlier, isHero, onClick,
+}) {
+  return (
+    <button type="button" data-face-index={it.index} data-selected={selected ? 'true' : 'false'} data-outlier={outlier ? 'true' : 'false'}
+            onClick={onClick} aria-pressed={selected}
+            aria-label={`Face ${it.index + 1}${it.quality !== null ? `, quality ${Math.round(it.quality * 100)}%` : ''}`}
+            style={{ width: thumb, height: thumb }}
+            className={`relative shrink-0 rounded-lg overflow-hidden border transition-[opacity,box-shadow] ${selected ? 'ring-2 ring-[var(--accent)] border-[var(--accent)]/60' : 'border-white/10 hover:border-white/30'} ${outlier ? 'opacity-35 grayscale' : ''}`}>
+      <img src={it.src} alt="" draggable={false} className="w-full h-full object-cover pointer-events-none" />
+      {it.quality !== null && thumb >= 80 && (
+        <span className="absolute top-1 left-1 px-1 rounded text-nano font-bold tabular-nums bg-black/65 text-white/90">{Math.round(it.quality * 100)}%</span>
+      )}
+      {isHero && (
+        <span className="absolute top-1 right-1 px-1 rounded text-nano font-bold bg-amber-500/80 text-black" title="Hero thumbnail">★</span>
+      )}
+      {outlier && thumb >= 96 && <span className="absolute bottom-1 inset-x-1 text-center text-nano font-bold uppercase text-red-300 bg-red-950/70 rounded">low</span>}
+    </button>
+  );
+});
+
 export default function IdentityWorkstation({ notify, setTab, facesetState, onFacesetChange }) {
   // ── mode: 'people' (captured target clusters) | 'faceset' (the Face Manager's working set)
   const [mode, setMode] = useState('faceset');
@@ -283,21 +304,17 @@ export default function IdentityWorkstation({ notify, setTab, facesetState, onFa
   const renderTile = (it) => {
     const on = sel.includes(it.index);
     const low = outlierSet.has(it.index);
+    const isHero = mode === 'people' && people.some((p) => p.hero === it.index);
     return (
-      <button key={it.index} type="button" data-face-index={it.index} data-selected={on ? 'true' : 'false'} data-outlier={low ? 'true' : 'false'}
-              onClick={(e) => clickFace(it.index, e)} aria-pressed={on}
-              aria-label={`Face ${it.index + 1}${it.quality !== null ? `, quality ${Math.round(it.quality * 100)}%` : ''}`}
-              style={{ width: thumb, height: thumb }}
-              className={`relative shrink-0 rounded-lg overflow-hidden border transition-[opacity,box-shadow] ${on ? 'ring-2 ring-[var(--accent)] border-[var(--accent)]/60' : 'border-white/10 hover:border-white/30'} ${low ? 'opacity-35 grayscale' : ''}`}>
-        <img src={it.src} alt="" draggable={false} className="w-full h-full object-cover pointer-events-none" />
-        {it.quality !== null && thumb >= 80 && (
-          <span className="absolute top-1 left-1 px-1 rounded text-nano font-bold tabular-nums bg-black/65 text-white/90">{Math.round(it.quality * 100)}%</span>
-        )}
-        {mode === 'people' && people.some((p) => p.hero === it.index) && (
-          <span className="absolute top-1 right-1 px-1 rounded text-nano font-bold bg-amber-500/80 text-black" title="Hero thumbnail">★</span>
-        )}
-        {low && thumb >= 96 && <span className="absolute bottom-1 inset-x-1 text-center text-nano font-bold uppercase text-red-300 bg-red-950/70 rounded">low</span>}
-      </button>
+      <WorkstationFaceTile
+        key={it.index}
+        it={it}
+        thumb={thumb}
+        selected={on}
+        outlier={low}
+        isHero={isHero}
+        onClick={(e) => clickFace(it.index, e)}
+      />
     );
   };
 

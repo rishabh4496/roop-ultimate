@@ -52,7 +52,7 @@ const socketUrl = () => {
  */
 export default function useTelemetrySocket(onFrame, enabled = true) {
   const [connected, setConnected] = useState(false);
-  const [lastFrameAt, setLastFrameAt] = useState(0);
+  const lastFrameAtRef = useRef(0);
 
   const socketRef = useRef(null);
   const retryRef = useRef(null);
@@ -114,7 +114,7 @@ export default function useTelemetrySocket(onFrame, enabled = true) {
       // `pong` is liveness only and carries no state; arming the silence timer
       // above is its entire purpose.
       if (frame.event === 'pong') return;
-      setLastFrameAt(Date.now());
+      lastFrameAtRef.current = Date.now();
       try {
         onFrameRef.current?.(frame);
       } catch {
@@ -189,5 +189,5 @@ export default function useTelemetrySocket(onFrame, enabled = true) {
     };
   }, [enabled, connect, clearTimers]);
 
-  return { connected, lastFrameAt };
+  return { connected, lastFrameAt: lastFrameAtRef.current };
 }

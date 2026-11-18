@@ -15,7 +15,7 @@ import { selectProg } from '../../store/telemetryStore';
 const BTN = 'flex h-8 items-center gap-1.5 rounded-lg px-2 text-mini font-semibold transition-colors';
 const IDLE = 'text-white/65 hover:bg-white/10 hover:text-white';
 
-export default function WorkstationHeader({
+function WorkstationHeaderImpl({
   current, tab, onNavigate, runChip, engine, onOpenDiagnostics,
   zoom, onBumpZoom, onResetZoom,
   profileName, onOpenProfiles, onOpenSnapshots, onOpenPalette, pipOn, onTogglePip,
@@ -88,3 +88,5 @@ export default function WorkstationHeader({
     </header>
   );
 }
+
+export default React.memo(WorkstationHeaderImpl);

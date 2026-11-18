@@ -19,7 +19,7 @@ const frameFromEvent = (e, el, view, maxFrames) => {
   return frameAtX(e.clientX - rect.left, rect.width, view, maxFrames);
 };
 
-export function RulerLane({ view, maxFrames, fps, onPointerDown, onPointerMove, onPointerLeave }) {
+function RulerLaneImpl({ view, maxFrames, fps, onPointerDown, onPointerMove, onPointerLeave }) {
   const ref = useLaneCanvas(
     (ctx, g) => {
       const ticks = drawRuler(ctx, g, { view, maxFrames, fps });
@@ -43,8 +43,9 @@ export function RulerLane({ view, maxFrames, fps, onPointerDown, onPointerMove, 
     />
   );
 }
+export const RulerLane = React.memo(RulerLaneImpl);
 
-export function CacheLane({ view, maxFrames, spans }) {
+function CacheLaneImpl({ view, maxFrames, spans }) {
   const ref = useLaneCanvas(
     (ctx, g) => { drawCacheStrip(ctx, g, { view, maxFrames, spans }); },
     [view.start, view.end, maxFrames, spans],
@@ -60,8 +61,9 @@ export function CacheLane({ view, maxFrames, spans }) {
     />
   );
 }
+export const CacheLane = React.memo(CacheLaneImpl);
 
-export function AudioLane({ view, maxFrames, fps, waves, slipSeconds, active, label }) {
+function AudioLaneImpl({ view, maxFrames, fps, waves, slipSeconds, active, label }) {
   const ref = useLaneCanvas(
     (ctx, g) => { drawAudioTrack(ctx, g, { view, maxFrames, fps, waves, slipSeconds, active }); },
     [view.start, view.end, maxFrames, fps, waves, slipSeconds, active],
@@ -77,8 +79,9 @@ export function AudioLane({ view, maxFrames, fps, waves, slipSeconds, active, la
     />
   );
 }
+export const AudioLane = React.memo(AudioLaneImpl);
 
-export function FilmCanvas({ view, maxFrames, fps, slots, tileFor, tileVersion, waveCoarse, waveFine, thumbsHidden }) {
+function FilmCanvasImpl({ view, maxFrames, fps, slots, tileFor, tileVersion, waveCoarse, waveFine, thumbsHidden }) {
   const ref = useLaneCanvas(
     (ctx, g) => { drawFilmstrip(ctx, g, { view, maxFrames, fps, slots, tileFor, waveCoarse, waveFine, thumbsHidden }); },
     [view.start, view.end, maxFrames, fps, slots, tileFor, tileVersion, waveCoarse, waveFine, thumbsHidden],
@@ -91,8 +94,9 @@ export function FilmCanvas({ view, maxFrames, fps, slots, tileFor, tileVersion, 
     />
   );
 }
+export const FilmCanvas = React.memo(FilmCanvasImpl);
 
-export function SceneLane({
+function SceneLaneImpl({
   view, maxFrames, fps, cuts, presence, selectedPersonId, selectedInterval, emptyNote,
   onSeek, onJumpCut, onPresenceClick,
 }) {
@@ -149,6 +153,7 @@ export function SceneLane({
     />
   );
 }
+export const SceneLane = React.memo(SceneLaneImpl);
 
 /**
  * Who the matcher was sure about, and where it was not. One thin row per person; an amber cell is a
@@ -156,7 +161,7 @@ export function SceneLane({
  * seeks to that frame - one click from "that looks off" to the frame itself. It reads the Face Bank's
  * SAMPLED detections, like the presence lane, not the render's per-frame matcher.
  */
-export function IdentityLane({ view, maxFrames, rows, emptyNote, onSeek }) {
+function IdentityLaneImpl({ view, maxFrames, rows, emptyNote, onSeek }) {
   // Cells are laid out once per data change, never per paint (a repaint only walks the visible ones).
   const laid = useMemo(() => rows.map((r) => ({ ...r, cells: laneCells(r.points, maxFrames) })), [rows, maxFrames]);
   const h = identityLaneHeight(laid.length);
@@ -206,8 +211,9 @@ export function IdentityLane({ view, maxFrames, rows, emptyNote, onSeek }) {
     />
   );
 }
+export const IdentityLane = React.memo(IdentityLaneImpl);
 
-export function OverrideLane({
+function OverrideLaneImpl({
   view, maxFrames, overrides, selectedId, inout, emptyNote, onSelect, onUpdate, onSeek,
 }) {
   const dragRef = useRef(null);
@@ -284,8 +290,9 @@ export function OverrideLane({
     />
   );
 }
+export const OverrideLane = React.memo(OverrideLaneImpl);
 
-export function ByteTrackLane({
+function ByteTrackLaneImpl({
   view,
   maxFrames,
   track,
@@ -320,4 +327,9 @@ export function ByteTrackLane({
     />
   );
 }
+const ByteTrackLaneMemo = React.memo(ByteTrackLaneImpl);
+export function ByteTrackLane(props) {
+  return <ByteTrackLaneMemo {...props} />;
+}
+
 

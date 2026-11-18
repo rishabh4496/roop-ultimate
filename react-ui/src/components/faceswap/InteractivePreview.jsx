@@ -726,10 +726,12 @@ export default function InteractivePreview({
       const sy = (cy - crect.top) / s;
       const mediaPt = viewportMatrix.screenToMedia(sx, sy);
       const r = viewportMatrix.screenRadiusToMedia(brushSize / 2);
+      const innerR = Math.max(0, r * (1 - Math.max(0, Math.min(1, brushFeather))));
       sample = {
         x: mediaPt.x,
         y: mediaPt.y,
         r,
+        innerR,
         scale: canvas.width / (viewportMatrix.metrics.containedWidth || canvas.width),
         onImage: mediaPt.onMedia,
       };
@@ -870,22 +872,47 @@ export default function InteractivePreview({
   useEffect(() => {
     const el = containerRef.current;
     if (!el || typeof ResizeObserver === 'undefined') return undefined;
-    const ro = new ResizeObserver(() => {
-      const box = containerRef.current?.getBoundingClientRect();
-      if (box) {
-        setSmallStage(box.height < 300 || box.width < 560);
-        if (box.width > 0 && box.height > 0) {
-          setContainerDim({ w: el.clientWidth, h: el.clientHeight });
-        }
+
+    const measure = () => {
+      const w = el.clientWidth;
+      const h = el.clientHeight;
+      if (w > 0 && h > 0) {
+        setSmallStage(h < 300 || w < 560);
+        setContainerDim((prev) => {
+          if (Math.abs(prev.w - w) < 0.5 && Math.abs(prev.h - h) < 0.5) return prev;
+          return { w, h };
+        });
       }
-      const z = zoomRef.current;
-      const cur = panRef.current;
-      const c = clampPan(cur, z, containerRef.current, imageRef.current);
-      if (c.x !== cur.x || c.y !== cur.y) updateViewport(z, c, false);
+    };
+    measure();
+
+    let rafId = null;
+    const ro = new ResizeObserver((entries) => {
+      if (rafId !== null) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => {
+        rafId = null;
+        for (const entry of entries) {
+          const cr = entry.contentRect;
+          if (cr.width > 0 && cr.height > 0) {
+            setSmallStage(cr.height < 300 || cr.width < 560);
+            setContainerDim((prev) => {
+              if (Math.abs(prev.w - cr.width) < 0.5 && Math.abs(prev.h - cr.height) < 0.5) return prev;
+              return { w: cr.width, h: cr.height };
+            });
+          }
+        }
+        const z = zoomRef.current;
+        const cur = panRef.current;
+        const c = clampPan(cur, z, containerRef.current, imageRef.current);
+        if (c.x !== cur.x || c.y !== cur.y) updateViewport(z, c, false);
+      });
     });
     ro.observe(el);
-    return () => ro.disconnect();
-  }, [updateViewport, compare, compareMode]);
+    return () => {
+      if (rafId !== null) cancelAnimationFrame(rafId);
+      ro.disconnect();
+    };
+  }, [updateViewport]);
 
   // ── Gesture Engine (@use-gesture/react) ──────────────────────────────────
   useGesture(
@@ -997,8 +1024,8 @@ export default function InteractivePreview({
           const sy = (cy - rect.top) / s;
           const loupeCrop = viewportMatrix ? viewportMatrix.getLoupeCrop(sx, sy, 180, loupePower) : null;
           lensPendingRef.current = {
-            x: sx,
-            y: sy,
+            x: (cx - rect.left) / s,
+            y: (cy - rect.top) / s,
             imgW: (ir?.width || rect.width) / s,
             imgH: (ir?.height || rect.height) / s,
             imgX: ((ir?.left ?? rect.left) - rect.left) / s,
@@ -1332,10 +1359,11 @@ export default function InteractivePreview({
     const interactive = selectable || menuable;
     return faces.map((bbox, i) => {
       const [sx, sy, ex, ey] = bbox;
-      const left = (sx / imgDim.w) * 100;
-      const top = (sy / imgDim.h) * 100;
-      const width = ((ex - sx) / imgDim.w) * 100;
-      const height = ((ey - sy) / imgDim.h) * 100;
+      const isNorm = ex <= 1.0 && ey <= 1.0 && (sx < 1.0 || sy < 1.0);
+      const left = isNorm ? sx * 100 : (sx / imgDim.w) * 100;
+      const top = isNorm ? sy * 100 : (sy / imgDim.h) * 100;
+      const width = isNorm ? (ex - sx) * 100 : ((ex - sx) / imgDim.w) * 100;
+      const height = isNorm ? (ey - sy) * 100 : ((ey - sy) / imgDim.h) * 100;
       const personLabel = (personIds[i] ?? i) + 1;
       const selected = selectedFaceIndex === i;
       const info = faceRoles[i] || null;
@@ -1447,15 +1475,28 @@ export default function InteractivePreview({
       >
         {kps.map((k, i) => {
           if (!k || k.length < 5) return null;
-          const [eyeL, eyeR, nose, mL, mR] = k;
-          const p = pose[i];
+          const toMediaKp = ([x, y]) => [
+            x <= 1.0 && imgDim?.w ? x * imgDim.w : x,
+            y <= 1.0 && imgDim?.h ? y * imgDim.h : y,
+          ];
+          const eyeL = toMediaKp(k[0]);
+          const eyeR = toMediaKp(k[1]);
+          const nose = toMediaKp(k[2]);
+          const mL = toMediaKp(k[3]);
+          const mR = toMediaKp(k[4]);
+          const p = pose?.[i];
           const mesh = k.length >= 68
             ? [[...Array(17).keys()], [17, 18, 19, 20, 21], [22, 23, 24, 25, 26], [27, 28, 29, 30], [31, 32, 33, 34, 35], [36, 37, 38, 39, 40, 41, 36], [42, 43, 44, 45, 46, 47, 42], [48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 48], [60, 61, 62, 63, 64, 65, 66, 67, 60]]
             : [[0, 1], [0, 2], [1, 2], [2, 3], [2, 4], [3, 4]];
           return (
             <g key={i}>
               {mesh.map((indices, meshIndex) => (
-                <polyline key={meshIndex} points={indices.map((index) => k[index]?.join(',')).filter(Boolean).join(' ')} fill="none" stroke="#67e8f9" strokeWidth={r * 0.28} opacity="0.48" />
+                <polyline key={meshIndex} points={indices.map((index) => {
+                  const kp = k[index];
+                  if (!kp) return '';
+                  const pt = toMediaKp(kp);
+                  return `${pt[0]},${pt[1]}`;
+                }).filter(Boolean).join(' ')} fill="none" stroke="#67e8f9" strokeWidth={r * 0.28} opacity="0.48" />
               ))}
               <line x1={eyeL[0]} y1={eyeL[1]} x2={eyeR[0]} y2={eyeR[1]} stroke="#38bdf8" strokeWidth={r * 0.5} opacity="0.75" />
               <line x1={mL[0]} y1={mL[1]} x2={mR[0]} y2={mR[1]} stroke="#f472b6" strokeWidth={r * 0.5} opacity="0.75" />
@@ -1464,11 +1505,14 @@ export default function InteractivePreview({
                 x2={(mL[0] + mR[0]) / 2} y2={(mL[1] + mR[1]) / 2}
                 stroke="#a3e635" strokeWidth={r * 0.4} opacity="0.6" strokeDasharray={`${r * 2} ${r * 1.5}`}
               />
-              {k.map(([x, y], j) => (
-                <circle key={j} cx={x} cy={y} r={r} fill={COLORS[j]} stroke="#000" strokeWidth={r * 0.3} opacity="0.95">
-                  <title>{NAMES[j]}</title>
-                </circle>
-              ))}
+              {k.map((kp, j) => {
+                const pt = toMediaKp(kp);
+                return (
+                  <circle key={j} cx={pt[0]} cy={pt[1]} r={r} fill={COLORS[j]} stroke="#000" strokeWidth={r * 0.3} opacity="0.95">
+                    <title>{NAMES[j]}</title>
+                  </circle>
+                );
+              })}
               {p && (
                 <text
                   x={nose[0]} y={nose[1] - r * 4}
@@ -2228,6 +2272,7 @@ export default function InteractivePreview({
                 onClick={() => setWipeAngle(0)}
                 className="px-1.5 py-0.5 rounded text-nano font-mono font-bold bg-accent/20 text-accent hover:bg-accent/30"
                 title="Reset rotation angle to 0°"
+                aria-label="Reset rotation angle to 0°"
               >
                 ↺
               </button>
@@ -2578,7 +2623,7 @@ export default function InteractivePreview({
           <span className="absolute top-1.5 left-1/2 -translate-x-1/2 px-1.5 py-0.5 rounded bg-black/80 backdrop-blur border border-cyan-400/40 text-nano font-mono font-bold text-cyan-300 tracking-wider">
             {loupePower}× LOUPE
           </span>
-          <span className="absolute bottom-1 left-1/2 -translate-x-1/2 whitespace-nowrap rounded bg-black/85 px-1.5 py-0.5 text-[9px] font-mono font-bold text-cyan-100 shadow">
+          <span className="absolute bottom-1 left-1/2 -translate-x-1/2 whitespace-nowrap rounded bg-black/85 px-1.5 py-0.5 text-nano font-mono font-bold text-cyan-100 shadow">
             {loupePixel ? `RGB ${loupePixel.r} ${loupePixel.g} ${loupePixel.b} · ${loupePixel.hex}` : 'RGB — · HEX —'}
           </span>
         </div>

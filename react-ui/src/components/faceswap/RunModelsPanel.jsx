@@ -1,4 +1,5 @@
 import React, { useMemo } from 'react';
+import { useTelemetryStore } from '../../store/telemetryStore';
 
 /**
  * RunModelsPanel — WHICH MODELS ARE ACTUALLY LOADED AND RUNNING.
@@ -70,7 +71,8 @@ export default function RunModelsPanel({ runtime = null, settings = null, teleme
     // for. They agree in normal operation; when they do not, the running one is
     // the one worth showing.
     const pool = pooling.pool || runtime?.pool || null;
-    const tPool = telemetry?.pools || null;
+    const activeSys = telemetry || useTelemetryStore.getState().system;
+    const tPool = activeSys?.pools || null;
     const workers = pooling.workers || runtime?.workers || null;
 
     const swapper = pick(model.swap_model, runtime?.model, p.swap_model);
@@ -115,9 +117,9 @@ export default function RunModelsPanel({ runtime = null, settings = null, teleme
         expression: pool?.expression ?? tPool?.expr ?? null,
       },
       workers: workers?.active ?? workers?.configured ?? null,
-      turbo: !!telemetry?.turbo_active,
-      nvdec: telemetry?.nvdec_active,
-      nvenc: telemetry?.nvenc_active,
+      turbo: !!activeSys?.turbo_active,
+      nvdec: activeSys?.nvdec_active,
+      nvenc: activeSys?.nvenc_active,
     };
   }, [runtime, settings, telemetry]);
 

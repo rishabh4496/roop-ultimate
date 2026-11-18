@@ -172,8 +172,8 @@ export default function ExtrasMediaViewport({ children, overlays, chrome, mediaS
         <span className="extras-media-viewport__zoom" aria-live="polite">{Math.round(zoom * 100)}%</span>
         <button type="button" onClick={fitZoom} title="Fit image to viewport (F)">Fit</button>
         <button type="button" onClick={fillZoom} title="Fill viewport; crop overflow">Fill</button>
-        <button type="button" onClick={() => pixelZoom(1)} title="1:1 source pixels">100%</button>
-        <button type="button" onClick={() => pixelZoom(2)} title="2:1 source pixels">200%</button>
+        <button type="button" onClick={() => pixelZoom(1)} title="1:1 source pixels" aria-label="100% zoom (1:1 source pixels)">100%</button>
+        <button type="button" onClick={() => pixelZoom(2)} title="2:1 source pixels" aria-label="200% zoom (2:1 source pixels)">200%</button>
         {zoom >= 3 && <button type="button" aria-pressed={pixelGrid} onClick={() => setPixelGrid((value) => !value)} title="Toggle pixel grid">Grid</button>}
         <span className="extras-media-viewport__hint">MMB / Space drag · scroll zoom</span>
       </div>

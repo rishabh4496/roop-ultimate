@@ -12,7 +12,7 @@ import { clamp, centerView, minSpan, normalizeView, panView, placeView, viewSpan
 
 export const MINIMAP_H = 34;
 
-export default function Minimap({
+function MinimapImpl({
   maxFrames, view, setView, frame, startFrame, endFrame, spans, cuts, presence, trackW,
 }) {
   const v = normalizeView(view, maxFrames);
@@ -161,3 +161,5 @@ export default function Minimap({
     </div>
   );
 }
+
+export default React.memo(MinimapImpl);

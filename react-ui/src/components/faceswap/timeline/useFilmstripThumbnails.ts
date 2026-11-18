@@ -199,10 +199,10 @@ export function useFilmstripThumbnails({
     []
   );
 
-  return {
+  return useMemo(() => ({
     slots,
     getThumbnail,
     cacheSize: cacheRef.current.size,
     version,
-  };
+  }), [slots, getThumbnail, version]);
 }

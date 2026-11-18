@@ -333,6 +333,7 @@ What the shell loads first, and the CFG editor.
 | POST | `/api/advisor` | useClipAdvisor |
 | GET | `/api/meta` | App |
 | GET | `/api/models/integrity` | ModelSplash |
+| GET | `/api/models/offline` | LaunchpadBand |
 | GET, POST | `/api/profiles` | useProfiles |
 | GET, POST | `/api/settings` | App, FaceSwap, Settings, useUserDefaults |
 | GET | `/api/settings/defaults` | Settings |
@@ -397,6 +398,7 @@ Faceset library and builder, identity blending, recognition backbone.
 | POST | `/api/facemgr/build` | FaceManager, VideoFramesetExtractor |
 | POST | `/api/facemgr/clear` | FaceManager |
 | POST | `/api/facemgr/cut` | FaceManager, VideoFramesetExtractor |
+| GET | `/api/facemgr/faces` | FaceManager, IdentityWorkstation |
 | POST | `/api/facemgr/faceset` | FaceManager |
 | GET | `/api/facemgr/frame` | FaceManager, VideoFramesetExtractor |
 | POST | `/api/facemgr/morph/blend` | MorphLab |
@@ -474,6 +476,7 @@ Finished renders, run history, export, projects and storage.
 | GET | `/api/output` | Gallery, Home, RunHistory |
 | POST | `/api/output/delete` | Gallery |
 | GET | `/api/projects` | ProjectsPanel |
+| POST | `/api/projects/load` | QueueMissionControl |
 | POST | `/api/quality/analyze` | QualityReport |
 | POST | `/api/reveal` | FaceSwap, Gallery, Processing, RunHistory |
 | GET | `/api/storage` | StorageManager |

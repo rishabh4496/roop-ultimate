@@ -168,6 +168,17 @@ const tabFromHash = (hash, valid) => {
   return valid.includes(id) ? id : null;
 };
 
+const resolveInitialTab = (valid) => {
+  if (typeof window === 'undefined') return 'faceswap';
+  const fromHash = tabFromHash(window.location.hash, valid);
+  if (fromHash) return fromHash;
+  try {
+    const saved = window.localStorage.getItem('roop_active_tab');
+    if (saved && valid.includes(saved)) return saved;
+  } catch { /* storage unavailable */ }
+  return 'faceswap';
+};
+
 // Poll cadence. The fast rate is the historical 1 Hz, used whenever the
 // telemetry socket is NOT connected and the poll is the only source of live
 // state. When the socket IS connected it carries the per-frame numbers, and
@@ -180,7 +191,7 @@ const SLOW_POLL_MS = 5000;
 
 export default function App() {
   const [tab, setTabState] = useState(
-    () => tabFromHash(window.location.hash, ALL_TABS.map((t) => t.id)) || 'faceswap');
+    () => resolveInitialTab(ALL_TABS.map((t) => t.id)));
   const [meta, setMeta] = useState(null);
   const [settings, setSettings] = useState(null);
   const [toasts, setToasts] = useState([]);
@@ -243,6 +254,7 @@ export default function App() {
         if (replace) window.history.replaceState(null, '', path);
         else window.location.hash = path;
       }
+      try { window.localStorage.setItem('roop_active_tab', id); } catch { /* storage unavailable */ }
       return id;
     });
   }, []);
@@ -252,12 +264,16 @@ export default function App() {
     const ids = ALL_TABS.map((t) => t.id);
     const onHash = () => {
       const id = tabFromHash(window.location.hash, ids);
-      if (id) setTabState(id);
+      if (id) {
+        setTabState(id);
+        try { window.localStorage.setItem('roop_active_tab', id); } catch { /* storage unavailable */ }
+      }
     };
     // Stamp the opening tab so the first Back does not land on a bare URL.
     if (!tabFromHash(window.location.hash, ids)) {
       window.history.replaceState(null, '', `#/${tab}`);
     }
+    try { window.localStorage.setItem('roop_active_tab', tab); } catch { /* storage unavailable */ }
     window.addEventListener('hashchange', onHash);
     return () => window.removeEventListener('hashchange', onHash);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- mount only; `tab` is read once to stamp the initial URL
@@ -599,7 +615,7 @@ export default function App() {
   // run ends so the finished log and the output are still there to read. It
   // disappears once you navigate away from it with nothing running.
   const [runTabOpen, setRunTabOpen] = useState(
-    () => tabFromHash(window.location.hash, ALL_TABS.map((t) => t.id)) === 'processing'
+    () => resolveInitialTab(ALL_TABS.map((t) => t.id)) === 'processing'
   );
   // Queued jobs count too: the rail's Processing badge is a count of work still
   // to run, and a badge on a route that is not listed would be unreachable.

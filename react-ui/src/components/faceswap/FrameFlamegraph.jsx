@@ -243,11 +243,11 @@ export default function FrameFlamegraph({
         }, {}),
       },
       hardware_environment: {
-        gpu_util: telemetry?.gpu_util ?? null,
-        vram_used_gb: telemetry?.vram_used ?? null,
-        vram_total_gb: telemetry?.vram_total ?? null,
-        cpu_percent: telemetry?.cpu_percent ?? null,
-        active_pools: telemetry?.pools ?? null,
+        gpu_util: (telemetry ?? useTelemetryStore.getState().system)?.gpu_util ?? null,
+        vram_used_gb: (telemetry ?? useTelemetryStore.getState().system)?.vram_used ?? null,
+        vram_total_gb: (telemetry ?? useTelemetryStore.getState().system)?.vram_total ?? null,
+        cpu_percent: (telemetry ?? useTelemetryStore.getState().system)?.cpu_percent ?? null,
+        active_pools: (telemetry ?? useTelemetryStore.getState().system)?.pools ?? null,
       },
     };
 

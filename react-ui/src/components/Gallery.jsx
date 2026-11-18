@@ -518,95 +518,24 @@ export default function Gallery({ notify, setSettings, setTab }) {
                     if (!file) return null;
                     const absolutePath = `${outputPath}/${file.name}`;
                     const srcUrl = fileUrl(absolutePath);
-                    const isSel = selectedFiles.has(file.name);
-                    const historyEntry = historyByName[file.name];
                     return (
-                      <div
-                        role="row"
-                        aria-rowindex={i + 2}
-                        className={`grid items-center border-b border-white/5 hover:bg-white/[0.04] transition-colors ${isSel ? 'bg-[var(--accent)]/10' : ''}`}
-                        style={{ gridTemplateColumns: LIST_COLUMNS }}
-                      >
-                        <div role="cell" className="p-3 text-center">
-                          <input
-                            type="checkbox"
-                            checked={isSel}
-                            onChange={() => toggleSelect(file.name)}
-                            aria-label={`Select ${file.name}`}
-                            className="rounded accent-[var(--accent)] cursor-pointer"
-                          />
-                        </div>
-                        <div role="cell" className="p-3 min-w-0 font-semibold text-white/90 flex items-center gap-2">
-                          {file.kind === 'video'
-                            ? <Icon.film size={15} className="shrink-0 text-muted" />
-                            : <Icon.still size={15} className="shrink-0 text-muted" />}
-                          <a href={srcUrl} target="_blank" rel="noreferrer" className="hover:text-accent truncate" title={file.name}>
-                            {file.name}
-                          </a>
-                        </div>
-                        <div role="cell" className="p-3 text-white/50 font-mono text-micro uppercase">{file.kind}</div>
-                        <div role="cell" className="p-3 text-white/60 font-mono text-mini tabular-nums">{fmtSize(file.size)}</div>
-                        <div role="cell" className="p-3 text-white/50 text-mini whitespace-nowrap">{getFormatDate(file.mtime)}</div>
-                        <div role="cell" className="p-3 text-right">
-                          <div className="flex items-center justify-end gap-1.5">
-                            {historyEntry && (
-                              <button
-                                type="button"
-                                onClick={() => loadRunSettings(historyEntry)}
-                                className="px-2 py-1 rounded bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 text-micro font-bold"
-                                title="Re-apply run settings"
-                              >
-                                Preset
-                              </button>
-                            )}
-                            <button
-                              type="button"
-                              onClick={() => sendAsReference(file)}
-                              className="px-2 py-1 rounded bg-white/5 hover:bg-white/15 text-white/80 text-micro font-bold"
-                              title="Send to Face Swap as the A/B reference"
-                              aria-label={`Send ${file.name} to Face Swap as the A/B reference`}
-                            >
-                              A/B
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => reuseAsTarget(file.name)}
-                              disabled={busyFile === file.name}
-                              className="px-2 py-1 rounded bg-white/5 hover:bg-white/15 text-white/80 text-micro font-bold"
-                              title="Reuse as Target"
-                            >
-                              Target
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => reuseAsSource(file.name)}
-                              disabled={busyFile === file.name}
-                              className="px-2 py-1 rounded bg-white/5 hover:bg-white/15 text-white/80 text-micro font-bold"
-                              title="Extract Face as Source"
-                            >
-                              Source
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => revealFile(file.name)}
-                              className="p-1 rounded bg-white/5 hover:bg-white/15 text-white/70"
-                              title="Reveal File"
-                              aria-label={`Reveal ${file.name} in the file manager`}
-                            >
-                              <Icon.reveal size={14} />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => deleteFile(file.name)}
-                              className="p-1 rounded bg-red-500/10 hover:bg-red-500/20 text-red-400"
-                              title="Delete File"
-                              aria-label={`Delete ${file.name}`}
-                            >
-                              <Icon.trash size={14} />
-                            </button>
-                          </div>
-                        </div>
-                      </div>
+                      <GalleryListRow
+                        file={file}
+                        srcUrl={srcUrl}
+                        isSel={selectedFiles.has(file.name)}
+                        historyEntry={historyByName[file.name]}
+                        onToggleSelect={() => toggleSelect(file.name)}
+                        onLoadSettings={loadRunSettings}
+                        onSendReference={() => sendAsReference(file)}
+                        onReuseTarget={() => reuseAsTarget(file.name)}
+                        onReuseSource={() => reuseAsSource(file.name)}
+                        onReveal={() => revealFile(file.name)}
+                        onDelete={() => deleteFile(file.name)}
+                        isBusy={busyFile === file.name}
+                        dateStr={getFormatDate(file.mtime)}
+                        sizeStr={fmtSize(file.size)}
+                        rowIndex={i + 2}
+                      />
                     );
                   }}
                 />
@@ -662,6 +591,113 @@ export default function Gallery({ notify, setSettings, setTab }) {
   );
 }
 
+const GalleryListRow = React.memo(function GalleryListRow({
+  file,
+  srcUrl,
+  isSel,
+  historyEntry,
+  onToggleSelect,
+  onLoadSettings,
+  onSendReference,
+  onReuseTarget,
+  onReuseSource,
+  onReveal,
+  onDelete,
+  isBusy,
+  dateStr,
+  sizeStr,
+  rowIndex,
+}) {
+  return (
+    <div
+      role="row"
+      aria-rowindex={rowIndex}
+      className={`grid items-center border-b border-white/5 hover:bg-white/[0.04] transition-colors ${isSel ? 'bg-[var(--accent)]/10' : ''}`}
+      style={{ gridTemplateColumns: LIST_COLUMNS }}
+    >
+      <div role="cell" className="p-3 text-center">
+        <input
+          type="checkbox"
+          checked={isSel}
+          onChange={onToggleSelect}
+          aria-label={`Select ${file.name}`}
+          className="rounded accent-[var(--accent)] cursor-pointer"
+        />
+      </div>
+      <div role="cell" className="p-3 min-w-0 font-semibold text-white/90 flex items-center gap-2">
+        {file.kind === 'video'
+          ? <Icon.film size={15} className="shrink-0 text-muted" />
+          : <Icon.still size={15} className="shrink-0 text-muted" />}
+        <a href={srcUrl} target="_blank" rel="noreferrer" className="hover:text-accent truncate" title={file.name}>
+          {file.name}
+        </a>
+      </div>
+      <div role="cell" className="p-3 text-white/50 font-mono text-micro uppercase">{file.kind}</div>
+      <div role="cell" className="p-3 text-white/60 font-mono text-mini tabular-nums">{sizeStr}</div>
+      <div role="cell" className="p-3 text-white/50 text-mini whitespace-nowrap">{dateStr}</div>
+      <div role="cell" className="p-3 text-right">
+        <div className="flex items-center justify-end gap-1.5">
+          {historyEntry && (
+            <button
+              type="button"
+              onClick={() => onLoadSettings(historyEntry)}
+              className="px-2 py-1 rounded bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 text-micro font-bold"
+              title="Re-apply run settings"
+            >
+              Preset
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onSendReference}
+            className="px-2 py-1 rounded bg-white/5 hover:bg-white/15 text-white/80 text-micro font-bold"
+            title="Send to Face Swap as the A/B reference"
+            aria-label={`Send ${file.name} to Face Swap as the A/B reference`}
+          >
+            A/B
+          </button>
+          <button
+            type="button"
+            onClick={onReuseTarget}
+            disabled={isBusy}
+            className="px-2 py-1 rounded bg-white/5 hover:bg-white/15 text-white/80 text-micro font-bold"
+            title="Reuse as Target"
+          >
+            Target
+          </button>
+          <button
+            type="button"
+            onClick={onReuseSource}
+            disabled={isBusy}
+            className="px-2 py-1 rounded bg-white/5 hover:bg-white/15 text-white/80 text-micro font-bold"
+            title="Extract Face as Source"
+          >
+            Source
+          </button>
+          <button
+            type="button"
+            onClick={onReveal}
+            className="p-1 rounded bg-white/5 hover:bg-white/15 text-white/70"
+            title="Reveal File"
+            aria-label={`Reveal ${file.name} in the file manager`}
+          >
+            <Icon.reveal size={14} />
+          </button>
+          <button
+            type="button"
+            onClick={onDelete}
+            className="p-1 rounded bg-red-500/10 hover:bg-red-500/20 text-red-400"
+            title="Delete File"
+            aria-label={`Delete ${file.name}`}
+          >
+            <Icon.trash size={14} />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+});
+
 // The metadata pills on a card. Only values the run actually recorded are shown (see gallery/mediaMeta.js).
 function MetaPills({ entry }) {
   const pills = pillsFor(entry, null);
@@ -678,7 +714,7 @@ function MetaPills({ entry }) {
   );
 }
 
-function VideoHoverCard({ file, srcUrl, dateStr, sizeStr, onDelete, onReveal, onReuseTarget, onReuseSource, onSendReference, historyEntry, onLoadSettings, isBusy, isSelected, onToggleSelect }) {
+const VideoHoverCard = React.memo(function VideoHoverCard({ file, srcUrl, dateStr, sizeStr, onDelete, onReveal, onReuseTarget, onReuseSource, onSendReference, historyEntry, onLoadSettings, isBusy, isSelected, onToggleSelect }) {
   const videoRef = useRef(null);
   // Hover scrubbing: the pointer's x across the thumbnail is the playhead. Written straight to the
   // <video> and to two DOM nodes (bar + clock) once per animation frame; no React state per pointer move,
@@ -902,4 +938,4 @@ function VideoHoverCard({ file, srcUrl, dateStr, sizeStr, onDelete, onReveal, on
       </div>
     </Card>
   );
-}
+});

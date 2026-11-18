@@ -494,17 +494,28 @@ export const PreviewViewport: React.FC<PreviewViewportProps> = ({
 
     updateDimensions();
 
+    let rafId: number | null = null;
     const ro = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        const cr = entry.contentRect;
-        if (cr.width > 0 && cr.height > 0) {
-          setContainerDim({ w: cr.width, h: cr.height });
+      if (rafId !== null) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => {
+        rafId = null;
+        for (const entry of entries) {
+          const cr = entry.contentRect;
+          if (cr.width > 0 && cr.height > 0) {
+            setContainerDim((prev) => {
+              if (Math.abs(prev.w - cr.width) < 0.5 && Math.abs(prev.h - cr.height) < 0.5) return prev;
+              return { w: cr.width, h: cr.height };
+            });
+          }
         }
-      }
+      });
     });
 
     ro.observe(container);
-    return () => ro.disconnect();
+    return () => {
+      if (rafId !== null) cancelAnimationFrame(rafId);
+      ro.disconnect();
+    };
   }, [containerRef]);
 
   // ── ViewportMatrix Instance ─────────────────────────────────────────────────
@@ -1028,7 +1039,7 @@ export const PreviewViewport: React.FC<PreviewViewportProps> = ({
           const rMedia = viewportMatrix.screenRadiusToMedia(brushSize / 2);
           ctx.save();
           ctx.globalCompositeOperation = brushMode === 'erase' ? 'destination-out' : 'source-over';
-          ctx.strokeStyle = brushMode === 'erase' ? 'rgba(0,0,0,1)' : 'rgba(34,211,238,0.7)';
+          ctx.strokeStyle = brushMode === 'erase' ? 'rgba(0,0,0,1)' : 'rgba(236,72,153,0.7)';
           ctx.lineWidth = rMedia * 2;
           ctx.lineCap = 'round';
           ctx.lineJoin = 'round';
@@ -1217,18 +1228,41 @@ export const PreviewViewport: React.FC<PreviewViewportProps> = ({
       const isExcluded = Boolean(face.excluded || (faceRoles && (faceRoles as any)[faceIndex]?.excluded));
 
       // BiSeNet semantic parsing or landmark points
-      const landmarks = face.landmarks || face.kps;
+      const landmarks = face.landmarks || face.kps || kps?.[faceIndex] || kps?.[i];
+      const box = face.bbox as any;
+      let bx0 = 0;
+      let by0 = 0;
+      let bx1 = 0;
+      let by1 = 0;
+      if (Array.isArray(box) && box.length >= 4) {
+        const isNorm = box[2] <= 1.0 && box[3] <= 1.0 && (box[0] < 1.0 || box[1] < 1.0);
+        bx0 = isNorm ? box[0] * naturalDim.w : box[0];
+        by0 = isNorm ? box[1] * naturalDim.h : box[1];
+        bx1 = isNorm ? box[2] * naturalDim.w : box[2];
+        by1 = isNorm ? box[3] * naturalDim.h : box[3];
+      } else if (box && typeof box === 'object') {
+        const isNorm = box.width <= 1.0 && box.height <= 1.0 && (box.x < 1.0 || box.y < 1.0);
+        bx0 = isNorm ? box.x * naturalDim.w : box.x;
+        by0 = isNorm ? box.y * naturalDim.h : box.y;
+        bx1 = isNorm ? (box.x + box.width) * naturalDim.w : box.x + box.width;
+        by1 = isNorm ? (box.y + box.height) * naturalDim.h : box.y + box.height;
+      }
+      const bw = Math.max(1e-6, bx1 - bx0);
+      const bh = Math.max(1e-6, by1 - by0);
+
       const landmarkPositions = Array.isArray(landmarks) ? landmarks.map((landmark: any) => {
         const point = extractPoint(landmark);
-        const box = face.bbox as any;
-        const x0 = Array.isArray(box) ? box[0] : box?.x ?? 0;
-        const y0 = Array.isArray(box) ? box[1] : box?.y ?? 0;
-        const x1 = Array.isArray(box) ? box[2] : (box?.x ?? 0) + (box?.width ?? 0);
-        const y1 = Array.isArray(box) ? box[3] : (box?.y ?? 0) + (box?.height ?? 0);
-        return {
-          x: point.x <= 1 ? point.x * 100 : ((point.x - x0) / Math.max(1e-6, x1 - x0)) * 100,
-          y: point.y <= 1 ? point.y * 100 : ((point.y - y0) / Math.max(1e-6, y1 - y0)) * 100,
-        };
+        const lx = point.x;
+        const ly = point.y;
+        const mediaLx = lx > 1.0 ? lx : (lx >= 0 && lx <= 1.0 ? lx * naturalDim.w : lx);
+        const mediaLy = ly > 1.0 ? ly : (ly >= 0 && ly <= 1.0 ? ly * naturalDim.h : ly);
+        let px = ((mediaLx - bx0) / bw) * 100;
+        let py = ((mediaLy - by0) / bh) * 100;
+        if (lx <= 1.0 && (px < -20 || px > 120)) {
+          px = lx * 100;
+          py = ly * 100;
+        }
+        return { x: px, y: py };
       }) : [];
       const landmarkMesh = landmarkPositions.length >= 68
         ? [[...Array(17).keys()], [17, 18, 19, 20, 21], [22, 23, 24, 25, 26], [27, 28, 29, 30], [31, 32, 33, 34, 35], [36, 37, 38, 39, 40, 41, 36], [42, 43, 44, 45, 46, 47, 42], [48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 48], [60, 61, 62, 63, 64, 65, 66, 67, 60]]
@@ -1431,18 +1465,32 @@ export const PreviewViewport: React.FC<PreviewViewportProps> = ({
             <div className="absolute inset-0 pointer-events-none">
               <svg className="absolute inset-0 h-full w-full overflow-visible" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
                 {landmarkMesh.map((indices: number[], meshIndex: number) => (
-                  <polyline key={`mesh_${faceIndex}_${meshIndex}`} points={indices.map((index) => landmarkPositions[index] ? `${landmarkPositions[index].x},${landmarkPositions[index].y}` : '').filter(Boolean).join(' ')} fill="none" stroke="#67e8f9" strokeWidth="0.35" opacity="0.55" />
+                  <polyline key={`mesh_${faceIndex}_${meshIndex}`} points={indices.map((index) => landmarkPositions[index] ? `${landmarkPositions[index].x},${landmarkPositions[index].y}` : '').filter(Boolean).join(' ')} fill="none" stroke="#67e8f9" strokeWidth="0.4" opacity="0.6" />
                 ))}
+                {landmarks.length === 5 && landmarkPositions[0] && landmarkPositions[1] && (
+                  <line x1={landmarkPositions[0].x} y1={landmarkPositions[0].y} x2={landmarkPositions[1].x} y2={landmarkPositions[1].y} stroke="#38bdf8" strokeWidth="0.6" opacity="0.8" />
+                )}
+                {landmarks.length === 5 && landmarkPositions[3] && landmarkPositions[4] && (
+                  <line x1={landmarkPositions[3].x} y1={landmarkPositions[3].y} x2={landmarkPositions[4].x} y2={landmarkPositions[4].y} stroke="#f472b6" strokeWidth="0.6" opacity="0.8" />
+                )}
+                {landmarks.length === 5 && landmarkPositions[0] && landmarkPositions[1] && landmarkPositions[2] && landmarkPositions[3] && landmarkPositions[4] && (
+                  <line x1={(landmarkPositions[0].x + landmarkPositions[1].x) / 2} y1={(landmarkPositions[0].y + landmarkPositions[1].y) / 2} x2={(landmarkPositions[3].x + landmarkPositions[4].x) / 2} y2={(landmarkPositions[3].y + landmarkPositions[4].y) / 2} stroke="#a3e635" strokeWidth="0.45" strokeDasharray="1.5 1" opacity="0.75" />
+                )}
               </svg>
-              {landmarks.map((lm: any, lIdx: number) => {
+              {landmarks.map((_lm: any, lIdx: number) => {
                 const point = landmarkPositions[lIdx];
                 const px = point?.x ?? 0;
                 const py = point?.y ?? 0;
+                const arcfaceColors = ['#38bdf8', '#38bdf8', '#fbbf24', '#f472b6', '#f472b6'];
+                const arcfaceNames = ['EyeL', 'EyeR', 'Nose', 'MouthL', 'MouthR'];
+                const color = landmarks.length === 5 ? arcfaceColors[lIdx] : '#22d3ee';
+                const label = landmarks.length === 5 ? arcfaceNames[lIdx] : `Pt ${lIdx + 1}`;
                 return (
                   <span
                     key={`lm_${faceIndex}_${lIdx}`}
-                    className="absolute w-1 h-1 rounded-full bg-cyan-300 -translate-x-1/2 -translate-y-1/2 shadow-[0_0_4px_rgba(34,211,238,0.9)]"
-                    style={{ left: `${px}%`, top: `${py}%` }}
+                    title={label}
+                    className="absolute w-1.5 h-1.5 rounded-full -translate-x-1/2 -translate-y-1/2 shadow-[0_0_6px_rgba(34,211,238,0.95)]"
+                    style={{ left: `${px}%`, top: `${py}%`, backgroundColor: color }}
                   />
                 );
               })}
@@ -1455,6 +1503,7 @@ export const PreviewViewport: React.FC<PreviewViewportProps> = ({
     showBoxes,
     showLandmarks,
     faces,
+    kps,
     naturalDim,
     selectedFaceIndex,
     selectedTrackId,
@@ -1474,10 +1523,6 @@ export const PreviewViewport: React.FC<PreviewViewportProps> = ({
   const isVideoSource = playbackSource === 'video' || (playbackSource === 'auto' && Boolean(videoSrc));
   const { centerScreenX, centerScreenY, effectiveScale } = viewportMatrix.metrics;
   const activeFace = faces[selectedFaceIndex ?? 0];
-  const loupeDisplayCenter = {
-    x: Math.max(LOUPE_DIAMETER / 2, Math.min(containerDim.w - LOUPE_DIAMETER / 2, cursorPos.x)),
-    y: Math.max(LOUPE_DIAMETER / 2, Math.min(containerDim.h - LOUPE_DIAMETER / 2, cursorPos.y)),
-  };
 
   return (
     <div
@@ -1526,12 +1571,14 @@ export const PreviewViewport: React.FC<PreviewViewportProps> = ({
         </div>
       )}
       <div
-        className="relative transition-transform duration-75 ease-out will-change-transform pointer-events-none"
+        className="absolute pointer-events-none transition-none will-change-transform"
         style={{
           width: `${naturalDim.w}px`,
           height: `${naturalDim.h}px`,
-          transform: `translate3d(${centerScreenX - naturalDim.w / 2}px, ${centerScreenY - naturalDim.h / 2}px, 0) scale(${effectiveScale})`,
-          transformOrigin: 'center center',
+          left: 0,
+          top: 0,
+          transformOrigin: '0 0',
+          transform: `translate3d(${centerScreenX - (naturalDim.w / 2) * effectiveScale}px, ${centerScreenY - (naturalDim.h / 2) * effectiveScale}px, 0) scale(${effectiveScale})`,
         }}
       >
         {/* Backing Video */}
@@ -1675,8 +1722,8 @@ export const PreviewViewport: React.FC<PreviewViewportProps> = ({
             style={{
               width: `${LOUPE_DIAMETER}px`,
               height: `${LOUPE_DIAMETER}px`,
-              left: `${loupeDisplayCenter.x}px`,
-              top: `${loupeDisplayCenter.y}px`,
+              left: `${cursorPos.x}px`,
+              top: `${cursorPos.y}px`,
             }}
             data-testid="magnifier-loupe"
           >

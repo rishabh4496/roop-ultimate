@@ -39,7 +39,9 @@ function push(list, v) {
 function Sparkline() {
   const ref = useRef(null);
   useEffect(() => {
+    let rafId = 0;
     const draw = () => {
+      rafId = 0;
       const cv = ref.current;
       if (!cv) return;
       const dpr = window.devicePixelRatio || 1;
@@ -79,15 +81,28 @@ function Sparkline() {
       line(history.primary, accent, true);
     };
 
-    draw();
+    const scheduleDraw = () => {
+      if (!rafId) {
+        rafId = typeof requestAnimationFrame === 'function' ? requestAnimationFrame(draw) : setTimeout(draw, 0);
+      }
+    };
+
+    scheduleDraw();
     // One push + one redraw per NEW sample (the poller writes a fresh object each time). The listener runs
     // inside setState, before any React work, so nothing here costs a commit.
-    return useTelemetryStore.subscribe((state, prev) => {
+    const unsub = useTelemetryStore.subscribe((state, prev) => {
       if (state.system === prev.system) return;
       const r = readingOf(state.system);
       if (r) { push(history.primary, r.primary); push(history.cpu, r.cpu); }
-      draw();
+      scheduleDraw();
     });
+    return () => {
+      unsub();
+      if (rafId) {
+        if (typeof cancelAnimationFrame === 'function') cancelAnimationFrame(rafId);
+        else clearTimeout(rafId);
+      }
+    };
   }, []);
   return <canvas ref={ref} aria-hidden="true" className="h-[22px] w-[76px] shrink-0 max-xl:hidden" />;
 }
@@ -173,7 +188,7 @@ function Details({ engine, onOpenDiagnostics, onClose }) {
   );
 }
 
-export default function TelemetryPill({ engine, onOpenDiagnostics }) {
+function TelemetryPillImpl({ engine, onOpenDiagnostics }) {
   // Keeps the shared poll running; renders nothing when a sample lands.
   useSystemTelemetryPoller(3000);
   const [open, setOpen] = useState(false);
@@ -235,3 +250,5 @@ export default function TelemetryPill({ engine, onOpenDiagnostics }) {
     </div>
   );
 }
+
+export default React.memo(TelemetryPillImpl);

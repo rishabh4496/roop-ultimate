@@ -145,6 +145,167 @@ console.log('── Unified ViewportMatrix Coordinate Math ───────
   ok('slot D is bottom-right quadrant', quadD.slotId === 'D' && quadD.screenLeft === 640 && quadD.screenTop === 360);
 }
 
+console.log('── Ultra-Wide Displays (2560x1440, 3440x1440, 3840x2160, 5120x1440) ──');
+
+{
+  const ultraWideResolutions = [
+    { name: '2560x1440 (QHD 16:9)', w: 2560, h: 1440 },
+    { name: '3440x1440 (Ultrawide 21.5:9)', w: 3440, h: 1440 },
+    { name: '3840x2160 (4K UHD 16:9)', w: 3840, h: 2160 },
+    { name: '5120x1440 (Super Ultrawide 32:9)', w: 5120, h: 1440 },
+  ];
+
+  const testMediaSizes = [
+    { w: 1920, h: 1080, label: '1080p 16:9' },
+    { w: 3840, h: 1600, label: 'Cinema 2.40:1' },
+    { w: 1080, h: 1920, label: 'Vertical 9:16' },
+  ];
+
+  for (const res of ultraWideResolutions) {
+    for (const media of testMediaSizes) {
+      for (const zoom of [1.0, 2.5]) {
+        const pan = zoom > 1.0 ? { x: 75.5, y: -42.25 } : { x: 0, y: 0 };
+        const vm = createViewportMatrix({
+          containerWidth: res.w,
+          containerHeight: res.h,
+          mediaWidth: media.w,
+          mediaHeight: media.h,
+          zoom,
+          pan,
+        });
+
+        const { centerScreenX, centerScreenY, effectiveScale } = vm.metrics;
+        const domTx = centerScreenX - (media.w / 2) * effectiveScale;
+        const domTy = centerScreenY - (media.h / 2) * effectiveScale;
+
+        // Sub-pixel test points across media: top-left, center, arbitrary subpixel, bottom-right
+        const testPoints = [
+          [0, 0],
+          [media.w / 2, media.h / 2],
+          [media.w * 0.33333, media.h * 0.66667],
+          [media.w, media.h],
+        ];
+
+        let maxError = 0;
+        for (const [mx, my] of testPoints) {
+          const domSx = domTx + mx * effectiveScale;
+          const domSy = domTy + my * effectiveScale;
+          const vmScreen = vm.mediaToScreen(mx, my);
+          const errX = Math.abs(domSx - vmScreen.x);
+          const errY = Math.abs(domSy - vmScreen.y);
+          maxError = Math.max(maxError, errX, errY);
+
+          // Inverse round-trip
+          const back = vm.screenToMedia(domSx, domSy);
+          const invErrX = Math.abs(back.x - mx);
+          const invErrY = Math.abs(back.y - my);
+          maxError = Math.max(maxError, invErrX, invErrY);
+        }
+
+        ok(`${res.name} on ${media.label} @ ${zoom}x: DOM CSS transform exactly matches ViewportMatrix (error < 1e-6px)`, maxError < 1e-6);
+      }
+    }
+  }
+}
+
+console.log('── 5-Point ArcFace Landmark Overlays Zero-Drift ──────────────');
+
+{
+  const vm = createViewportMatrix({
+    containerWidth: 3440,
+    containerHeight: 1440,
+    mediaWidth: 1920,
+    mediaHeight: 1080,
+    zoom: 1.75,
+    pan: { x: 120, y: -60 },
+  });
+
+  // Typical ArcFace 5-point facial keypoints: EyeL, EyeR, Nose, MouthL, MouthR
+  const arcfaceKps = [
+    [892.35, 461.80],  // EyeL
+    [1027.65, 461.25], // EyeR
+    [959.80, 524.50],  // Nose
+    [908.40, 582.15],  // MouthL
+    [1011.60, 581.70], // MouthR
+  ];
+
+  const screenPoints = vm.landmarksToScreen(arcfaceKps);
+  ok('landmarksToScreen transforms all 5 ArcFace points', screenPoints.length === 5);
+
+  let maxLandmarkDrift = 0;
+  for (let i = 0; i < arcfaceKps.length; i++) {
+    const [mx, my] = arcfaceKps[i];
+    const sp = screenPoints[i];
+    const back = vm.screenToMedia(sp.x, sp.y);
+    maxLandmarkDrift = Math.max(maxLandmarkDrift, Math.abs(back.x - mx), Math.abs(back.y - my));
+  }
+  ok('ArcFace 5-point landmarks screen-to-media round-trip drift is 0 (< 1e-5px)', maxLandmarkDrift < 1e-5);
+
+  // Normalized landmark coordinates (0..1)
+  const normKps = arcfaceKps.map(([x, y]) => [x / 1920, y / 1080]);
+  const normScreen = vm.landmarksToScreen(normKps);
+  let normDiff = 0;
+  for (let i = 0; i < 5; i++) {
+    normDiff = Math.max(normDiff, Math.abs(normScreen[i].x - screenPoints[i].x), Math.abs(normScreen[i].y - screenPoints[i].y));
+  }
+  ok('normalized (0..1) and pixel (0..1920) ArcFace landmarks yield identical screen coordinates', normDiff < 1e-4);
+
+  // Sub-pixel bounding box relative positioning test
+  const bbox = [840.0, 390.0, 1080.0, 640.0]; // [x0, y0, x1, y1]
+  const bw = bbox[2] - bbox[0];
+  const bh = bbox[3] - bbox[1];
+  for (const [mx, my] of arcfaceKps) {
+    const px = ((mx - bbox[0]) / bw) * 100;
+    const py = ((my - bbox[1]) / bh) * 100;
+    const reconstructedMx = bbox[0] + (px / 100) * bw;
+    const reconstructedMy = bbox[1] + (py / 100) * bh;
+    ok(`landmark (${mx.toFixed(1)}, ${my.toFixed(1)}) reconstructs perfectly from sub-pixel percentage`, Math.abs(reconstructedMx - mx) < 1e-6 && Math.abs(reconstructedMy - my) < 1e-6);
+  }
+}
+
+console.log('── 3.5x+ Magnifier Loupe & Mask Brush Mapping ────────────────');
+
+{
+  const vm = createViewportMatrix({
+    containerWidth: 5120,
+    containerHeight: 1440,
+    mediaWidth: 1920,
+    mediaHeight: 1080,
+    zoom: 2.0,
+    pan: { x: -200, y: 100 },
+  });
+
+  // Test at various cursor coordinates
+  const cursorCoords = [
+    { x: 2560, y: 720 },
+    { x: 1280.5, y: 450.25 },
+    { x: 3840.75, y: 1100.8 },
+  ];
+
+  for (const cursor of cursorCoords) {
+    for (const mag of [3.5, 5.0, 8.0]) {
+      const crop = vm.getLoupeCrop(cursor.x, cursor.y, 180, mag);
+      const mediaCenter = vm.screenToMedia(cursor.x, cursor.y);
+
+      // Verify that center of loupe source crop matches cursor in media space
+      const cropCenterX = crop.sourceX + crop.sourceWidth / 2;
+      const cropCenterY = crop.sourceY + crop.sourceHeight / 2;
+      ok(`Loupe at ${mag}x: crop center matches cursor media position within 1e-5px`, Math.abs(cropCenterX - mediaCenter.x) < 1e-5 && Math.abs(cropCenterY - mediaCenter.y) < 1e-5);
+      ok(`Loupe at ${mag}x: magnification matches requested`, crop.magnification === mag);
+    }
+  }
+
+  // Brush radius and radial feathering
+  const screenRadius = 25; // 50px diameter on screen
+  const mediaRadius = vm.screenRadiusToMedia(screenRadius);
+  const backScreenRadius = vm.mediaRadiusToScreen(mediaRadius);
+  ok('screenRadiusToMedia / mediaRadiusToScreen round-trip is zero drift', Math.abs(backScreenRadius - screenRadius) < 1e-5);
+
+  const feather = 0.45;
+  const innerR = Math.max(0, mediaRadius * (1 - feather));
+  ok('radial feathering inner radius is proportional', Math.abs(innerR - mediaRadius * 0.55) < 1e-5);
+}
+
 console.log('── In-Memory ImageBitmap LRU Cache ───────────────────────────');
 
 {

@@ -54,7 +54,6 @@ export default function Processing({ progress, settings, notify, setTab,
 
   const [terminalExpanded, setTerminalExpanded] = useState(false);
 
-  const telemetry = useTelemetry();
   const {
     renderLite, mode: renderLiteMode, label: renderLiteLabel,
     hint: renderLiteHint, toggleRenderLite,
@@ -217,7 +216,7 @@ export default function Processing({ progress, settings, notify, setTab,
           counts, passthrough / GPU frames, peak VRAM, Stage 4 verification, speedup estimate). Above the
           live/finished split on purpose: the report arrives when the run ENDS, i.e. in the finished view. */}
       <PipelineHud runtime={progress.runtime} />
-      <FrameFlamegraph progress={progress} settings={settings} telemetry={telemetry} completed={completed} />
+      <FrameFlamegraph progress={progress} settings={settings} completed={completed} />
       {/* The console's own dashboard (four stages, per-frame latency split, bottleneck, hit rates): the backend paints
           the terminal from the object it sends here, so the numbers are the terminal's. Renders nothing before a job. */}
       <ConsoleMirror />
@@ -265,7 +264,6 @@ export default function Processing({ progress, settings, notify, setTab,
               <RunPanelsLive
                 settings={settings}
                 runtime={progress.runtime}
-                telemetry={telemetry}
                 runConfigSummary={runConfigSummary}
                 startedAtS={progress.started_at}
                 paused={!!progress.paused}
@@ -311,7 +309,6 @@ export default function Processing({ progress, settings, notify, setTab,
               <RunModelsPanel
                 runtime={progress.runtime}
                 settings={settings}
-                telemetry={telemetry}
                 className="self-start"
               />
             </div>
@@ -692,9 +689,10 @@ function RunHeadlineLive({ p, startedAtS, paused, pauseRequested, stopping, elap
   );
 }
 
-function RunPanelsLive({ settings, runtime, telemetry, runConfigSummary, startedAtS,
+function RunPanelsLive({ settings, runtime, runConfigSummary, startedAtS,
                          paused, pauseRequested, stopping, elapsedRef }) {
   const processing = true;
+  const telemetry = useTelemetry();
   const { prog, frames, elapsedMs, etaMs, desc, statusLine, fps, fpsBasis, liveSeq } = useLiveRun({
     startedAtS, paused, pauseRequested, stopping, elapsedRef,
   });

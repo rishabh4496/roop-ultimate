@@ -263,7 +263,12 @@ export function useClientFilmstrip({ grabber, mediaKey, viewStart, viewEnd, maxF
     return best;
   }, []);
 
-  return { slots, getThumbnail, cacheSize: cacheRef.current.size, version };
+  return useMemo(() => ({
+    slots,
+    getThumbnail,
+    cacheSize: cacheRef.current.size,
+    version,
+  }), [slots, getThumbnail, version]);
 }
 
 // ── waveform ──────────────────────────────────────────────────────────────────

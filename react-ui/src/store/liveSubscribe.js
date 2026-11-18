@@ -21,10 +21,20 @@ export function subscribeThrottled(onFlush, hz = UI_HZ) {
   const gap = 1000 / Math.max(0.05, hz);
   let last = -Infinity;
   let timer = null;
+  let rafId = 0;
   const flush = () => {
     timer = null;
     last = performance.now();
-    onFlush(useTelemetryStore.getState());
+    if (typeof requestAnimationFrame === 'function') {
+      if (!rafId) {
+        rafId = requestAnimationFrame(() => {
+          rafId = 0;
+          onFlush(useTelemetryStore.getState());
+        });
+      }
+    } else {
+      onFlush(useTelemetryStore.getState());
+    }
   };
   const onChange = () => {
     if (timer) return;
@@ -35,6 +45,7 @@ export function subscribeThrottled(onFlush, hz = UI_HZ) {
   return () => {
     unsub();
     if (timer) clearTimeout(timer);
+    if (rafId && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(rafId);
   };
 }
 
