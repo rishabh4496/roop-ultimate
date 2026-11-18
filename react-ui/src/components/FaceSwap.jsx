@@ -83,13 +83,16 @@ import { FACESWAP_DEFAULTS } from './faceswap/defaults';
 import { addPin, makePin, removePin, serializePins, trackLabel } from './faceswap/identityLock';
 import { anchorsOf, serialize as serializeRotoZones } from './faceswap/rotoModel';
 import InspectorGroup, { Disclosure } from './faceswap/InspectorGroup';
+import { HistoryInspectorGroup } from './faceswap/HistoryStackPanel';
 import RecipePresetBar from './faceswap/RecipePresetBar';
 import LinkedPaddingControl from './faceswap/LinkedPaddingControl';
 import EnhancerPipelineStack from './faceswap/EnhancerPipelineStack';
 import MaskEdgeProfile from './faceswap/MaskEdgeProfile';
 import { AI_UPSCALE_MODELS } from './faceswap/upscaleModels';
 import usePersonOverrides from './faceswap/usePersonOverrides';
-import { wireOverrides } from './faceswap/routingModel';
+import { overrideCount, wireOverrides } from './faceswap/routingModel';
+import useReferenceTags from './faceswap/useReferenceTags';
+import { choiceOf, resetSummary } from './faceswap/faceRoleChoices';
 import TemporalModeControl from './faceswap/TemporalModeControl';
 import { QUICK_RECIPES, activeRecipeId } from './faceswap/recipes';
 import { temporalModeOf } from './faceswap/temporalModes';
@@ -126,6 +129,7 @@ import { useSlotStore, SLOT_IDS, assignRecipeToSlot } from '../store/slotStore';
 import { useHistoryChannel, MASK_CHANNEL, ROTO_CHANNEL, PINS_CHANNEL } from '../history/historyChannels';
 import useSnapshotSlots from './faceswap/useSnapshotSlots';
 import SnapshotSlots from './faceswap/SnapshotSlots';
+import QuadSlotCompare from './faceswap/QuadSlotCompare';
 import { decodeFrame } from './faceswap/frameDecoder';
 
 export default function FaceSwap({
@@ -435,6 +439,8 @@ export default function FaceSwap({
   // Per-person render overrides for this clip (the routing dock's pills). Sent with every preview and render as
   // `person_overrides`; the backend applies them per face (app/roop/person_overrides.py).
   const personOv = usePersonOverrides(activeTargetMediaId);
+  // Stage 12: the "Reference Only" marker on a person (browser-side, per clip; the render treats such a person as excluded).
+  const refTags = useReferenceTags(activeTargetMediaId);
   const selectedDetectedFaceIndex = selectedDetectedFace
     && selectedDetectedFace.mediaId === activeTargetMediaId
     && selectedDetectedFace.frame === frame
@@ -2459,7 +2465,7 @@ export default function FaceSwap({
     const rank = rawRank === null || rawRank === undefined || rawRank === '' ? NaN : Number(rawRank);
     const personId = Number.isInteger(rank) && rank >= 0 && rank < records.length
       ? records[rank].targetPersonId : null;
-    return {
+    const base = {
       personId,
       ...faceRole({
         personId,
@@ -2472,6 +2478,13 @@ export default function FaceSwap({
         sourceIdentityIds: sourceFacesInfo.map((info, index) => info?.id || `memory-slot-${index}`),
         selectedSource: selSource,
       }),
+    };
+    // Stage 12: the role the on-canvas menu shows and sets. `reference` is an excluded person carrying the Reference marker.
+    const tagged = personId !== null && !!refTags.tags[personId];
+    return {
+      ...base,
+      reference: base.excluded && tagged,
+      choice: choiceOf({ role: base.role, excluded: base.excluded, personId, selectedTargetPersonId, tagged }),
     };
   });
 
@@ -2507,6 +2520,9 @@ export default function FaceSwap({
       ? includePerson(faceMapping, info.personId)
       : excludePerson(faceMapping, info.personId);
     setFaceMapping(next);
+    // The badge button's "Exclude" means protected, and including again clears any Reference marker: either way the person
+    // no longer carries it (a stale marker would turn the NEXT exclusion into a Reference one).
+    refTags.setTag(info.personId, false);
     // Same write the Person Groups dropdown makes; the versioned path keeps a
     // preview that was already in flight from landing on top of it.
     commitTargetContext({ face_mapping: next, target_person_source_mapping: next });
@@ -2860,6 +2876,12 @@ export default function FaceSwap({
   // frame on the stage until the real render of that recipe lands, so the flip is instant.
   const frameKeyNow = `${activeTargetMediaId || `legacy-index-${selTarget}`}_${frame}`;
   const [heldSlot, setHeldSlot] = useState(null);
+  // Stage 12: the Quad-slot split compare (A | B | C | D side by side). It takes the stage over like the other comparison
+  // grids do, so turning one of those on turns this off rather than leaving two grids fighting for the stage.
+  const [comparingSlots, setComparingSlots] = useState(false);
+  useEffect(() => {
+    if (comparingEnhancers || comparingMasks || comparingSwappers || comparingUpscalers) setComparingSlots(false);
+  }, [comparingEnhancers, comparingMasks, comparingSwappers, comparingUpscalers]);
   const slotBank = useSnapshotSlots({
     bank: 'faceswap',
     notify,
@@ -3638,6 +3660,89 @@ export default function FaceSwap({
       setPersonSource(personId, sourceIndex);
       notify(sourceIndex >= 0 ? `Face ${faceIndex + 1} now swaps from ${sourceNameAt(sourceIndex)}` : `Face ${faceIndex + 1} is never swapped`, 'info');
     },
+    // Stage 12 ─ roles. Each is a real change to what the render does, except Reference, which renders like Exclude and only
+    // adds the marker (see faceRoleChoices.js). A face nobody has captured is captured first, as `assign` does.
+    frontalizeOn: !!p.use_frontalization,
+    setRole: async (faceIndex, choice) => {
+      const n = faceIndex + 1;
+      if (choice === 'primary') {
+        // The same as clicking the box (it captures an unknown box, selects a known person, and goes to "Selected face"),
+        // after lifting an exclusion: an explicit "never swap" entry would otherwise win over the selection.
+        const pid = previewFaceRoles[faceIndex]?.personId ?? null;
+        if (pid && previewFaceRoles[faceIndex]?.excluded) {
+          const next = includePerson(faceMapping, pid);
+          setFaceMapping(next);
+          commitTargetContext({ face_mapping: next, target_person_source_mapping: next });
+          clearPreviewCache();
+        }
+        if (pid) refTags.setTag(pid, false);
+        await onFaceBoxClick(faceIndex);
+        return;
+      }
+      let personId = previewFaceRoles[faceIndex]?.personId ?? null;
+      if (!personId) personId = await captureTargetFaceFromFrame({ faceIndex });
+      if (!personId) return;
+      if (choice === 'secondary') {
+        const own = Number.isInteger(faceSources[faceIndex]) && faceSources[faceIndex] >= 0 ? faceSources[faceIndex] : null;
+        const fallback = Number.isInteger(Number(selSource)) && Number(selSource) >= 0 && Number(selSource) < sourceFaces.length ? Number(selSource) : 0;
+        const sourceIndex = own ?? fallback;
+        refTags.setTag(personId, false);
+        setPersonSource(personId, sourceIndex);
+        notify(`Face ${n} is a secondary target: it swaps from ${sourceNameAt(sourceIndex) || `source ${sourceIndex + 1}`}`, 'info');
+        return;
+      }
+      // exclude / reference: the same mapping write; only the marker differs
+      refTags.setTag(personId, choice === 'reference');
+      setPersonSource(personId, -1);
+      notify(choice === 'reference'
+        ? `Face ${n} is Reference Only: tracked, never swapped (rendered the same as Exclude)`
+        : `Face ${n} is excluded: it is never swapped`, 'info');
+    },
+    // Copy Pose to Filter: the face's head pose becomes the Frontalize gate. The gate does nothing until Frontalize is on, and
+    // that toggle is left to the user (measured harmful on some footage, see its tooltip), so the message says which it is.
+    copyPose: (faceIndex, pose) => {
+      set('frontalization_threshold', pose.angle);
+      notify(p.use_frontalization
+        ? `Frontalize above ${pose.angle}° (Face ${faceIndex + 1}: yaw ${pose.yaw.toFixed(1)}°, pitch ${pose.pitch.toFixed(1)}°)`
+        : `"Frontalize above angle" is now ${pose.angle}° (Face ${faceIndex + 1}: yaw ${pose.yaw.toFixed(1)}°, pitch ${pose.pitch.toFixed(1)}°), but Frontalize angled faces is OFF, so nothing changes until you turn it on`, 'info');
+    },
+    // Reset Face Overrides: everything set for THIS person, and nothing else - their routing-dock overrides, identity pins, the
+    // explicit source / skip entry in the face mapping, and the Reference marker.
+    resetPlan: (faceIndex) => {
+      const info = previewFaceRoles[faceIndex];
+      const pid = info?.personId ?? null;
+      const rank = previewPersonIds[faceIndex];
+      const pinTag = rank === null || rank === undefined || rank === '' ? null : `tp_${Number(rank)}`;
+      return {
+        pid,
+        pinIds: pinTag ? identityPins.filter((pin) => pin.person_id === pinTag).map((pin) => pin.id) : [],
+        overrides: pid ? overrideCount(personOv.overrides, pid) : 0,
+        mapped: !!pid && Object.prototype.hasOwnProperty.call(faceMapping, pid),
+        tagged: !!pid && !!refTags.tags[pid],
+      };
+    },
+    resetInfo: (faceIndex) => {
+      const plan = faceMenu.resetPlan(faceIndex);
+      const s = resetSummary({ overrides: plan.overrides, pins: plan.pinIds.length, mapped: plan.mapped, tagged: plan.tagged });
+      return s.total === 0
+        ? { reason: 'Nothing to reset: this face has no overrides, pins or role choices', sub: '' }
+        : { reason: '', sub: `Clears ${s.text}` };
+    },
+    reset: (faceIndex) => {
+      const plan = faceMenu.resetPlan(faceIndex);
+      const s = resetSummary({ overrides: plan.overrides, pins: plan.pinIds.length, mapped: plan.mapped, tagged: plan.tagged });
+      if (s.total === 0) { notify('Nothing to reset on this face', 'info'); return; }
+      if (plan.overrides) personOv.clearOverride(plan.pid);
+      for (const id of plan.pinIds) onUnpinIdentity(id);
+      if (plan.tagged) refTags.setTag(plan.pid, false);
+      if (plan.mapped) {
+        const next = includePerson(faceMapping, plan.pid);
+        setFaceMapping(next);
+        commitTargetContext({ face_mapping: next, target_person_source_mapping: next });
+      }
+      clearPreviewCache();
+      notify(`Face ${faceIndex + 1} reset: cleared ${s.text}`, 'info');
+    },
     bypass: (faceIndex) => {
       const { reason } = bypassInfoFor(faceIndex);
       if (reason) { notify(reason, 'error'); return; }
@@ -4044,6 +4149,9 @@ export default function FaceSwap({
           <div id="pipeline-controls-heading" className="text-nano font-bold uppercase tracking-[0.16em] text-white/60">3-stage pipeline</div>
           <PipelineControls values={p} models={meta.swap_models} onChange={set} onChangeMany={setMany} />
         </div>
+
+        {/* Stage 12: every recorded change as a clickable state, with non-destructive branching. */}
+        <HistoryInspectorGroup />
 
         <InspectorGroup id="detection" title="Detection" icon={Icon.face} defaultOpen>
           <StudioParameters values={p} onChange={set} />
@@ -4700,16 +4808,6 @@ export default function FaceSwap({
               onRefreshPreview={() => refreshPreview({ force: true })}
             />
 
-            {/* Stage 23: the four snapshot slots. Keys 1-4 over the stage do the same as these. */}
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
-              <SnapshotSlots api={slotBank} />
-              {referenceId && !referenceFrame && (
-                <span className="text-micro text-amber-300" role="status">
-                  Split-wipe reference Slot {referenceId} is of another frame, so the wipe shows the original.
-                </span>
-              )}
-            </div>
-
             {/* A previous render sent from Outputs, wiped against the live preview. Renders nothing until one is sent. */}
             <ABReferencePanel previewSrc={previewSrc} frame={frame} fps={targets[selTarget]?.fps || 25} startFrame={startFrame} />
 
@@ -5278,7 +5376,15 @@ export default function FaceSwap({
                   }}
                 />
 
-                {previewSrc ? (
+                {comparingSlots ? (
+                  <QuadSlotCompare
+                    bank="faceswap"
+                    frameKey={frameKeyNow}
+                    onClose={() => setComparingSlots(false)}
+                    onRecall={(id) => { setComparingSlots(false); slotBank.activate(id); }}
+                    onCapture={(id) => slotBank.activate(id)}
+                  />
+                ) : previewSrc ? (
                   comparingEnhancers ? (
                     <ComparisonGridPanel
                       title="Compare Enhancers (Select up to 4)"
@@ -5492,6 +5598,23 @@ export default function FaceSwap({
                       onPinIdentity={onPinIdentity}
                       onUnpinIdentity={onUnpinIdentity}
                       faceMenu={faceMenu}
+                      headerDock={(
+                        <>
+                          <SnapshotSlots
+                            api={slotBank}
+                            onQuad={() => setComparingSlots((on) => {
+                              if (!on) { setComparingEnhancers(false); setComparingMasks(false); setComparingSwappers(false); setComparingUpscalers(false); }
+                              return !on;
+                            })}
+                            quadActive={comparingSlots}
+                          />
+                          {referenceId && !referenceFrame && (
+                            <span className="text-micro text-amber-300" role="status">
+                              Split-wipe reference Slot {referenceId} is of another frame, so the wipe shows the original.
+                            </span>
+                          )}
+                        </>
+                      )}
                       notify={notify}
                       splitView={workspaceMode === 'dual' ? false : splitView}
                       compare={workspaceMode === 'dual' ? false : compare}

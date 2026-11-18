@@ -122,6 +122,12 @@ html, body, #root { width: 100%; height: 100%; margin: 0; overflow: hidden; }
 .vfx-face-bracket--tr { top: -1px; right: -1px; border-width: 2px 2px 0 0; }
 .vfx-face-bracket--bl { bottom: -1px; left: -1px; border-width: 0 0 2px 2px; }
 .vfx-face-bracket--br { right: -1px; bottom: -1px; border-width: 0 2px 2px 0; }
+/* Stage 12: a protected face (Exclude / never swap) is hatched crimson with a padlock; a Reference-Only face is dashed violet. */
+.vfx-face--protected { border-color: rgb(244 63 94 / 85%); border-style: solid; box-shadow: 0 0 14px rgb(244 63 94 / 45%), inset 0 0 0 1px rgb(244 63 94 / 25%); }
+.vfx-face--protected .vfx-face-bracket { width: 14px; height: 14px; border-color: #fb7185; filter: drop-shadow(0 0 4px rgb(244 63 94 / 85%)); }
+.vfx-face-stripes { background: repeating-linear-gradient(135deg, rgb(244 63 94 / 22%) 0 6px, transparent 6px 13px); }
+.vfx-face--reference { border-color: rgb(167 139 250 / 75%); border-style: dashed; box-shadow: 0 0 10px rgb(167 139 250 / 30%); }
+.vfx-face--reference .vfx-face-bracket { border-color: #a78bfa; filter: drop-shadow(0 0 3px rgb(167 139 250 / 70%)); }
 .workspace-single-preview { flex: 1; min-height: 0; }
 .workspace-preview-deck > div > .workspace-single-preview > div { height: 100%; display: flex; flex-direction: column; }
 .workspace-single-preview .preview-stage, .workspace-ab .preview-stage { flex: 1; height: auto; }

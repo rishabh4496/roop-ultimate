@@ -23,9 +23,13 @@
 
 import { DEFAULT_BEZIER, bezierEase } from '../identityKeyframes';
 
-export const INTERPS = Object.freeze(['hold', 'linear', 'ease', 'smooth']);
+//   bezier  (Stage 12) hand-shaped: the key carries its own easing `bz` = [x1, y1, x2, y2], the two control points of a
+//           cubic-Bezier easing on the unit square (the CSS `cubic-bezier()` form), dragged as tangent handles in the
+//           Curve Editor drawer. Both coordinates are held in [0, 1] - the same range bezierEase accepts and the backend's
+//           identity keyframes store - so a hand-shaped segment cannot overshoot its own two keyframes.
+export const INTERPS = Object.freeze(['hold', 'linear', 'ease', 'smooth', 'bezier']);
 export const INTERP_LABELS = Object.freeze({
-  hold: 'Hold (step)', linear: 'Linear', ease: 'Ease-In / Ease-Out', smooth: 'Auto-Smooth Bezier',
+  hold: 'Hold (step)', linear: 'Linear', ease: 'Ease-In / Ease-Out', smooth: 'Auto-Smooth Bezier', bezier: 'Custom Bezier (drag the handles)',
 });
 export const DEFAULT_INTERP = 'smooth';
 export const MAX_KEYS = 128;
@@ -73,6 +77,13 @@ export const ALL_DIRECT_PARAMS = Object.freeze(ALL_CURVE_PARAMS.filter((p) => !p
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const finite = (v, d = 0) => { const n = Number(v); return Number.isFinite(n) ? n : d; };
 
+/** A custom easing, sanitised: four finite numbers held in [0, 1] (a malformed one becomes ease-in-out). */
+export function cleanBz(bz) {
+  const raw = Array.isArray(bz) ? bz.slice(0, 4).map(Number) : [];
+  if (raw.length !== 4 || !raw.every(Number.isFinite)) return [...DEFAULT_BEZIER];
+  return raw.map((x) => Math.round(clamp(x, 0, 1) * 1000) / 1000);
+}
+
 /** A value clamped to the parameter's range and rounded to its precision. */
 export function clampValue(param, value) {
   const f = 10 ** param.digits;
@@ -85,10 +96,13 @@ export function normalizeTrack(list, param, maxFrames) {
   const byFrame = new Map();
   for (const k of Array.isArray(list) ? list.slice(0, MAX_KEYS * 4) : []) {
     if (!k || typeof k !== 'object' || !Number.isFinite(Number(k.frame)) || !Number.isFinite(Number(k.value))) continue;
-    byFrame.set(clamp(Math.round(Number(k.frame)), 1, hi), {
-      frame: clamp(Math.round(Number(k.frame)), 1, hi),
+    const interp = INTERPS.includes(k.interp) ? k.interp : DEFAULT_INTERP;
+    const frame = clamp(Math.round(Number(k.frame)), 1, hi);
+    byFrame.set(frame, {
+      frame,
       value: clampValue(param, k.value),
-      interp: INTERPS.includes(k.interp) ? k.interp : DEFAULT_INTERP,
+      interp,
+      ...(interp === 'bezier' ? { bz: cleanBz(k.bz) } : {}),
     });
   }
   return [...byFrame.values()].sort((a, b) => a.frame - b.frame).slice(0, MAX_KEYS);
@@ -135,6 +149,7 @@ export function segmentBezier(list, i, tans = tangents(list)) {
   const b = list[i + 1];
   if (!a || !b) return null;
   if (a.interp === 'ease') return DEFAULT_BEZIER;
+  if (a.interp === 'bezier') return cleanBz(a.bz);
   if (a.interp !== 'smooth') return null;
   const dx = b.frame - a.frame;
   const d = b.value - a.value;
@@ -235,12 +250,193 @@ export const removeKey = (list, frame) => list.filter((k) => k.frame !== frame);
 
 export function setInterp(list, frame, interp) {
   if (!INTERPS.includes(interp)) return list;
-  return list.map((k) => (k.frame === frame && k.interp !== interp ? { ...k, interp } : k));
+  const i = list.findIndex((k) => k.frame === frame);
+  if (i < 0 || list[i].interp === interp) return list;
+  const { bz: _old, ...rest } = list[i];
+  // Switching to Custom Bezier starts from the shape the segment already has, so nothing jumps; the handles are then dragged.
+  const next = interp === 'bezier'
+    ? { ...rest, interp, bz: cleanBz(segmentHandles(list, i) || DEFAULT_BEZIER) }
+    : { ...rest, interp };
+  return list.map((k, j) => (j === i ? next : k));
 }
 
 /** Set the value of an existing key. */
 export function setValue(list, param, frame, value) {
   return list.map((k) => (k.frame === frame ? { ...k, value: clampValue(param, value) } : k));
+}
+
+// ── Stage 12: hand-shaped segments, grid snapping, box selection, group edits ──
+
+/**
+ * The easing handles of the segment that starts at keyframe `i`, as [x1, y1, x2, y2] on the unit square, or null where
+ * there is nothing to shape: the last key, a hold, or a flat segment (every easing between two equal values is the same
+ * line). A linear segment reports its diagonal, so dragging a handle on it curves it from where it is.
+ */
+export function segmentHandles(list, i, tans = tangents(list)) {
+  const a = list[i];
+  const b = list[i + 1];
+  if (!a || !b || a.interp === 'hold') return null;
+  if (Math.abs(b.value - a.value) < 1e-12) return null;
+  return segmentBezier(list, i, tans) || [1 / 3, 1 / 3, 2 / 3, 2 / 3];
+}
+
+const sameBz = (a, b) => Array.isArray(a) && Array.isArray(b) && a.length === 4 && a.every((x, i) => x === b[i]);
+
+/** Give the segment after `frame` a hand-shaped easing (the segment becomes Custom Bezier). The same list when nothing changes. */
+export function setSegmentBezier(list, frame, bz) {
+  const i = list.findIndex((k) => k.frame === frame);
+  if (i < 0 || i === list.length - 1) return list;
+  const next = cleanBz(bz);
+  if (list[i].interp === 'bezier' && sameBz(list[i].bz, next)) return list;
+  return list.map((k, j) => (j === i ? { ...k, interp: 'bezier', bz: next } : k));
+}
+
+/**
+ * Where a handle sits in a graph, and the inverse. A segment from key a to key b maps the unit square onto the box
+ * [a.frame, b.frame] x [a.value, b.value]: handle (hx, hy) is at frame a.frame + hx*dx and value a.value + hy*(b.value-a.value).
+ */
+export const handlePoint = (a, b, hx, hy) => ({ frame: a.frame + hx * (b.frame - a.frame), value: a.value + hy * (b.value - a.value) });
+export function handleFromPoint(a, b, frame, value) {
+  const dx = b.frame - a.frame;
+  const dv = b.value - a.value;
+  return [
+    dx === 0 ? 0 : clamp((frame - a.frame) / dx, 0, 1),
+    dv === 0 ? 0 : clamp((value - a.value) / dv, 0, 1),
+  ];
+}
+
+// -- grid snapping --
+
+/** Value grid: 0 = off, else the parameter's range is cut in this many equal steps. */
+export const SNAP_VALUE_DIVS = Object.freeze([0, 4, 10, 20]);
+/** Frame grid: 1 = off, else keys land on multiples of this many frames. */
+export const SNAP_FRAME_STEPS = Object.freeze([1, 5, 10, 25]);
+
+/** `value` snapped to the nearest line of the value grid (and clamped / rounded to the parameter). */
+export function snapValue(param, value, div) {
+  if (!(div > 0)) return clampValue(param, value);
+  const step = (param.max - param.min) / div;
+  return clampValue(param, param.min + Math.round((finite(value, param.base) - param.min) / step) * step);
+}
+
+/** `frame` snapped to a multiple of `step` (frame 1 stays reachable: the clip's first frame is always a grid line). */
+export function snapFrame(frame, step, maxFrames) {
+  const hi = Math.max(1, Math.round(finite(maxFrames, 1)));
+  const s = Math.max(1, Math.round(finite(step, 1)));
+  const f = Math.round(finite(frame, 1));
+  return clamp(s <= 1 ? f : Math.round(f / s) * s, 1, hi);
+}
+
+// -- selection: a Set of "paramId:frame" strings --
+
+export const selKey = (paramId, frame) => `${paramId}:${frame}`;
+export const parseSelKey = (s) => { const at = String(s).lastIndexOf(':'); return { paramId: s.slice(0, at), frame: Number(s.slice(at + 1)) }; };
+/** A value as a 0..1 position inside its parameter's range (the overlay draws every curve on this scale). */
+export const normValue = (param, v) => (param.max === param.min ? 0 : (v - param.min) / (param.max - param.min));
+
+/** The keys of `paramIds` inside a box: frames f0..f1 and 0..1 positions n0..n1 (either corner order). */
+export function keysInBox(tracks, paramIds, { f0, f1, n0, n1 }) {
+  const lo = Math.min(f0, f1);
+  const hi = Math.max(f0, f1);
+  const nlo = Math.min(n0, n1);
+  const nhi = Math.max(n0, n1);
+  const out = new Set();
+  for (const id of paramIds) {
+    const p = paramById(id);
+    for (const k of tracks?.[id] || []) {
+      const n = p ? normValue(p, k.value) : 0;
+      if (k.frame >= lo && k.frame <= hi && n >= nlo && n <= nhi) out.add(selKey(id, k.frame));
+    }
+  }
+  return out;
+}
+
+const byParam = (sel) => {
+  const m = new Map();
+  for (const s of sel || []) {
+    const { paramId, frame } = parseSelKey(s);
+    if (!m.has(paramId)) m.set(paramId, new Set());
+    m.get(paramId).add(frame);
+  }
+  return m;
+};
+
+/**
+ * How far a selection may slide in frames as ONE rigid group: no selected key may reach an unselected neighbour or leave
+ * the clip. Selected keys keep their spacing, so only the nearest unselected key on each side matters.
+ */
+export function shiftBounds(tracks, sel, maxFrames) {
+  const hi = Math.max(1, Math.round(finite(maxFrames, 1)));
+  let min = -Infinity;
+  let max = Infinity;
+  for (const [id, frames] of byParam(sel)) {
+    const list = tracks?.[id] || [];
+    list.forEach((k, i) => {
+      if (!frames.has(k.frame)) return;
+      let l = i - 1;
+      while (l >= 0 && frames.has(list[l].frame)) l -= 1;
+      let r = i + 1;
+      while (r < list.length && frames.has(list[r].frame)) r += 1;
+      min = Math.max(min, (l >= 0 ? list[l].frame + 1 : 1) - k.frame);
+      max = Math.min(max, (r < list.length ? list[r].frame - 1 : hi) - k.frame);
+    });
+  }
+  if (min === -Infinity || max === Infinity || min > max) return { min: 0, max: 0 };
+  return { min, max };
+}
+
+/**
+ * Slide a selection by `dFrame` frames (held inside shiftBounds) and `dNorm` of each key's own range up or down.
+ * Returns the SAME map when nothing moved.
+ */
+export function moveKeys(tracks, sel, dFrame, dNorm, maxFrames) {
+  const { min, max } = shiftBounds(tracks, sel, maxFrames);
+  const d = clamp(Math.round(finite(dFrame, 0)), min, max);
+  let changed = false;
+  const out = { ...tracks };
+  for (const [id, frames] of byParam(sel)) {
+    const p = paramById(id);
+    const list = tracks?.[id];
+    if (!p || !list) continue;
+    out[id] = list.map((k) => {
+      if (!frames.has(k.frame)) return k;
+      const nk = { ...k, frame: k.frame + d, value: clampValue(p, k.value + finite(dNorm, 0) * (p.max - p.min)) };
+      if (nk.frame !== k.frame || nk.value !== k.value) changed = true;
+      return nk;
+    });
+  }
+  return changed ? out : tracks;
+}
+
+/** Remove every selected key; a track left empty is dropped from the map. */
+export function removeKeys(tracks, sel) {
+  const out = { ...tracks };
+  let changed = false;
+  for (const [id, frames] of byParam(sel)) {
+    const list = tracks?.[id];
+    if (!list) continue;
+    const next = list.filter((k) => !frames.has(k.frame));
+    if (next.length === list.length) continue;
+    changed = true;
+    if (next.length) out[id] = next; else delete out[id];
+  }
+  return changed ? out : tracks;
+}
+
+/** Set the segment shape after every selected key. */
+export function setInterpKeys(tracks, sel, interp) {
+  const out = { ...tracks };
+  let changed = false;
+  for (const [id, frames] of byParam(sel)) {
+    let list = tracks?.[id];
+    if (!list) continue;
+    for (const f of frames) {
+      const next = setInterp(list, f, interp);
+      if (next !== list) { list = next; changed = true; }
+    }
+    out[id] = list;
+  }
+  return changed ? out : tracks;
 }
 
 // ── applying curves ──────────────────────────────────────────────────────────
@@ -282,7 +478,7 @@ export function curveIneffective(param, settings) {
 
 // ── identity morph ───────────────────────────────────────────────────────────
 
-const IDENTITY_CURVE = { hold: 'hold', linear: 'linear', ease: 'cubic_bezier', smooth: 'cubic_bezier' };
+const IDENTITY_CURVE = { hold: 'hold', linear: 'linear', ease: 'cubic_bezier', smooth: 'cubic_bezier', bezier: 'cubic_bezier' };
 
 /**
  * Compile the Identity Morph Weight curve into Identity Keyframe Track keyframes (identityKeyframes.js shape).

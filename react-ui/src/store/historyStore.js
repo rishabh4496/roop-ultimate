@@ -44,6 +44,7 @@ const publish = (set) => {
     canUndo: E.canUndo(history),
     canRedo: E.canRedo(history),
     headId: E.head(history).id,
+    branches: E.branchesOf(history),
   });
 };
 
@@ -110,6 +111,8 @@ export const useHistoryStore = create((set, get) => {
     canUndo: false,
     canRedo: false,
     headId: 0,
+    // Stage 12: the parked alternatives to the current path (a new edit after an undo no longer deletes the redo tail).
+    branches: [],
 
     /** An owner reports the current value of its channel. Cheap when nothing changed. */
     observe(id, value) {
@@ -204,6 +207,21 @@ export const useHistoryStore = create((set, get) => {
     },
 
     /**
+     * Make a parked branch the current path and apply its tip. The path it replaces is parked in turn, so this is
+     * reversible: switching back brings the other one home. Nothing is deleted.
+     */
+    switchBranch(branchId) {
+      if (!history) return false;
+      flush();
+      const r = E.switchBranch(history, branchId);
+      if (!r) return false;
+      history = r.h;
+      applyState(r.state, r.entry.label, 'branch');
+      publish(set);
+      return true;
+    },
+
+    /**
      * Apply a state that came from somewhere other than the history (a snapshot slot) AS an action:
      * the channels move, and one entry with `label` records it, so Ctrl+Z flips back.
      */
@@ -253,5 +271,5 @@ export function resetHistoryForTests() {
   txTimer = null;
   txWatchdog = null;
   appliedListeners.clear();
-  useHistoryStore.setState({ entries: [], index: 0, canUndo: false, canRedo: false, headId: 0 });
+  useHistoryStore.setState({ entries: [], index: 0, canUndo: false, canRedo: false, headId: 0, branches: [] });
 }

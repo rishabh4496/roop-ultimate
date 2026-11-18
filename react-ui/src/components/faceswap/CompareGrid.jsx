@@ -18,7 +18,13 @@ const ZOOM_MAX = 8;
  *   gridColsClass  tailwind grid-cols class
  *   emptyHint      optional string shown center when there are no items
  */
-export default function CompareGrid({ items, previews, times, timers, gridColsClass, emptyHint }) {
+//   cellPlaceholder(label)  Stage 12: what a cell with no picture shows instead of the "Rendering…" spinner (an empty slot
+//                           is not rendering anything). Return null to fall back to the spinner.
+//   cellLabel(label)        the caption in the cell's corner, when it should say more than the item name
+//   cellOverlay(label)      extra content laid over a cell (the Quad compare's parameter deltas)
+export default function CompareGrid({
+  items, previews, times, timers, gridColsClass, emptyHint, cellPlaceholder = null, cellLabel = null, cellOverlay = null,
+}) {
   // Zoom/pan is shared by every cell, so the same region is magnified in all
   // variants at once — that's what makes fine differences readable.
   const [zoom, setZoom] = useState(1);
@@ -213,7 +219,7 @@ export default function CompareGrid({ items, previews, times, timers, gridColsCl
             <div className="w-full h-full flex items-center justify-center transition-transform duration-75 select-none" style={transformStyle}>
               <img src={previews[label]} alt={label} className="max-w-full max-h-full object-contain pointer-events-none" draggable={false} />
             </div>
-          ) : (
+          ) : (cellPlaceholder && cellPlaceholder(label)) || (
             <div className="flex flex-col items-center justify-center gap-2 text-muted text-xs px-3 text-center">
               <span className="h-4 w-4 rounded-full border-2 border-white/20 border-t-[var(--accent)] animate-spin" />
               <span className="font-semibold">Rendering {label}…</span>
@@ -224,7 +230,8 @@ export default function CompareGrid({ items, previews, times, timers, gridColsCl
               )}
             </div>
           )}
-          <span className="absolute bottom-2 left-2 px-2 py-0.5 rounded bg-black/70 backdrop-blur border border-white/10 text-micro font-bold text-white uppercase pointer-events-none max-w-[calc(100%-1rem)] truncate">{label}</span>
+          <span className="absolute bottom-2 left-2 px-2 py-0.5 rounded bg-black/70 backdrop-blur border border-white/10 text-micro font-bold text-white uppercase pointer-events-none max-w-[calc(100%-1rem)] truncate">{cellLabel ? cellLabel(label) : label}</span>
+          {cellOverlay ? cellOverlay(label) : null}
           {times[label] && (
             <span className="absolute bottom-2 right-2 px-2 py-0.5 rounded bg-black/70 backdrop-blur border border-white/10 text-micro font-bold text-white/60 font-mono pointer-events-none">
               ⏱️ {times[label]}

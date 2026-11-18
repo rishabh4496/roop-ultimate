@@ -241,3 +241,49 @@ export function formatPoseAngles(pose) {
   return `(yaw: ${fmtDegree(yaw)}, pitch: ${fmtDegree(pitch)}, roll: ${fmtDegree(roll)})`;
 }
 
+
+// ── beside the face, not under the pointer (Stage 12) ─────────────────────────
+
+/**
+ * Where a menu of size w x h goes relative to a FACE BOX (`rect`: left / top / right / bottom, in the same visual pixels as
+ * vw / vh): directly beside it - on its right when there is room, else on its left - top-aligned with the box, kept inside the
+ * window. When the box fills the window so that neither side has room, it falls back to clampMenuPosition at `point` (the click),
+ * so the menu is always fully on screen. `side` says which of the three happened.
+ */
+export function placeBesideRect({ rect, w, h, vw, vh, point = null, gap = 10, margin = MENU_MARGIN }) {
+  const room = (total) => Math.max(0, total - 2 * margin);
+  const maxHeight = h > room(vh) ? room(vh) : null;
+  const top = clamp(rect.top, margin, Math.max(margin, vh - Math.min(h, room(vh)) - margin));
+  if (w <= vw - margin - (rect.right + gap)) return { left: rect.right + gap, top, side: 'right', maxHeight };
+  if (w <= rect.left - gap - margin) return { left: rect.left - gap - w, top, side: 'left', maxHeight };
+  const p = point || { x: (rect.left + rect.right) / 2, y: (rect.top + rect.bottom) / 2 };
+  const c = clampMenuPosition({ x: p.x, y: p.y, w, h, vw, vh, margin });
+  return { left: c.left, top: c.top, side: 'point', maxHeight: c.maxHeight };
+}
+
+/**
+ * The zoom at which a face's box fills `fill` of the stage's shorter side, for a picture shown object-contain in a stage of
+ * `stage` {w, h} (layout px). Held to [1, max]; 2 when anything is unknown (the same default the Focus action uses).
+ */
+export function faceFitZoom({ bbox, imgDim, stage, fill = 0.6, max = 8 }) {
+  if (!bbox || bbox.length < 4 || !imgDim?.w || !imgDim?.h || !stage?.w || !stage?.h) return 2;
+  const fit = Math.min(stage.w / imgDim.w, stage.h / imgDim.h);
+  const fw = (bbox[2] - bbox[0]) * fit;
+  const fh = (bbox[3] - bbox[1]) * fit;
+  if (!(fw > 1 && fh > 1)) return 2;
+  return Math.round(clamp(fill * Math.min(stage.w / fw, stage.h / fh), 1, max) * 100) / 100;
+}
+
+/**
+ * The pose a face has, turned into the Frontalize gate's angle: the larger of |yaw| and |pitch|, rounded to the slider's 5-degree
+ * step and held to its 10-60 range (the only pose-angle FILTER the renderer has: `frontalization_threshold`). Null when the pose
+ * was not measured. `exact` is the unrounded angle, for the sentence that explains the rounding.
+ */
+export function poseToFilterAngle(pose, { min = 10, max = 60, step = 5 } = {}) {
+  const arr = Array.isArray(pose) ? pose : pose && typeof pose === 'object' ? [pose.yaw, pose.pitch, pose.roll] : null;
+  if (!arr || arr.length < 2 || !finite(arr[0]) || !finite(arr[1])) return null;
+  const yaw = Number(arr[0]);
+  const pitch = Number(arr[1]);
+  const exact = Math.max(Math.abs(yaw), Math.abs(pitch));
+  return { angle: clamp(Math.round(exact / step) * step, min, max), exact: Math.round(exact * 10) / 10, yaw, pitch };
+}

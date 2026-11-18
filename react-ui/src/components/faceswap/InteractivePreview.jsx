@@ -29,11 +29,12 @@ import {
 } from '../monitor/referenceChannel';
 import {
   ZOOM_MIN, ZOOM_MAX, clampPan, panAnchoredAt, panCenteringAt,
-  transformFor, uiScale, wheelZoomDelta, faceTrackingTarget, focusPanFor, screenToMedia,
+  transformFor, uiScale, wheelZoomDelta, faceTrackingTarget, focusPanFor, screenToMedia, stageSize,
 } from './zoomPan';
 import FaceContextMenu from './FaceContextMenu';
 import FacePoseGizmo from './FacePoseGizmo';
-import { cropRectFor, faceBadgeText, warmthDeltaFor } from './faceContextModel';
+import { cropRectFor, faceBadgeText, faceFitZoom, poseToFilterAngle, warmthDeltaFor } from './faceContextModel';
+import { ROLE_CHOICES, choiceBlocked } from './faceRoleChoices';
 import { cropToPng, loadStageImage, sampleFaceSkin } from './faceSample';
 import { soloLabel } from './flowModel';
 import { SLOT_ACTION_IDS } from '../../shortcuts/actions';
@@ -103,6 +104,7 @@ export default function InteractivePreview({
   // sourceIndex|-1), bypassInfo(faceIndex) -> {reason, rangeText}, bypass(faceIndex), extract(faceIndex, pngBlob),
   // applySkin(faceIndex, measurement)}. Absent = no menu (the Batch page, tests).
   faceMenu = null,
+  headerDock = null,
   playbackSource = null,
   frameUnavailable = false,
   onRetryFrame,
@@ -1265,11 +1267,37 @@ export default function InteractivePreview({
   const openFaceMenu = useCallback((faceIndex, e) => {
     e.preventDefault();
     e.stopPropagation();
-    setFaceMenuAt({ faceIndex, x: e.clientX, y: e.clientY });
+    // The face box's own rectangle (visual px): the menu opens BESIDE it, so the face stays in view while its menu is used.
+    const r = e.currentTarget?.getBoundingClientRect?.();
+    setFaceMenuAt({
+      faceIndex, x: e.clientX, y: e.clientY,
+      rect: r && r.width > 0 && r.height > 0 ? { left: r.left, top: r.top, right: r.right, bottom: r.bottom } : null,
+    });
   }, []);
   // A menu is about one face on one frame: another frame, or fewer faces, and it is about nothing.
   useEffect(() => { setFaceMenuAt(null); }, [frame]);
   useEffect(() => { setFaceMenuAt((m) => (m && m.faceIndex >= faces.length ? null : m)); }, [faces.length]);
+
+  // "Copy Pose to Filter": the face's head pose becomes the Frontalize gate's angle - the only pose-angle filter the renderer
+  // has. Disabled, with the reason, when no pose was measured for this face (the preview only returns one for detected faces).
+  const copyPoseInfo = (i) => {
+    const p = poseToFilterAngle(Array.isArray(pose) ? pose[i] : null);
+    if (!p) return { reason: 'No head pose was measured for this face on this frame', sub: '' };
+    return {
+      reason: '',
+      sub: `Sets "Frontalize above angle" to ${p.angle}° (yaw ${p.yaw.toFixed(1)}°, pitch ${p.pitch.toFixed(1)}°)${faceMenu?.frontalizeOn === false ? ' - Frontalize is off' : ''}`,
+    };
+  };
+
+  // Frame this face and (optionally) turn a tool on for it: the Loupe's magnifier, or the occlusion brush in Paint mode.
+  const zoomToFace = (i, { magnifier = false, brush = false } = {}) => {
+    stopInertia();
+    setLockTargetFace(false);
+    const z = faceFitZoom({ bbox: faces[i], imgDim, stage: stageSize(containerRef.current) });
+    updateViewport(z, focusPanFor(faces[i], imgDim, containerRef.current, z) || { x: 0, y: 0 }, true);
+    if (magnifier) setMagnifierActive(true);
+    if (brush) { setBrushMode('paint'); setMaskBrushActive(true); setRotoActive(false); }
+  };
 
   const faceMenuFace = (i) => {
     const info = faceRoles[i] || null;
@@ -1291,6 +1319,13 @@ export default function InteractivePreview({
         : pinSource === null ? 'No source to lock yet: assign one first' : '',
       bypassReason: bypass.reason,
       bypassSub: bypass.reason ? '' : bypass.rangeText,
+      // Stage 12
+      pose: Array.isArray(pose) ? (pose[i] ?? null) : null,
+      choice: info?.choice ?? null,
+      roleBlocked: Object.fromEntries(ROLE_CHOICES.map((c) => [c.id, choiceBlocked(c.id, info, { hasSources: (faceMenu?.sources?.length || 0) > 0 })])),
+      loupeReason: imgDim ? '' : 'The frame is still loading',
+      copyPose: copyPoseInfo(i),
+      reset: faceMenu?.resetInfo?.(i) || { reason: 'Nothing to reset', sub: '' },
       extractReason: imgDim ? '' : 'The frame is still loading',
       skinReason: !swapped ? 'This face is not swapped, so there is no swapped skin to match'
         : (!afterFrame && (!afterSrc || afterSrc === beforeSrc)) ? 'There is no swapped result on the stage to compare with' : '',
@@ -1313,6 +1348,11 @@ export default function InteractivePreview({
       } else onPinIdentity?.(i);
     },
     bypass: () => faceMenu?.bypass?.(i),
+    role: (choice) => runFaceAction('Set face role', async () => { await faceMenu?.setRole?.(i, choice); }),
+    loupe: () => zoomToFace(i, { magnifier: true }),
+    paint: () => zoomToFace(i, { brush: true }),
+    copyPose: () => { const p = poseToFilterAngle(Array.isArray(pose) ? pose[i] : null); if (p) faceMenu?.copyPose?.(i, p); },
+    reset: () => faceMenu?.reset?.(i),
     focus: () => {
       stopInertia();
       setLockTargetFace(false);
@@ -1368,14 +1408,20 @@ export default function InteractivePreview({
       const selected = selectedFaceIndex === i;
       const info = faceRoles[i] || null;
       const similarity = Number(info?.cosine_similarity ?? info?.cosineSimilarity ?? info?.similarity ?? info?.score);
+      // Stage 12: a protected face wears a crimson striped lock bracket, a Reference-Only face a dashed violet one.
+      const protectedFace = !!info?.excluded && !info?.reference;
+      const referenceFace = !!info?.reference;
       const roleLabel = !info ? null
         : info.role === 'target' ? 'Target'
           : info.role === 'swapped' ? 'Swapped'
-            : (info.excluded ? 'Excluded · never swapped' : 'Bystander · not swapped');
+            : referenceFace ? 'Reference · tracked, not swapped'
+              : (info.excluded ? 'Excluded · never swapped' : 'Bystander · not swapped');
       const roleClass = !info ? ''
         : info.role === 'target' ? 'bg-emerald-600'
           : info.role === 'swapped' ? 'bg-[var(--accent)]'
-            : 'bg-zinc-700';
+            : referenceFace ? 'bg-violet-600'
+              : protectedFace ? 'bg-rose-700'
+                : 'bg-zinc-700';
       const togglable = typeof onToggleExclude === 'function' && info && info.canExclude;
       // Stage 11: pin this person's identity to the track passing through this box on this frame.
       const pinSource = Number.isInteger(faceSources[i]) && faceSources[i] >= 0 ? faceSources[i] : null;
@@ -1385,7 +1431,7 @@ export default function InteractivePreview({
       return (
         <div
           key={i}
-          className={`absolute border border-cyan-300/45 ${selected ? 'bg-white/10 ring-2 ring-[var(--accent)]' : 'hover:border-white/80'} shadow-[0_0_10px_var(--accent-glow)] z-20 ${
+          className={`absolute border ${protectedFace ? 'vfx-face--protected' : referenceFace ? 'vfx-face--reference' : 'border-cyan-300/45 shadow-[0_0_10px_var(--accent-glow)]'} ${selected ? 'bg-white/10 ring-2 ring-[var(--accent)]' : 'hover:border-white/80'} z-20 ${
             interactive
               ? `pointer-events-auto group/face hover:bg-[var(--accent)]/10 transition-colors ${selectable ? 'cursor-pointer' : ''}`
               : 'pointer-events-none'
@@ -1393,6 +1439,7 @@ export default function InteractivePreview({
           style={{ left: `${left}%`, top: `${top}%`, width: `${width}%`, height: `${height}%` }}
           data-face-index={i}
           data-face-role={info ? info.role : undefined}
+          data-face-choice={info?.choice || undefined}
           title={selectable ? `Click to use Face ${i + 1} (Person ${personLabel}) as target${menuable ? ' - right-click for actions' : ''}` : undefined}
           onPointerDown={interactive ? (e) => e.stopPropagation() : undefined}
           onClick={selectable ? (e) => { e.stopPropagation(); onSelectFace(i); } : undefined}
@@ -1406,6 +1453,22 @@ export default function InteractivePreview({
             >
               {faceBadgeText({ faceIndex: i, personId: personIds[i] ?? null, sourceName: faceMenu.sourceNames?.[i] || null, role: info?.role, excluded: !!info?.excluded })}
             </span>
+          )}
+          {protectedFace && (
+            <>
+              {/* The stripes read as "hatched out" at a glance, even on a busy frame; the padlock says why. */}
+              <span aria-hidden="true" className="vfx-face-stripes pointer-events-none absolute inset-0" />
+              <span
+                data-testid="face-lock-badge"
+                title="Protected: this person is never swapped"
+                className="pointer-events-none absolute left-1/2 top-1/2 z-10 grid h-7 w-7 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full border border-rose-300/70 bg-rose-950/85 text-rose-100 shadow-[0_0_14px_rgba(244,63,94,0.6)]"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <rect x="5" y="11" width="14" height="9" rx="2" />
+                  <path d="M8 11V8a4 4 0 0 1 8 0v3" />
+                </svg>
+              </span>
+            </>
           )}
           <span className="vfx-face-bracket vfx-face-bracket--tl" />
           <span className="vfx-face-bracket vfx-face-bracket--tr" />
@@ -2675,6 +2738,20 @@ export default function InteractivePreview({
       )}
 
       {/* ── Bottom Floating Pill & HUD ─────────────────────────────────────── */}
+      {/* Stage 12: the viewport's header dock (the A | B | C | D snapshot bank + Quad). An overlay, because the stage is
+          short at common window sizes and a row above it made the HUD cover the face boxes; the Preview section's own
+          title row is hidden by studio-shell.css, so it cannot host this either. It stops pointer events so a press on a
+          slot never starts a pan. */}
+      {headerDock && (
+        <div
+          data-testid="viewport-header-dock"
+          className="absolute right-3 top-3 z-40 flex max-w-[calc(100%-1.5rem)] flex-col items-end gap-1 overflow-x-auto rounded-xl border border-white/10 bg-black/55 p-1 backdrop-blur-md no-scrollbar"
+          onPointerDown={(e) => e.stopPropagation()}
+          onWheel={(e) => e.stopPropagation()}
+        >
+          {headerDock}
+        </div>
+      )}
       {hudStack()}
     </div>
   );

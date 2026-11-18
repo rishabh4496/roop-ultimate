@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { useHistoryChannel, CURVES_CHANNEL } from '../../../history/historyChannels';
 import {
-  addKey, hasCurves, moveKey, normalizeTracks, paramById, removeKey, setInterp, setValue,
+  addKey, hasCurves, moveKey, moveKeys, normalizeTracks, paramById, removeKey, removeKeys, setInterp, setInterpKeys, setSegmentBezier, setValue,
 } from './curveModel';
 
 // Parameter curves, per clip.
@@ -111,6 +111,45 @@ export default function useParameterCurves(targetKey, maxFrames = 1) {
   }, [commit]);
   const clearParam = useCallback((paramId) => commit(paramId, []), [commit]);
 
+  // Stage 12: edits that touch several keys / several curves at once. Each writes the WHOLE map in one commit, so a
+  // box-selected drag across three curves is one undo step (and one preview refresh), not three.
+  const commitAll = useCallback((t) => {
+    write(tracksKey(key), t, Object.keys(t).length === 0);
+    tracksRef.current = t;                                  // a second edit in the same tick builds on this one
+    setEdited((all) => ({ ...all, [key]: t }));
+    return t;
+  }, [key]);
+  const moveMany = useCallback((sel, dFrame, dNorm) => {
+    const cur = tracksRef.current;
+    const next = moveKeys(cur, sel, dFrame, dNorm, maxFrames);
+    if (next === cur) return false;
+    commitAll(next);
+    return true;
+  }, [commitAll, maxFrames]);
+  const removeMany = useCallback((sel) => {
+    const cur = tracksRef.current;
+    const next = removeKeys(cur, sel);
+    if (next === cur) return false;
+    commitAll(next);
+    return true;
+  }, [commitAll]);
+  const interpMany = useCallback((sel, kind) => {
+    const cur = tracksRef.current;
+    const next = setInterpKeys(cur, sel, kind);
+    if (next === cur) return false;
+    commitAll(next);
+    return true;
+  }, [commitAll]);
+  // The tangent handles: the segment after `frame` takes this easing and becomes Custom Bezier.
+  const setBezier = useCallback((paramId, frame, bz) => {
+    const cur = trackOf(paramId);
+    const next = setSegmentBezier(cur, frame, bz);
+    if (next === cur) return false;
+    commit(paramId, next);
+    return true;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [commit]);
+
   return useMemo(() => ({
     tracks,
     /** What the preview and the render read: the tracks, or nothing while the master switch is off. */
@@ -124,5 +163,9 @@ export default function useParameterCurves(targetKey, maxFrames = 1) {
     interp,
     setValue: setKeyValue,
     clearParam,
-  }), [tracks, enabled, setEnabled, add, move, remove, interp, setKeyValue, clearParam]);
+    moveMany,
+    removeMany,
+    interpMany,
+    setBezier,
+  }), [tracks, enabled, setEnabled, add, move, remove, interp, setKeyValue, clearParam, moveMany, removeMany, interpMany, setBezier]);
 }

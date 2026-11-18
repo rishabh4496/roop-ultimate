@@ -12,8 +12,8 @@ import { useHistoryStore } from '../../store/historyStore';
 //
 // The pill shows a thumbnail of the kept frame, a dot when the slot has been edited away from, and
 // an R when it is the split-wipe reference.
-const THUMB_W = 28;
-const THUMB_H = 16;
+const THUMB_W = 44;
+const THUMB_H = 26;
 
 function Thumb({ slot }) {
   const ref = useRef(null);
@@ -27,10 +27,20 @@ function Thumb({ slot }) {
     if (!bm) return;
     try { ctx.drawImage(bm, 0, 0, c.width, c.height); } catch { /* bitmap closed under us: leave it blank */ }
   }, [slot]);
-  return <canvas ref={ref} width={THUMB_W} height={THUMB_H} aria-hidden="true" className="h-4 w-7 rounded-[3px] bg-white/10" />;
+  return <canvas ref={ref} width={THUMB_W} height={THUMB_H} aria-hidden="true" className="h-[26px] w-11 rounded-[4px] bg-white/10 object-cover" />;
 }
 
-export default function SnapshotSlots({ api, className = '', label = 'Snapshot slots', supportsReference = true }) {
+/** "14:03:09" for the badge. Empty when the slot has no time (a test fixture). */
+const clock = (ts) => {
+  if (!ts) return '';
+  try { return new Date(ts).toLocaleTimeString([], { hour12: false }); } catch { return ''; }
+};
+
+// Stage 12: docked in the viewport header. Each filled slot shows a mini thumbnail of the frame it kept and the time it
+// was captured; `onQuad` adds the Quad compare button (A vs B vs C vs D in one split viewport).
+export default function SnapshotSlots({
+  api, className = '', label = 'Snapshot slots', supportsReference = true, onQuad = null, quadActive = false,
+}) {
   const bank = api.bank;
   const slots = useSlotStore((s) => s.banks[bank]);
   const active = useSlotStore((s) => s.active[bank]);
@@ -93,6 +103,7 @@ export default function SnapshotSlots({ api, className = '', label = 'Snapshot s
             >
               <span>{id}</span>
               {slot?.bitmap ? <Thumb slot={slot} /> : null}
+              {slot && clock(slot.ts) ? <span className="font-mono text-nano font-medium tabular-nums text-white/55" data-testid={`slot-time-${id}`}>{clock(slot.ts)}</span> : null}
               {isRef && <span className="rounded bg-cyan-500/30 px-1 text-nano text-cyan-100" title="Split-wipe reference">R</span>}
               {modified && <span className="h-1.5 w-1.5 rounded-full bg-amber-400" title="Edited since this slot was applied" />}
             </button>
@@ -112,6 +123,26 @@ export default function SnapshotSlots({ api, className = '', label = 'Snapshot s
           </div>
         );
       })}
+      {onQuad && (() => {
+        const filled = SLOT_IDS.filter((id) => slots[id]).length;
+        return (
+          <button
+            type="button"
+            onClick={onQuad}
+            disabled={filled < 2 && !quadActive}
+            aria-pressed={quadActive}
+            data-testid="slot-quad-toggle"
+            title={quadActive ? 'Back to the single viewport' : filled < 2 ? 'Capture at least two slots to compare them side by side' : 'Compare A, B, C and D side by side, with their parameter differences'}
+            className={`flex h-7 items-center gap-1 rounded-lg border px-2 text-mini font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+              quadActive ? 'border-[var(--accent)] bg-[var(--accent)]/20 text-white' : 'border-white/15 bg-white/[0.06] text-white/85 hover:bg-white/10'}`}
+          >
+            <span aria-hidden="true" className="grid grid-cols-2 gap-px">
+              {[0, 1, 2, 3].map((i) => <span key={i} className="h-1.5 w-1.5 rounded-[1px] bg-current opacity-80" />)}
+            </span>
+            Quad
+          </button>
+        );
+      })()}
     </div>
   );
 }

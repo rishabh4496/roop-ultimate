@@ -19,7 +19,10 @@ export function describeCurvesChange(before, after) {
       if (na > nb) return `Added ${name} Keyframe`;
       if (na < nb) return na === 0 ? `Cleared ${name} Curve` : `Removed ${name} Keyframe`;
       const moved = (b[id] || []).some((k, i) => k.frame !== a[id][i].frame || k.value !== a[id][i].value);
-      return moved ? `Moved ${name} Keyframe` : `Changed ${name} Interpolation`;
+      if (moved) return nb > 1 && (b[id] || []).filter((k, i) => k.frame !== a[id][i].frame || k.value !== a[id][i].value).length > 1
+        ? `Moved ${name} Keyframes` : `Moved ${name} Keyframe`;
+      const reshaped = (b[id] || []).some((k, i) => k.interp === 'bezier' && a[id][i].interp === 'bezier' && !same(k.bz, a[id][i].bz));
+      return reshaped ? `Reshaped ${name} Curve` : `Changed ${name} Interpolation`;
     }
   }
   return 'Edited Parameter Curves';
