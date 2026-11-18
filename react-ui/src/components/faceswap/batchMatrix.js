@@ -554,6 +554,7 @@ export function stageRangeLockTracks({
 export function queueRequestFromStagedJobs(stagedJobs = []) {
   return stagedJobs.map((j) => ({
     target_name: j.target_name,
+    ...(j.target_media_id ? { target_media_id: j.target_media_id } : {}),
     source_index: j.source_index,
     source_name: j.source_name,
     source_id: j.source_id || j.payload?.selected_source_id || null,

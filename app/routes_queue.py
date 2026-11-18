@@ -45,6 +45,7 @@ from roop.degrade import swallowed as _swallowed
 from fastapi import APIRouter, Body
 from fastapi.responses import JSONResponse
 
+import hashlib
 import json
 import os
 import threading
@@ -611,9 +612,12 @@ def _segment_spec_for(job):
     seg = job.get("segment")
     if seg:
         return SegmentSpec(seg["group"], seg["index"], seg["count"], int(fs), int(fe))
+    if (job.get("payload") or {}).get("_batch_matrix"):
+        return None
     key = job.get("target_media_id") or job.get("target_name")
     peers = sorted((j for j in _queue["jobs"]
                     if (j.get("target_media_id") or j.get("target_name")) == key
+                    and not (j.get("payload") or {}).get("_batch_matrix")
                     and j.get("frame_start") is not None and j.get("frame_end") is not None),
                    key=lambda j: (int(j["frame_start"]), j.get("added", 0)))
     if len(peers) < 2:
@@ -638,6 +642,15 @@ def _segment_path(job, spec):
     from roop.segment_output import segment_destination
     ext = "." + str(getattr(roop_globals.CFG, "output_video_format", "mp4") or "mp4")
     return segment_destination(roop_globals.output_path, spec, ext)
+
+
+def _segment_join_stem(job, group_id):
+    from roop.segment_output import safe_stem
+    stem = safe_stem(job.get("target_name") or "output")
+    if (job.get("payload") or {}).get("_batch_matrix"):
+        suffix = hashlib.sha256(group_id.encode("utf-8")).hexdigest()[:12]
+        stem = f"{stem[:100].replace('.', '_')}_{suffix}"
+    return stem
 
 
 def _group_pairs_locked(group_id):
@@ -684,7 +697,7 @@ def _join_group(group_id, *, automatic=False):
                    else f"only {len(pairs)} of {specs[0].count} slices are in the queue")
             return {"ok": False, "skipped": "incomplete", "error": why, "waiting": waiting}
         paths = [_segment_path(j, s) for j, s in zip(group, specs)]
-        stem = segment_output.safe_stem(group[0].get("target_name") or "output")
+        stem = _segment_join_stem(group[0], group_id)
         ext = os.path.splitext(paths[0])[1]
         ranges = [(s.start_frame, s.end_frame) for s in specs]
         source, total, fps = _target_entry_for(group[0])
@@ -848,8 +861,19 @@ def _run_one(job):
                 break
     state.selected_input_face_index = src_idx
 
-    _apply_segment(list_files_process[idx], job)
+    entry = list_files_process[idx]
+    previous_range = (entry.startframe, entry.endframe)
+    _apply_segment(entry, job)
+    queued_range = (entry.startframe, entry.endframe)
+    try:
+        return _run_target_job(job, idx, media_id, src_idx, selection)
+    finally:
+        if ((job.get("payload") or {}).get("_batch_matrix")
+                and (entry.startframe, entry.endframe) == queued_range):
+            entry.startframe, entry.endframe = previous_range
 
+
+def _run_target_job(job, idx, media_id, src_idx, selection):
     payload = dict(job.get("payload") or {})
     payload["target_index"] = idx
     actual_media_id = getattr(list_files_process[idx], "media_id", "") or ""
@@ -905,6 +929,7 @@ def _run_one(job):
         _queue_ids = [j["id"] for j in _queue["jobs"]]
     roop_globals._dashboard_job = {
         "job_id": job["id"],
+        "batch_matrix": bool(payload.get("_batch_matrix")),
         "batch_index": (_queue_ids.index(job["id"]) + 1) if job["id"] in _queue_ids else 1,
         "batch_count": max(1, len(_queue_ids))}
     if spec is not None:
@@ -1351,7 +1376,7 @@ def _segment_groups_snapshot():
         for g in groups.values():
             g["segments"].sort(key=lambda s: s["index"])
             job, ext = g.pop("_job"), g.pop("_ext")
-            stem = segment_output.safe_stem(g["target_name"] or "output")
+            stem = _segment_join_stem(job, g["group"])
             joined = segment_output.joined_path(out_dir, stem, ext or ".mp4")
             segs = g["segments"]
             complete = len(segs) >= g["count"] and all(s["state"] == "COMPLETED" and s["exists"] for s in segs)

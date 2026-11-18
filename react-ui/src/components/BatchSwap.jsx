@@ -8,15 +8,15 @@ import QueuePanel from './faceswap/QueuePanel';
 import PreFlightLinter from './faceswap/PreFlightLinter';
 import SegmentMatrix from './segments/SegmentMatrix';
 import FacesetLibrary from './faceswap/FacesetLibrary';
+import BatchFlow, { RecipeCards } from './faceswap/BatchFlow';
+import { buildBatchColumns, estimateBatch, planBatchJobs, RECIPE_FIELDS } from './faceswap/batchPlan';
 import {
   autoMatchMatrixConfig,
   buildBatchJobPayload,
   defaultMatrixRow,
+  newStagedJobId,
   queueRequestFromStagedJobs,
   stageCartesian,
-  stageGrouped,
-  stageMatrix,
-  stageOneToMany,
   stageSegments,
   stageSequential,
   parseTimelineCutsText,
@@ -40,7 +40,7 @@ const ENHANCER_OPTIONS = [
   'None',
 ];
 
-export default function BatchSwap({ settings = {}, notify, onUpdateSetting }) {
+export default function BatchSwap({ settings = {}, meta = {}, notify, onUpdateSetting }) {
   const { getJSON, postFiles, postJSON } = useApi();
   // ── Server State ────────────────────────────────────────────────────────
   const [targets, setTargets] = useState([]);
@@ -112,6 +112,13 @@ export default function BatchSwap({ settings = {}, notify, onUpdateSetting }) {
 
   // Active Batch Strategy: 'one_to_many' | 'grouped' | 'matrix' | 'recipes'
   const [batchMode, setBatchMode] = useState('one_to_many');
+  const [pairSelections, setPairSelections] = useState({});
+  const [split, setSplit] = useState({ enabled: false, seconds: 30 });
+  const [keyframes, setKeyframes] = useState({});
+  const [splitStatus, setSplitStatus] = useState('');
+  const [recipeTarget, setRecipeTarget] = useState(0);
+  const [recipeVariants, setRecipeVariants] = useState([]);
+  const recipes = useMemo(() => [{ id: 'baseline', label: 'Baseline', patch: {} }, ...recipeVariants], [recipeVariants]);
 
   // Quick Slots & Health Inspector Modal State
   const [activeQuickSlot, setActiveQuickSlot] = useState(null);
@@ -172,7 +179,7 @@ export default function BatchSwap({ settings = {}, notify, onUpdateSetting }) {
         const updated = { ...prev };
         tg.forEach((t, idx) => {
           if (!updated[idx]) {
-            updated[idx] = defaultMatrixRow(t, settings);
+            updated[idx] = { ...defaultMatrixRow(t, settings || undefined), frameStart: (t.start_frame || 0) + 1 };
           }
         });
         return updated;
@@ -211,6 +218,10 @@ export default function BatchSwap({ settings = {}, notify, onUpdateSetting }) {
         mode1FaceDistance,
         groups,
         matrixConfig,
+        pairSelections,
+        split,
+        recipeTarget,
+        recipeVariants,
         savedAt: new Date().toISOString(),
       };
       localStorage.setItem(`roop_batch_slot_${slotNum}`, JSON.stringify(slotData));
@@ -236,6 +247,10 @@ export default function BatchSwap({ settings = {}, notify, onUpdateSetting }) {
       if (data.mode1FaceDistance != null) setMode1FaceDistance(data.mode1FaceDistance);
       if (Array.isArray(data.groups)) setGroups(data.groups);
       if (data.matrixConfig) setMatrixConfig(data.matrixConfig);
+      setPairSelections(data.pairSelections || {});
+      setSplit(data.split || { enabled: false, seconds: 30 });
+      setRecipeTarget(data.recipeTarget ?? 0);
+      setRecipeVariants(Array.isArray(data.recipeVariants) ? data.recipeVariants : []);
       setActiveQuickSlot(slotNum);
       notify?.(`Loaded configuration from Quick Slot #${slotNum}!`);
     } catch (e) {
@@ -352,6 +367,10 @@ export default function BatchSwap({ settings = {}, notify, onUpdateSetting }) {
         mode1FaceDistance,
         groups,
         matrixConfig,
+        pairSelections,
+        split,
+        recipeTarget,
+        recipeVariants,
         sourceNames: sourceFacesInfo.map((s) => s.name || ''),
         targetNames: targets.map((t) => t.name || ''),
         stagedJobs,
@@ -389,6 +408,10 @@ export default function BatchSwap({ settings = {}, notify, onUpdateSetting }) {
         if (p.mode1FaceDistance != null) setMode1FaceDistance(p.mode1FaceDistance);
         if (Array.isArray(p.groups)) setGroups(p.groups);
         if (p.matrixConfig) setMatrixConfig(p.matrixConfig);
+        setPairSelections(p.pairSelections || {});
+        setSplit(p.split || { enabled: false, seconds: 30 });
+        setRecipeTarget(p.recipeTarget ?? 0);
+        setRecipeVariants(Array.isArray(p.recipeVariants) ? p.recipeVariants : []);
         if (Array.isArray(p.stagedJobs)) setStagedJobs(p.stagedJobs);
         notify?.('Successfully imported Pro Batch Matrix Preset!');
       } catch (err) {
@@ -456,24 +479,9 @@ export default function BatchSwap({ settings = {}, notify, onUpdateSetting }) {
     setMode1Mappings((prev) => prev.map((m, i) => (i === idx ? { ...m, ...patch } : m)));
   };
 
-  const generateMode1Jobs = () => stageWith(
-    stageOneToMany({
-      targets,
-      selectedTargets: mode1SelectedTargets,
-      mappings: mode1Mappings,
-      swapMode: mode1SwapMode,
-      enhancer: mode1Enhancer,
-      faceDistance: mode1FaceDistance,
-      sourceCount: sourceFaces.length,
-      sourceFacesInfo,
-      createJobPayload,
-    }),
-    (jobs) => `Generated ${jobs.length} multi-face batch job(s) for review`,
-  );
-
   // ── Strategy 2 Handlers ────────────────────────────────────────────────
   const addGroup = () => {
-    const nextId = groups.length + 1;
+    const nextId = Math.max(0, ...groups.map((group) => group.id)) + 1;
     setGroups((prev) => [
       ...prev,
       {
@@ -519,11 +527,6 @@ export default function BatchSwap({ settings = {}, notify, onUpdateSetting }) {
       )
     );
   };
-
-  const generateGroupJobs = () => stageWith(
-    stageGrouped({ targets, groups, sourceCount: sourceFaces.length, sourceFacesInfo, createJobPayload }),
-    (jobs) => `Generated ${jobs.length} group batch job(s)`,
-  );
 
   // ── Strategy 3 Handlers ────────────────────────────────────────────────
   const addMatrixMapping = (tIdx) => {
@@ -602,11 +605,6 @@ export default function BatchSwap({ settings = {}, notify, onUpdateSetting }) {
     reader.readAsText(file);
     e.target.value = '';
   };
-
-  const generateMatrixJobs = () => stageWith(
-    stageMatrix({ targets, matrixConfig, sourceCount: sourceFaces.length, sourceFacesInfo, createJobPayload }),
-    (jobs) => `Generated ${jobs.length} matrix batch job(s)`,
-  );
 
   // Bulk Matrix Actions
   const bulkSetMatrixSource = (srcIdx) => {
@@ -689,27 +687,60 @@ export default function BatchSwap({ settings = {}, notify, onUpdateSetting }) {
   };
 
   // ── Batch Time & Frame Estimator ─────────────────────────────────────────
-  const stagedStats = useMemo(() => {
-    let totalFrames = 0;
-    let estSeconds = 0;
+  const stagedStats = useMemo(() => estimateBatch(stagedJobs), [stagedJobs]);
+  const sources = useMemo(() => sourceFaces.map((thumbnail, index) => ({
+    id: sourceFacesInfo[index]?.id || `memory-slot-${index}`,
+    name: sourceFacesInfo[index]?.name || 'Faceset #' + (index + 1),
+    thumbnail,
+    index,
+  })), [sourceFaces, sourceFacesInfo]);
+  const activeRecipeTarget = recipeTarget < targets.length ? recipeTarget : 0;
+  const columns = useMemo(() => buildBatchColumns({
+    mode: batchMode, targets, selectedTargets: mode1SelectedTargets, matrixConfig, groups, recipes,
+    recipeTarget: activeRecipeTarget, splitSeconds: split.enabled ? Number(split.seconds) : 0, keyframes,
+    oneToMany: { mappings: mode1Mappings, swapMode: mode1SwapMode, enhancer: mode1Enhancer, faceDistance: mode1FaceDistance },
+  }), [batchMode, targets, mode1SelectedTargets, matrixConfig, groups, recipes, activeRecipeTarget,
+    split, keyframes, mode1Mappings, mode1SwapMode, mode1Enhancer, mode1FaceDistance]);
+  const planInputs = useMemo(() => ({
+    columns, sources, selections: pairSelections, targets, sourceFacesInfo, createJobPayload,
+  }), [columns, sources, pairSelections, targets, sourceFacesInfo, createJobPayload]);
+  const plannedJobs = useMemo(() => planBatchJobs(planInputs), [planInputs]);
+  const stagePlan = () => {
+    if (!plannedJobs.length) return;
+    stageWith({ jobs: planBatchJobs(planInputs) }, (jobs) => 'Staged ' + jobs.length + ' batch job(s)');
+  };
+  const baselinePayload = createJobPayload().payload;
+  const recipeValues = (column) => {
+    const payload = createJobPayload([], column.swapMode, { enhancer: column.enhancer }).payload;
+    return RECIPE_FIELDS.map(([field]) => column.recipe?.patch?.[field] ?? payload[field] ?? null);
+  };
+  const inspectKeyframes = async () => {
+    const media = [...new Map(columns.filter(({ target }) => target.fps > 0 && target.frames > 1)
+      .map((column) => [column.mediaKey, column])).values()];
+    if (!media.length) return;
+    setSplitStatus('Inspecting GOP boundaries…');
+    const result = {};
+    let unavailable = 0;
+    for (const column of media) {
+      try {
+        const query = new URLSearchParams(column.target.media_id
+          ? { media_id: column.target.media_id } : { index: column.index });
+        const response = await getJSON('/api/target/keyframes?' + query, { timeout: 0 });
+        if (!Array.isArray(response.frames) || !response.frames.length) {
+          unavailable++;
+          continue;
+        }
+        result[column.mediaKey] = response.frames;
+      } catch {
+        unavailable++;
+      }
+    }
+    setKeyframes((current) => ({ ...current, ...result }));
+    setSplitStatus(unavailable ? 'GOP lookup unavailable for ' + unavailable + ' video(s)' : 'GOP boundaries loaded');
+  };
 
-    stagedJobs.forEach((job) => {
-      const frames = job.total_frames || job.payload?.end_frame || 1;
-      totalFrames += frames;
-      const enhancer = job.payload?.enhancer || 'None';
-      const perFrameMs = enhancer !== 'None' ? 115 : 35;
-      estSeconds += (frames * perFrameMs) / 1000;
-    });
-
-    const mins = Math.floor(estSeconds / 60);
-    const secs = Math.round(estSeconds % 60);
-    const timeStr = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
-
-    return { totalFrames, timeStr };
-  }, [stagedJobs]);
-
-  // ── Staged Jobs Commit Handlers (Atomic Batch Add) ──────────────────────
   const enqueueStagedJobs = async (autoStart = false) => {
+    if (queue.busy) return;
     if (stagedJobs.length === 0) {
       notify?.('No staged jobs to enqueue', 'error');
       return;
@@ -719,13 +750,13 @@ export default function BatchSwap({ settings = {}, notify, onUpdateSetting }) {
       const jobsToAdd = queueRequestFromStagedJobs(stagedJobs);
 
       // Uses atomic /api/queue/add_batch via useQueue hook
-      await queue.addMany(jobsToAdd);
+      if (!await queue.addMany(jobsToAdd)) return;
       notify?.(`Enqueued ${jobsToAdd.length} job(s) to server queue`);
-      setStagedJobs([]);
+      const submittedIds = new Set(stagedJobs.map((job) => job.id));
+      setStagedJobs((current) => current.filter((job) => !submittedIds.has(job.id)));
 
       if (autoStart) {
-        await queue.start();
-        notify?.('Started batch processing queue!');
+        if (await queue.start()) notify?.('Started batch processing queue!');
       }
     } catch (e) {
       notify?.('Failed to enqueue jobs: ' + e.message, 'error');
@@ -794,7 +825,7 @@ export default function BatchSwap({ settings = {}, notify, onUpdateSetting }) {
               <div className="p-3 bg-white/5 rounded-xl border border-white/5">
                 <span className="text-nano text-muted block">Est. Disk Space</span>
                 <span className="text-lg font-bold text-cyan-400">
-                  ~{Math.round(stagedStats.totalFrames * 0.25)} MB
+                  ~{Math.round(stagedStats.megabytes)} MB
                 </span>
               </div>
             </div>
@@ -1199,16 +1230,32 @@ export default function BatchSwap({ settings = {}, notify, onUpdateSetting }) {
             <div className="flex items-center justify-between mb-1.5">
               <span className="font-bold text-sm text-white flex items-center gap-2">
                 <Icon.wand size={16} className="text-accent" />
-                Pro Recipes & Splitter
+                Recipe Matrix
               </span>
               {batchMode === 'recipes' && <Icon.done size={14} className="text-accent" />}
             </div>
             <p className="text-xs text-white/50 leading-relaxed">
-              1-Click Combinatorial Matrix, Sequential Pairs & Multi-Segment Video Splitter.
+              Compare swap models, enhancers and masks on the same clip.
             </p>
           </button>
         </div>
       </Section>
+
+      {batchMode === 'recipes' && (
+        <>
+          <RecipeCards recipes={recipes} baseline={baselinePayload} meta={meta} setRecipes={setRecipeVariants}
+            targetIndex={activeRecipeTarget} setTargetIndex={setRecipeTarget} targets={targets} />
+          <Button variant="secondary" onClick={() => setRecipeVariants((list) => {
+            const next = Math.max(0, ...list.map((item) => item.number)) + 1;
+            return [...list, { id: newStagedJobId(), number: next, label: 'Recipe ' + next, patch: {} }];
+          })}>Add recipe</Button>
+        </>
+      )}
+      <BatchFlow columns={columns} sources={sources} selections={pairSelections} setSelections={setPairSelections}
+        jobs={plannedJobs} stagedJobs={stagedJobs} queueJobs={queue.jobs} stage={stagePlan}
+        split={split} setSplit={setSplit} splitStatus={splitStatus} inspectKeyframes={inspectKeyframes}
+        onUseDuration={() => { setKeyframes({}); setSplitStatus(''); }}
+        keyframes={keyframes} recipeValues={recipeValues} />
 
       {/* ── Mode 1 Panel: 1 Faceset + 1 Target Face -> Multi Files ── */}
       {batchMode === 'one_to_many' && (
@@ -1335,16 +1382,6 @@ export default function BatchSwap({ settings = {}, notify, onUpdateSetting }) {
                   />
                 </div>
               </div>
-
-              <Button
-                variant="primary"
-                className="w-full justify-center py-2.5 mt-2"
-                onClick={generateMode1Jobs}
-                disabled={targets.length === 0 || sourceFaces.length === 0}
-              >
-                <Icon.add size={16} className="mr-1.5" />
-                Generate Batch Jobs ({mode1SelectedTargets.length} Files)
-              </Button>
             </div>
 
             {/* Target Media Picker */}
@@ -1559,11 +1596,6 @@ export default function BatchSwap({ settings = {}, notify, onUpdateSetting }) {
                 </div>
               </Card>
             ))}
-
-            <Button variant="primary" className="w-full justify-center py-2.5" onClick={generateGroupJobs}>
-              <Icon.add size={16} className="mr-1.5" />
-              Generate Grouped Batch Jobs
-            </Button>
           </div>
         </Section>
       )}
@@ -1822,17 +1854,12 @@ export default function BatchSwap({ settings = {}, notify, onUpdateSetting }) {
               })}
             </div>
           )}
-
-          <Button variant="primary" className="w-full justify-center py-2.5 mt-4" onClick={generateMatrixJobs}>
-            <Icon.add size={16} className="mr-1.5" />
-            Generate Per-File Matrix Batch Jobs
-          </Button>
         </Section>
       )}
 
       {/* ── Mode 4 Panel: Pro Recipes & Video Segment Splitter ── */}
       {batchMode === 'recipes' && (
-        <Section title="Strategy 4: Automated Pro Recipes & Video Segment Splitter">
+        <Section title="Batch generators">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {/* Cartesian Generator */}
             <Card className="p-4 space-y-3 bg-black/40 flex flex-col justify-between">
@@ -1971,7 +1998,7 @@ export default function BatchSwap({ settings = {}, notify, onUpdateSetting }) {
                   Ready to Enqueue ({stagedJobs.length} Jobs)
                 </span>
                 <span className="text-micro text-emerald-400/90 font-mono">
-                  📊 Total {stagedStats.totalFrames.toLocaleString()} frames · Est. ~{stagedStats.timeStr} runtime
+                  {stagedStats.totalFrames.toLocaleString()} frames · ~{stagedStats.timeStr} runtime · ~{stagedStats.megabytes.toLocaleString()} MB storage
                 </span>
               </div>
 
@@ -1995,10 +2022,10 @@ export default function BatchSwap({ settings = {}, notify, onUpdateSetting }) {
                   🔍 Pre-flight Health Check
                 </Button>
 
-                <Button size="sm" variant="secondary" onClick={() => enqueueStagedJobs(false)}>
+                <Button size="sm" variant="secondary" disabled={queue.busy} onClick={() => enqueueStagedJobs(false)}>
                   Enqueue to Queue
                 </Button>
-                <Button size="sm" variant="primary" onClick={() => enqueueStagedJobs(true)}>
+                <Button size="sm" variant="primary" disabled={queue.busy} onClick={() => enqueueStagedJobs(true)}>
                   ▶ Enqueue & Start Batch
                 </Button>
               </div>

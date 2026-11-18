@@ -375,6 +375,7 @@ Target media, the people found in it and their captured angles.
 | GET | `/api/target/preview_grid` | FaceSwap |
 | POST | `/api/target/prescan` | PipelinePill |
 | GET | `/api/target/scene_cuts` | FaceSwap |
+| GET | `/api/target/keyframes` | Batch Matrix GOP alignment |
 | GET | `/api/target/timeline_tracks` | Timeline |
 | GET | `/api/target/waveform` | Timeline |
 | GET | `/api/media/waveform` | NleTimeline, useAudioWaveform |

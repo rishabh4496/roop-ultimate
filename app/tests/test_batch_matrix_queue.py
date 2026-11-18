@@ -215,6 +215,28 @@ class BatchMatrixQueue(QueueTestBase):
         self.assertEqual([d[1] for d in self.dispatched], [1, 0, 1],
                          "the stored numeric source_index must not be trusted")
 
+    def test_recipe_variants_are_independent_and_restore_the_target_trim(self):
+        marker = {"cells": ["cell"], "recipe": ["realswap", "None", "RealityUX"]}
+        variants = [
+            wire_job("a.mp4", [(0, 0)], frame_start=10, frame_end=20,
+                     _batch_matrix=marker, mask_engine=mask)
+            for mask in ("RealityUX", "DFL XSeg")
+        ]
+        q.queue_add_batch({"jobs": variants})
+        seen = []
+
+        def run(payload):
+            entry = self.entries[0]
+            seen.append((entry.startframe, entry.endframe, roop_globals._segment_spec,
+                         roop_globals._dashboard_job["batch_matrix"], payload["mask_engine"]))
+            self._fake_run(payload)
+
+        q._run_swap = run
+        self._drain()
+        self.assertEqual(seen, [(9, 20, None, True, "RealityUX"),
+                                (9, 20, None, True, "DFL XSeg")])
+        self.assertEqual((self.entries[0].startframe, self.entries[0].endframe), (0, 300))
+
     # ── 2. per-job progress and cancel stay with their job ────────────────
     def test_progress_is_recorded_per_job_not_inherited_from_the_previous_one(self):
         def run(payload):

@@ -1470,6 +1470,7 @@ export default function App() {
                 {tab === 'batch' && (
                   <BatchSwap
                     settings={settings}
+                    meta={meta}
                     notify={notify}
                     progress={progress}
                     setTab={setTab}

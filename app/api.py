@@ -3035,6 +3035,24 @@ def target_preview_grid(index: int = 0, frames: str = "", width: int = 200,
                              media_type="application/octet-stream")
 
 
+@app.get("/api/target/keyframes")
+def target_keyframes(index: int = None, media_id: str = None):
+    """One-based display frames where an automatic batch split can start a GOP."""
+    target_index, resolved_id = _target_index_for_ref(index=index, media_id=media_id)
+    if target_index is None or not 0 <= target_index < len(list_files_process):
+        return JSONResponse(status_code=404, content={"message": "no target"})
+    filename = list_files_process[target_index].filename
+    if not util.is_video(filename) or not os.path.isfile(filename):
+        return JSONResponse(status_code=422, content={"message": "target video is unavailable"})
+    try:
+        from roop.video_io_hw import keyframe_display_indices
+        frames = sorted({frame + 1 for frame in keyframe_display_indices(filename)})
+    except Exception as exc:
+        _swallowed("api.py:target_keyframes", exc, "keyframe lookup failed")
+        return JSONResponse(status_code=422, content={"message": "could not inspect target keyframes"})
+    return {"target_media_id": resolved_id, "frames": frames}
+
+
 @app.get("/api/target/scene_cuts")
 def target_scene_cuts(index: int = None, media_id: str = None):
     """Return detected scene cut frame numbers for the active (or specified) target."""
@@ -6397,7 +6415,8 @@ def _run_swap(payload):
             except Exception as _degrade_error:
                 _swallowed("api.py:3061", _degrade_error, "fallback continued")
                 pass
-        _clear_output_folder(has_checkpoint)
+        if not (getattr(roop_globals, "_dashboard_job", None) or {}).get("batch_matrix"):
+            _clear_output_folder(has_checkpoint)
 
         enhancer = payload.get("enhancer", roop_globals.CFG.selected_enhancer)
         selection_state = processing_request["selection_state"]

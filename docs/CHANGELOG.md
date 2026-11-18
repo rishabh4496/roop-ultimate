@@ -1,3 +1,9 @@
+## 2026-11-18 — UI overhaul Stage 7: Batch Matrix flow (`#/batch`)
+
+- All four strategies share a source-by-target, segment, or recipe grid with cell, row, and column controls. The same plan drives staging and displays the queued and completed states of its jobs.
+- Automatic splitting previews actual inclusive frame ranges, with optional GOP alignment from the loaded video's decoded keyframes. The preview estimates total jobs, render time, and storage for chunks and joined outputs.
+- Recipe cards compare swap models, enhancers, and masks against the baseline on one clip. Queued variants retain separate outputs, and a rejected submission leaves the staged jobs available for retry.
+
 ## 2026-11-18 — UI overhaul Stage 6: Identity Workstation (`#/facemgr`)
 
 **Face Manager opens on a full-viewport three-pane Identity Workstation** (`react-ui/src/components/facemgr/IdentityWorkstation.jsx`;

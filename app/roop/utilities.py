@@ -721,6 +721,9 @@ def replace_template(file_path: str, index: int = 0) -> str:
     replaced_filename = template_parser.parse(
         template, {"index": str(index), "file": fn, "timestamp": datetime.now().strftime('%Y%m%d%H%M%S')}
     )
+    queue_job = getattr(roop.globals, "_dashboard_job", None) or {}
+    if queue_job.get("batch_matrix"):
+        replaced_filename = f"{replaced_filename}_{queue_job['job_id']}"
 
     return os.path.join(roop.globals.output_path, f"{replaced_filename}{ext}")
 

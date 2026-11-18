@@ -387,3 +387,11 @@ strategy binds by faceset id or path, and `plan_track_facesets` is a pure planni
 `roop.globals.identity_pins`). Wiring an explicit binding into `_assign_track_sources` would change which face is swapped
 and needs its own measurement, so it was left out. Which person rank a track belongs to is the caller's input
 (`track_person`); the API does not compute it.
+
+## Stage 7 flow preview
+
+`BatchSwap` builds columns from the active strategy, target media, trims, and optional split ranges. `batchPlan.js` builds the jobs from those columns and the selected faceset cells. A multi-person assignment stays in one job while its configured sources are selected. Additional facesets become separate jobs.
+
+The flow sends `target_media_id` and stores the selected cell keys and recipe values in `payload._batch_matrix`. The grid reads those directly from staged jobs and the queue snapshot. Unsplit variants render independently. Split variants carry a different group per recipe and faceset assignment. A group only joins when all of its intended chunks complete.
+
+The optional `GET /api/target/keyframes` lookup accepts the id of a loaded video and returns one-based keyframe positions. Duration mode uses frame counts derived from the clip's FPS. GOP mode moves interior cuts to decoded keyframes while preserving the selected trim endpoints. Both modes cap the plan at 32 slices per target range.

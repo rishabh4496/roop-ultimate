@@ -222,12 +222,28 @@ class SplitThroughTheRunner(QueueTestBase):
         self.progress["progress"] = 1.0
         self.progress["processing"] = False
 
-    def _queue_split(self):
+    def _queue_split(self, group="G1", matrix=False):
+        payload = {"swap_model": "inswapper"}
+        if matrix:
+            payload["_batch_matrix"] = {"cells": [group], "recipe": ["inswapper", "None", "None"]}
         jobs = [{"target_name": "clip.mp4", "target_media_id": "m1", "source_index": 0,
-                 "payload": {"swap_model": "inswapper"}, "frame_start": s, "frame_end": e,
-                 "segment": {"group": "G1", "index": i, "count": 3}}
+                 "payload": payload, "frame_start": s, "frame_end": e,
+                 "segment": {"group": group, "index": i, "count": 3}}
                 for i, (s, e) in enumerate([(1, 10), (11, 20), (21, 30)], 1)]
         q.queue_add_batch({"jobs": jobs})
+
+    def test_matrix_splits_of_one_clip_keep_both_joined_outputs(self):
+        self._queue_split("baseline", matrix=True)
+        self._queue_split("variant", matrix=True)
+        self._drain(timeout=60)
+        groups = q.queue_segments()["groups"]
+        joined = [group["joined"] for group in groups]
+        self.assertEqual(len(joined), 2)
+        self.assertEqual(len({item["name"] for item in joined}), 2)
+        for item in joined:
+            self.assertTrue(item["exists"], item)
+            self.assertTrue(item["result"]["ok"], item)
+            self.assertEqual(_frames(item["result"]["output"]), 30)
 
     def test_every_slice_survives_and_the_join_is_added_beside_them(self):
         self._queue_split()

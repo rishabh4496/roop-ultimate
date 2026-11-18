@@ -22,7 +22,7 @@
 // single-target jobs in one add_batch call, so this mock accepts exactly that
 // and drives each job's progress independently.
 import type { Express, Request, Response } from 'express';
-import { randomBytes } from 'crypto';
+import { createHash, randomBytes } from 'crypto';
 
 export const JOB_STATES = [
   'QUEUED', 'PREPARING', 'PROCESSING', 'PAUSE_REQUESTED', 'PAUSED', 'COMPLETED',
@@ -346,8 +346,9 @@ export class MockQueue {
   private specOf(job: MockJob): { group: string; index: number; count: number; start: number; end: number } | null {
     if (job.frame_start == null || job.frame_end == null) return null;
     if (job.segment) return { ...job.segment, start: job.frame_start, end: job.frame_end };
+    if (job.payload._batch_matrix) return null;
     const key = job.target_media_id || job.target_name;
-    const peers = this.jobs.filter((j) => (j.target_media_id || j.target_name) === key && j.frame_start != null && j.frame_end != null)
+    const peers = this.jobs.filter((j) => (j.target_media_id || j.target_name) === key && !j.payload._batch_matrix && j.frame_start != null && j.frame_end != null)
       .sort((a, b) => (a.frame_start as number) - (b.frame_start as number));
     if (peers.length < 2) return null;
     return { group: `auto:${key}`, index: peers.indexOf(job) + 1, count: peers.length, start: job.frame_start, end: job.frame_end };
@@ -371,7 +372,11 @@ export class MockQueue {
       g.segments.sort((a: any, b: any) => a.index - b.index);
       const first = g._job as MockJob;
       delete g._job;
-      const stem = (g.target_name || 'output').replace(/\.[^.]+$/, '');
+      let stem = (g.target_name || 'output').replace(/\.[^.]+$/, '');
+      if (first.payload._batch_matrix) {
+        const suffix = createHash('sha256').update(g.group).digest('hex').slice(0, 12);
+        stem = `${stem.slice(0, 100).replaceAll('.', '_')}_${suffix}`;
+      }
       const complete = g.segments.length >= g.count && g.segments.every((s: any) => s.state === 'COMPLETED' && s.exists);
       const result = first.group_join || null;
       return {
