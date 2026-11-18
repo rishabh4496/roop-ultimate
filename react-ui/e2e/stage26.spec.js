@@ -18,7 +18,9 @@ const ERODE = 'Face detection threshold';       // visible on load, has a defaul
 
 const field = (page, label) => page.locator('label.block').filter({ has: page.getByText(label, { exact: true }) }).first();
 const labelOf = (page, label) => field(page, label).getByText(label, { exact: true });
-const readout = (page, label) => field(page, label).locator('button[title^="Click to type"]');
+// Stage 5: the readout is the scrubber's value text; the bar is what a mouse drags, double-clicks and right-clicks.
+const readout = (page, label) => field(page, label).getByTestId('scrubber-value');
+const barOf = (page, label) => field(page, label).getByTestId('scrubber-bar');
 const dotOf = (page, label) => field(page, label).getByTestId('modified-dot');
 
 /** The slider's own min / max / step, so expectations follow the control rather than a number copied from it. */
@@ -88,13 +90,13 @@ test.describe('scrub, expressions, the modified dot', () => {
     expect(await value(page, ERODE), 'dragging left lowers it').toBe(scrubbed(sp, v, -40));
   });
 
-  test('the number scrubs too, and a plain click on it still opens the editor', async ({ page }) => {
-    const num = readout(page, ERODE);
+  test('the bar scrubs too, and a double-click on it opens the editor', async ({ page }) => {
+    const num = barOf(page, ERODE);
     const sp = await spec(page, ERODE);
     await scrubBy(page, num, 20);
     expect(await value(page, ERODE)).toBe(scrubbed(sp, 0.5, 20));
     await expect(field(page, ERODE).getByLabel(`${ERODE} value`), 'a drag must not leave the editor open').toHaveCount(0);
-    await num.click();
+    await num.dblclick();
     await expect(field(page, ERODE).getByLabel(`${ERODE} value`)).toBeVisible();
   });
 
@@ -122,7 +124,7 @@ test.describe('scrub, expressions, the modified dot', () => {
   test('typing takes expressions: arithmetic, +10%, a share of the range, and clamps', async ({ page }) => {
     const { min, max } = await spec(page, ERODE);
     const type = async (text) => {
-      await readout(page, ERODE).click();
+      await barOf(page, ERODE).dblclick();
       const input = field(page, ERODE).getByLabel(`${ERODE} value`);
       await input.fill(text);
       await input.press('Enter');
@@ -143,7 +145,7 @@ test.describe('scrub, expressions, the modified dot', () => {
   });
 
   test('an expression that does not parse keeps the editor open and says why; Escape restores the value', async ({ page }) => {
-    await readout(page, ERODE).click();
+    await barOf(page, ERODE).dblclick();
     const input = field(page, ERODE).getByLabel(`${ERODE} value`);
     await input.fill('1/0');
     await input.press('Enter');
@@ -159,7 +161,7 @@ test.describe('scrub, expressions, the modified dot', () => {
   });
 
   test('leaving the field on something unparseable puts the old value back (no silent garbage)', async ({ page }) => {
-    await readout(page, ERODE).click();
+    await barOf(page, ERODE).dblclick();
     const input = field(page, ERODE).getByLabel(`${ERODE} value`);
     await input.fill('banana');
     await page.locator('body').click({ position: { x: 2, y: 2 } });
@@ -189,23 +191,16 @@ test.describe('scrub, expressions, the modified dot', () => {
     await expect.poll(() => value(page, ERODE)).toBe(0.5);
   });
 
-  test('double-clicking the track still resets (unchanged)', async ({ page }) => {
+  test('right-clicking the bar resets (double-click types instead)', async ({ page }) => {
     await scrubBy(page, labelOf(page, ERODE), 40);
-    await field(page, ERODE).getByRole('slider').dblclick();
+    await barOf(page, ERODE).click({ button: 'right' });
     await expect.poll(() => value(page, ERODE)).toBe(0.5);
   });
 
-  test('Shift+drag on the TRACK is still the fine adjustment it always was', async ({ page }) => {
-    const slider = field(page, ERODE).getByRole('slider');
-    const box = await slider.boundingBox();
-    await page.keyboard.down('Shift');
-    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-    await page.mouse.down();
-    await page.mouse.move(box.x + box.width / 2 + 40, box.y + box.height / 2, { steps: 5 });
-    await page.mouse.up();
-    await page.keyboard.up('Shift');
-    const v = await value(page, ERODE);
-    expect(Math.abs(v - 0.5), 'a tenth-speed track drag moves far less than the track width would').toBeLessThan(0.1);
+  test('Shift+drag on the BAR is x10, exactly as on the label (the bar is no longer a thumb track)', async ({ page }) => {
+    const sp = await spec(page, ERODE);
+    await scrubBy(page, barOf(page, ERODE), 4, { shift: true });
+    expect(await value(page, ERODE)).toBe(scrubbed(sp, 0.5, 4, { shift: true }));
   });
 });
 

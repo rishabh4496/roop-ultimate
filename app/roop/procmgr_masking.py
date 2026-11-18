@@ -21,6 +21,7 @@ import roop.globals
 from roop import mask_roi
 from roop import grain_match
 from roop import timeline_state as _timeline_state
+from roop import studio_parameters as _studio
 from roop.typing import Frame, Face
 from roop.face_util import clamp_cut_values, kps_pose_ratios
 from roop.nonfrontal import nonfrontal_score
@@ -582,8 +583,11 @@ class MaskingMixin:
         return int(frame_index) + max(0, int(getattr(roop.globals, 'roto_frame_base', 1) or 1) - 1)
 
     def _timeline_params(self, frame_index):
-        """Keyframed overrides for this frame (``{}`` when the run has no timeline - the common, free case)."""
-        return _timeline_state.params_at(self._timeline_absolute_frame(frame_index))
+        """Overrides for this frame (``{}`` when the run has neither a timeline nor a per-person override - the common,
+        free case): the face's person override (roop.person_overrides) under the keyframes, which win."""
+        keyed = _timeline_state.params_at(self._timeline_absolute_frame(frame_index))
+        person = _studio.person_values()
+        return {**person, **keyed} if person else keyed
 
     def _timeline_gate(self, pending, frame_idx):
         """``pending`` without the (source, face) pairs whose bound track is outside its ``active_ranges`` here.
@@ -1008,12 +1012,15 @@ class MaskingMixin:
         roi_IM[0, 2] -= x0
         roi_IM[1, 2] -= y0
         content = upsk_face
-        if upsk_face is not fake_face and getattr(self.options, 'blend_ratio', 1.) < .999:
+        # `option` so a per-person override (or a keyframe) of `blend_ratio` reaches this face; with neither it IS
+        # `self.options.blend_ratio`.
+        _blend_ratio = _studio.option(self.options, 'blend_ratio', 1.)
+        if upsk_face is not fake_face and _blend_ratio < .999:
             base = fake_face
             if base.shape[:2] != upsk_face.shape[:2]:
                 base = cv2.resize(base, (w,h), interpolation=cv2.INTER_CUBIC)
-            content = cv2.addWeighted(upsk_face, self.options.blend_ratio,
-                                      base, 1.-self.options.blend_ratio, 0.)
+            content = cv2.addWeighted(upsk_face, _blend_ratio,
+                                      base, 1.-_blend_ratio, 0.)
         # ── Skin-class Lab match at the seam ─────────────────────────────────
         # Statistics from the eroded `skin` class only (eyes, brows, lips, mouth interior stay out of
         # them and are not recoloured), swapped crop vs the plate under it. The two are pixel-aligned by
@@ -1390,8 +1397,9 @@ class MaskingMixin:
         # Clamp defensively so malformed API payloads cannot allocate a huge
         # kernel on a full-resolution frame.
         try:
+            # `_studio.value` so a per-person override reaches this face; with none it is the global setting.
             signed_radius = int(np.clip(
-                int(getattr(roop.globals, 'mask_erode_dilate_radius', 0) or 0),
+                int(_studio.value('mask_erode_dilate_radius', 0) or 0),
                 -64, 64))
         except (TypeError, ValueError, OverflowError):
             signed_radius = 0

@@ -13,6 +13,10 @@ mask_build_lock = threading.Lock()
 
 _values = ContextVar('studio_frame_values', default={})
 _shape = ContextVar('studio_frame_shape', default=None)
+# The overrides of the target PERSON whose face is being swapped right now (roop.person_overrides). Kept apart from
+# `_values` because the paste matte reads its keyed numbers from `timeline_state.params_at`, not from `_values`, and has
+# to merge these in itself (`MaskingMixin._timeline_params`).
+_person = ContextVar('studio_person_values', default={})
 
 ALIASES = {
     'detector_model': 'detector_engine',
@@ -85,6 +89,37 @@ def maximum(name, fallback=0.0):
     timeline = active()
     values = [kf.values()[name] for kf in timeline.keyframes if name in kf.values()] if timeline else []
     return max([fallback, *values])
+
+
+def person_values():
+    """The per-person overrides in force for the face being processed (``{}`` outside a person scope)."""
+    return _person.get()
+
+
+@contextmanager
+def person_scope(values):
+    """Run one face's swap with its person's overrides as the BASE for the frame.
+
+    Precedence, lowest to highest: the run's settings < this person's override < a keyframe at this frame. A keyframe is
+    an explicit statement about a moment on the timeline, so it still wins over a standing per-person value; and a
+    parameter nobody overrides is left exactly as it was. ``values`` uses the timeline names (``restore_identity_weight``,
+    not its alias ``codeformer_fidelity``) because `value()` translates through ALIASES before it looks here.
+
+    A ContextVar, like `frame_scope`: no worker changes another worker's values, and a restorer batch that copies its
+    context (`UltraMax`) carries the person with it - `batch_context_key` includes these items, so two persons with
+    different fidelity never share a batch.
+    """
+    if not values:
+        yield
+        return
+    values = dict(values)
+    person_token = _person.set(values)
+    frame_token = _values.set({**values, **_values.get()})
+    try:
+        yield
+    finally:
+        _values.reset(frame_token)
+        _person.reset(person_token)
 
 
 @contextmanager

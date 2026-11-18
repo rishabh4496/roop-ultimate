@@ -1,3 +1,63 @@
+## 2026-11-18 — UI overhaul Stage 5: studio scrubbers, effect rack, face routing dock, mask edge profile (+ per-person render overrides)
+
+**Scrubber (`react-ui/src/components/StudioScrubberInput.jsx`).** Every numeric parameter (`Slider` in `ui.jsx` is now a
+one-line wrapper, so all ~100 call sites changed at once) is a filled bar in `--accent-cyan`: drag the label or the bar to
+scrub from where the value is (a press does not jump it), Shift x10, Alt x0.1; **double-click types** (arithmetic still works);
+right-click or the cyan dot resets; a range through zero fills outward from zero. A hidden, pointer-transparent
+`<input type="range">` stays underneath as the one tab stop (keyboard, screen reader, `.fill()` in tests). **Behaviour changes
+that existing tests pinned and were rewritten:** double-click used to RESET (now types; reset is right-click), Shift+drag on
+the track used to be the FINE adjustment (now x10, Alt is fine), and the number button that opened the editor is gone.
+
+**Effect rack (`faceswap/EnhancerPipelineStack.jsx`, same mount on Face Swap and Extras).** Six modules in engine order with a
+glowing power (bypass) switch that remembers what it replaced, a wet/dry mix bar in %, a Low / Med / High VRAM badge and a
+collapsible body. Wet/dry is a real setting only where one exists (restorer `blend_ratio`, grain `merger_grain_match`,
+colour `merger_hist_match`); the occlusion mask and the upscaler show a disabled 100% bar that says why. Latency is `measured`
+only for GPEN-256/512, RestoreFormer++ and CodeFormer (the figures already printed beside the selector, RTX 4070); everything
+else is an `estimate` and the tooltip says so. Not reorderable: the engine's order is fixed. The slot-heavy bodies start folded (the mix bar and the power switch never
+fold away) to keep Face Swap's tab-stop count where it was.
+
+**Face routing dock (`faceswap/FaceRoutingDock.jsx`, inside `PersonGroups`).** Targets left (rank, thumbnail, pose badge,
+presence % from the Face Bank scan, "—" until scanned), sources right, an SVG route line per person; click-click or drag to
+route through the same `setMapping` the people list uses. Per-face override pills (erode, feather, likeness, LAB strength,
+enhancer blend) for the selected person.
+
+**Per-person render overrides (backend, new).** There was no per-face channel (only frame ranges and track bindings), so one was
+built: `app/roop/person_overrides.py` validates (400 on an unknown name or out-of-range value, never clamped) and resolves
+person id -> rank; `studio_parameters.person_scope` wraps `ProcessMgr.process_face`; precedence settings < person < keyframe.
+Applies in `selected` / `selected_multi` only (the modes where `process_face`'s `face_index` IS the person's rank); other modes
+get `person_overrides_status.applied: false` plus the reason, echoed on every preview/render response. 57 tests, including the
+production `paste_upscale` bit for bit against the same setting changed globally.
+
+**Mask edge profile (`faceswap/MaskEdgeProfile.jsx`).** Beside the feather and erode sliders: the exact seam falloff of the
+default (semantic) matte. Checked sample for sample against the REAL `MaskComposer.asymmetric_inward` (528 samples, 9e-7).
+That check found something reading the code did not: `cv2.distanceTransform(..., DIST_L2, 3)` reads 0.955 per pixel, so a ramp
+is 4.7% wider in pixels than the slider's feather. The legacy Gaussian matte (`semantic_paste_mask` off) is not drawn.
+
+**Findings.** `enable_xseg_occlusion` / `occlusion_erosion` have no reader in `ProcessMgr` / `procmgr_masking` (only
+`anatomical_engine` / `enhancer_routes`), so the occlusion module is bound to `mask_engine_2` instead of a control that would
+look wired and change nothing. The legacy `MiniSwitch.jsx` was deleted (unreferenced). The mask profile's crop size (512) and
+matte span (80%) are stated assumptions; only the 18% cap reads the span.
+
+**NOT verified.** No real render with overrides (no fps, no pixel-noise-floor, no 3060); the per-person scope reaches code that
+reads `studio_parameters` on the `process_face` thread, not work submitted to other pools without `copy_context`. A request with
+overrides goes through `/api/preview` and render; the Extras tab has the rack and scrubbers but no dock. The colour-transfer
+micro-preview named in the brief's title was not built (the brief's body only specifies the mask curve).
+
+**A bug the e2e found in the new bar.** The bar sits inside the Field's `<label>`, and a click on a label is forwarded to its
+range input; Chrome sets a range from the position of the click it is handed, so double-clicking the bar to type snapped the
+value to the pressed position. The bar now swallows the forwarding and focuses the range itself (`stage5-studio.spec.js`).
+
+**Tab stops.** Face Swap measures 273 stops against `allowlist.json`'s ceiling of 256; clean HEAD measures 271, so that test
+was already failing and this change adds 2. Not re-baselined.
+
+**Tests.** `app/tests/test_person_overrides.py` (57), `.render-check/mask-edge-check.mjs` + `stage5-studio-check.mjs`,
+`e2e/stage5-studio.spec.js` (32). `workstation.spec.js`, `stage26.spec.js`, `render-pipeline-controls.mjs`, `test_ui_slider_commit.py` and
+`test_ui_preset_recipes.py` were updated for the changes above. Failing at clean HEAD and NOT from this change: e2e
+`faceswap-layout` type scale (`FacePoseGizmo` 9px) and "one run control" (no Preview button in the dock), the eight
+`stage26` floating-preview (PiP) tests, `contrast` on a `text-white/40` line, `tab-stops` (above), `test_ui_accessibility`,
+`test_ui_type_scale`, `test_ui_zoom_pan` MagnifierLens, `test_stage14_async_state` preview_swap_receives_the_canonical_selection.
+
+
 ## 2026-11-18 — UI overhaul Stage 4: multi-lane NLE timeline (Face Swap + Extras)
 
 The Pro Studio timeline is now a stack of lanes under a sticky control group (transport deck, overview

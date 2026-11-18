@@ -7,6 +7,7 @@ import { targetPersonRecords, normalizeSourceIndex, SKIP } from './faceswap/face
 import { excludePerson } from './faceswap/faceRoles';
 import { applyTargetFacesPayload } from './faceswap/targetPayload';
 import { FocusedInput } from './ui';
+import FaceRoutingDock from './faceswap/FaceRoutingDock';
 
 // Coarse pose buckets we consider "primary coverage" for a person. Anything the
 // backend labels (e.g. "Left Profile + Up Tilt") is matched against these by
@@ -65,6 +66,10 @@ export default function PersonGroups({
   // the backend (and therefore a reload) knows the selected person, not just
   // the array position of an angle.
   commitTargetContext,
+  // The face routing dock: per-person render overrides (faceswap/usePersonOverrides), the ordinary settings the pills show
+  // until overridden, the clip length (for the presence %), and the way back to a mode where the overrides apply.
+  personOverrides, onPersonOverride, onClearPersonOverride, onClearPersonOverrides,
+  settings, maxFrames, onUseSelectedPeople,
 }) {
   // Select a person by stable id, optionally on one of its angles. The click
   // used to change React state only, so a reload restored whatever angle index
@@ -399,6 +404,21 @@ export default function PersonGroups({
     if (firstFace >= 0) choosePerson(nextRank, firstFace);
   };
 
+  // Which source a person becomes. Same helper the swap payload is built from, so a row (or the routing dock) can never show a
+  // source the backend will not actually use.
+  const routedSourceOf = (rank) => {
+    const rawStable = faceMapping?.[rank];
+    const mappedByIdentity = rawStable == null ? SKIP
+      : sourceFacesInfo?.findIndex((info, index) =>
+        String(info?.id || `memory-slot-${index}`) === String(rawStable));
+    const mappedById = mappedByIdentity >= 0 ? mappedByIdentity
+      : normalizeSourceIndex(rawStable, sourceFaces.length);
+    return mappedById >= 0 ? mappedById
+      : (faceSelection === 'Selected face' && rank === selRank
+        ? normalizeSourceIndex(selectedSource, sourceFaces.length)
+        : SKIP);
+  };
+
   const otherRanks = people.map(([r]) => r);
 
   if (targetFaces.length === 0) {
@@ -468,6 +488,35 @@ export default function PersonGroups({
       </div>
 
       {sourceFaces.length > 0 && (
+        <FaceRoutingDock
+          people={people.map(([id, indices, displayRank]) => ({
+            id,
+            rank: displayRank + 1,
+            name: labelFor(id),
+            color: PERSON_COLORS[displayRank % PERSON_COLORS.length],
+            thumb: targetFaces[indices[0]],
+            firstFace: indices[0],
+            pose: (targetFacesInfo && targetFacesInfo[indices[0]]?.pose) || 'Front',
+            sourceIndex: routedSourceOf(id),
+          }))}
+          sources={sourceFaces.map((thumb, index) => ({ index, thumb, name: sourceFacesInfo?.[index]?.name || `Source Face ${index + 1}` }))}
+          selectedId={selRank}
+          onSelect={(person) => choosePerson(person.id, person.firstFace)}
+          onMap={setMapping}
+          overrides={personOverrides}
+          onOverride={onPersonOverride}
+          onClearOverride={onClearPersonOverride}
+          onClearPerson={onClearPersonOverrides}
+          settings={settings}
+          swapModeLabel={faceSelection}
+          onUseSelectedPeople={onUseSelectedPeople}
+          targetIndex={selTarget}
+          targetMediaId={targetMediaId}
+          maxFrames={maxFrames}
+        />
+      )}
+
+      {sourceFaces.length > 0 && (
         <div className="text-note text-muted flex items-center gap-1.5 select-none">
           <span className="h-1 w-1 rounded-full bg-[var(--accent)]" />
           Drag a source face onto a person, or use the dropdown, to choose who they become.
@@ -478,18 +527,7 @@ export default function PersonGroups({
         const color = PERSON_COLORS[displayRank % PERSON_COLORS.length];
         const open = isExpanded(rank);
         const isSel = rank === selRank;
-        // Same helper the swap payload is built from, so the row can never show
-        // a source the backend will not actually use.
-        const rawStable = faceMapping?.[rank];
-        const mappedByIdentity = rawStable == null ? SKIP
-          : sourceFacesInfo?.findIndex((info, index) =>
-            String(info?.id || `memory-slot-${index}`) === String(rawStable));
-        const mappedById = mappedByIdentity >= 0 ? mappedByIdentity
-          : normalizeSourceIndex(rawStable, sourceFaces.length);
-        const safeMap = mappedById >= 0 ? mappedById
-          : (faceSelection === 'Selected face' && rank === selRank
-            ? normalizeSourceIndex(selectedSource, sourceFaces.length)
-            : SKIP);
+        const safeMap = routedSourceOf(rank);
         const mapValid = safeMap >= 0 && safeMap < sourceFaces.length;
 
         // Pose coverage for this person.

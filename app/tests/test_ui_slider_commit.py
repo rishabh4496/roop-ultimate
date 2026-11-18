@@ -1,6 +1,7 @@
 """A slider drag must not re-render the whole app sixty times a second.
 
-`<Slider>` is used at 53 call sites and its `onChange` is, at nearly all of
+`<Slider>` (now a thin wrapper over components/StudioScrubberInput.jsx, which owns
+all of this) is used at 53 call sites and its `onChange` is, at nearly all of
 them, `set(key, value)` -- which writes App's `settings` state. `settings` is a
 prop of every screen, so calling `onChange` from the range input's `onChange`
 (which fires on EVERY pointer move, 60+ a second) re-rendered the entire tree
@@ -29,16 +30,26 @@ UI = os.path.join(os.path.dirname(APP), 'react-ui', 'src', 'components')
 
 
 def _slider_source():
+    # Stage 5: `Slider` in ui.jsx is `(props) => <StudioScrubberInput {...props} />`; the commit behaviour lives there.
+    with open(os.path.join(UI, 'StudioScrubberInput.jsx'), encoding='utf-8') as fh:
+        src = fh.read()
+    start = src.index('export default function StudioScrubberInput')
+    return src[start:]
+
+
+def _slider_is_the_scrubber():
     with open(os.path.join(UI, 'ui.jsx'), encoding='utf-8') as fh:
         src = fh.read()
-    start = src.index('export const Slider =')
-    end = src.index('export const Toggle =')
-    return src[start:end]
+    return 'export const Slider = (props) => <StudioScrubberInput {...props} />' in src
 
 
 class SliderCommitTest(unittest.TestCase):
     def setUp(self):
         self.src = _slider_source()
+
+    def test_every_slider_call_site_reaches_the_scrubber(self):
+        self.assertTrue(_slider_is_the_scrubber(),
+                        'Slider no longer renders StudioScrubberInput: the call sites would lose the debounce')
 
     def test_input_does_not_commit_directly(self):
         # The exact shape that regressed: onChange={(e) => onChange(...)} on the
@@ -63,7 +74,7 @@ class SliderCommitTest(unittest.TestCase):
         # is felt as lag on exactly the interaction the fix is meant to improve.
         self.assertTrue(
             any(handler in self.src
-                for handler in ('onPointerUp', 'onMouseUp', 'onPointerCancel')),
+                for handler in ('onPointerUp', 'onMouseUp', 'onPointerCancel', 'onEnd: flush')),
             'no release handler: the committed value would always trail the '
             'drag by the debounce interval')
 
@@ -89,16 +100,15 @@ class SliderCommitTest(unittest.TestCase):
             'the follow effect must be keyed on `value`')
 
     def test_debounce_interval_is_short_enough_to_feel_immediate(self):
-        match = re.search(r'SLIDER_COMMIT_MS\s*=\s*(\d+)', self.src) \
-            or re.search(r'SLIDER_COMMIT_MS\s*=\s*(\d+)', _whole_file())
-        self.assertIsNotNone(match, 'SLIDER_COMMIT_MS is not defined')
+        match = re.search(r'(?:SLIDER_)?COMMIT_MS\s*=\s*(\d+)', _whole_file())
+        self.assertIsNotNone(match, 'COMMIT_MS is not defined')
         self.assertLessEqual(int(match.group(1)), 150,
                              'the commit debounce is long enough to be felt as '
                              'lag on keyboard-driven edits')
 
 
 def _whole_file():
-    with open(os.path.join(UI, 'ui.jsx'), encoding='utf-8') as fh:
+    with open(os.path.join(UI, 'StudioScrubberInput.jsx'), encoding='utf-8') as fh:
         return fh.read()
 
 

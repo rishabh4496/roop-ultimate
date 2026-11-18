@@ -433,6 +433,7 @@ from roop.ffmpeg_writer import FFMPEG_VideoWriter
 from roop.StreamWriter import StreamWriter
 from roop import swap_batcher
 from roop import studio_parameters as _studio
+from roop import person_overrides as _person_overrides
 import roop.globals
 
 
@@ -5774,6 +5775,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         index = next((i + 1 for i, p in enumerate(chain) if p.type == 'swap'), 0)
         return chain[:index] + replacements + chain[index:]
 
+    @_person_overrides.scoped_face
     def process_face(self, face_index, target_face:Face, frame:Frame, plate:Frame=None, region=None):
         """Swap one face and composite it into `frame`.
 

@@ -72,6 +72,7 @@ from roop import terminal_dashboard as _terminal_dashboard
 from roop import procmgr_runtime as _procmgr_runtime
 from roop import runtime_state as _runtime_state
 from roop.processing_request import (
+    PersonOverrideError,
     UnknownSwapMode,
     normalize_processing_request,
     normalize_source_index_mapping,
@@ -133,6 +134,13 @@ async def _unknown_swap_mode(request, exc):
     """A face-selection mode that does not exist is refused, never guessed as "all"."""
     return JSONResponse(status_code=400, content={"error": "unknown_swap_mode",
                                                   "message": str(exc)})
+
+
+@app.exception_handler(PersonOverrideError)
+async def _person_override_rejected(request, exc):
+    """An override outside its range or naming a setting that does not exist is refused, never clamped."""
+    return JSONResponse(status_code=400, content={"error": "invalid_person_overrides",
+                                                  "message": str(exc), "errors": exc.errors})
 
 
 @app.exception_handler(_safe_paths.UploadRejected)
@@ -1335,6 +1343,9 @@ def _selection_response_fields(request, *, frame=None, fake=None):
         "preview_signature": signature,
         "frame": frame,
         "diagnostics": selection_diagnostics(selection, preview_signature=signature),
+        # Did the per-person overrides reach this run? `applied` is False in a mode that cannot route by person, with
+        # the reason; a UI that shows override pills reads this instead of assuming they took effect.
+        "person_overrides_status": dict(request.get("person_overrides_status") or {}),
     }
 
 

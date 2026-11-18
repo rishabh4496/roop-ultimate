@@ -84,6 +84,10 @@ import InspectorGroup, { Disclosure } from './faceswap/InspectorGroup';
 import RecipePresetBar from './faceswap/RecipePresetBar';
 import LinkedPaddingControl from './faceswap/LinkedPaddingControl';
 import EnhancerPipelineStack from './faceswap/EnhancerPipelineStack';
+import MaskEdgeProfile from './faceswap/MaskEdgeProfile';
+import { AI_UPSCALE_MODELS } from './faceswap/upscaleModels';
+import usePersonOverrides from './faceswap/usePersonOverrides';
+import { wireOverrides } from './faceswap/routingModel';
 import TemporalModeControl from './faceswap/TemporalModeControl';
 import { QUICK_RECIPES, activeRecipeId } from './faceswap/recipes';
 import { temporalModeOf } from './faceswap/temporalModes';
@@ -121,28 +125,6 @@ import { useHistoryChannel, MASK_CHANNEL, ROTO_CHANNEL, PINS_CHANNEL } from '../
 import useSnapshotSlots from './faceswap/useSnapshotSlots';
 import SnapshotSlots from './faceswap/SnapshotSlots';
 import { decodeFrame } from './faceswap/frameDecoder';
-
-// AI upscale models folded into the swap pass (mirrors the Extras post-processor
-// list). value = backend subtype, label = friendly name.
-const AI_UPSCALE_MODELS = [
-  { value: 'esrganx2', label: 'Real-ESRGAN ×2' },
-  { value: 'esrganx4', label: 'Real-ESRGAN ×4' },
-  { value: 'esrgan_anime_x4', label: 'Real-ESRGAN Anime ×4' },
-  { value: 'ultrasharp_x4', label: 'Ultra-Sharp ×4' },
-  { value: 'lsdirx4', label: 'LSDIR ×4' },
-  { value: 'clear_reality_x4', label: 'Clear Reality ×4' },
-  { value: 'span_x4', label: 'SPAN ×4' },
-  { value: 'compact_x4', label: 'Compact ×4 (fast AI)' },
-  { value: 'nomos8k_x4', label: 'Nomos8k ×4' },
-  { value: 'lanczos_x2', label: 'Fast Lanczos ×2 (no AI)' },
-  { value: 'lanczos_x4', label: 'Fast Lanczos ×4 (no AI)' },
-  { value: 'fsr_x2', label: 'FSR-lite ×2 · Lanczos+CAS (no AI)' },
-  { value: 'fsr_x4', label: 'FSR-lite ×4 · Lanczos+CAS (no AI)' },
-  { value: 'spline_x2', label: 'Spline36 ×2 (no AI)' },
-  { value: 'spline_x4', label: 'Spline36 ×4 (no AI)' },
-  { value: 'sinc_x2', label: 'Sinc ×2 · sharpest (no AI)' },
-  { value: 'sinc_x4', label: 'Sinc ×4 · sharpest (no AI)' },
-];
 
 export default function FaceSwap({
   meta, settings, setSettings, notify, registerFileListener,
@@ -436,6 +418,9 @@ export default function FaceSwap({
   const targetIdAt = (index = selTarget) => targets[index]?.media_id
     || targets[index]?.id || null;
   const activeTargetMediaId = targetIdAt(selTarget);
+  // Per-person render overrides for this clip (the routing dock's pills). Sent with every preview and render as
+  // `person_overrides`; the backend applies them per face (app/roop/person_overrides.py).
+  const personOv = usePersonOverrides(activeTargetMediaId);
   const selectedDetectedFaceIndex = selectedDetectedFace
     && selectedDetectedFace.mediaId === activeTargetMediaId
     && selectedDetectedFace.frame === frame
@@ -1096,6 +1081,7 @@ export default function FaceSwap({
       face_mapping: getFaceMappingArray(sp, selectedSource),
       target_person_source_mapping: getStableTargetSourceMapping(sp, selectedSource),
       target_person_ids: targetPersonIds,
+      person_overrides: wireOverrides(personOv.overrides, targetPersonIds),
       source_mapping_names: getSourceMappingNames(sp, selectedSource),
       source_mapping_ids: getSourceMappingIds(sp, selectedSource),
       selected_source_name: sourceNameAt(selectedSource),
@@ -1553,6 +1539,7 @@ export default function FaceSwap({
       face_mapping: getFaceMappingArray(activeParams),
       target_person_source_mapping: getStableTargetSourceMapping(activeParams),
       target_person_ids: targetPersonIds,
+      person_overrides: wireOverrides(personOv.overrides, targetPersonIds),
       source_mapping_names: getSourceMappingNames(activeParams),
       selected_source_id: sourceIdAt(selSource),
       selected_source_name: sourceNameAt(selSource),
@@ -3792,6 +3779,13 @@ export default function FaceSwap({
               setTargetFacesInfo={setTargetFacesInfo}
               notify={notify}
               clearPreviewCache={clearPreviewCache}
+              personOverrides={personOv.overrides}
+              onPersonOverride={personOv.setOverride}
+              onClearPersonOverride={personOv.clearOverride}
+              onClearPersonOverrides={(id) => personOv.clearOverride(id)}
+              settings={p}
+              maxFrames={maxFrames}
+              onUseSelectedPeople={() => set('face_detection_mode', 'Selected people')}
             />
           </Section>
 
@@ -4115,9 +4109,10 @@ export default function FaceSwap({
           <Toggle label="Show mask overlay in preview" checked={!!p.show_mask_offsets} onChange={(v) => set('show_mask_offsets', v)} />
           <LinkedPaddingControl settings={p} onChangeMany={setMany} defaults={FACESWAP_DEFAULTS} />
           <Slider label="Face mask edge blend" min={0} max={200} step={1} value={num(p.face_mask_blend, 20)} onChange={(v) => set('face_mask_blend', v)} defaultValue={FACESWAP_DEFAULTS.face_mask_blend} />
+          <Slider label="Mask erode / dilate radius" info="Signed frame-pixel adjustment to the facial landmark convex hull before Gaussian feathering. Negative values erode the swap to keep hair, hands, microphones, and accessories out. Positive values dilate it to recover clipped skin. 0 preserves the detected contour." min={-32} max={32} step={1} value={num(p.mask_erode_dilate_radius, 0)} onChange={(v) => set('mask_erode_dilate_radius', v)} defaultValue={FACESWAP_DEFAULTS.mask_erode_dilate_radius} />
+          <MaskEdgeProfile blend={num(p.face_mask_blend, 20)} erode={num(p.mask_erode_dilate_radius, 0)} settings={p} />
           <Select label="Mask edge falloff" info="Shape of the ramp between swapped and original pixels. 'Gaussian' is the shipped behaviour and what 'Face mask edge blend' was calibrated against. 'Distance (soft)' derives the ramp from a distance transform, so it is the SAME WIDTH everywhere along the boundary — a Gaussian narrows wherever the mask is locally convex or thin, which is why one setting can look soft along the cheek and hard at the temple in the same frame." value={p.mask_edge_mode || 'gaussian'} onChange={(v) => set('mask_edge_mode', v)} options={[{ value: 'gaussian', label: 'Gaussian (default)' }, { value: 'distance', label: 'Distance (soft, constant width)' }]} />
           <Slider label="Boundary illumination match" info="Grades only the LOW frequencies of the pasted face toward the original plate, and only at the rim — exactly zero where the mask is fully opaque, so the identity region is untouched and no target texture is copied in. Use when a seam is still visible after the edge is soft: that residual line is a brightness step, not a geometry problem. 0 disables it entirely." min={0} max={1} step={0.05} value={num(p.boundary_illumination_strength, 0)} onChange={(v) => set('boundary_illumination_strength', v)} defaultValue={FACESWAP_DEFAULTS.boundary_illumination_strength} />
-          <Slider label="Mask erode / dilate radius" info="Signed frame-pixel adjustment to the facial landmark convex hull before Gaussian feathering. Negative values erode the swap to keep hair, hands, microphones, and accessories out. Positive values dilate it to recover clipped skin. 0 preserves the detected contour." min={-32} max={32} step={1} value={num(p.mask_erode_dilate_radius, 0)} onChange={(v) => set('mask_erode_dilate_radius', v)} defaultValue={FACESWAP_DEFAULTS.mask_erode_dilate_radius} />
           <Slider label="🧩 Swap model's own face mask" info="Only hififace and hyperswap emit this — every other swapper ignores the setting, so it is safe to leave on. Those two nets output a face mask alongside the swapped image, saying where they actually synthesised a face, and the pipeline used to throw it away. That matters because the paste mask cannot know: it is an ellipse intersected with the convex hull of the 106 landmarks, whose forehead extension runs 60% above the eyebrows and therefore into the HAIR. Measured against hififace's own verdict, 15–27% of the paste mask is territory the model says is not face on a FRONTAL head, and 31% on a profile — and looking at where that excess lands, it is the band above the hairline frontally, and a wedge of hair plus background behind the head on a profile. That is very likely why eyes/nose/mouth read as distorted at angles: not the features themselves, but the invalid territory around them being composited. Not pose-gated, unlike the two angle controls above, because the net derives this from the actual image and its verdict is right at every angle. 100 = trust the model fully, 0 = off (previous behaviour), which is the default — this is new and has not been judged on real footage yet. It is the first thing to raise if a hififace or hyperswap paste reaches up into hair." min={0} max={100} step={5} value={num(p.swap_model_mask_strength, 0)} onChange={(v) => set('swap_model_mask_strength', v)} defaultValue={FACESWAP_DEFAULTS.swap_model_mask_strength} />
           <Toggle label="XSeg edge refinement (guided filter)" info="DFL XSeg only. Re-fits XSeg's 256px mask boundary to the edges of the face crop with a guided filter. Measured on 10 clips against an independent face parser it did NOT move the boundary closer (placement unchanged, agreement worse on every clip); it only softens the edge. Off by default; kept for comparison. About 1 ms of CPU per face." checked={!!p.mask_guided_filter} onChange={(v) => set('mask_guided_filter', v)} />
           <Disclosure id="inspector.mouth-mask" title="Mouth mask">

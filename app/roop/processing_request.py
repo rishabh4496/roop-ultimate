@@ -13,6 +13,8 @@ from roop.processing_selection import (
     selection_diagnostics,
 )
 from roop.target_selection import normalize_target_selection
+from roop import person_overrides as _person_overrides
+from roop.person_overrides import PersonOverrideError  # noqa: F401  (re-exported for the API's 400 handler)
 
 
 SWAP_MODE_LABELS = {
@@ -384,6 +386,11 @@ def normalize_processing_request(payload=None, *, target_groups=None,
         for index in (source_index_mapping or [])
     ] if source_index_mapping is not None else None
 
+    # Per-person paste overrides (roop.person_overrides). Validated in EVERY mode (a bad payload is a 400 whether or
+    # not this mode could use it) but only handed to the render in the modes that route by person.
+    overrides = _person_overrides.resolve(
+        payload.get("person_overrides"), stable_person_ids, swap_mode)
+
     return {
         "request_id": str(request_id or payload.get("request_id") or uuid4().hex[:12]),
         "processing_selection": dict(processing_selection),
@@ -409,6 +416,14 @@ def normalize_processing_request(payload=None, *, target_groups=None,
         "selected_source_gallery_index": _optional_int(
             selected_source_gallery_index, -1),
         "source_index": source_index,
+        # rank -> {name: value}; empty unless the mode routes by person. `person_overrides_status` is the honest answer
+        # to "did my override reach the render?" that the preview/render responses echo to the UI.
+        "person_overrides": overrides["by_rank"],
+        "person_overrides_status": {
+            "applied": overrides["applied"],
+            "reason": overrides["reason"],
+            "unknown_people": overrides["unknown_people"],
+        },
     }
 
 

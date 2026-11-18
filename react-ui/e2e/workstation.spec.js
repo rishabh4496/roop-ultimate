@@ -20,6 +20,8 @@ test.afterEach(async ({ request }) => {
 });
 
 const range = (page, label) => page.locator('label', { hasText: label }).locator('input[type="range"]').first();
+// Stage 5: the visible control is the scrubber bar; the range input is its hidden twin (keyboard, assistive tech, .fill()).
+const barOf = (page, label) => page.locator('label', { hasText: label }).filter({ has: page.locator('input[type="range"]') }).first().getByTestId('scrubber-bar');
 const posted = (page, key) => page.waitForRequest((r) => r.method() === 'POST' && /\/api\/settings$/.test(r.url())
   && key in (r.postDataJSON() || {}));
 
@@ -30,11 +32,11 @@ test.describe('slider gestures', () => {
     await openTab(page, 'faceswap');
   });
 
-  test('double-click resets to the factory default, Backspace does the same from the keyboard', async ({ page }) => {
+  test('right-click resets to the factory default, Backspace does the same from the keyboard', async ({ page }) => {
     const s = range(page, 'Face detection threshold');           // default 0.5
     await s.fill('0.7');
     await expect(s).toHaveValue('0.7');
-    await s.dblclick();
+    await barOf(page, 'Face detection threshold').click({ button: 'right' });
     await expect(s).toHaveValue('0.5');
 
     await s.fill('0.3');
@@ -55,46 +57,46 @@ test.describe('slider gestures', () => {
     expect(Math.abs(req.postDataJSON().face_detector_threshold - 0.54)).toBeLessThan(1e-6);
   });
 
-  test('Shift+drag moves the value a tenth as fast as a plain drag', async ({ page }) => {
-    const s = range(page, 'Face detection threshold');
-    await s.fill('0.5');
-    const box = await s.boundingBox();
-    const y = box.y + box.height / 2;
-    const x0 = box.x + box.width * 0.5;
+  test('Alt+drag moves the value a tenth as fast as a plain drag, Shift+drag ten times as fast', async ({ page }) => {
+    const L = 'Face mask edge blend';                                   // 0..200, default 12
+    await page.getByTestId('inspector').getByRole('button', { name: /^Masking/ }).click();    // a closed group unmounts its body
+    const s = range(page, L);
     const read = async () => Number(await s.inputValue());
-
-    await page.mouse.move(x0, y);
-    await page.keyboard.down('Shift');
-    await page.mouse.down();
-    await page.mouse.move(x0 + 100, y, { steps: 8 });
-    await page.mouse.up();
-    await page.keyboard.up('Shift');
-    const fine = Math.abs((await read()) - 0.5);
-
-    await s.fill('0.5');
-    await page.mouse.move(x0, y);
-    await page.mouse.down();
-    await page.mouse.move(x0 + 100, y, { steps: 8 });
-    await page.mouse.up();
-    const coarse = Math.abs((await read()) - 0.5);
-
-    expect(coarse, 'a plain drag of 100px moves the value a lot').toBeGreaterThan(0.1);
-    expect(fine, 'the same Shift+drag moves it far less').toBeLessThan(coarse / 3);
+    const drag = async (mods) => {
+      await s.fill('12');
+      const box = await barOf(page, L).boundingBox();
+      const y = box.y + box.height / 2;
+      const x0 = box.x + box.width * 0.2;
+      for (const m of mods) await page.keyboard.down(m);
+      await page.mouse.move(x0, y);
+      await page.mouse.down();
+      await page.mouse.move(x0 + 30, y, { steps: 8 });
+      await page.mouse.up();
+      for (const m of mods) await page.keyboard.up(m);
+      return Math.abs((await read()) - 12);
+    };
+    const plain = await drag([]);
+    const fine = await drag(['Alt']);
+    const fast = await drag(['Shift']);
+    expect(plain, 'a plain drag of 30px moves the value').toBeGreaterThanOrEqual(8);
+    expect(fine, 'the same Alt+drag moves it far less').toBeLessThan(plain / 5);
+    expect(fast, 'the same Shift+drag moves it far more').toBeGreaterThan(plain * 8);
   });
 
-  test('click the number to type an exact value; Enter commits, Escape cancels; Enter on the slider opens it', async ({ page }) => {
+  test('double-click the bar to type an exact value; Enter commits, Escape cancels; Enter on the slider opens it', async ({ page }) => {
     const s = range(page, 'Face detection threshold');
     const label = page.locator('label', { hasText: 'Face detection threshold' });
+    const shown = label.getByTestId('scrubber-value');
     await s.fill('0.5');
 
-    await label.locator('button[title="Click to type a value"]').click();
+    await barOf(page, 'Face detection threshold').dblclick();
     const box = page.getByRole('textbox', { name: 'Face detection threshold value' });
     await expect(box).toBeFocused();
     await box.fill('0.62');
     const sent = posted(page, 'face_detector_threshold');
     await page.keyboard.press('Enter');
     expect((await sent).postDataJSON().face_detector_threshold).toBe(0.62);
-    await expect(label.locator('button[title="Click to type a value"]')).toHaveText('0.62');
+    await expect(shown).toHaveText('0.62');
 
     await s.focus();
     await page.keyboard.press('Enter');                          // the keyboard way in
@@ -102,12 +104,12 @@ test.describe('slider gestures', () => {
     await box.fill('0.9');
     await page.keyboard.press('Escape');
     await expect(box).toHaveCount(0);
-    await expect(label.locator('button[title="Click to type a value"]')).toHaveText('0.62');
+    await expect(shown).toHaveText('0.62');
 
-    await label.locator('button[title="Click to type a value"]').click();
+    await barOf(page, 'Face detection threshold').dblclick();
     await page.getByRole('textbox', { name: 'Face detection threshold value' }).fill('7');   // beyond the max
     await page.keyboard.press('Enter');
-    await expect(label.locator('button[title="Click to type a value"]')).toHaveText('0.90');
+    await expect(shown).toHaveText('0.90');
   });
 });
 
@@ -208,17 +210,18 @@ test.describe('inspector', () => {
     await expect(pills.getByRole('button', { name: 'Glasses' })).toHaveAttribute('aria-pressed', 'false');
   });
 
-  test('the enhancer stack: four stages, switches that remember, a locked core, double-click reset on every slider', async ({ page }) => {
+  test('the effect rack: six modules, switches that remember, a locked core, right-click reset on every mix and slider', async ({ page }) => {
     const inspector = page.getByTestId('inspector');
     const stack = inspector.getByRole('list', { name: 'Enhancer pipeline' });
-    await expect(stack.getByRole('listitem').filter({ has: page.getByRole('switch') })).toHaveCount(4);
-    for (const t of ['Swapper Core', 'Face Restorer', 'Texture & Grain Closer', 'LAB Color & Skin-Tone Match']) {
+    await expect(stack.getByRole('listitem').filter({ has: page.getByRole('switch') })).toHaveCount(6);
+    for (const t of ['Swapper Core', 'Face Restorer', 'Texture & Grain Closer', 'LAB Color & Skin-Tone Match', 'Occlusion Mask', 'Frame Upscaling']) {
       await expect(stack.getByRole('switch', { name: `${t} enabled` })).toBeVisible();
     }
     await expect(stack.getByRole('switch', { name: 'Swapper Core enabled' }), 'the core cannot be turned off').toBeDisabled();
 
     // Restorer: off -> None, on -> the one it replaced (not a default).
     const restorer = stack.getByRole('switch', { name: 'Face Restorer enabled' });
+    await stack.getByRole('button', { name: /Face Restorer/ }).click();                       // the body starts folded
     await inspector.locator('label', { hasText: 'Restorer model' }).locator('select').selectOption('GPEN');
     await expect(restorer).toHaveAttribute('aria-checked', 'true');
     const off = posted(page, 'selected_enhancer');
@@ -231,7 +234,7 @@ test.describe('inspector', () => {
 
     // Grain: off -> 0, on -> what it was.
     const grain = stack.getByRole('switch', { name: 'Texture & Grain Closer enabled' });
-    await range(page, 'Grain match').fill('0.8');
+    await stack.locator('label', { hasText: 'Grain match' }).locator('input[type="range"]').first().fill('0.8');   // scoped: Face Swap has a second 'Grain match strength'
     const z = posted(page, 'merger_grain_match');
     await grain.click();
     expect((await z).postDataJSON().merger_grain_match).toBe(0);
@@ -239,15 +242,15 @@ test.describe('inspector', () => {
     await grain.click();
     expect((await back).postDataJSON().merger_grain_match).toBe(0.8);
 
-    // Every slider in the stack resets on double-click.
+    // Every slider in the stack resets on right-click (the mixes read 0-100%, the range input still holds 0..1).
     await range(page, 'Original/Enhanced blend').fill('0.2');
-    await range(page, 'Original/Enhanced blend').dblclick();
+    await barOf(page, 'Original/Enhanced blend').click({ button: 'right' });
     await expect(range(page, 'Original/Enhanced blend')).toHaveValue('1');
     await range(page, 'Histogram match').fill('0.9');
-    await range(page, 'Histogram match').dblclick();
+    await barOf(page, 'Histogram match').click({ button: 'right' });
     await expect(range(page, 'Histogram match')).toHaveValue('0.4');
     await range(page, 'Swapping steps').fill('4');
-    await range(page, 'Swapping steps').dblclick();
+    await barOf(page, 'Swapping steps').click({ button: 'right' });
     await expect(range(page, 'Swapping steps')).toHaveValue('1');
   });
 
@@ -393,12 +396,12 @@ test.describe('editor', () => {
     await request.post('/api/facemgr/clear', { data: {} });
   });
 
-  test('crop sliders reset on double-click, and the swap enhancement stack is mounted (collapsed)', async ({ page }) => {
+  test('crop sliders reset on right-click, and the swap enhancement stack is mounted (collapsed)', async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await openTab(page, 'extras');
     const left = page.locator('label').filter({ has: page.getByText('Left', { exact: true }) }).locator('input[type="range"]');
     await left.fill('20');
-    await left.dblclick();
+    await page.locator('label').filter({ has: page.getByText('Left', { exact: true }) }).getByTestId('scrubber-bar').click({ button: 'right' });
     await expect(left).toHaveValue('0');
     await expect(page.getByRole('list', { name: 'Enhancer pipeline' })).toHaveCount(0);
     await page.getByRole('button', { name: 'Swap enhancement pipeline' }).click();

@@ -243,6 +243,29 @@ Reused frames are still written, so Effective Output can exceed Neural. A metric
 call)` for the ORT / cv2 / pipe calls `_prof` wraps (their return IS the duration), `cuda-event` for a GPU-resident
 stage read through `roop/gpu_event_timer.py` (record on the hot path, read later at <= 4 Hz, never synchronized).
 
+### Studio controls
+
+`components/StudioScrubberInput.jsx` is every numeric control (`Slider` in `ui.jsx` renders it): a filled bar in
+`--accent-cyan`; drag the label or the bar to scrub from where the value is (a press never jumps it), **Shift x10, Alt x0.1**;
+**double-click types** (`512/2`, `+10%` work); **right-click or the cyan dot resets**; Arrow keys, Backspace (reset) and Enter
+(type) work on the hidden `<input type="range">` underneath, which is the control's one tab stop. `percent` shows a 0..1 value as
+0-100%. The geometry is `scrubberModel.js`; the pace is `numeric/scrubMath.js`.
+
+`faceswap/EnhancerPipelineStack.jsx` (Face Swap and Extras) is the **effect rack**: swapper, restorer, grain, colour, occlusion
+mask, upscaler in the engine's fixed order. Each card has a bypass switch that remembers what it replaced, a wet/dry mix bar
+where the render has a blend setting (`effectRackModel.js` says which and why not for the rest), and a Low / Med / High VRAM
+badge (`measured` only for four restorers; everything else is an `estimate` and the tooltip says so).
+
+`faceswap/FaceRoutingDock.jsx` (inside the people list) routes target faces to sources and carries the **per-face override
+pills** for the selected person. Overrides ride every preview and render as `person_overrides` (`{ <person id>: { mask_feather,
+mask_erode_dilate_radius, color_match_strength, blend_ratio, restore_identity_weight } }`); the backend
+(`app/roop/person_overrides.py`) applies them per face in "Selected face" / "Selected people" only, answers 400 to an unknown name
+or an out-of-range value, and echoes `person_overrides_status` (`applied`, and why not). `routingModel.js` is checked against
+the backend's table by `.render-check/stage5-studio-check.mjs`.
+
+`faceswap/MaskEdgeProfile.jsx` draws the paste matte's seam falloff beside the feather and erode sliders from the production
+formula (`maskEdgeModel.js`; `.render-check/mask-edge-check.mjs` compares it with the real `MaskComposer` sample for sample).
+
 ### Type scale and colour tokens
 
 Body text is **12px or more**. `text-nano` (9) and `text-micro` (10) are chrome sizes (pill badge, `<kbd>`,

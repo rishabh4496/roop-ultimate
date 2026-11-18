@@ -10,7 +10,7 @@ Studio recipes did (`enhancer_blend`, `face_upscaler`, `mask_blur`,
 
 So the presets are checked against the two places that define what is real:
 faceswap/defaults.js for the key set, and api.py's meta lists (plus the UI's own
-AI_UPSCALE_MODELS) for the values. Covers both preset sources — the Preset
+AI_UPSCALE_MODELS, now faceswap/upscaleModels.js) for the values. Covers both preset sources — the Preset
 Studio recipes and SliderTrackerBar's built-in presets.
 """
 
@@ -99,7 +99,7 @@ ENUMS = {
         r'no_face_choices = \[(.*?)\]', API_SRC, re.S).group(1))),
     'upscale_model_after': set(re.findall(
         r"value:\s*'([^']+)'", re.search(r'AI_UPSCALE_MODELS = \[(.*?)\];',
-                                         _read(UI, 'FaceSwap.jsx'), re.S).group(1))),
+                                         _read(UI, 'faceswap/upscaleModels.js'), re.S).group(1))),
 }
 
 # Every setting the Face Swap tab can change, straight from its set('key', …)
