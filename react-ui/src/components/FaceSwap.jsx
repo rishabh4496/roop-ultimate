@@ -68,7 +68,8 @@ import { EMPTY_BLEND, fetchIdentityBlend, normalizeBlend } from './faceswap/iden
 import AmbilightGlow from './faceswap/AmbilightGlow';
 import FloatingActionDock from './faceswap/FloatingActionDock';
 import PipelinePill from './faceswap/PipelinePill';
-import { ModularPipelineFlowStrip } from './faceswap/PipelinePill';
+import { VisualPipelineNodeFlowBar } from './faceswap/PipelinePill';
+import { FLOW_NODES } from './faceswap/flowModel';
 import { useRunBarSync } from './faceswap/runBarSync';
 import ParameterSweepModal from './faceswap/ParameterSweepModal';
 import MediaTabSessionBar from './faceswap/MediaTabSessionBar';
@@ -121,7 +122,7 @@ import { outputMediaUrl, outputSource } from './outputUrl';
 import { useFrameSocketHold } from '../transport/useFrameSocket';
 import { logFailure, reportFailure } from '../failureLog';
 import { useHistoryStore } from '../store/historyStore';
-import { useSlotStore, SLOT_IDS } from '../store/slotStore';
+import { useSlotStore, SLOT_IDS, assignRecipeToSlot } from '../store/slotStore';
 import { useHistoryChannel, MASK_CHANNEL, ROTO_CHANNEL, PINS_CHANNEL } from '../history/historyChannels';
 import useSnapshotSlots from './faceswap/useSnapshotSlots';
 import SnapshotSlots from './faceswap/SnapshotSlots';
@@ -252,13 +253,21 @@ export default function FaceSwap({
   const soloStageRef = useRef(null);
   soloStageRef.current = soloStage;
   const [bypassedStages, setBypassedStages] = useState({});
+  const bypassedRef = useRef({});
+  bypassedRef.current = bypassedStages;
+  // What the backend said about the solo it was asked for: { applied, note, stats } - a solo it could not produce is said, not shown.
+  const [previewSolo, setPreviewSolo] = useState(null);
   const [showFlowStrip, setShowFlowStrip] = useState(true);
   const [showSweepModal, setShowSweepModal] = useState(false);
+
+  // The stages switched off for the preview, in pipeline order: the list the request carries and the cache key is built from.
+  const bypassList = (map = bypassedRef.current) => FLOW_NODES.filter((n) => n.bypassable && map[n.id]).map((n) => n.id);
 
   const handleSoloStage = useCallback((stage) => {
     const next = stage === soloStageRef.current ? null : stage;
     setSoloStage(next);
     soloStageRef.current = next;
+    if (!next) setPreviewSolo(null);
     setTimeout(() => {
       if (refreshPreviewRef.current) {
         refreshPreviewRef.current({ force: true, solo_stage: next });
@@ -266,8 +275,12 @@ export default function FaceSwap({
     }, 0);
   }, []);
 
+  // A bypass changes the PICTURE (the backend skips the stage), so it re-renders the frame like a solo does.
   const handleToggleBypass = useCallback((stageId) => {
-    setBypassedStages((prev) => ({ ...prev, [stageId]: !prev[stageId] }));
+    const next = { ...bypassedRef.current, [stageId]: !bypassedRef.current[stageId] };
+    bypassedRef.current = next;
+    setBypassedStages(next);
+    setTimeout(() => { refreshPreviewRef.current?.({ force: true }); }, 0);
   }, []);
   const [uploadingSrc, setUploadingSrc] = useState(false);
   const [uploadingTgt, setUploadingTgt] = useState(false);
@@ -1597,6 +1610,7 @@ export default function FaceSwap({
       processing_selection: selectionIdentity(buildProcessingSelection(params, { requestId: 'sig' })),
       selection_version: null,
       solo_stage: solo,
+      bypass_stages: bypassList(),
     }));
 
   // The settings IN FORCE at the playhead: the clip's, with the scene override covering this frame
@@ -1791,6 +1805,7 @@ export default function FaceSwap({
         setPreviewAnchors(cached.anchors || []);
         setPreviewPose(cached.pose || []);
         setPreviewDiagnostic(cached.diagnostic || null);
+        setPreviewSolo(cached.solo || null);
         if (cached.sar !== undefined) setPreviewSar(cached.sar);
         if (cached.dar !== undefined) setPreviewDar(cached.dar);
         if (cached.colorBadge !== undefined) setPreviewColorBadge(cached.colorBadge);
@@ -1860,6 +1875,7 @@ export default function FaceSwap({
         index: idx, frame: fr, fake, target_media_id: requestedMediaId,
         processing_selection: selection,
         solo_stage: effectiveSolo,
+        bypass_stages: bypassList(),
         ...(opts.overrides || {}),
       }), {
         abortOnUnmount: true, timeout: 0, signal: ctrl.signal,
@@ -1909,6 +1925,9 @@ export default function FaceSwap({
       const diagnostic = res.selection_diagnostic
         || (res.target_required ? 'target_required' : null);
       setPreviewDiagnostic(diagnostic);
+      setPreviewSolo(res.solo_stage != null
+        ? { applied: res.solo_applied !== false, note: res.solo_note || '', stats: res.solo_stats || null }
+        : null);
       // The backend hands back a base64 data URL. It is converted here, ONCE,
       // at the only point it enters the client — so nothing downstream (React
       // state, the cache, the pop-out, localStorage) ever holds the megabytes.
@@ -1928,6 +1947,9 @@ export default function FaceSwap({
           pose: res.pose || [], image: blobSrc, diagnostic,
           signature: res.preview_signature || null, requestId: res.request_id || null,
           sar: res.sar_val ?? 1.0, dar: res.dar_val ?? 0.0,
+          solo: res.solo_stage != null
+            ? { applied: res.solo_applied !== false, note: res.solo_note || '', stats: res.solo_stats || null }
+            : null,
         });
       }
     } catch (e) {
@@ -4663,21 +4685,7 @@ export default function FaceSwap({
         </Section>
                   <div data-after-deck className="space-y-3">
 
-            {/* Modular Pipeline Flow Strip & 1-Click Buffer Soloing */}
-            {showFlowStrip && (
-              <div className="pt-1">
-                <div className="flex items-center justify-between mb-1 text-micro text-white/50 px-1">
-                  <span className="font-semibold uppercase tracking-wider text-mini text-white/70">Modular Pipeline Flow</span>
-                  <span className="text-note">Alt+Click node to solo intermediate buffer &bull; ⏻ bypass</span>
-                </div>
-                <ModularPipelineFlowStrip
-                  soloStage={soloStage}
-                  onSoloStage={handleSoloStage}
-                  bypassedStages={bypassedStages}
-                  onToggleBypass={handleToggleBypass}
-                />
-              </div>
-            )}
+            {/* The pipeline flow bar now docks under the viewport (see the stage deck above); it is no longer in this panel. */}
 
             {/* Live Slider Tracker Bar. It scrolls UNDER the pinned deck above, so a slider is dragged
                 with the picture it changes in view. */}
@@ -4769,7 +4777,12 @@ export default function FaceSwap({
             onApplyRecipe={(recipe) => {
               setSettings((s) => ({ ...s, ...recipe }));
               refreshPreview({ force: true, overrides: recipe });
-              notify?.('Applied sweep recipe parameters', 'info');
+            }}
+            onAssignSlot={async (slotId, recipe, { tile }) => {
+              // The recipe goes into the slot as it is (merged over the live one); a small picture of the cell is kept for the pill.
+              let bitmap = null;
+              try { bitmap = tile?.image ? await decodeFrame(tile.image) : null; } catch { bitmap = null; }
+              assignRecipeToSlot('faceswap', slotId, recipe, { bitmap, fallbackSettings: p, label: `Slot ${slotId} · sweep cell` });
             }}
             notify={notify}
           />
@@ -5551,6 +5564,24 @@ export default function FaceSwap({
                   );
                 })()}
               </div>
+            )}
+
+            {/* Stage 11: the pipeline flow bar, docked under the viewport. Solo a stage's buffer (S / 1-6), bypass it, read its
+                latency and its warnings; the "Flow Nodes" toggle in the inspector hides it. It is a child of the deck's flex
+                column (not of the deck): studio-shell.css gives the deck's direct divs height:100%, and flow-bar.css makes
+                this one `flex: none` and hands the stage's `flex: 1` to the sibling before it. */}
+            {showFlowStrip && (
+              <VisualPipelineNodeFlowBar
+                className="flow-dock"
+                soloStage={soloStage}
+                onSoloStage={handleSoloStage}
+                bypassedStages={bypassedStages}
+                onToggleBypass={handleToggleBypass}
+                settings={p}
+                provider={meta?.provider_status || null}
+                faces={previewFaces}
+                soloResult={previewSolo}
+              />
             )}
           </div>
 

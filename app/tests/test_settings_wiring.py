@@ -127,7 +127,7 @@ VIA_MASK_OFFSET_HELPER = {
 }
 
 # Preview-only concepts, meaningless to a full render.
-PREVIEW_ONLY = {"index", "frame", "fake_preview", "show_mask_offsets", "solo_stage",
+PREVIEW_ONLY = {"index", "frame", "fake_preview", "show_mask_offsets", "solo_stage", "bypass_stages",
                 # /api/preview/frame: which frame to address and how to SHOW and ENCODE it. None of them changes a
                 # pixel the render writes; the render's own frame range comes from the job, not from a request field.
                 "frame_idx", "render_mode", "landmarks", "image_format", "image_quality", "diff_gain", "seq"}

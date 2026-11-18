@@ -35,7 +35,7 @@ import FaceContextMenu from './FaceContextMenu';
 import FacePoseGizmo from './FacePoseGizmo';
 import { cropRectFor, faceBadgeText, warmthDeltaFor } from './faceContextModel';
 import { cropToPng, loadStageImage, sampleFaceSkin } from './faceSample';
-import { MODULAR_FLOW_NODES } from './pillModel';
+import { soloLabel } from './flowModel';
 import { SLOT_ACTION_IDS } from '../../shortcuts/actions';
 import { eventMatches, keyupMatches } from '../../store/shortcutStore';
 import { usePipStore } from '../../store/pipStore';
@@ -2021,10 +2021,10 @@ export default function InteractivePreview({
         <div
           role="status"
           data-testid="interactive-preview-solo-badge"
-          className="pointer-events-auto flex items-center gap-2 rounded-lg bg-amber-400 text-black px-2.5 py-1 text-micro font-bold shadow-lg border border-amber-300 select-none animate-pulse"
+          className="pointer-events-auto flex items-center gap-2 rounded-lg bg-cyan-300 text-black px-2.5 py-1 text-micro font-bold shadow-[0_0_18px_rgba(34,211,238,0.55)] border border-cyan-100 select-none"
         >
           <span className="h-2 w-2 rounded-full bg-black" />
-          <span>SOLO: {MODULAR_FLOW_NODES.find((n) => n.id === soloStage)?.label || soloStage}</span>
+          <span>SOLO: {soloLabel(soloStage)}</span>
           <button
             type="button"
             data-testid="exit-solo-button"
@@ -2032,8 +2032,8 @@ export default function InteractivePreview({
               e.stopPropagation();
               onSoloStage?.(null);
             }}
-            className="ml-1 px-1.5 py-0.5 rounded bg-black/80 hover:bg-black text-amber-300 text-micro uppercase font-bold transition-colors"
-            title="Exit Solo buffer mode (Esc / Alt+Click)"
+            className="ml-1 px-1.5 py-0.5 rounded bg-black/80 hover:bg-black text-cyan-200 text-micro uppercase font-bold transition-colors"
+            title="Exit Solo buffer mode (Esc, or 0 in the flow bar)"
           >
             Exit Solo
           </button>

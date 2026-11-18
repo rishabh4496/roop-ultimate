@@ -10,8 +10,9 @@
 //   label     what the cheat-sheet and the remapper call it
 //   category  the cheat-sheet section
 //   scope     'global' (live on every tab), 'faceswap' (live on the Face Swap tab, and the Editor tab for the
-//             snapshot slots) or 'monitor' (the pop-out reference monitor's own window). Two actions may share a key
-//             only if their scopes cannot both be live - see scopesOverlap in combo.js.
+//             snapshot slots), 'monitor' (the pop-out reference monitor's own window), 'flow' (the pipeline flow bar:
+//             live only while focus is inside it) or 'sweep' (the 3x3 contact sheet: live only while it is open). Two
+//             actions may share a key only if their scopes cannot both be live - see scopesOverlap in combo.js.
 //   keys      default combos (combo.js spelling). Several keys may do one thing.
 //   hold      true: the action lasts while the key is down (it also reads keyup)
 //   modInText true: its Mod+ combos still fire while a text field has focus (the palette, help). A BARE key never does -
@@ -103,6 +104,31 @@ export const ACTIONS = [
   { id: 'timeline.nextCut', label: 'Next scene cut', category: 'Timeline', scope: 'faceswap', keys: ['ArrowDown'] },
   // Bare C cycles the comparison modes (viewport.compareCycle), so the curve editor moved to Alt+C.
   { id: 'timeline.curveEditor', label: 'Parameter curve editor (video)', category: 'Timeline', scope: 'faceswap', keys: ['Alt+C'] },
+
+  // ── Pipeline flow bar (Stage 11) ─────────────────────────────────────────
+  // Live only while focus is INSIDE the flow bar (hover a node and the bar takes focus when nothing else has it), so 1-4 stay
+  // the snapshot slots everywhere else. Scope 'flow' overlaps only 'global', which is why the same digits can be listed twice.
+  { id: 'flow.solo1', label: 'Flow bar: solo the Detector buffer', category: 'Viewport & Scopes', scope: 'flow', keys: ['1'] },
+  { id: 'flow.solo2', label: 'Flow bar: solo the raw Swapper buffer', category: 'Viewport & Scopes', scope: 'flow', keys: ['2'] },
+  { id: 'flow.solo3', label: 'Flow bar: solo Gaze & Mouth', category: 'Viewport & Scopes', scope: 'flow', keys: ['3'] },
+  { id: 'flow.solo4', label: 'Flow bar: solo the XSeg 3 matte', category: 'Viewport & Scopes', scope: 'flow', keys: ['4'] },
+  { id: 'flow.solo5', label: 'Flow bar: solo the Restorer buffer', category: 'Viewport & Scopes', scope: 'flow', keys: ['5'] },
+  { id: 'flow.solo6', label: 'Flow bar: solo Colour / LUT', category: 'Viewport & Scopes', scope: 'flow', keys: ['6'] },
+  { id: 'flow.soloClear', label: 'Flow bar: back to the live result', category: 'Viewport & Scopes', scope: 'flow', keys: ['0'] },
+  { id: 'flow.solo', label: 'Flow bar: solo / un-solo the focused node', category: 'Viewport & Scopes', scope: 'flow', keys: ['S'] },
+  { id: 'flow.diff', label: 'Flow bar: difference pass of the focused node', category: 'Viewport & Scopes', scope: 'flow', keys: ['D'] },
+  { id: 'flow.bypass', label: 'Flow bar: bypass the focused node', category: 'Viewport & Scopes', scope: 'flow', keys: ['B'] },
+
+  // ── 3x3 Parameter Sweep contact sheet (Stage 11) ─────────────────────────
+  // Live only while the sheet is open (it is a dialog, and every other window handler yields to an open dialog).
+  { id: 'sweep.cell', label: 'Contact sheet: apply cell 1-9 to the active recipe', category: 'Viewport & Scopes', scope: 'sweep', keys: ['1', '2', '3', '4', '5', '6', '7', '8', '9'] },
+  { id: 'sweep.apply', label: 'Contact sheet: apply the selected cell', category: 'Viewport & Scopes', scope: 'sweep', keys: ['Enter'] },
+  { id: 'sweep.slotA', label: 'Contact sheet: assign the selected cell to Slot A', category: 'Viewport & Scopes', scope: 'sweep', keys: ['A'] },
+  { id: 'sweep.slotB', label: 'Contact sheet: assign the selected cell to Slot B', category: 'Viewport & Scopes', scope: 'sweep', keys: ['B'] },
+  { id: 'sweep.slotC', label: 'Contact sheet: assign the selected cell to Slot C', category: 'Viewport & Scopes', scope: 'sweep', keys: ['C'] },
+  { id: 'sweep.slotD', label: 'Contact sheet: assign the selected cell to Slot D', category: 'Viewport & Scopes', scope: 'sweep', keys: ['D'] },
+  { id: 'sweep.loupe', label: 'Contact sheet: synchronized 3.5x loupe', category: 'Viewport & Scopes', scope: 'sweep', keys: ['G'] },
+  { id: 'sweep.fit', label: 'Contact sheet: fit all nine cells', category: 'Viewport & Scopes', scope: 'sweep', keys: ['F'] },
 
   // ── Snapshots ────────────────────────────────────────────────────────────
   { id: 'snapshot.slotA', label: 'Snapshot slot A', category: 'Snapshots', scope: 'faceswap', keys: ['1'] },

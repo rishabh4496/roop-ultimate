@@ -115,6 +115,40 @@ function createSampleTargetSvg(label: string, frame: number, total: number, isVi
   return `data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`;
 }
 
+// ── Stage 11: solo / bypass / sweep contract, mirrored from app/roop/preview_solo.py and app/roop/sweep_bindings.py ──
+// (app/tests/test_stage11_flow_solo_sweep.py proves the real side; check_api_mock_parity.py keeps the routes honest.)
+const SOLO_ALIASES: Record<string, string> = {
+  source: 'source',
+  '1': 'detect_align', detect: 'detect_align', detect_align: 'detect_align',
+  '2': 'hyperswap', swap: 'hyperswap', hyperswap: 'hyperswap',
+  '3': 'gaze_mouth', gaze_mouth: 'gaze_mouth',
+  '4': 'xseg_roto', mask: 'xseg_roto', xseg_roto: 'xseg_roto', xseg_3_mask: 'xseg_roto',
+  '5': 'restore_ultra', restore: 'restore_ultra', restore_ultra: 'restore_ultra', restore_diff: 'restore_diff',
+  '6': 'relight_lut', relight_lut: 'relight_lut', relight_diff: 'relight_diff',
+  bisenet_parsing: 'bisenet_parsing', occlusion_alpha: 'occlusion_alpha', depth_z_order: 'depth_z_order',
+};
+const SOLO_UNAVAILABLE: Record<string, string> = {
+  occlusion_alpha: 'Occlusion alpha needs the swap crop and the temporal occluder state, which a single preview frame does not have. Run a render to see it.',
+  depth_z_order: 'Depth / Z-order is not built: nothing in the pipeline estimates it yet.',
+};
+const BYPASSABLE = ['hyperswap', 'gaze_mouth', 'xseg_roto', 'restore_ultra', 'relight_lut'];
+const SOLO_NODE: Record<string, string> = { restore_diff: 'restore_ultra', relight_diff: 'relight_lut', bisenet_parsing: 'xseg_roto' };
+const canonicalSolo = (v: unknown): string | null => SOLO_ALIASES[String(v).trim().toLowerCase()] ?? null;
+function parseBypass(v: unknown): string[] {
+  if (v == null || v === '') return [];
+  const items = typeof v === 'string' ? v.split(',') : Array.isArray(v) ? v
+    : typeof v === 'object' ? Object.entries(v as Record<string, unknown>).filter(([, on]) => on).map(([k]) => k) : [];
+  const wanted = new Set(items.map((i) => canonicalSolo(i)));
+  return BYPASSABLE.filter((s) => wanted.has(s));
+}
+// The sweepable ids nothing reads in a single-frame preview (sweep_bindings.BINDINGS kind 'none') and why.
+const SWEEP_UNBOUND: Record<string, string> = {
+  stabilization_strength: 'Needs several frames (a temporal filter); one preview frame cannot show it.',
+};
+const sweepAxis = (param: string) => (SWEEP_UNBOUND[param]
+  ? { param, bound: false, kind: 'none', target: '', reason: SWEEP_UNBOUND[param] }
+  : { param, bound: true, kind: 'global', target: param, reason: '' });
+
 // Initial source faces and target videos/images
 const sourceThumbs = [
   createSampleFaceSvg('Source Alpha (Frontal)', 'Pitch: 0.0° · Yaw: -1.2° · Roll: 0.5°', '#1e293b', '#0f172a', 1),
@@ -1168,21 +1202,56 @@ async function startServer() {
     if ('error' in mouth) { res.status(422).json({ message: mouth.error }); return; }
     const idx = Number(req.body.index ?? selectedTargetIndex);
     const frame = Number(req.body.frame ?? currentFrame);
-    const soloStage = req.body?.solo_stage || null;
+    const soloStage = req.body?.solo_stage ?? null;
     const target = targetEntries[idx] || targetEntries[0];
     let label = `SWAPPED: ${sourceInfo[selectedSourceIndex]?.path || 'source'} -> ${target?.name || 'target'}`;
-    if (soloStage === 'detect' || soloStage === 'detect_align' || soloStage === '1') {
+
+    // Mirrors app/roop/preview_solo.py: the canonical id, the stages a preview may bypass, and which solos are REFUSED
+    // (applied:false + a note) instead of quietly showing the finished swap.
+    const solo = soloStage == null ? null : canonicalSolo(soloStage);
+    const bypass = parseBypass(req.body?.bypass_stages);
+    let soloApplied = true;
+    let soloNote = '';
+    let soloStats: Record<string, number> | null = null;
+    if (soloStage != null && solo == null) {
+      soloApplied = false; soloNote = `Unknown solo buffer "${soloStage}"; showing the original frame.`;
+    } else if (solo && SOLO_UNAVAILABLE[solo]) {
+      soloApplied = false; soloNote = SOLO_UNAVAILABLE[solo];
+    } else if (bypass.includes('hyperswap') && solo && solo !== 'detect_align' && solo !== 'bisenet_parsing') {
+      soloApplied = false; soloNote = 'The swapper is bypassed, so this buffer does not exist. Enable it to solo this stage.';
+    } else if (solo && bypass.includes(SOLO_NODE[solo] ?? solo)) {
+      soloApplied = false; soloNote = 'That stage is bypassed in this preview, so it has no buffer to show. Enable it to solo it.';
+    } else if (solo === 'restore_diff' && /^none$/i.test(String(req.body?.enhancer ?? appSettings.selected_enhancer ?? 'None'))) {
+      soloApplied = false; soloNote = 'No restorer is selected, so the Restore Ultra difference is empty.';
+    } else if (solo === 'relight_diff' && !req.body?.light_harmonizer) {
+      soloApplied = false; soloNote = 'Relight is off, so there is no backend colour difference to show. The LUT is graded by the viewport (WebGL2) in preview and baked by the writer on render, not by this buffer.';
+    } else if (solo === 'restore_diff' || solo === 'relight_diff') {
+      soloStats = { changed_pct: 6.25, peak: 61, mean_changed: 24.5 };
+    }
+    if (!soloApplied) {
+      label = `[SOLO REFUSED] ${soloNote}`;
+    } else if (solo === 'source') {
+      label = `[SOLO: SOURCE] The target frame, before any stage touched it`;
+    } else if (solo === 'detect_align') {
       label = `[STAGE 1 SOLO: DETECT & ALIGN] 512 Crop + 106 Landmarks`;
-    } else if (soloStage === 'swap' || soloStage === 'hyperswap' || soloStage === '2') {
+    } else if (solo === 'hyperswap') {
       label = `[STAGE 2 SOLO: HYPERSWAP] Raw Unrestored Swap Output`;
-    } else if (soloStage === 'gaze_mouth' || soloStage === '3') {
+    } else if (solo === 'gaze_mouth') {
       label = `[STAGE 3 SOLO: GAZE & MOUTH] Gaze Tracking & Viseme Blend`;
-    } else if (soloStage === 'mask' || soloStage === 'xseg_roto' || soloStage === '4') {
+    } else if (solo === 'xseg_roto') {
       label = `[STAGE 4 SOLO: XSEG3 + ROTO] Combined Alpha Matte Buffer`;
-    } else if (soloStage === 'restore' || soloStage === 'restore_ultra' || soloStage === '5') {
+    } else if (solo === 'bisenet_parsing') {
+      label = `[PASS: BISENET PARSING] Parsed facial regions`;
+    } else if (solo === 'restore_ultra') {
       label = `[STAGE 5 SOLO: RESTORE ULTRA] Neural Restoration & High-Freq Detail`;
-    } else if (soloStage === 'relight_lut' || soloStage === '6') {
+    } else if (solo === 'restore_diff') {
+      label = `[STAGE 5 DIFFERENCE: RESTORE ULTRA] heat-map of what the restorer changed`;
+    } else if (solo === 'relight_lut') {
       label = `[STAGE 6 SOLO: RELIGHT & LUT] Photometric Relighting & 3D LUT`;
+    } else if (solo === 'relight_diff') {
+      label = `[STAGE 6 DIFFERENCE: RELIGHT] heat-map of what relighting changed`;
+    } else if (bypass.length) {
+      label = `${label} [BYPASSED: ${bypass.join(', ')}]`;
     }
 
     const image = createSampleTargetSvg(
@@ -1203,7 +1272,12 @@ async function startServer() {
       pose: [{ pitch: -1.4, yaw: 8.2, roll: 0.4 }],
       enhancer: appSettings.selected_enhancer,
       swap_model: appSettings.swap_model,
-      solo_stage: soloStage,
+      // the real response carries these only for a solo (preview_solo.response_fields); `bypassed` is always there
+      bypassed: bypass,
+      ...(soloStage != null ? {
+        solo_stage: soloStage, solo_id: solo, solo_applied: soloApplied, solo_note: soloNote,
+        ...(soloStats ? { solo_stats: soloStats } : {}),
+      } : {}),
     });
   });
 
@@ -1222,18 +1296,35 @@ async function startServer() {
     const xVals = Array.isArray(x_values) && x_values.length === 3 ? x_values : [0.25, 0.65, 1.0];
     const yVals = Array.isArray(y_values) && y_values.length === 3 ? y_values : [-5, 0, 5];
 
+    // Like the real endpoint: an axis nothing reads leaves the tile unchanged, an unknown id is a 422 that lists the ids.
+    const sweepable = ['restore_ultra_detail_weight', 'face_mask_blend', 'specular_highlight_recovery', 'max_face_distance', 'swap_model',
+      'blend_ratio', 'mask_erode_dilate_radius', 'skin_tone_warmth', 'expression_gaze_follow', 'stabilization_strength', 'yaw_erosion_bias',
+      'expression_restorer_weight', 'pixel_boost', 'temporal_restore_alpha', 'restore_identity_weight', 'grain_match_strength', 'motion_blur_match'];
+    const badAxes = [x_param, y_param].filter((p) => !sweepable.includes(String(p)));
+    if (badAxes.length) {
+      res.status(422).json({ message: `Not a sweepable parameter: ${badAxes.join(', ')}`, sweepable });
+      return;
+    }
+    const xAxis = sweepAxis(String(x_param));
+    const yAxis = sweepAxis(String(y_param));
+
     const tiles = [];
+    const seen = new Set<string>();
     for (let yi = 0; yi < 3; yi++) {
       for (let xi = 0; xi < 3; xi++) {
         const xv = xVals[xi];
         const yv = yVals[yi];
+        // Only a BOUND axis changes the picture; two unbound axes give nine identical tiles.
+        const seed = 1000 + (yAxis.bound ? yi * 10 : 0) + (xAxis.bound ? xi : 0);
+        const caption = `SWEEP ${xAxis.bound ? `${x_param}=${xv}` : x_param} | ${yAxis.bound ? `${y_param}=${yv}` : y_param}`;
         const tileSvg = createSampleTargetSvg(
-          `SWEEP [${xi},${yi}] ${x_param}=${xv} | ${y_param}=${yv}`,
+          caption,
           Number(reqFrame),
           target?.frames || 100,
           target?.is_video || false,
-          1000 + yi * 10 + xi
+          seed
         );
+        seen.add(tileSvg);
         tiles.push({
           tile_id: `${yi}_${xi}`,
           x_index: xi,
@@ -1254,19 +1345,23 @@ async function startServer() {
       tiles,
       face_coordinates: {
         bbox: [190, 60, 140, 160], width: 140, height: 160,
+        // crop_rect is [x, y, w, h] in FRAME px; eyes / mouth / jawline are CROP-relative (the real endpoint subtracts the crop origin)
         crop_rect: [140, 30, 240, 220],
         eyes: {
-          left: [240, 130],
-          right: [280, 130],
+          left: [100, 100],
+          right: [140, 100],
         },
         mouth: {
-          center: [260, 170],
+          center: [120, 140],
         },
         jawline: {
-          center: [260, 215],
+          center: [120, 185],
         },
       },
       count: tiles.length,
+      axes: { x: xAxis, y: yAxis },
+      distinct_tiles: seen.size,
+      identical: seen.size <= 1,
     });
   });
 

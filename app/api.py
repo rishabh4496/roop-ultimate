@@ -56,6 +56,8 @@ from roop.face_util import extract_face_images, get_all_faces
 from roop.FaceSet import FaceSet
 from roop.capturer import get_video_frame, get_video_frame_total, get_image_frame, FrameSuperseded
 from roop import preview_provider as _preview_provider
+from roop import preview_solo as _preview_solo
+from roop import sweep_bindings as _sweep_bindings
 from roop.ProcessEntry import ProcessEntry
 from roop import capture_seed
 from roop import segment_writer
@@ -5463,7 +5465,11 @@ def preview(payload: dict = Body(...)):
             }
 
         if not fake or len(roop_globals.INPUT_FACESETS) < 1:
-            return {"image": _bgr_to_preview_dataurl(current_frame), "faces": faces_list, "person_ids": person_ids, "kps": kps_list, "anchors": anchors_list, "pose": pose_list, "face_index_order": _TARGET_FACE_INDEX_ORDER, **echo, **sar_fields, "target_index": idx, "target_media_id": media_id}
+            _no_pipeline = _preview_solo.response_fields(
+                solo_stage, _preview_solo.canonical_solo(solo_stage), _preview_solo.parse_bypass(payload.get("bypass_stages")),
+                applied=_preview_solo.canonical_solo(solo_stage) == 'source',
+                note="Live Swap is off or no source face is loaded, so there is no pipeline to solo.")
+            return {"image": _bgr_to_preview_dataurl(current_frame), "faces": faces_list, "person_ids": person_ids, "kps": kps_list, "anchors": anchors_list, "pose": pose_list, "face_index_order": _TARGET_FACE_INDEX_ORDER, **_no_pipeline, **echo, **sar_fields, "target_index": idx, "target_media_id": media_id}
 
         try:
             from roop.core import live_swap, get_processing_plugins
@@ -5507,8 +5513,34 @@ def preview(payload: dict = Body(...)):
             # gate then discards used to come back as an unswapped picture with
             # no diagnostic at all (Stage 15 acceptance finding).
             audit_before = dict(_procmgr_runtime._audit)
-            # Stage 24: 1-Click Buffer Solo overrides
-            if solo_stage in ('detect', 'detect_align', '1'):
+            # Stage 11 flow bar: 1-click buffer solo + per-stage bypass (roop/preview_solo.py owns the ids and the mapping).
+            solo = _preview_solo.canonical_solo(solo_stage)
+            bypass = _preview_solo.parse_bypass(payload.get("bypass_stages"))
+
+            def _solo_reply(image, applied=True, note="", extra=None):
+                """The response for a solo: the picture plus everything the client needs to know whether it is the real buffer."""
+                return {"image": _bgr_to_preview_dataurl(image), "faces": faces_list, "person_ids": person_ids,
+                        "kps": kps_list, "anchors": anchors_list, "pose": pose_list,
+                        "face_index_order": _TARGET_FACE_INDEX_ORDER,
+                        **_preview_solo.response_fields(solo_stage, solo, bypass, applied=applied, note=note),
+                        **(extra or {}), **echo, **sar_fields, "target_index": idx, "target_media_id": media_id}
+
+            if solo_stage is not None and solo is None:
+                return _solo_reply(current_frame, False, f'Unknown solo buffer "{solo_stage}"; showing the original frame.')
+            if solo in _preview_solo.UNAVAILABLE:
+                return _solo_reply(current_frame, False, _preview_solo.UNAVAILABLE[solo])
+            if solo == 'source':
+                return _solo_reply(current_frame, True, "The target frame as decoded, before any stage touched it.")
+            if 'hyperswap' in bypass and solo not in ('detect_align', 'bisenet_parsing'):
+                # Swapper bypassed: nothing downstream has anything to work on, so the frame is the original. A solo of a
+                # downstream buffer is refused (applied=False) rather than shown as if it had been produced.
+                return _solo_reply(current_frame, solo is None, "Swapper bypassed: the original frame." if solo is None
+                                   else "The swapper is bypassed, so this buffer does not exist. Enable it to solo this stage.")
+
+            if _preview_solo.bypassed_solo(solo, bypass):
+                return _solo_reply(current_frame, False, "That stage is bypassed in this preview, so it has no buffer to show. Enable it to solo it.")
+
+            if solo == 'detect_align':
                 import cv2
                 solo_frame = current_frame.copy()
                 for f in (faces or []):
@@ -5520,9 +5552,35 @@ def preview(payload: dict = Body(...)):
                             cv2.circle(solo_frame, (int(pt[0]), int(pt[1])), 4, (0, 255, 255), -1)
                     cv2.putText(solo_frame, "STAGE 1 SOLO: DETECT & ALIGN", (bbox[0], max(24, bbox[1] - 8)),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 255, 128), 2)
-                return {"image": _bgr_to_preview_dataurl(solo_frame), "faces": faces_list, "person_ids": person_ids, "kps": kps_list, "anchors": anchors_list, "pose": pose_list, "face_index_order": _TARGET_FACE_INDEX_ORDER, "solo_stage": solo_stage, **echo, **sar_fields, "target_index": idx, "target_media_id": media_id}
+                return _solo_reply(solo_frame, bool(faces), "" if faces else "No face was detected on this frame.")
 
-            if solo_stage in ('mask', 'xseg_roto', '4') and faces:
+            if solo == 'bisenet_parsing':
+                try:
+                    import cv2
+                    from roop.ProcessMgr import canonicalize_face_alignment
+                    from roop import face_parser as _face_parser
+                    if not faces:
+                        return _solo_reply(current_frame, False, "No face was detected on this frame.")
+                    aligned_img, M, _alignment = canonicalize_face_alignment(
+                        current_frame, faces[0], roop_globals.subsample_size, 'arcface')
+                    parsed = _face_parser.FaceParser().parse(aligned_img)
+                    if parsed is None:
+                        return _solo_reply(current_frame, False, "The face parser produced no labels for this crop.")
+                    tinted = _face_parser.overlay(aligned_img, parsed.labels)
+                    h_f, w_f = current_frame.shape[:2]
+                    warped = cv2.warpAffine(tinted, cv2.invertAffineTransform(M), (w_f, h_f), flags=cv2.INTER_LINEAR)
+                    cover = cv2.warpAffine(np.full(aligned_img.shape[:2], 255, np.uint8), cv2.invertAffineTransform(M),
+                                           (w_f, h_f), flags=cv2.INTER_LINEAR)[..., None].astype(np.float32) / 255.0
+                    solo_img = (warped.astype(np.float32) * cover + current_frame.astype(np.float32) * (1.0 - cover)).astype(np.uint8)
+                    note = "" if parsed.is_semantic else "BiSeNet weights are not installed: this is the landmark-hull fallback (skin / not-skin only)."
+                    return _solo_reply(solo_img, True, note)
+                except Exception as _parse_err:
+                    _swallowed("api:solo_bisenet", _parse_err)
+                    return _solo_reply(current_frame, False, f"BiSeNet parsing failed: {_parse_err}")
+
+            if solo == 'xseg_roto' and not faces:
+                return _solo_reply(current_frame, False, "No face was detected on this frame.")
+            if solo == 'xseg_roto' and faces:
                 try:
                     import cv2
                     from roop.ProcessMgr import canonicalize_face_alignment
@@ -5542,36 +5600,71 @@ def preview(payload: dict = Body(...)):
                             inv_M = cv2.invertAffineTransform(M)
                             h_f, w_f = current_frame.shape[:2]
                             full_matte = cv2.warpAffine(m_bgr, inv_M, (w_f, h_f), flags=cv2.INTER_LINEAR)
-                            return {"image": _bgr_to_preview_dataurl(full_matte), "faces": faces_list, "person_ids": person_ids, "kps": kps_list, "anchors": anchors_list, "pose": pose_list, "face_index_order": _TARGET_FACE_INDEX_ORDER, "solo_stage": solo_stage, **echo, **sar_fields, "target_index": idx, "target_media_id": media_id}
+                            return _solo_reply(full_matte, True, "")
+                        return _solo_reply(current_frame, False, "The mask engine produced no matte for this crop.")
+                    return _solo_reply(current_frame, False, "No mask engine is selected, so there is no XSeg matte to show. Pick XSeg or BiSeNet+XSeg as the mask engine.")
                 except Exception as _mask_err:
                     _swallowed("api:solo_mask", _mask_err)
+                    return _solo_reply(current_frame, False, f"The matte could not be built: {_mask_err}")
 
-            if solo_stage in ('swap', 'hyperswap', '2'):
-                # Bypass mask, enhancer, mouth, and relighting for raw unrestored swap
-                options.processors = [p for p in options.processors if getattr(p, 'type', None) == 'swap']
-                roop_globals.selected_enhancer = "None"
-                roop_globals.light_harmonizer = False
-                roop_globals.expression_restore_strength = 0.0
+            def _force_globals(overrides):
+                """Apply a preview_solo override dict; `swap_only` narrows the processor chain instead of a global."""
+                for key, val in overrides.items():
+                    if key == 'swap_only':
+                        if val:
+                            options.processors = [p for p in options.processors if getattr(p, 'type', None) == 'swap']
+                    else:
+                        setattr(roop_globals, key, val)
 
-            elif solo_stage in ('gaze_mouth', '3'):
-                # Swap + expression/mouth, no restorer or relighting
-                roop_globals.selected_enhancer = "None"
-                roop_globals.light_harmonizer = False
+            def _run_swap():
+                return live_swap(current_frame, options, input_facesets=mapped,
+                                 frame_idx=max(0, frame - 1), source_video=filename)
 
-            elif solo_stage in ('restore', 'restore_ultra', '5'):
-                # Swap + enhancer, no photometric relighting
-                roop_globals.light_harmonizer = False
+            # Stage bypass is applied to EVERY preview that carries it (solo or not); a solo then narrows further.
+            _force_globals(_preview_solo.bypass_overrides(bypass))
+            if 'xseg_roto' in bypass:
+                options.processors = [p for p in options.processors if getattr(p, 'type', None) != 'mask']
 
-            swapped = live_swap(current_frame, options, input_facesets=mapped,
-                                frame_idx=max(0, frame - 1), source_video=filename)
+            if solo in _preview_solo.SOLO_DIFF:
+                spec = _preview_solo.SOLO_DIFF[solo]
+                relight_on = bool(getattr(roop_globals, 'light_harmonizer', False))
+                empty_note = _preview_solo.solo_note_for(
+                    solo, enhancer=str(getattr(roop_globals, 'selected_enhancer', 'None')), relight_on=relight_on)
+                if spec['stage'] in bypass:
+                    return _solo_reply(current_frame, False, f"{spec['label']}: that stage is bypassed, so there is nothing to compare.")
+                if empty_note:
+                    return _solo_reply(current_frame, False, empty_note)
+                keep = {k: getattr(roop_globals, k, None) for k in {*spec['before'], *spec['after']}}
+                try:
+                    _force_globals(spec['before'])
+                    before = _run_swap()
+                    for k, v in keep.items():
+                        setattr(roop_globals, k, v)
+                    _force_globals(spec['after'])
+                    after = _run_swap()
+                finally:
+                    for k, v in keep.items():
+                        setattr(roop_globals, k, v)
+                if before is None or after is None:
+                    return _solo_reply(current_frame, False, f"{spec['label']}: the swap produced no frame to compare.")
+                heat, diff_stats = _preview_solo.diff_heatmap(before, after)
+                return _solo_reply(heat, True, f"{spec['label']}: {diff_stats['changed_pct']}% of pixels changed, peak {diff_stats['peak']}/255.",
+                                   extra={"solo_stats": diff_stats})
+
+            if solo in _preview_solo.SOLO_RENDER:
+                _force_globals(_preview_solo.SOLO_RENDER[solo])
+
+            swapped = _run_swap()
             audit_after = _procmgr_runtime._audit
             swap_audit = {key: int(audit_after[key] - audit_before.get(key, 0))
                           for key in list(audit_after.keys())
                           if audit_after[key] - audit_before.get(key, 0)}
             print(f"[Preview] request={processing_request['request_id']} swap_audit={swap_audit}", flush=True)
+            solo_fields = _preview_solo.response_fields(solo_stage, solo, bypass, applied=swapped is not None,
+                                                        note="" if swapped is not None else "The swap produced no frame; showing the original.")
             if swapped is None:
-                return {"image": _bgr_to_preview_dataurl(current_frame), "faces": faces_list, "person_ids": person_ids, "kps": kps_list, "anchors": anchors_list, "pose": pose_list, "face_index_order": _TARGET_FACE_INDEX_ORDER, "solo_stage": solo_stage, **echo, **sar_fields, "swap_audit": swap_audit, "target_index": idx, "target_media_id": media_id}
-            return {"image": _bgr_to_preview_dataurl(swapped), "faces": faces_list, "person_ids": person_ids, "kps": kps_list, "anchors": anchors_list, "pose": pose_list, "face_index_order": _TARGET_FACE_INDEX_ORDER, "solo_stage": solo_stage, **echo, **sar_fields, "swap_audit": swap_audit, "target_index": idx, "target_media_id": media_id, **_mask_debug_fields(payload)}
+                return {"image": _bgr_to_preview_dataurl(current_frame), "faces": faces_list, "person_ids": person_ids, "kps": kps_list, "anchors": anchors_list, "pose": pose_list, "face_index_order": _TARGET_FACE_INDEX_ORDER, **solo_fields, **echo, **sar_fields, "swap_audit": swap_audit, "target_index": idx, "target_media_id": media_id}
+            return {"image": _bgr_to_preview_dataurl(swapped), "faces": faces_list, "person_ids": person_ids, "kps": kps_list, "anchors": anchors_list, "pose": pose_list, "face_index_order": _TARGET_FACE_INDEX_ORDER, **solo_fields, **echo, **sar_fields, "swap_audit": swap_audit, "target_index": idx, "target_media_id": media_id, **_mask_debug_fields(payload)}
         except Exception:
             traceback.print_exc()
             return JSONResponse(status_code=500, content={
@@ -5920,8 +6013,14 @@ def preview_sweep(payload: dict = Body(...)):
     """
     if _render_active():
         return _render_active_response()
+    _bad_axes = [str((payload or {}).get(k)) for k in ("x_param", "y_param")
+                 if (payload or {}).get(k) and str(payload.get(k)) not in _sweep_bindings.BINDINGS]
+    if _bad_axes:
+        return JSONResponse(status_code=422, content={
+            'message': f"Not a sweepable parameter: {', '.join(_bad_axes)}", 'sweepable': sorted(_sweep_bindings.BINDINGS)})
     _preview_request_lock.acquire()
     target_context_lock_held = False
+    _sweep_saved_cfg = {}                     # CFG attributes a tile changed (restored in `finally`, never saved)
     try:
         _target_context_lock.acquire()
         target_context_lock_held = True
@@ -5988,6 +6087,11 @@ def preview_sweep(payload: dict = Body(...)):
                 "tiles": tiles,
                 "face_coordinates": None,
                 "count": len(tiles),
+                "no_face": True,
+                "axes": {"x": {"param": x_param, **_sweep_bindings.describe(x_param)},
+                         "y": {"param": y_param, **_sweep_bindings.describe(y_param)}},
+                "distinct_tiles": 1,
+                "identical": True,
             }
 
         target_face = faces[0]
@@ -6038,6 +6142,7 @@ def preview_sweep(payload: dict = Body(...)):
         face_index = processing_request["source_index"]
 
         tiles = []
+        tile_hashes = []
         for yi, y_val in enumerate(y_values):
             for xi, x_val in enumerate(x_values):
                 tile_payload = dict(payload)
@@ -6050,13 +6155,13 @@ def preview_sweep(payload: dict = Body(...)):
                 _apply_target_appearance_settings(tile_payload)
                 _apply_lut_grading_settings(tile_payload)
 
+                # Drive each axis through the thing that READS it (roop/sweep_bindings.py). This used to be
+                # `if hasattr(roop_globals, name)`, which silently did nothing for nine of the seventeen ids.
                 for p_name, p_val in [(x_param, x_val), (y_param, y_val)]:
-                    if hasattr(roop_globals, p_name):
-                        try:
-                            cur_v = getattr(roop_globals, p_name)
-                            setattr(roop_globals, p_name, type(cur_v)(p_val) if cur_v is not None else p_val)
-                        except Exception:
-                            setattr(roop_globals, p_name, p_val)
+                    bound = _sweep_bindings.apply(p_name, p_val, runtime=roop_globals, cfg=roop_globals.CFG,
+                                                  tile_payload=tile_payload, saved_cfg=_sweep_saved_cfg)
+                    if bound["error"]:
+                        raise ValueError(f"{p_name}={p_val!r}: {bound['error']}")
 
                 swap_m = tile_payload.get("swap_model", payload.get("swap_model", "inswapper"))
                 mask_e = map_mask_engines(tile_payload.get("mask_engine", "None"),
@@ -6081,6 +6186,7 @@ def preview_sweep(payload: dict = Body(...)):
                 else:
                     tile_crop = current_frame[cy1:cy2, cx1:cx2]
 
+                tile_hashes.append(hashlib.sha1(np.ascontiguousarray(tile_crop).tobytes()).hexdigest())
                 tiles.append({
                     "tile_id": f"{yi}_{xi}",
                     "x_index": xi,
@@ -6099,11 +6205,20 @@ def preview_sweep(payload: dict = Body(...)):
             "tiles": tiles,
             "face_coordinates": face_coords,
             "count": len(tiles),
+            # Whether each axis is wired to anything, and whether the nine pictures actually differ. A sweep whose tiles
+            # are byte-identical did not sweep anything, whatever the reason; the contact sheet says so.
+            "axes": {"x": {"param": x_param, **_sweep_bindings.describe(x_param)},
+                     "y": {"param": y_param, **_sweep_bindings.describe(y_param)}},
+            "distinct_tiles": len(set(tile_hashes)),
+            "identical": len(set(tile_hashes)) <= 1,
         }
+    except ValueError as exc:
+        return JSONResponse(status_code=422, content={"message": f"Sweep value rejected: {exc}"})
     except Exception as exc:
         traceback.print_exc()
         return JSONResponse(status_code=500, content={"message": f"Sweep failed: {str(exc)}"})
     finally:
+        _sweep_bindings.restore_cfg(roop_globals.CFG, _sweep_saved_cfg)
         roop_globals.is_preview = False
         roop_globals.solo_stage = None
         if target_context_lock_held:

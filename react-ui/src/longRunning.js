@@ -30,6 +30,7 @@ export const LONG_RUNNING = {
   // ── per-request inference (the first call can build a TensorRT engine: minutes)
   'POST /api/preview': 'swaps one frame; cold detector / swapper / enhancer load',
   'POST /api/preview_upscale': 'upscales one frame on the GPU',
+  'POST /api/preview/sweep': 'nine live swaps of one frame for the 3x3 contact sheet; the first can load detector / swapper / enhancer cold',
   'POST /api/advisor': 'analyses the target clip (detection over sampled frames)',
   'POST /api/quality/analyze': 'detects and embeds faces across an output',
   'POST /api/extras/apply': 'media edit / re-encode of an uploaded file',

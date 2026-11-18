@@ -53,7 +53,7 @@ export const useSlotStore = create((set, get) => ({
    * retired. `frameKey` ties the bitmap to a media + frame so a recall on a different frame does
    * not show a picture of some other moment.
    */
-  put(bank, id, { state, bitmap = null, frameKey = null, label = '' }) {
+  put(bank, id, { state, bitmap = null, frameKey = null, label = '', activate = true }) {
     const prev = get().banks[bank][id];
     if (prev?.bitmap) retire(prev.bitmap);
     const slot = {
@@ -62,10 +62,14 @@ export const useSlotStore = create((set, get) => ({
       width: bitmap?.width || 0,
       height: bitmap?.height || 0,
     };
+    // `activate: false` is a recipe handed to a slot WITHOUT being applied (a contact-sheet cell assigned to a slot): the live
+    // recipe did not change, so the pill must not claim this slot is the one in force.
     set((s) => ({
       banks: { ...s.banks, [bank]: { ...s.banks[bank], [id]: slot } },
-      active: { ...s.active, [bank]: id },
-      activeHeadId: { ...s.activeHeadId, [bank]: useHistoryStore.getState().headId },
+      ...(activate ? {
+        active: { ...s.active, [bank]: id },
+        activeHeadId: { ...s.activeHeadId, [bank]: useHistoryStore.getState().headId },
+      } : {}),
     }));
     return slot;
   },
@@ -105,6 +109,21 @@ export const BANK_SCOPES = { faceswap: ['global', 'faceswap'], extras: ['global'
 export function captureSlot(bank, id, { bitmap = null, frameKey = null } = {}) {
   const state = useHistoryStore.getState().snapshot(BANK_SCOPES[bank]);
   return useSlotStore.getState().put(bank, id, { state, bitmap, frameKey, label: `Slot ${id}` });
+}
+
+/**
+ * Store `recipe` (a { settingKey: value } map, e.g. one cell of the 3x3 parameter sweep) in slot `id` WITHOUT applying it.
+ *
+ * The slot's state is the live recipe state of the bank with `recipe` written over the `settings` channel, so recalling it later
+ * puts back exactly "what I have now, with these two parameters changed" - not a half-empty state. `fallbackSettings` stands in
+ * for the settings channel when it is not mounted (a test, or the route before the app has its settings). `bitmap` (a small
+ * picture of the cell) is optional; it carries no `frameKey`, so a recall never mistakes a face crop for the frame on screen.
+ */
+export function assignRecipeToSlot(bank, id, recipe, { bitmap = null, fallbackSettings = {}, label = '' } = {}) {
+  const state = { ...useHistoryStore.getState().snapshot(BANK_SCOPES[bank]) };
+  const base = state.settings && typeof state.settings === 'object' ? state.settings : fallbackSettings;
+  state.settings = { ...base, ...recipe };
+  return useSlotStore.getState().put(bank, id, { state, bitmap, frameKey: null, label: label || `Slot ${id} · sweep cell`, activate: false });
 }
 
 /**
