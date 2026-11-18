@@ -5,6 +5,7 @@ import { logFailure, reportFailure, setFailureToast } from './failureLog';
 import { Toasts, Confetti } from './components/ui';
 import QualityProfilesModal, { BUILTIN_PROFILES } from './components/QualityProfilesModal';
 import CommandPalette from './components/CommandPalette';
+import { COMPARE_STEPS } from './components/faceswap/compareCycle';
 import WorkstationRail from './components/shell/WorkstationRail';
 import WorkstationHeader from './components/shell/WorkstationHeader';
 import useQueueSummary from './components/shell/useQueueSummary';
@@ -82,6 +83,31 @@ const RunHistory = lazyPanel(loadRunHistory);
 // slashes, and the toast only wants the file name. Split on each in turn rather
 // than reaching for a character class that needs an escaped separator in it.
 const basename = (p) => String(p || '').split('\\').pop().split('/').pop();
+
+// Tab moves focus between controls, and keyboard-only navigation starts from the page, so cinema mode does NOT take
+// Tab from the page. It takes Tab only when the preview stage itself has focus: the stage carries data-cinema-zone and
+// tabIndex -1, so a click on it lands focus there, and from that one place Tab toggles cinema mode.
+const cinemaZoneFocused = () => !!document.activeElement?.hasAttribute?.('data-cinema-zone');
+
+// Queue pause / resume and the thread benchmark, as the command palette runs them. Both read the server's answer
+// before acting, so a palette press never guesses whether the queue is running.
+async function toggleQueuePause(notify) {
+  try {
+    const q = await getJSON('/api/queue', { timeout: 8000 });
+    if (!q?.running) { notify('The render queue is not running', 'info'); return; }
+    if (q.paused) { await postJSON('/api/queue/resume', {}, { timeout: timeoutFor('POST', '/api/queue/resume') }); notify('Queue resumed'); }
+    else { await postJSON('/api/queue/pause', {}, { timeout: timeoutFor('POST', '/api/queue/pause') }); notify('Queue paused at the next safe checkpoint', 'info'); }
+  } catch (e) { notify(e.message || 'Could not change the queue', 'error'); }
+}
+
+async function startThreadBenchmark(notify, setTab) {
+  try {
+    // The same request the Diagnostics panel sends: the providers profile, measured on an idle GPU.
+    await postJSON('/api/settings/benchmark_threads', { profile: 'providers' });
+    notify('Thread benchmark started. Results appear in Settings → Diagnostics.', 'info');
+    setTab('settings');
+  } catch (e) { notify(e.message || 'The thread benchmark did not start', 'error'); }
+}
 
 function TabFallback() {
   return (
@@ -767,6 +793,10 @@ export default function App() {
       else if (eventMatches(e, 'app.zoomIn')) { e.preventDefault(); bumpZoom(0.05); }
       else if (eventMatches(e, 'app.zoomOut')) { e.preventDefault(); bumpZoom(-0.05); }
       else if (eventMatches(e, 'app.zoomReset')) { e.preventDefault(); setZoom(1); }
+      else if (eventMatches(e, 'workspace.cinema') && cinemaZoneFocused()) {
+        e.preventDefault();
+        useWorkspaceStore.getState().toggleCinema();
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -870,6 +900,25 @@ export default function App() {
     setTab('settings');
   }, [setSettingsTab, setTab]);
 
+  // Recent resumable checkpoints for the palette. Read each time the palette opens, so the list is never stale and
+  // costs nothing while the palette is closed.
+  const [paletteProjects, setPaletteProjects] = useState([]);
+  useEffect(() => {
+    if (!showPalette) return undefined;
+    let live = true;
+    getJSON('/api/projects', { timeout: 8000 })
+      .then((r) => {
+        if (!live) return;
+        const list = (Array.isArray(r?.projects) ? r.projects : [])
+          .filter((p) => p.recoverable)
+          .sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0))
+          .slice(0, 6);
+        setPaletteProjects(list);
+      })
+      .catch(() => { if (live) setPaletteProjects([]); });
+    return () => { live = false; };
+  }, [showPalette]);
+
   const commands = useMemo(() => {
     const cmds = [];
     // The tab's own icon and label carry straight into its palette row, so the
@@ -890,6 +939,34 @@ export default function App() {
       run: () => openDiagnostics(),
     });
     cmds.push({ id: 'act-rail', section: 'Layout', icon: Icon.panelLeft, title: 'Toggle navigation rail', subtitle: 'Ctrl B', run: () => toggleRail() });
+    // Stage 9: the palette reaches the same actions the keys do. Cinema is the Tab key; the four compare steps are the C
+    // cycle; the rest go through the same viewport bus (faceswap/FaceSwap.jsx roop:command, InteractivePreview roop:viewport).
+    cmds.push({ id: 'act-cinema', section: 'Layout', icon: Icon.panelLeft, title: 'Toggle cinema mode', subtitle: 'Tab · collapse the side panels',
+      run: () => useWorkspaceStore.getState().toggleCinema() });
+    COMPARE_STEPS.forEach((st, i) => cmds.push({ id: `view-${st.id}`, section: 'Viewport', icon: Icon.compare,
+      title: `Compare: ${st.label}`, subtitle: 'C cycles these four', run: () => runFaceswap('compareStep', { index: i }) }));
+    cmds.push({ id: 'view-heatmap', section: 'Viewport', icon: Icon.compare, title: 'Compare: Diff heatmap',
+      subtitle: 'Shows where the swap changed the picture', run: () => runFaceswap('viewportMode', { mode: 'heatmap' }) });
+    cmds.push({ id: 'view-loupe', section: 'Viewport', icon: Icon.preview, title: 'Magnifier loupe', subtitle: 'Z · 3.5× to 8× lens under the pointer',
+      run: () => runFaceswap('viewportMode', { mode: 'loupe' }) });
+    cmds.push({ id: 'view-paint', section: 'Viewport', icon: Icon.edit ?? Icon.preview, title: 'Mask paint brush', subtitle: 'B',
+      run: () => runFaceswap('viewportMode', { mode: 'paint' }) });
+    cmds.push({ id: 'view-erase', section: 'Viewport', icon: Icon.edit ?? Icon.preview, title: 'Mask erase brush', subtitle: 'E',
+      run: () => runFaceswap('viewportMode', { mode: 'erase' }) });
+    cmds.push({ id: 'queue-toggle', section: 'Actions', icon: Icon.queue, title: 'Pause or resume the render queue',
+      subtitle: 'Acts on the queue the server is running', run: () => toggleQueuePause(notify) });
+    cmds.push({ id: 'bench-threads', section: 'Actions', icon: Icon.meter, title: 'Run the thread benchmark',
+      subtitle: 'Measures thread and pool scaling, then opens Diagnostics', run: () => startThreadBenchmark(notify, setTab) });
+    paletteProjects.forEach((p) => cmds.push({ id: `ckpt-${p.id}`, section: 'Checkpoints', icon: Icon.history,
+      title: `Load checkpoint: ${p.name || p.id}`, subtitle: `frame ${p.safe_frame ?? '?'} · ${String(p.state || '').toLowerCase()}`,
+      run: async () => {
+        const path = `/api/projects/${encodeURIComponent(p.id)}/load`;
+        try {
+          await postJSON(path, {}, { timeout: timeoutFor('POST', path) });
+          notify(`“${p.name || p.id}” loaded into the workstation`, 'success');
+          setTab('faceswap');
+        } catch (e) { notify(e.message || 'Could not load that checkpoint', 'error'); }
+      } }));
     LAYOUT_PRESETS.forEach((l) => cmds.push({
       id: `layout-${l.id}`, section: 'Layout', icon: Icon.layout, title: `Layout: ${l.label}`, subtitle: l.hint,
       run: () => { setWorkspaceMode(l.mode); setTab('faceswap'); },
@@ -963,7 +1040,7 @@ export default function App() {
 
     return cmds;
   }, [applyTheme, applyQualityProfile, runFaceswap, customThemes, presets, visibleTabs, liteMode, setTab,
-    toggleRail, setWorkspaceMode, openDiagnostics, meta, settings?.provider, notify]);
+    toggleRail, setWorkspaceMode, openDiagnostics, meta, settings?.provider, notify, paletteProjects]);
 
   const registerFileListener = useCallback((cb) => {
     fileListenersRef.current.push(cb);

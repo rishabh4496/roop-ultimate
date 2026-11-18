@@ -1,17 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-
-// Lightweight subsequence fuzzy match with a simple relevance score.
-function score(query, text) {
-  if (!query) return 1;
-  const q = query.toLowerCase();
-  const t = text.toLowerCase();
-  if (t.includes(q)) return 100 - t.indexOf(q); // contiguous match ranks highest
-  let qi = 0;
-  for (let ti = 0; ti < t.length && qi < q.length; ti++) {
-    if (t[ti] === q[qi]) qi++;
-  }
-  return qi === q.length ? 10 : 0; // subsequence match, low score
-}
+import { rankCommands, groupBySection } from './commandPaletteModel';
 
 export default function CommandPalette({ open, onClose, commands }) {
   const [query, setQuery] = useState('');
@@ -23,13 +11,7 @@ export default function CommandPalette({ open, onClose, commands }) {
     if (open) { setQuery(''); setSel(0); setTimeout(() => inputRef.current?.focus(), 20); }
   }, [open]);
 
-  const filtered = useMemo(() => {
-    const scored = commands
-      .map((c) => ({ c, s: score(query, `${c.title} ${c.subtitle || ''} ${c.section || ''}`) }))
-      .filter((x) => x.s > 0)
-      .sort((a, b) => b.s - a.s);
-    return scored.map((x) => x.c);
-  }, [query, commands]);
+  const filtered = useMemo(() => rankCommands(commands, query), [query, commands]);
 
   useEffect(() => { if (sel >= filtered.length) setSel(0); }, [filtered.length, sel]);
 
@@ -51,13 +33,7 @@ export default function CommandPalette({ open, onClose, commands }) {
   if (!open) return null;
 
   // Group filtered results by section, preserving score order.
-  const groups = [];
-  const seen = new Map();
-  filtered.forEach((c, i) => {
-    const key = c.section || 'Actions';
-    if (!seen.has(key)) { seen.set(key, groups.length); groups.push({ section: key, items: [] }); }
-    groups[seen.get(key)].items.push({ c, i });
-  });
+  const groups = groupBySection(filtered);
 
   return (
     <div className="fixed inset-0 z-[60] flex items-start justify-center pt-[12vh] px-4 bg-black/50 backdrop-blur-sm animate-slide-up" onMouseDown={onClose}>
@@ -91,7 +67,7 @@ export default function CommandPalette({ open, onClose, commands }) {
                     type="button"
                     onMouseEnter={() => setSel(i)}
                     onClick={() => run(c)}
-                    className={`w-full flex items-center gap-3 px-4 py-2 text-left transition-colors ${i === sel ? 'bg-[var(--accent)]/15' : 'hover:bg-white/5'}`}
+                    className={`w-full flex items-center gap-3 px-4 py-2 text-left transition-[background-color,transform] duration-150 ease-out motion-reduce:transition-none active:scale-[0.99] ${i === sel ? 'bg-[var(--accent)]/15 translate-x-0.5' : 'hover:bg-white/5'}`}
                   >
                     {/* `icon` is an icon COMPONENT from icons.jsx (it used to
                         be an emoji string). Rendering it in a fixed-width,

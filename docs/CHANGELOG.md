@@ -1,3 +1,26 @@
+## 2026-11-18 — UI overhaul Stage 9: hotkeys, command palette, cheat-sheet
+
+**Command palette (Ctrl/⌘+K, from anywhere).** Search ranks a title match above a match that only lands in a subtitle (`components/commandPaletteModel.js`, pinned by the render-check). The palette now reaches: cinema mode (Tab); the four comparison steps and the Diff heatmap; the magnifier loupe; the mask paint and erase brushes; pause or resume of the render queue (it reads the server's `running` and `paused` before it acts); the thread benchmark (the same `providers` request Diagnostics sends, then opens Settings); and the most recent resumable checkpoints, read each time the palette opens and loaded through `POST /api/projects/{id}/load`. Routes and the rest of the existing commands are unchanged.
+
+**Keys (the registry, `shortcuts/actions.js`, is the only place a default is written).** Some requested keys were already taken, so these moved, and they're listed here so nobody is surprised:
+
+- **C** cycles the comparison: Split wipe → Crossfade → Diff → Side-by-side (`faceswap/compareCycle.js`). Side-by-side turns the split view on. The state lives in FaceSwap; the sub-mode reaches the preview as a `roop:viewport` event.
+- **Alt+C** opens the parameter curve editor (video only). It was bare C.
+- **Z** and **G** both toggle the 3.5× loupe (`InteractivePreview`'s `loupePower`).
+- **B** activates the paint brush and **E** the erase brush (new). Pressing the active one turns it off; pressing the other switches the mode and keeps the brush on.
+- **[** and **]** resize the mask brush while it is active (4 px steps, clamped to 4–160). The range trims moved to **Alt+[** and **Alt+]**, because bare brackets are now the brush.
+- **J / K / L** keep their meaning and now shuttle through **0.25× · 0.5× · 1× · 2× · 4×**. A fresh press still starts at 1×; **Shift+L** and **Shift+J** step down the ladder, stopping at 0.25×. Reverse still runs on the clock in `timeline/shuttle.js`.
+- **Tab** toggles cinema mode, which is the Canvas layout with the rails collapsed, and restores the previous layout on the next press (`workspaceStore.toggleCinema`). **It works only when the preview stage itself has focus:** the stage is focusable with `tabIndex -1`, so a click on it lands there. From the page or any control, Tab moves focus as before. An earlier version took Tab from the page, and it broke keyboard-only navigation (`keyboard.spec.js`), so it was narrowed.
+- The Face Manager's Delete, Backspace and Ctrl+A were hard-coded handlers. They are now `facemgr.exclude` and `facemgr.selectAll`, in a new `facemgr` scope. `test_ui_shortcut_keys.py` had been failing on those literal keys since Stage 6; this makes it green.
+
+**Virtual keyboard (`?`).** The overlay has a List and Keyboard view. The keyboard view (`shortcuts/keyboardModel.js`, `components/shortcuts/VirtualKeyboard.jsx`) lights every key a workstation action uses, from the live keymap, so a remap moves the highlight with it. Each lit key names its actions on hover, and the overlay's search narrows the lit keys to matching actions. Keys flash as they are pressed. The flash and the press scale are off under `prefers-reduced-motion`.
+
+**Micro-interactions.** Palette rows ease their highlight and slide the selected row slightly. Keyboard keys transition their border and fill. Both respect reduced motion.
+
+**Known limits.** Tab cinema needs the preview focused, which is not obvious; the cheat-sheet says so. The C cycle is Face Swap only (its scope is `faceswap`). Brush radius is clamped to 4–160 px, which may not match the brush slider's own range.
+
+**Verification.** `render-ui-overhaul-stage9.mjs`: 32 checks pass. The existing `workstation-shortcuts-check.mjs` (46, with new slow-shuttle cases), `render-stage26-logic.mjs` (209) and `render-timeline-logic.mjs` (110) pass after their pinned defaults were updated on purpose. `test_ui_shortcut_keys.py`: 6 pass. `e2e/stage9-hotkeys.spec.js`: 5 of 5 pass. `keyboard.spec.js`, `workspace-shell.spec.js` and `nav-visibility.spec.js` pass; that run caught the Tab regression above and is green after the fix. `stage25`/`stage26` fail only on the tests that already failed at HEAD. `tab-stops: faceswap` was already red at HEAD. Build passes. oxlint reports nothing on the files this stage touched. The API-callsite and unreachable-module gates pass.
+
 ## 2026-11-18 — UI overhaul Stage 8: mission-control screens (`#/processing`, `#/settings`, `#/gallery`, `#/history`, `#/home`)
 
 **Render queue mission control (`#/processing`).** `components/processing/QueueMissionControl.jsx` sits under the live run and reads the server's queue through `useQueue`. Every job has a card or a row (cards / table toggle): all ten backend states with their own badge (`queueModel.STATE_BADGE`, pinned by the render-check), a speedometer (fps and ETA from the job's own progress, `—` when the server sent none), a stage bar with frames and phase, and the quick actions Cancel, Duplicate, Retry, Load checkpoint (for jobs with a saved project, `POST /api/projects/{id}/load`) and Remove. The state legend doubles as a filter. Drag reorders, and so does Alt+↑ / Alt+↓ on a focused handle. Running jobs are locked, as before.

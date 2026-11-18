@@ -607,6 +607,8 @@ export default function Timeline({
       else if (eventMatches(e, 'transport.shuttleBack')) { e.preventDefault(); shuttleTo(shuttleKey(shuttleRef.current, 'j')); }
       else if (eventMatches(e, 'transport.shuttlePause')) { e.preventDefault(); shuttleTo(shuttleKey(shuttleRef.current, 'k')); }
       else if (eventMatches(e, 'transport.shuttleForward')) { e.preventDefault(); shuttleTo(shuttleKey(shuttleRef.current, 'l')); }
+      else if (eventMatches(e, 'transport.shuttleSlowBack')) { e.preventDefault(); shuttleTo(shuttleKey(shuttleRef.current, 'j', { slow: true })); }
+      else if (eventMatches(e, 'transport.shuttleSlowForward')) { e.preventDefault(); shuttleTo(shuttleKey(shuttleRef.current, 'l', { slow: true })); }
       else if (eventMatches(e, 'timeline.setIn')) { e.preventDefault(); L.setFrameMarkerVal('start', L.frame); }
       else if (eventMatches(e, 'timeline.setOut')) { e.preventDefault(); L.setFrameMarkerVal('end', L.frame); }
       else if (eventMatches(e, 'timeline.frameBack')) { e.preventDefault(); L.step(-stepSize(false)); }

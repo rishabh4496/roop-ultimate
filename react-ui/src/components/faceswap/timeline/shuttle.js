@@ -10,18 +10,29 @@
 // reverse has no buffer to ride, so the Timeline steps the playhead on a clock. This module is the
 // state machine and the clock arithmetic, with no React in it.
 
-export const SHUTTLE_SPEEDS = [1, 2, 4];
+// Stage 9: the ladder runs 0.25× to 4×. A fresh press starts at 1× (FRESH_LEVEL), so L and J still feel the same
+// at first; each further press goes faster, and Shift+J / Shift+L step down toward 0.25×.
+export const SHUTTLE_SPEEDS = [0.25, 0.5, 1, 2, 4];
+export const FRESH_LEVEL = SHUTTLE_SPEEDS.indexOf(1);
 
 export const IDLE = Object.freeze({ dir: 0, level: 0 });
 
-/** Next shuttle state for a J / K / L key press. Unknown keys return the state unchanged. */
-export function shuttleKey(state, key) {
+/**
+ * Next shuttle state for a J / K / L key press. Unknown keys return the state unchanged.
+ * `slow` is the Shift variant: one step slower in the direction already running, or a fresh 0.25× start.
+ */
+export function shuttleKey(state, key, { slow = false } = {}) {
   const k = String(key || '').toLowerCase();
   if (k === 'k') return IDLE;
   const dir = k === 'l' ? 1 : k === 'j' ? -1 : 0;
   if (!dir) return state;
-  if (state.dir === dir) return { dir, level: Math.min(state.level + 1, SHUTTLE_SPEEDS.length - 1) };
-  return { dir, level: 0 };
+  const top = SHUTTLE_SPEEDS.length - 1;
+  if (slow) {
+    if (state.dir === dir) return { dir, level: Math.max(state.level - 1, 0) };
+    return { dir, level: 0 };
+  }
+  if (state.dir === dir) return { dir, level: Math.min(state.level + 1, top) };
+  return { dir, level: FRESH_LEVEL };
 }
 
 export const shuttleRate = (state) => (state.dir ? SHUTTLE_SPEEDS[state.level] : 0);

@@ -54,6 +54,12 @@ import { bridgePreviewExportParity } from './runBarSync';
 // The floating preview keeps its own copy of each picture the stage receives (store/pipStore.js); a no-op while it is off.
 const offerPipFrame = (img) => usePipStore.getState().offerFrame(img);
 
+// The mask brush's radius, for the [ and ] keys (mask.brushSmaller / mask.brushLarger). The slider's own range is the
+// upper bound in practice; these only keep the keys from taking the brush to zero or to an unusable size.
+const BRUSH_RADIUS_MIN = 4;
+const BRUSH_RADIUS_MAX = 160;
+const BRUSH_RADIUS_STEP = 4;
+
 export default function InteractivePreview({
   beforeSrc,
   afterSrc,
@@ -221,6 +227,29 @@ export default function InteractivePreview({
   const toggleRoto = useCallback(() => {
     setRotoActive((a) => { if (!a) setMaskBrushActive(false); return !a; });
   }, []);
+
+  // B (paint) and E (erase) share one press: the key of the brush that is already on turns it off; the other key
+  // switches the mode and keeps the brush on. The ref lets the keydown effect read the current state without re-binding.
+  const brushStateRef = useRef({ active: false, mode: 'paint' });
+  brushStateRef.current = { active: maskBrushActive, mode: brushMode };
+  const pressBrush = useCallback((mode) => {
+    const cur = brushStateRef.current;
+    if (cur.active && cur.mode === mode) { setMaskBrushActive(false); return; }
+    setBrushMode(mode);
+    setMaskBrushActive(true);
+    setRotoActive(false);
+  }, []);
+  // The viewport bus: FaceSwap's C cycle and the command palette send a sub-mode here (see roop:viewport).
+  useEffect(() => {
+    const onViewport = (ev) => {
+      const mode = ev.detail?.mode;
+      if (mode === 'slider' || mode === 'blend' || mode === 'diff' || mode === 'heatmap') setCompareMode(mode);
+      else if (mode === 'loupe') setMagnifierActive((m) => !m);
+      else if (mode === 'paint' || mode === 'erase') pressBrush(mode);
+    };
+    window.addEventListener('roop:viewport', onViewport);
+    return () => window.removeEventListener('roop:viewport', onViewport);
+  }, [pressBrush]);
 
   // Feature: Broadcast Scopes & 3D LUT Color Grading
   const [scopeActive, setScopeActive] = useState(false);
@@ -1140,7 +1169,15 @@ export default function InteractivePreview({
       } else if (eventMatches(e, 'viewport.loupe') && !splitMode) {
         setMagnifierActive((m) => !m);
       } else if (eventMatches(e, 'mask.brush') && !splitMode) {
-        toggleBrush();
+        pressBrush('paint');
+      } else if (eventMatches(e, 'mask.erase') && !splitMode) {
+        pressBrush('erase');
+      } else if (eventMatches(e, 'mask.brushSmaller') && brushStateRef.current.active) {
+        e.preventDefault();
+        setBrushSize((s) => Math.max(BRUSH_RADIUS_MIN, s - BRUSH_RADIUS_STEP));
+      } else if (eventMatches(e, 'mask.brushLarger') && brushStateRef.current.active) {
+        e.preventDefault();
+        setBrushSize((s) => Math.min(BRUSH_RADIUS_MAX, s + BRUSH_RADIUS_STEP));
       } else if (eventMatches(e, 'mask.pen') && !splitMode) {
         e.preventDefault();
         toggleRoto();
@@ -1171,7 +1208,7 @@ export default function InteractivePreview({
     };
   }, [
     compare, compareMode, handlePreset1to1, handlePreset200, handlePreset400,
-    handlePresetFit, maskBrushActive, splitMode, zoomBy, toggleBrush, toggleRoto,
+    handlePresetFit, maskBrushActive, splitMode, zoomBy, toggleBrush, toggleRoto, pressBrush,
   ]);
 
   useEffect(() => {
@@ -1999,6 +2036,8 @@ export default function InteractivePreview({
         className={`relative w-full max-h-[var(--stage-max-h,65vh)] min-h-[150px] rounded-2xl overflow-hidden preview-stage group border border-white/10 shadow-2xl ${
           isFullscreen ? 'h-screen w-screen max-h-none' : ''
         } aspect-video`}
+        data-cinema-zone=""
+        tabIndex={-1}
         onDoubleClick={handleDoubleClick}
         style={{ touchAction: 'none' }}
       >
@@ -2071,6 +2110,8 @@ export default function InteractivePreview({
       className={`relative w-full max-h-[var(--stage-max-h,65vh)] min-h-[150px] rounded-2xl overflow-hidden preview-stage contain-panel select-none group border border-white/10 shadow-2xl ${
         isFullscreen ? 'h-screen w-screen max-h-none' : ''
       } ${displayRatio ? '' : 'aspect-video'} ${zoom >= 3 ? 'vfx-pixelated' : ''}`}
+      data-cinema-zone=""
+      tabIndex={-1}
       onDoubleClick={handleDoubleClick}
       style={{
         touchAction: 'none',

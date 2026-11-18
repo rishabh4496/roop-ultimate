@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getJSON, postJSON, postFile, fileUrl } from '../../api';
+import { eventMatches } from '../../store/shortcutStore';
 import { Button } from '../ui';
 import CoverageRadar from './CoverageRadar';
 import {
@@ -265,8 +266,9 @@ export default function IdentityWorkstation({ notify, setTab, facesetState, onFa
     const onKey = (e) => {
       if (isTyping(e.target)) return;
       if (e.key === 'Escape' && sel.length) { clearSel(); }
-      else if ((e.key === 'Delete' || e.key === 'Backspace') && sel.length) { e.preventDefault(); excludeIndices(sel); }
-      else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a' && order.length) { e.preventDefault(); selectAll(); }
+      // Both keys are registry actions (shortcuts/actions.js, scope 'facemgr'), so a remap in Settings reaches them.
+      else if (eventMatches(e, 'facemgr.exclude') && sel.length) { e.preventDefault(); excludeIndices(sel); }
+      else if (eventMatches(e, 'facemgr.selectAll') && order.length) { e.preventDefault(); selectAll(); }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);

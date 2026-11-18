@@ -34,6 +34,9 @@ export const ACTIONS = [
   { id: 'app.palette', label: 'Command palette', category: 'Workspace', scope: 'global', keys: ['Mod+K'], modInText: true },
   { id: 'app.help', label: 'Keyboard shortcuts', category: 'Workspace', scope: 'global', keys: ['?', 'Shift+/', 'Mod+/'], modInText: true },
   { id: 'app.toggleRail', label: 'Collapse / expand the side rail', category: 'Workspace', scope: 'global', keys: ['Mod+B'] },
+  { id: 'workspace.cinema', label: 'Cinema mode: collapse the side panels (with the preview focused)', category: 'Workspace', scope: 'global', keys: ['Tab'] },
+  { id: 'facemgr.exclude', label: 'Face Manager: exclude the selected faces', category: 'Workspace', scope: 'facemgr', keys: ['Delete', 'Backspace'] },
+  { id: 'facemgr.selectAll', label: 'Face Manager: select every face', category: 'Workspace', scope: 'facemgr', keys: ['Mod+A'] },
   { id: 'app.zoomIn', label: 'Zoom the interface in', category: 'Workspace', scope: 'global', keys: ['Mod+=', 'Mod++'] },
   { id: 'app.zoomOut', label: 'Zoom the interface out', category: 'Workspace', scope: 'global', keys: ['Mod+-', 'Mod+_'] },
   { id: 'app.zoomReset', label: 'Reset interface zoom', category: 'Workspace', scope: 'global', keys: ['Mod+0'] },
@@ -53,11 +56,14 @@ export const ACTIONS = [
   { id: 'transport.shuttleBack', label: 'Shuttle backward', category: 'Transport', scope: 'faceswap', keys: ['J'] },
   { id: 'transport.shuttlePause', label: 'Shuttle: pause', category: 'Transport', scope: 'faceswap', keys: ['K'] },
   { id: 'transport.shuttleForward', label: 'Shuttle forward', category: 'Transport', scope: 'faceswap', keys: ['L'] },
+  { id: 'transport.shuttleSlowBack', label: 'Shuttle: slower backward (down to 0.25×)', category: 'Transport', scope: 'faceswap', keys: ['Shift+J'] },
+  { id: 'transport.shuttleSlowForward', label: 'Shuttle: slower forward (down to 0.25×)', category: 'Transport', scope: 'faceswap', keys: ['Shift+L'] },
 
   // ── Viewport & Scopes ────────────────────────────────────────────────────
   { id: 'viewport.compare', label: 'Compare before / after', category: 'Viewport & Scopes', scope: 'faceswap', keys: ['Shift+C'] },
   { id: 'viewport.splitView', label: 'Split view', category: 'Viewport & Scopes', scope: 'faceswap', keys: ['S'] },
   { id: 'viewport.compareMode', label: 'Compare: blend / slider', category: 'Viewport & Scopes', scope: 'faceswap', keys: ['W'] },
+  { id: 'viewport.compareCycle', label: 'Cycle comparison: Wipe → Crossfade → Diff → Side-by-side', category: 'Viewport & Scopes', scope: 'faceswap', keys: ['C'] },
   { id: 'viewport.compareAxis', label: 'Compare: split axis', category: 'Viewport & Scopes', scope: 'faceswap', keys: ['X'] },
   { id: 'viewport.autoSwipe', label: 'Compare: auto-swipe', category: 'Viewport & Scopes', scope: 'faceswap', keys: ['A'] },
   { id: 'viewport.zoomIn', label: 'Zoom the preview in', category: 'Viewport & Scopes', scope: 'faceswap', keys: ['=', '+'] },
@@ -67,13 +73,16 @@ export const ACTIONS = [
   { id: 'viewport.zoom200', label: 'Preview at 200%', category: 'Viewport & Scopes', scope: 'faceswap', keys: ['Shift+2'] },
   { id: 'viewport.zoom400', label: 'Preview at 400%', category: 'Viewport & Scopes', scope: 'faceswap', keys: ['Shift+4'] },
   { id: 'viewport.peekOriginal', label: 'Peek the original (hold)', category: 'Viewport & Scopes', scope: 'faceswap', keys: ['\\'], hold: true },
-  { id: 'viewport.loupe', label: 'Magnifier lens', category: 'Viewport & Scopes', scope: 'faceswap', keys: ['G'] },
+  { id: 'viewport.loupe', label: 'Magnifier loupe (3.5×)', category: 'Viewport & Scopes', scope: 'faceswap', keys: ['Z', 'G'] },
   { id: 'viewport.debugOverlay', label: 'Keypoints and pose overlay', category: 'Viewport & Scopes', scope: 'faceswap', keys: ['D'] },
   { id: 'viewport.lockTarget', label: 'Lock to the target face', category: 'Viewport & Scopes', scope: 'faceswap', keys: ['T'] },
   { id: 'monitor.fullscreen', label: 'Reference monitor: full screen', category: 'Viewport & Scopes', scope: 'monitor', keys: ['F', 'F11'] },
 
   // ── Mask & Roto ──────────────────────────────────────────────────────────
-  { id: 'mask.brush', label: 'Mask brush', category: 'Mask & Roto', scope: 'faceswap', keys: ['B'] },
+  { id: 'mask.brush', label: 'Mask paint brush (toggle)', category: 'Mask & Roto', scope: 'faceswap', keys: ['B'] },
+  { id: 'mask.erase', label: 'Mask erase brush (toggle)', category: 'Mask & Roto', scope: 'faceswap', keys: ['E'] },
+  { id: 'mask.brushSmaller', label: 'Brush radius: smaller', category: 'Mask & Roto', scope: 'faceswap', keys: ['['] },
+  { id: 'mask.brushLarger', label: 'Brush radius: larger', category: 'Mask & Roto', scope: 'faceswap', keys: [']'] },
   { id: 'mask.pen', label: 'Roto pen (exclusion / inclusion zones)', category: 'Mask & Roto', scope: 'faceswap', keys: ['P'] },
   { id: 'mask.featherDown', label: 'Brush feather: softer', category: 'Mask & Roto', scope: 'faceswap', keys: ['{', 'Shift+['] },
   { id: 'mask.featherUp', label: 'Brush feather: harder', category: 'Mask & Roto', scope: 'faceswap', keys: ['}', 'Shift+]'] },
@@ -82,8 +91,9 @@ export const ACTIONS = [
   { id: 'timeline.marker', label: 'Marker at the playhead', category: 'Timeline', scope: 'faceswap', keys: ['M'] },
   { id: 'timeline.setIn', label: 'Set in point', category: 'Timeline', scope: 'faceswap', keys: ['I'] },
   { id: 'timeline.setOut', label: 'Set out point', category: 'Timeline', scope: 'faceswap', keys: ['O'] },
-  { id: 'timeline.trimStart', label: 'Set the start frame of the range', category: 'Timeline', scope: 'faceswap', keys: ['['] },
-  { id: 'timeline.trimEnd', label: 'Set the end frame of the range', category: 'Timeline', scope: 'faceswap', keys: [']'] },
+  // Bare [ and ] resize the mask brush (mask.brushSmaller / Larger), so the range trims moved to Alt.
+  { id: 'timeline.trimStart', label: 'Set the start frame of the range', category: 'Timeline', scope: 'faceswap', keys: ['Alt+['] },
+  { id: 'timeline.trimEnd', label: 'Set the end frame of the range', category: 'Timeline', scope: 'faceswap', keys: ['Alt+]'] },
   { id: 'timeline.resetRange', label: 'Reset the range to the whole clip', category: 'Timeline', scope: 'faceswap', keys: ['R'] },
   { id: 'timeline.frameBack', label: 'Back 1 frame', category: 'Timeline', scope: 'faceswap', keys: [','] },
   { id: 'timeline.frameForward', label: 'Forward 1 frame', category: 'Timeline', scope: 'faceswap', keys: ['.'] },
@@ -91,7 +101,8 @@ export const ACTIONS = [
   { id: 'timeline.frameForward10', label: 'Forward 10 frames', category: 'Timeline', scope: 'faceswap', keys: ['>', 'Shift+.'] },
   { id: 'timeline.prevCut', label: 'Previous scene cut', category: 'Timeline', scope: 'faceswap', keys: ['ArrowUp'] },
   { id: 'timeline.nextCut', label: 'Next scene cut', category: 'Timeline', scope: 'faceswap', keys: ['ArrowDown'] },
-  { id: 'timeline.curveEditor', label: 'Parameter curve editor (video)', category: 'Timeline', scope: 'faceswap', keys: ['C'] },
+  // Bare C cycles the comparison modes (viewport.compareCycle), so the curve editor moved to Alt+C.
+  { id: 'timeline.curveEditor', label: 'Parameter curve editor (video)', category: 'Timeline', scope: 'faceswap', keys: ['Alt+C'] },
 
   // ── Snapshots ────────────────────────────────────────────────────────────
   { id: 'snapshot.slotA', label: 'Snapshot slot A', category: 'Snapshots', scope: 'faceswap', keys: ['1'] },

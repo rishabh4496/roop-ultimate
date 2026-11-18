@@ -49,19 +49,19 @@ console.log('── J / K / L Shuttle Ergonomics & Speed Ladder ─────�
 
   // 2. Forward shuttle (L): 1x -> 2x -> 4x -> 4x (capped)
   let s = shuttleKey(IDLE, 'l');
-  ok('first L press moves forward at 1x', s.dir === 1 && s.level === 0 && shuttleRate(s) === 1);
+  ok('first L press moves forward at 1x', s.dir === 1 && s.level === 2 && shuttleRate(s) === 1);
   ok('forward 1x label displays ▶ 1×', shuttleLabel(s).includes('▶') && shuttleLabel(s).includes('1×'));
 
   s = shuttleKey(s, 'l');
-  ok('second L press advances to 2x', s.dir === 1 && s.level === 1 && shuttleRate(s) === 2);
+  ok('second L press advances to 2x', s.dir === 1 && s.level === 3 && shuttleRate(s) === 2);
   ok('forward 2x label displays ▶ 2×', shuttleLabel(s).includes('▶') && shuttleLabel(s).includes('2×'));
 
   s = shuttleKey(s, 'l');
-  ok('third L press advances to 4x', s.dir === 1 && s.level === 2 && shuttleRate(s) === 4);
+  ok('third L press advances to 4x', s.dir === 1 && s.level === 4 && shuttleRate(s) === 4);
   ok('forward 4x label displays ▶ 4×', shuttleLabel(s).includes('▶') && shuttleLabel(s).includes('4×'));
 
   s = shuttleKey(s, 'l');
-  ok('fourth L press stays capped at 4x', s.dir === 1 && s.level === 2 && shuttleRate(s) === 4);
+  ok('fourth L press stays capped at 4x', s.dir === 1 && s.level === 4 && shuttleRate(s) === 4);
 
   // 3. Pause (K): returns to IDLE immediately
   s = shuttleKey(s, 'k');
@@ -69,22 +69,41 @@ console.log('── J / K / L Shuttle Ergonomics & Speed Ladder ─────�
 
   // 4. Reverse shuttle (J): -1x -> -2x -> -4x
   s = shuttleKey(IDLE, 'j');
-  ok('first J press moves reverse at -1x', s.dir === -1 && s.level === 0 && shuttleRate(s) === 1);
+  ok('first J press moves reverse at -1x', s.dir === -1 && s.level === 2 && shuttleRate(s) === 1);
   ok('reverse 1x label displays ◀ 1×', shuttleLabel(s).includes('◀') && shuttleLabel(s).includes('1×'));
 
   s = shuttleKey(s, 'j');
-  ok('second J press advances to -2x', s.dir === -1 && s.level === 1 && shuttleRate(s) === 2);
+  ok('second J press advances to -2x', s.dir === -1 && s.level === 3 && shuttleRate(s) === 2);
 
   s = shuttleKey(s, 'j');
-  ok('third J press advances to -4x', s.dir === -1 && s.level === 2 && shuttleRate(s) === 4);
+  ok('third J press advances to -4x', s.dir === -1 && s.level === 4 && shuttleRate(s) === 4);
+
+  // 4b. Stage 9 slow shuttle: Shift+L / Shift+J step DOWN the ladder to 0.25x, and stop there
+  {
+    let v = shuttleKey(IDLE, 'l', { slow: true });
+    ok('Shift+L from rest starts forward at 0.25x', v.dir === 1 && v.level === 0 && shuttleRate(v) === 0.25);
+    ok('the 0.25x label reads ▶ 0.25×', shuttleLabel(v).includes('0.25×'));
+    v = shuttleKey(shuttleKey(IDLE, 'l'), 'l', { slow: true });
+    ok('Shift+L while going 1x steps down to 0.5x', v.dir === 1 && v.level === 1 && shuttleRate(v) === 0.5);
+    v = shuttleKey(v, 'l', { slow: true });
+    ok('Shift+L again reaches 0.25x', v.dir === 1 && v.level === 0 && shuttleRate(v) === 0.25);
+    v = shuttleKey(v, 'l', { slow: true });
+    ok('Shift+L stays at 0.25x (the floor)', v.dir === 1 && v.level === 0 && shuttleRate(v) === 0.25);
+    v = shuttleKey(IDLE, 'j', { slow: true });
+    ok('Shift+J from rest reverses at 0.25x', v.dir === -1 && v.level === 0 && shuttleRate(v) === 0.25);
+    v = shuttleKey(shuttleKey(shuttleKey(IDLE, 'j'), 'j'), 'j', { slow: true }); // 1x, 2x, then one slow step: 1x
+    ok('Shift+J while reversing at 2x steps down to 1x', v.dir === -1 && v.level === 2 && shuttleRate(v) === 1);
+    v = shuttleKey(shuttleKey(IDLE, 'l'), 'k');
+    ok('K still pauses and resets the dial', v.dir === 0 && v.level === 0 && shuttleRate(v) === 0);
+  }
 
   // 5. Direction change: L while reversing immediately switches to forward 1x
   s = shuttleKey(s, 'l');
-  ok('L while reversing immediately switches to forward 1x', s.dir === 1 && s.level === 0 && shuttleRate(s) === 1);
+  ok('L while reversing immediately switches to forward 1x', s.dir === 1 && s.level === 2 && shuttleRate(s) === 1);
 
   // J while going forward immediately switches to reverse -1x
   s = shuttleKey(s, 'j');
-  ok('J while going forward immediately switches to reverse -1x', s.dir === -1 && s.level === 0 && shuttleRate(s) === 1);
+  ok('J while going forward immediately switches to reverse -1x', s.dir === -1 && s.level === 2 && shuttleRate(s) === 1);
 }
 
 console.log('── Sub-frame Reverse rAF Clock Math ────────────────────────────');

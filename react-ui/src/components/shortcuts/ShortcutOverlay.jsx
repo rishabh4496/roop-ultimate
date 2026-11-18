@@ -5,6 +5,7 @@ import { allConflicts, bindingsOf, isOverridden } from '../../shortcuts/keymap';
 import { useShortcutStore } from '../../store/shortcutStore';
 import { Icon } from '../../icons';
 import KeyChips from './KeyChips';
+import VirtualKeyboard from './VirtualKeyboard';
 
 // The workstation shortcut sheet: `?` or Ctrl+/ from anywhere.
 //
@@ -21,6 +22,8 @@ export default function ShortcutOverlay({ onOpenSettings }) {
   const overrides = useShortcutStore((s) => s.overrides);
   const close = useShortcutStore((s) => s.closeOverlay);
   const [query, setQuery] = useState('');
+  // 'list' is the searchable sheet; 'keyboard' is the drawn keyboard with the bound keys lit (VirtualKeyboard).
+  const [view, setView] = useState('list');
   const searchRef = useRef(null);
   const returnTo = useRef(null);
 
@@ -87,11 +90,27 @@ export default function ShortcutOverlay({ onOpenSettings }) {
             aria-label="Search shortcuts"
             className="flex-1 min-w-0 px-3 py-1.5 rounded-lg glass-input text-compact text-white focus:outline-none"
           />
+          <div role="group" aria-label="View" className="flex shrink-0 rounded-lg border border-white/10 p-0.5">
+            {[['list', 'List'], ['keyboard', 'Keyboard']].map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                aria-pressed={view === id}
+                onClick={() => setView(id)}
+                className={`px-2.5 py-1 rounded-md text-micro font-bold uppercase tracking-wider transition-colors duration-150 motion-reduce:transition-none ${
+                  view === id ? 'bg-[var(--accent)] text-white' : 'text-white/60 hover:text-white'}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
           <button type="button" onClick={close} aria-label="Close keyboard shortcuts" className="text-muted hover:text-white font-bold px-1">✕</button>
         </div>
 
         <div className="overflow-y-auto px-5 py-4">
-          {sections.length === 0 ? (
+          {view === 'keyboard' ? (
+            <VirtualKeyboard overrides={overrides} query={query} />
+          ) : sections.length === 0 ? (
             <p className="py-8 text-center text-xs text-muted">No shortcut matches “{query}”.</p>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-5">

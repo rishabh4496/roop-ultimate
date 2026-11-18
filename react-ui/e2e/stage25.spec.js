@@ -82,12 +82,12 @@ test.describe('curve editor (300-frame clip)', () => {
     await resizeClip(request, 180);
   });
 
-  test('C opens and closes it, and Shift+C is still Compare', async ({ page }) => {
+  test('Alt+C opens and closes it, and Shift+C is still Compare', async ({ page }) => {
     await openTimeline(page);
     await expect(page.getByTestId('curve-editor')).toHaveCount(0);
-    await page.keyboard.press('c');
+    await page.keyboard.press('Alt+c');
     await expect(page.getByTestId('curve-editor')).toBeVisible();
-    await page.keyboard.press('c');
+    await page.keyboard.press('Alt+c');
     await expect(page.getByTestId('curve-editor')).toHaveCount(0);
     await page.keyboard.press('Shift+C');
     await expect(page.getByTestId('curve-editor'), 'Shift+C must not open the editor').toHaveCount(0);

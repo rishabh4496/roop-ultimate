@@ -493,9 +493,10 @@ export function useWorkstationShortcuts({
     }
 
     // 4. J / K / L Shuttle Ergonomics
-    const isJ = eventMatches(e, 'transport.shuttleBack') || (!e.ctrlKey && !e.metaKey && !e.altKey && e.code === 'KeyJ');
+    // Shift+J / Shift+L are the slow-shuttle keys (transport.shuttleSlow*), so the physical-key fallbacks stay plain-key only.
+    const isJ = eventMatches(e, 'transport.shuttleBack') || (!e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && e.code === 'KeyJ');
     const isK = eventMatches(e, 'transport.shuttlePause') || (!e.ctrlKey && !e.metaKey && !e.altKey && e.code === 'KeyK');
-    const isL = eventMatches(e, 'transport.shuttleForward') || (!e.ctrlKey && !e.metaKey && !e.altKey && e.code === 'KeyL');
+    const isL = eventMatches(e, 'transport.shuttleForward') || (!e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && e.code === 'KeyL');
 
     if (isJ && p.maxFrames > 1) {
       e.preventDefault?.();

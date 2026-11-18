@@ -125,6 +125,22 @@ export const useWorkspaceStore = create((set, get) => ({
     persist(get());
   },
 
+  // Cinema mode (Tab): the Canvas layout with the side rails collapsed. Toggling again returns to the layout and rail
+  // state it came from. Not persisted, so a reload leaves cinema mode (the saved layout is the one to come back to).
+  cinemaReturn: null,
+  toggleCinema: () => {
+    const s = get();
+    if (s.cinemaReturn) {
+      const back = s.cinemaReturn;
+      set({ cinemaReturn: null, railCollapsed: back.railCollapsed, railChosen: true });
+      get().applyLayout(back.layoutId);
+      return;
+    }
+    set({ cinemaReturn: { layoutId: s.activeLayoutId, railCollapsed: s.railCollapsed } });
+    get().applyLayout('canvas');
+    set({ railCollapsed: true, railChosen: true });
+  },
+
   applyLayout: (layoutId) => {
     const preset = LAYOUT_PRESETS.find((l) => l.id === layoutId);
     const custom = get().customLayouts.find((l) => l.id === layoutId);

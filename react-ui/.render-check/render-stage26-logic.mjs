@@ -272,7 +272,8 @@ const ev = (o) => ({ key: '', code: '', ctrlKey: false, metaKey: false, altKey: 
 console.log('keymap');
 {
   ok('action ids are unique', new Set(ACTIONS.map((a) => a.id)).size === ACTIONS.length);
-  ok('every action has a label, a known category and a scope', ACTIONS.every((a) => a.label && CATEGORIES.includes(a.category) && ['global', 'faceswap', 'monitor'].includes(a.scope)));
+  // 'facemgr' is the Face Manager's own scope (Stage 9 moved its Delete / Ctrl+A keys into the registry).
+  ok('every action has a label, a known category and a scope', ACTIONS.every((a) => a.label && CATEGORIES.includes(a.category) && ['global', 'faceswap', 'monitor', 'facemgr'].includes(a.scope)));
   ok('every action has at least one default key', ACTIONS.every((a) => a.keys.length > 0));
   ok('every category has an action', CATEGORIES.every((cat) => ACTIONS.some((a) => a.category === cat)));
   ok('THE SHIPPED KEYMAP HAS NO CLASH', allConflicts({}).length === 0, JSON.stringify(allConflicts({})));
@@ -283,12 +284,14 @@ console.log('keymap');
     'transport.playPause': ['Space'], 'transport.stepBack': ['ArrowLeft'], 'transport.stepForward': ['ArrowRight'],
     'transport.stepBack10': ['Shift+ArrowLeft'], 'transport.stepForward10': ['Shift+ArrowRight'],
     'transport.toStart': ['Home'], 'transport.toEnd': ['End'], 'transport.run': ['Mod+Enter'], 'transport.addToQueue': ['Q'],
-    'timeline.trimStart': ['['], 'timeline.trimEnd': [']'], 'timeline.resetRange': ['R'], 'timeline.curveEditor': ['C'],
+    // Stage 9 moved four of these ON PURPOSE: C became the comparison cycle, so the curve editor took Alt+C; bare [ and ]
+    // became the brush radius, so the range trims took Alt+[ and Alt+]; the loupe gained Z alongside G.
+    'timeline.trimStart': ['Alt+['], 'timeline.trimEnd': ['Alt+]'], 'timeline.resetRange': ['R'], 'timeline.curveEditor': ['Alt+C'],
     'viewport.compare': ['Shift+C'], 'viewport.splitView': ['S'],
     'timeline.marker': ['M'], 'transport.shuttleBack': ['J'], 'transport.shuttlePause': ['K'], 'transport.shuttleForward': ['L'],
     'timeline.setIn': ['I'], 'timeline.setOut': ['O'], 'timeline.frameBack': [','], 'timeline.frameForward': ['.'],
     'timeline.frameBack10': ['<', 'Shift+,'], 'timeline.frameForward10': ['>', 'Shift+.'], 'timeline.prevCut': ['ArrowUp'], 'timeline.nextCut': ['ArrowDown'],
-    'viewport.fit': ['F'], 'viewport.lockTarget': ['T'], 'viewport.debugOverlay': ['D'], 'viewport.loupe': ['G'],
+    'viewport.fit': ['F'], 'viewport.lockTarget': ['T'], 'viewport.debugOverlay': ['D'], 'viewport.loupe': ['Z', 'G'],
     'mask.brush': ['B'], 'mask.pen': ['P'], 'viewport.compareAxis': ['X'], 'viewport.compareMode': ['W'], 'viewport.autoSwipe': ['A'],
     'viewport.zoom100': ['Shift+1'], 'viewport.zoom200': ['Shift+2'], 'viewport.zoom400': ['Shift+4'],
     'snapshot.slotA': ['1'], 'snapshot.slotB': ['2'], 'snapshot.slotC': ['3'], 'snapshot.slotD': ['4'],
@@ -302,7 +305,7 @@ console.log('keymap');
 
   const index = buildIndex({});
   ok('index resolves a combo to its action', index.get('Mod+K')?.[0] === 'app.palette' && index.get('Shift+C')?.[0] === 'viewport.compare');
-  ok('C and Shift+C are different keys', index.get('C')?.[0] === 'timeline.curveEditor' && index.get('Shift+C')?.[0] === 'viewport.compare');
+  ok('C cycles the comparison, Alt+C is the curve editor, Shift+C is still compare', index.get('C')?.[0] === 'viewport.compareCycle' && index.get('Alt+C')?.[0] === 'timeline.curveEditor' && index.get('Shift+C')?.[0] === 'viewport.compare');
 
   // Overrides
   ok('an override replaces the defaults', JSON.stringify(bindingsOf('viewport.splitView', { 'viewport.splitView': ['Y'] })) === '["Y"]');

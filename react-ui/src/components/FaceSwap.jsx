@@ -9,6 +9,7 @@ import { Icon } from '../icons';
 import PersonGroups from './PersonGroups';
 import QualityReport from './QualityReport';
 import FileDrop from './faceswap/FileDrop';
+import { COMPARE_STEPS, nextCompareIndex } from './faceswap/compareCycle';
 import MouthCustodyPanel from './faceswap/MouthCustodyPanel';
 import useTargetAudio from './faceswap/useTargetAudio';
 import { modeOf, overridePatch, requestFields, clampOffset, MODE_LABELS } from './faceswap/mouthCustody';
@@ -3318,12 +3319,17 @@ export default function FaceSwap({
 
       // The curve-editor key opens the timeline's Curve Editor (Stage 25) and Shift+C is the comparison view it displaced -
       // this handler stays the one owner of both (test_ui_shortcut_keys). A still image has no timeline to hang a curve on,
-      // so there the curve key keeps doing what the bare C always did: compare. Ctrl/Cmd+C is a different combo and is
-      // never claimed, so copy still works.
+      // Alt+C is the curve key (video only; a still image has no timeline, so it does nothing there). Bare C cycles the
+      // comparison modes (viewport.compareCycle). Ctrl/Cmd+C is a different combo and is never claimed, so copy still works.
       const curveKey = eventMatches(e, 'timeline.curveEditor');
-      if (curveKey || eventMatches(e, 'viewport.compare')) {
+      if (curveKey && maxFrames > 1) { e.preventDefault(); setCurveOpen((open) => !open); return; }
+      if (eventMatches(e, 'viewport.compareCycle')) {
         e.preventDefault();
-        if (curveKey && maxFrames > 1) { setCurveOpen((open) => !open); return; }
+        applyCompareStep(nextCompareIndex(compareStepRef.current, compareRef.current));
+        return;
+      }
+      if (eventMatches(e, 'viewport.compare')) {
+        e.preventDefault();
         setCompare((prev) => {
           const nextVal = !prev;
           if (nextVal) { setComparingEnhancers(false); setComparingMasks(false); setComparingSwappers(false); setComparingUpscalers(false); }
@@ -3395,10 +3401,32 @@ export default function FaceSwap({
   ]);
   /* eslint-enable react-hooks/exhaustive-deps */
 
+  // Comparison modes, shared by the C key and the command palette (faceswap/compareCycle.js). The step functions read
+  // only refs and setters, so the keydown effect and the palette can both call them without going stale.
+  const compareRef = useRef(compare);
+  compareRef.current = compare;
+  const compareStepRef = useRef(-1);
+  const applyCompareStep = useCallback((index) => {
+    const step = COMPARE_STEPS[index];
+    if (!step) return;
+    compareStepRef.current = index;
+    setComparingEnhancers(false); setComparingMasks(false); setComparingSwappers(false); setComparingUpscalers(false);
+    setCompare(true);
+    setSplitView(step.split);
+    window.dispatchEvent(new CustomEvent('roop:viewport', { detail: { mode: step.sub } }));
+  }, [setComparingEnhancers, setComparingMasks, setComparingSwappers, setComparingUpscalers, setCompare, setSplitView]);
+  // A viewport sub-mode that is not one of the four cycle steps: the diff heatmap, the loupe, or a brush mode.
+  const applyViewportMode = useCallback((mode) => {
+    if (mode === 'heatmap') { setCompare(true); setSplitView(false); }
+    if (mode) window.dispatchEvent(new CustomEvent('roop:viewport', { detail: { mode } }));
+  }, []);
+
   // Command-palette action bus (dispatched from App via window 'roop:command').
   // A ref keeps the handler map fresh without re-subscribing every render.
   const cmdRef = useRef({});
   cmdRef.current = {
+    compareStep: (d) => applyCompareStep(Number(d?.index) || 0),
+    viewportMode: (d) => applyViewportMode(String(d?.mode || '')),
     start: () => { if (queue.running) return; if (queue.pending.length > 0) startQueue(); else start(); },
     stop,
     queue: addToQueue,
