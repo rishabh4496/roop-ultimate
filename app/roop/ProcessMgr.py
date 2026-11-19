@@ -436,6 +436,7 @@ from roop import swap_batcher
 from roop import studio_parameters as _studio
 from roop import person_overrides as _person_overrides
 import roop.globals
+from roop.occlusion_mask import OCCLUDER_FAMILY as _OCCLUDER_FAMILY
 
 
 
@@ -5901,6 +5902,14 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         _img_mask = None
         _unified_keep = None
         _skin_colour_mask = None
+        # Occlusion-aware colour: the swap BEFORE its colour transfer, the pass-1 skin/hull support, and the
+        # sampling mask pass 1 actually used. The mask stage knows what is in front of the face; pass 1 does
+        # not (see roop/occlusion_color.py), so once `_unified_keep` exists the transfer is redone from the
+        # untransferred swap with a hand/hair-free sampling mask -- only when that mask measurably changes the
+        # target's statistics. None everywhere when there is no mask stage or colour transfer is off.
+        _fake_pre_colour = None
+        _skin_support = None
+        _colour_mask_used = None
         # inputface is assigned after pose computation below (supports source bank)
         inputface = None
         # Cleared per face: the swap net's mask is stashed per THREAD, so without
@@ -6603,6 +6612,11 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     enhanced_frame = _raw_hit['enhanced_frame']
                     scale_factor = _raw_hit['scale_factor']
                     self._tls.swap_model_mask = _raw_hit['swap_model_mask']
+                    # The neighbouring block's pass-1 inputs, so this block refines the colour exactly as the
+                    # producing block would have (otherwise output would depend on which thread got there first).
+                    _fake_pre_colour = _raw_hit.get('fake_pre_colour')
+                    _skin_support = _raw_hit.get('skin_support')
+                    _colour_mask_used = _skin_support
                     _bp.count('stab.dedup.served')
                 elif _raw_state == 'produce':
                     _raw_slot = _raw_obj
@@ -6834,6 +6848,9 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     cv2.fillConvexPoly(_interior, cv2.convexHull(_crop_kps.astype(np.int32)), 1)
                     _skin = _interior.astype(np.float32) if _skin is None else _skin * _interior
                     _skin_colour_mask = _skin
+                    if any(getattr(_q, 'type', None) == 'mask' for _q in self.processors):
+                        # apply_color_transfer returns a NEW array, so holding the reference costs no copy.
+                        _fake_pre_colour, _skin_support, _colour_mask_used = fake_frame, _skin, _skin
                     with _prof('lighting'):
                         fake_frame = self.apply_color_transfer(fake_frame, aligned_img,
                             appearance=_target_appearance, mask=_skin)
@@ -6850,7 +6867,8 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     _raw_cache.publish(_raw_slot, {
                         'fake_frame': fake_frame, 'enhanced_frame': enhanced_frame,
                         'scale_factor': scale_factor,
-                        'swap_model_mask': getattr(self._tls, 'swap_model_mask', None)})
+                        'swap_model_mask': getattr(self._tls, 'swap_model_mask', None),
+                        'fake_pre_colour': _fake_pre_colour, 'skin_support': _skin_support})
                     _raw_slot = None
                 with _prof('mask'), _gpu_guard(pooled=getattr(p, 'pool', None) is not None, owner='mask'):  # mask: lock-free when pooled
                     # Defer both target composites until the mask stabilizer has
@@ -6897,6 +6915,21 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     _unified_keep = (_keep if _unified_keep is None
                                      else np.minimum(_unified_keep, _keep))
                     _img_mask = 1.0 - _unified_keep
+                    # Occlusion-aware colour: now that the mask stage knows what is in front of the face, redo
+                    # the swap-stage transfer from the untransferred swap if (and only if) a hand/hair-free
+                    # sampling mask changes the target statistics it was fitted to. See roop/occlusion_color.py.
+                    if _fake_pre_colour is not None and _skin_support is not None:
+                        try:
+                            _redo = self._occlusion_aware_colour(
+                                _fake_pre_colour, aligned_img, _skin_support, _unified_keep,
+                                _colour_mask_used, _target_appearance, fake_now=fake_frame)
+                            if _redo is not None:
+                                fake_frame, _colour_mask_used = _redo
+                                _skin_colour_mask = _colour_mask_used
+                                self._count_stage3('colour_occlusion_redone')
+                        except Exception as _exc:
+                            _swallowed('roop/ProcessMgr.py:occlusion_colour', _exc,
+                                       'kept the pass-1 colour transfer')
                     try:
                         from roop import watchdog
                         _cur_fidx = getattr(self._tls, 'frame_idx', None)
@@ -6915,7 +6948,10 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                             face_id=_wd_key,
                             face_index=face_index,
                             mask_name=getattr(p, 'processorname', None),
-                            bbox=getattr(target_face, 'bbox', None))
+                            bbox=getattr(target_face, 'bbox', None),
+                            # An occluder pass is an obstruction that may enter/leave: never a "collapse".
+                            mask_role=('obstruction' if getattr(p, 'processorname', None) in _OCCLUDER_FAMILY
+                                       else 'face'))
                     except Exception:
                         pass
                 if self._stab_history is not None and _img_mask is not None:

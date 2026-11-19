@@ -387,8 +387,19 @@ class RuntimeWatchdog:
         face_index: Optional[int] = None,
         mask_name: Optional[str] = None,
         bbox: Optional[Any] = None,
+        mask_role: str = "face",
     ) -> bool:
         """Detect if occlusion mask area suddenly drops to 0px or fluctuates > 70% within the same scene cut.
+
+        ``mask_role`` separates the two things a mask pass can be:
+
+        ``"face"``         the geometric face-region mask. Its area is a property of the face, so a drop to 0 or a
+                           >70% jump in one frame is an engine failure and is reported (the original behaviour).
+        ``"obstruction"``  an occluder-family pass (``Mask_Occluder`` / XSeg 3: hand, microphone, hair, glasses).
+                           An obstruction legitimately enters, leaves and changes size between adjacent frames; the
+                           mask going to 0 px when the hand moves away is the engine being RIGHT, not collapsing. It
+                           still keeps a baseline but never raises the collapse / seam-jump alarm, so it cannot paint
+                           a false seam marker on the timeline or push a warning for a correct subtraction.
 
         The baseline is per (stream_key, thread, mask shape): the previous mask is only
         comparable when it is the same face, from the same mask engine, at the same resolution,
@@ -412,6 +423,10 @@ class RuntimeWatchdog:
                 if len(self._mask_baselines) > 512 and last is None:
                     self._mask_baselines.clear()
                 self._mask_baselines[key] = (curr_area, frame_idx, scene_cut_id)
+
+            # An obstruction appearing or leaving is not a mask failure (see ``mask_role``).
+            if mask_role == "obstruction":
+                return True
 
             # No baseline, a gap in frames, or a scene cut: this mask starts a new baseline.
             if last is None:
@@ -574,10 +589,12 @@ def check_mask_geometry(
     face_index: Optional[int] = None,
     mask_name: Optional[str] = None,
     bbox: Optional[Any] = None,
+    mask_role: str = "face",
 ) -> bool:
     return WATCHDOG.check_mask_geometry(
         frame_idx, mask, scene_cut_id, jump_threshold, stream_key,
         face_id=face_id, face_index=face_index, mask_name=mask_name, bbox=bbox,
+        mask_role=mask_role,
     )
 
 

@@ -151,6 +151,13 @@ blend_mode = 'laplacian'
 semantic_paste_mask = True
 skin_lab_match = 1.0
 skin_lab_match_mode = 'reinhard'
+# Rollback switches for two mask/paste fixes (no UI, no persisted setting; both default on):
+#   restorer_rim_lock: toward the paste rim, hand a restorer's low band back to the colour-matched swap
+#     (only when the seam skin Lab match did not run). roop/restorer_seam.py.
+#   realityux_outer_accessory: RealityUX lets BiSeNet subtract hair/ear/hat/cloth outside the landmark face
+#     core even where XSeg reads skin. Processors/Mask_RealityUX.py.
+restorer_rim_lock = True
+realityux_outer_accessory = True
 # Per-request: publish parsing_overlay / final_alpha_mask for the preview API.
 debug_mask_channels = False
 debug_mask_face_index = None

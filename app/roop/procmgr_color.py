@@ -335,6 +335,45 @@ class ColorTransferMixin:
         out = face + s * high_freq * core * skin_gate + dark_spot_layer
         return np.clip(out, 0, 255).astype(np.uint8)
 
+    def _occlusion_aware_colour(self, fake_pre, target, skin_support, keep, mask_used, appearance=None,
+                                fake_now=None):
+        """Redo the swap-stage colour transfer with a hand/hair-free sampling mask, or return None.
+
+        ``fake_pre`` is the swap BEFORE its pass-1 transfer, ``skin_support`` pass 1's soft skin x hull map,
+        ``keep`` the unified keep matte (1 = swap kept: inside the parsed face and not obstructed), and
+        ``mask_used`` the sampling mask the last transfer was fitted with. Returns ``(new_crop, new_mask)``
+        only when the occlusion-aware mask changes the TARGET's Lab statistics beyond a small tolerance --
+        otherwise pass 1 was already sampling the same skin and the frame is left bit-identical.
+
+        The transfer is re-run through ``apply_color_transfer`` itself, from the untransferred swap, so every
+        user control (mode, warmth, saturation, relighting, target-conditioned appearance) applies exactly as
+        in pass 1; only the pixels that define the statistics differ.
+        """
+        from roop import occlusion_color as _oc
+        from roop.unified_matte import interior_mask
+        if _studio.value('color_transfer_mode', 'rct') == 'none':
+            return None
+        before = interior_mask(mask_used, target.shape)
+        # Fast path, the common case: the keep matte excludes (almost) nothing the first pass sampled, so no
+        # occlusion-aware mask can change the statistics. Costs one comparison instead of the Lab assessment.
+        if not _oc.excludes_sampled_pixels(before, keep):
+            return None
+        clean = _oc.clean_stats_mask(skin_support, keep)
+        if clean is None:
+            return None
+        if not _oc.stats_diverge(target, before, clean):
+            return None
+        # A sample too small or too flat to fit statistics to is worse than the contaminated one: keep pass 1.
+        if not _oc.sample_is_reliable(target, before, clean):
+            return None
+        new_mask = clean.astype(np.float32)
+        out = self.apply_color_transfer(fake_pre, target, appearance=appearance, mask=new_mask)
+        # ``fake_now`` is the crop as it stands (pass 1, or an earlier redo). If the redo would move the face by
+        # more than occlusion can explain, the parse is what is wrong, not the first pass.
+        if fake_now is not None and out.shape == fake_now.shape and not _oc.correction_is_plausible(fake_now, out, clean):
+            return None
+        return out, new_mask
+
     def apply_color_transfer(self, source, target, appearance=None,
                              conditioned_strength=None, mask=None):
         """Match the swapped crop's color/lighting to the original target crop.

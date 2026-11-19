@@ -1037,6 +1037,7 @@ class MaskingMixin:
         _lab = float(getattr(roop.globals, 'skin_lab_match', 1.0) or 0.0)
         if 'color_match_strength' in _tl:
             _lab = float(_tl['color_match_strength'])      # keyframed: replaces the run's own setting
+        _lab_applied = False
         if _lab > 0.0 and _parse is not None and _parse.is_semantic:
             try:
                 from roop import blender as _bl
@@ -1044,11 +1045,32 @@ class MaskingMixin:
                 _skin = _fp.class_mask(_fp.resize_labels(_parse.labels, (h, w)), ('skin',)) & (alpha > 0.01)
                 _plate_crop = cv2.warpAffine(target_img, cv2.invertAffineTransform(IM), (w, h),
                                              flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
-                content, _ = _bl.skin_lab_match(content, _plate_crop, _skin, strength=_lab,
-                                                mode=getattr(roop.globals, 'skin_lab_match_mode', 'reinhard'))
+                content, _lab_info = _bl.skin_lab_match(content, _plate_crop, _skin, strength=_lab,
+                                                        mode=getattr(roop.globals, 'skin_lab_match_mode', 'reinhard'))
+                _lab_applied = bool(_lab_info.get('applied'))
             except Exception as exc:
                 _swallowed("roop/procmgr_masking.py:skin_lab_match", exc, "fallback continued")
                 _warn_once('skin_lab_match', '[Mask] skin Lab match failed; this face was pasted without it: %s: %s'
+                           % (type(exc).__name__, str(exc)[:160]))
+        # ── Restorer tone lock at the rim (only when the seam Lab match did not run) ──────────────────────
+        # A restorer regrades the face it returns; the seam skin Lab match above absorbs that when it runs
+        # (measured: +18 levels of regrade leaves the rim step at the no-regrade floor). When it cannot -- no
+        # semantic parse, or the user set skin_lab_match 0 to keep the source's own pigment -- the regraded
+        # patch meets the plate across the alpha ramp as a visible tone step (measured 4.1-4.9 vs 2.7-3.3
+        # levels/px). Toward the matte's rim only, hand the restorer's LOW band back to the colour-matched
+        # swap and keep its HIGH band; deep inside the matte the restorer output is untouched, so identity
+        # is not recoloured. See roop/restorer_seam.py.
+        if (not _lab_applied and upsk_face is not fake_face
+                and bool(getattr(roop.globals, 'restorer_rim_lock', True))):
+            try:
+                from roop import restorer_seam as _rs
+                _swap_ref = fake_face
+                if _swap_ref.shape[:2] != content.shape[:2]:
+                    _swap_ref = cv2.resize(_swap_ref, (w, h), interpolation=cv2.INTER_CUBIC)
+                content = _rs.rim_tone_lock(content, _swap_ref, alpha)
+            except Exception as exc:
+                _swallowed("roop/procmgr_masking.py:restorer_rim_lock", exc, "pasted without the rim tone lock")
+                _warn_once('restorer_rim_lock', '[Mask] restorer rim tone lock failed; this face was pasted without it: %s: %s'
                            % (type(exc).__name__, str(exc)[:160]))
         roi_warp = str(os.environ.get('ROOP_BLEND_ROI_WARP', '1')).strip().lower() not in (
             '0', 'false', 'no', 'off')
@@ -1859,10 +1881,15 @@ class MaskingMixin:
         # prevent ghosting (xseg_3 shares the face_occluder output convention).
         if p_name in ('mask_occluder', 'mask_xseg3'):
             if p_name == 'mask_occluder':
-                binary_mask = (img_mask > 0.35).astype(np.float32)
+                # Smoothstep about the same 0.35 operating point (soft > 0.5 <=> p > 0.35), not a 0/1 step:
+                # a pixel whose probability wanders across the threshold used to flip hand<->face between
+                # frames, and with k == 1 (large close-ups) nothing softened it at all. The Gaussian below
+                # still sets the on-screen edge width.
+                from roop.mask_soft import soft_threshold
+                soft_mask = soft_threshold(img_mask, 0.35)
                 k = _edge_blur_kernel(M, frame.shape, img_mask.shape)
-                img_mask = (cv2.GaussianBlur(binary_mask, (k, k), 0) if k > 1
-                            else binary_mask)
+                img_mask = (cv2.GaussianBlur(soft_mask, (k, k), 0) if k > 1
+                            else soft_mask)
             else:
                 # Stage 7: Confidence-aware smoothstep refinement & photographic edge guided filtering
                 # replaces hard >0.35 thresholding which caused mask popping and edge shimmer.

@@ -96,8 +96,11 @@ class Mask_Clip2Seg():
             blur_k   = clip_blur * 2 + 1
 
         np.clip(clip_mask, 0, 1, out=clip_mask)
-        clip_mask[clip_mask >  thresh] = 1.0
-        clip_mask[clip_mask <= thresh] = 0.0
+        # Smoothstep about `thresh` (soft > 0.5 <=> clip > thresh) instead of a 0/1 step: the dilate and blur
+        # below then act on a continuous edge, so a prompt score hovering near the threshold no longer
+        # makes the region's contour jump a whole pixel row between frames.
+        from roop.mask_soft import soft_threshold
+        clip_mask = soft_threshold(clip_mask, thresh)
 
         kernel    = np.ones((dil_k, dil_k), np.float32)
         clip_mask = cv2.dilate(clip_mask, kernel, iterations=1)

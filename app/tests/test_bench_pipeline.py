@@ -27,6 +27,56 @@ from bench_pipeline import (
 )
 
 
+class TestCompareSurvivesChdir(unittest.TestCase):
+    """``angle_bench.init_pipeline`` chdirs into ``app/``. A relative ``--compare`` path used to be resolved
+    AFTER the run, so it pointed at ``app/<path>``, the comparison was skipped with a warning and the exit
+    code stayed 0 -- the documented ``--compare bench_results/baseline.json`` never compared anything."""
+
+    def test_relative_compare_path_is_resolved_before_the_run_changes_directory(self):
+        import bench_pipeline as bp
+        work = tempfile.mkdtemp(prefix="bench_cmp_work_")
+        elsewhere = tempfile.mkdtemp(prefix="bench_cmp_elsewhere_")
+        saved_cwd = os.getcwd()
+        canned = {
+            "timestamp": "t", "config": {}, "telemetry": {},
+            "metrics": {"flicker": {}, "angle_buckets": {}, "overall_stability": {}},
+        }
+        seen = {}
+        real_run, real_gen, real_cmp = bp.run_pipeline_benchmark, bp.generate_synthetic_multi_angle_video, bp.compare_benchmarks
+
+        def fake_run(*a, **k):
+            os.chdir(elsewhere)                      # what init_pipeline does
+            return canned
+
+        def fake_gen(output_path, **k):
+            open(output_path, "wb").close()
+            return output_path, None
+
+        def fake_cmp(current, baseline):
+            seen["baseline"] = baseline
+            return "COMPARED"
+
+        try:
+            os.chdir(work)
+            os.makedirs("bench_results")
+            with open(os.path.join("bench_results", "baseline.json"), "w", encoding="utf-8") as fh:
+                json.dump({"marker": 1}, fh)
+            bp.run_pipeline_benchmark, bp.generate_synthetic_multi_angle_video, bp.compare_benchmarks = fake_run, fake_gen, fake_cmp
+            argv = sys.argv
+            sys.argv = ["bench_pipeline.py", "--synthetic", "--frames", "10", "--out-dir", os.path.join(work, "out"),
+                        "--compare", os.path.join("bench_results", "baseline.json")]
+            try:
+                self.assertEqual(bp.main(), 0)
+            finally:
+                sys.argv = argv
+        finally:
+            bp.run_pipeline_benchmark, bp.generate_synthetic_multi_angle_video, bp.compare_benchmarks = real_run, real_gen, real_cmp
+            os.chdir(saved_cwd)
+            shutil.rmtree(work, ignore_errors=True)
+            shutil.rmtree(elsewhere, ignore_errors=True)
+        self.assertEqual(seen.get("baseline"), {"marker": 1}, "the relative --compare file was not read")
+
+
 class TestBenchPipeline(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.mkdtemp(prefix="test_bench_pipeline_")

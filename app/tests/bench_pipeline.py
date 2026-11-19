@@ -643,6 +643,10 @@ def main() -> int:
 
     # Mode 2: Run benchmark
     initial_cwd = os.getcwd()
+    # Resolve BEFORE the run: ``angle_bench.init_pipeline`` chdirs into ``app/``, so a relative
+    # ``--compare bench_results/baseline.json`` resolved afterwards pointed at ``app/bench_results`` and the
+    # comparison was silently skipped (a warning, exit 0).
+    compare_abs = os.path.abspath(args.compare) if args.compare else None
     out_dir = os.path.abspath(os.path.join(initial_cwd, args.out_dir))
     os.makedirs(out_dir, exist_ok=True)
     out_json = (
@@ -693,7 +697,7 @@ def main() -> int:
 
         # Comparison against baseline if specified
         if args.compare:
-            compare_path = os.path.abspath(args.compare)
+            compare_path = compare_abs
             if os.path.isfile(compare_path):
                 with open(compare_path, "r", encoding="utf-8") as f:
                     base_data = json.load(f)

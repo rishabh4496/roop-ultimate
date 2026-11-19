@@ -182,6 +182,66 @@ def _non_target_keep_mask(mask_shape, crop_shape, M, non_targets, target_face=No
     return out
 
 
+#: Landmarks needed before the face's outline is trusted enough to hand the outside to the parser. Five
+#: keypoints bound only eyes-nose-mouth, which would leave cheeks "outside"; 68 / 106 trace the jaw.
+_MIN_CORE_LANDMARKS = 60
+
+#: The protected core is the landmark hull eroded by this fraction of its own size, then softened, so the
+#: parser's permission ramps in over the face's boundary instead of switching at it.
+_CORE_ERODE_FRAC = 0.04
+_CORE_SOFT_FRAC = 0.04
+_CORE_WORK_PX = 128.0
+
+
+def _core_protect_map(target_face, M, crop_shape, out_shape):
+    """float32 (h, w) map, 1.0 inside the target's landmark face core, 0.0 outside, in the MASK's pixels.
+
+    None when it cannot be built honestly (no dense landmarks, no frame->crop matrix, degenerate hull);
+    the caller then keeps the original XSeg-only gate everywhere.
+    """
+    try:
+        if target_face is None or M is None:
+            return None
+        lm = getattr(target_face, "landmark_2d_106", None)
+        if lm is None:
+            lm = getattr(target_face, "landmark_3d_68", None)
+        if lm is None or len(lm) < _MIN_CORE_LANDMARKS:
+            return None
+        pts = _frame_pts_to_crop(np.asarray(lm, np.float32)[:, :2], M)
+        if pts is None or len(pts) < _MIN_CORE_LANDMARKS or not np.isfinite(pts).all():
+            return None
+        h, w = int(out_shape[0]), int(out_shape[1])
+        ch, cw = int(crop_shape[0]), int(crop_shape[1])
+        if min(h, w, ch, cw) <= 0:
+            return None
+        # The core is a smooth field: build it on at most _CORE_WORK_PX (3.6 ms at 512 px -> ~0.5 ms) and
+        # upsample. The strict "nothing changes deep inside" property does not depend on the resolution: it
+        # is carried by the permission ramp's zero from core 0.5 inward.
+        f = min(1.0, _CORE_WORK_PX / float(max(h, w)))
+        hs, ws = max(8, int(round(h * f))), max(8, int(round(w * f)))
+        pts = np.asarray(pts, np.float32) * np.array([ws / float(cw), hs / float(ch)], np.float32)
+        pts = np.clip(pts, -4.0 * max(hs, ws), 5.0 * max(hs, ws))
+        hull = cv2.convexHull(np.round(pts).astype(np.int32))
+        core = np.zeros((hs, ws), np.uint8)
+        cv2.fillConvexPoly(core, hull, 1)
+        area = float(core.sum())
+        if area < 16:
+            return None
+        span = float(np.sqrt(area))
+        r = max(1, int(round(_CORE_ERODE_FRAC * span)))
+        el = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * r + 1, 2 * r + 1))
+        core = cv2.erode(core, el, borderType=cv2.BORDER_CONSTANT, borderValue=0).astype(np.float32)
+        sigma = max(0.8, _CORE_SOFT_FRAC * span)
+        core = np.clip(cv2.GaussianBlur(core, (0, 0), sigmaX=sigma), 0.0, 1.0)
+        if (hs, ws) != (h, w):
+            core = np.clip(cv2.resize(core, (w, h), interpolation=cv2.INTER_LINEAR), 0.0, 1.0)
+        return core
+    except Exception as _degrade_error:
+        _swallowed("roop/processors/Mask_RealityUX.py:core_protect", _degrade_error,
+                   "accessory gate kept XSeg-only")
+        return None
+
+
 class Mask_RealityUX():
     """DFL XSeg (mask_xseg) as the authoritative swap region, with BiSeNet
     Face Parser (mask_faceparser) allowed only to SUBTRACT pixels it is
@@ -336,10 +396,10 @@ class Mask_RealityUX():
             # Background class (0) is NEVER subtracted from the XSeg face region because
             # BiSeNet's frontal priors falsely mark angled/lying-down faces as background,
             # which causes partial/half-unswapped faces.
-            is_accessory = np.isin(labels, _NONFACE_OPAQUE).astype(np.float32)
+            _acc_hard = np.isin(labels, _NONFACE_OPAQUE).astype(np.float32)
 
             # Smooth accessory mask
-            is_accessory = cv2.GaussianBlur(is_accessory, (0, 0), sigmaX=3)
+            is_accessory = cv2.GaussianBlur(_acc_hard, (0, 0), sigmaX=3)
 
             h, w = labels.shape[:2]
             if xseg_mask.shape[:2] != (h, w):
@@ -380,7 +440,34 @@ class Mask_RealityUX():
             # 12.5% of the render for 0.6% of the mask's pixels -- and
             # `mask_engine: DFL XSeg` is the switch.
             accessory_allowed = np.clip((xseg_mask - 0.05) / 0.20, 0.0, 1.0)
+            # PRIORITY INVERSION, fixed outside the face only. The gate above lets the parser subtract
+            # hair/ears/hat/cloth ONLY where XSeg already excludes, so a hand-strand or headphone band XSeg
+            # reads as skin (xseg < 0.05) could never be removed even though BiSeNet was certain it was
+            # hair. The reason for the gate is to stop the parser's frontal priors eating a real angled
+            # face, and that can only happen INSIDE the face -- so outside the (landmark) face core the
+            # parser's call stands on its own, and inside it the gate is exactly what it was.
             non_face = np.clip(is_accessory * accessory_allowed, 0.0, 1.0)
+            if bool(getattr(roop.globals, 'realityux_outer_accessory', True)):
+                _core = _core_protect_map(target_face, M, img1.shape, (h, w))
+                if _core is not None:
+                    # Built from the UNBLURRED label map and a small feather. Opening the gate on the
+                    # sigma=3 `is_accessory` above was measured on 106 real faces to remove 2.5 skin pixels
+                    # (forehead / jaw margin, outside the landmark hull) for every hair pixel it gained: the
+                    # blur's halo carried the permission into skin. Only pixels BiSeNet itself labels
+                    # hair/ear/hat/cloth may be added, and the feather is a third of that halo.
+                    # Permission is zero from the core's half-height inward and the blur below reaches only a
+                    # few px, while the core's own ramp is ~10x wider, so deep inside the core nothing can
+                    # change -- a property, not a soft-ramp leak of a few hundredths.
+                    _outside = np.clip((0.5 - _core) / 0.5, 0.0, 1.0)
+                    _src = _acc_hard * _outside
+                    if h >= 384 and w >= 384:
+                        # Half resolution: the feather is a few px wide, so this is the same field for ~half the cost.
+                        _lo = cv2.resize(_src, (w // 2, h // 2), interpolation=cv2.INTER_AREA)
+                        _outer = cv2.resize(_scaled_blur(_lo, 7, 1.0, (h // 2) / _REF_MASK_PX), (w, h),
+                                            interpolation=cv2.INTER_LINEAR)
+                    else:
+                        _outer = _scaled_blur(_src, 7, 1.0, h / _REF_MASK_PX)
+                    non_face = np.maximum(non_face, np.clip(_outer, 0.0, 1.0))
 
             combined = np.maximum(xseg_mask, non_face)
 
@@ -413,14 +500,17 @@ class Mask_RealityUX():
         occ_applied = False
         if enable_xseg_occlusion and xseg_mask is not None:
             try:
-                occ_raw = (xseg_mask > 0.40).astype(np.uint8) * 255
-                if np.any(occ_raw > 0):
+                # Smoothstep about the old 0.40 operating point, not a 0/1 step: XSeg's probability wandering
+                # across the threshold used to flip whole pixels between frames. The erosion that follows
+                # shrinks THICK objects as before (the swap may run up to a hand) but no longer deletes
+                # structures narrower than its kernel -- glasses rims and hair strands came out of the old
+                # binary erosion as disconnected islands, or not at all.
+                from roop.mask_soft import soft_threshold, thin_preserving_erode
+                occ_soft = soft_threshold(xseg_mask, 0.40)
+                if np.any(occ_soft > 0):
                     _s = combined.shape[0] / _REF_MASK_PX
                     k_size = _odd(int(np.clip(occlusion_erosion, 1, 5)) * _s)
-                    morph_k = cv2.getStructuringElement(cv2.MORPH_RECT, (k_size, k_size))
-                    eroded_occ = cv2.erode(occ_raw, morph_k, iterations=1)
-
-                    eroded_f = eroded_occ.astype(np.float32) / 255.0
+                    eroded_f = thin_preserving_erode(occ_soft, k_size)
                     feathered_occ = _scaled_blur(eroded_f, 9, 2.0, _s)
                     feathered_occ = np.clip(feathered_occ, 0.0, 1.0)
 
