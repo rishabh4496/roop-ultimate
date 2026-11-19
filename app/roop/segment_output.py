@@ -42,6 +42,7 @@ from typing import Iterable, List, Optional, Sequence
 from roop.ffmpeg_path import ffmpeg_binary, ffprobe_binary
 
 SEGMENTS_DIRNAME = ".segments"
+SEGMENT_WARMUP = 12
 _SEG_RE = re.compile(r"^seg_(?P<idx>\d{4,})_(?P<start>\d+)_(?P<end>\d+)\.(?P<ext>[A-Za-z0-9]+)$")
 
 

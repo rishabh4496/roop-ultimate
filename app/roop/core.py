@@ -1858,7 +1858,8 @@ def batch_process(output_method, files:list[ProcessEntry], use_new_method) -> No
                     needs_originals = roop.globals.keep_frames or bool(per_frame_masks)
                     if needs_originals:
                         util.save_original_frames(v.filename)
-                    process_mgr.run_batch(temp_frame_paths, temp_frame_paths, roop.globals.execution_threads)
+                    process_mgr.run_batch(temp_frame_paths, temp_frame_paths, roop.globals.execution_threads,
+                                          video_source=v.filename, video_start=v.startframe, video_fps=fps)
                     if not roop.globals.processing:
                         end_processing('Processing stopped!')
                         return

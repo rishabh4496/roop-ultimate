@@ -64,7 +64,7 @@ def _temporal_prepass_features(pm: Any) -> Dict[str, Any]:
     options = getattr(pm, "options", None)
     strength = float(getattr(options, "stabilization_strength", 0.5) or 0.0)
     result = {
-        "association_policy": "bytetrack-v1",
+        "association_policy": "bytetrack-v2-hysteresis-video-one-euro",
         "active": bool((getattr(options, "stabilize_face", False) and strength > 0.0)
                        or getattr(options, "pose_adaptive_faceset", False)),
         "stabilize_face": bool(getattr(options, "stabilize_face", False)),

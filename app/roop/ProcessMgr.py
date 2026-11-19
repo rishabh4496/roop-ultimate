@@ -1692,7 +1692,8 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         # in-run collection point; never run GC on an arbitrary frame cadence.
         gc.collect()
 
-    def run_batch(self, source_files, target_files, threads:int = 1):
+    def run_batch(self, source_files, target_files, threads:int = 1, *,
+                  video_source=None, video_start=0, video_fps=None):
         progress_bar_format = PROGRESS_BAR_FORMAT
         self.total_frames = len(source_files)
         self.num_threads = threads
@@ -1702,8 +1703,19 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         # Files are handed to workers in slices, so a worker's frames are not
         # the video's consecutive frames; see `_dispatch_tracker`.
         self._dispatch_ordered = (threads <= 1)
+        video = video_source is not None and not self.options.frame_processing
         try:
             with ChunkedProgress(total=self.total_frames, desc='Processing', unit='frame', dynamic_ncols=True, bar_format=progress_bar_format) as progress:
+                if video:
+                    self._video_temporal_enabled = True
+                    self._video_fps = video_fps
+                    self._angle_frame_offset = video_start
+                    self._trajectory_source_video = video_source
+                    self._reset_dispatch_tracker()
+                    self._render_extracted_preroll(video_source, video_start)
+                    self.process_frames(source_files, target_files, source_files,
+                                        lambda: self.update_progress(progress), video=True)
+                    return
                 with ThreadPoolExecutor(max_workers=threads) as executor:
                     futures = []
                     queue = create_queue(source_files)
@@ -1714,12 +1726,39 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     for future in as_completed(futures):
                         future.result()
         finally:
+            if video:
+                self._video_temporal_enabled = False
+                self._tls.video_temporal_active = False
+                self._tls.video_temporal_state = None
+                self._tls.video_color_context = None
             if _hot_loop_gc_was_enabled:
                 gc.enable()
             gc.collect()
 
 
-    def process_frames(self, source_files: List[str], target_files: List[str], current_files, update: Callable[[], None]) -> None:
+    def _render_extracted_preroll(self, source, start):
+        from roop.segment_output import SEGMENT_WARMUP
+        count = min(start, SEGMENT_WARMUP)
+        if count <= 0:
+            return
+        cap = cv2.VideoCapture(source)
+        self._tls.vfx_warmup = True
+        try:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, start - count)
+            for index in range(-count, 0):
+                ok, frame = cap.read()
+                if not ok or not roop.globals.processing:
+                    break
+                try:
+                    self._process_frame_uncounted(frame, frame_idx=index)
+                except Exception as exc:
+                    _swallowed('ProcessMgr:extracted_preroll', exc, 'video overlap frame skipped')
+        finally:
+            self._tls.vfx_warmup = False
+            cap.release()
+
+    def process_frames(self, source_files: List[str], target_files: List[str], current_files,
+                       update: Callable[[], None], *, video=False) -> None:
         try:
             from core.cpu_topology import pin_current_thread_to_p_cores
             pin_current_thread_to_p_cores(high_priority=True)
@@ -1754,7 +1793,8 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     else:
                         # process_frame serialises only its GPU primitives (under
                         # TensorRT); CPU work overlaps across threads.
-                        resimg = self.process_frame(temp_frame, output_pending=True)
+                        resimg = self.process_frame(temp_frame, frame_idx=idx if video else None,
+                                                    output_pending=True)
                         if resimg is not None:
                             pause_controller.pending_output(-1)
                 except RuntimeError as exc:
@@ -1809,7 +1849,8 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                         break
 
     def read_frames_thread(self, cap, frame_start, frame_end, num_threads):
-        num_frame = 0
+        overlap = getattr(self, '_segment_warmup_count', 0)
+        num_frame = -overlap
         total_num = frame_end - frame_start
         # Bind the queues this run owns. `self.frames_queue` is REPLACED by the
         # next run_batch_inmem, so a straggler reader that resolved the attribute
@@ -1817,7 +1858,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         # retire one of its workers early.
         queues = self.frames_queue
         if frame_start > 0:
-            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_start)
+            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_start - overlap)
 
         while True and roop.globals.processing:
             # Pause the reader; consumers drain the queue then block on get(),
@@ -1847,9 +1888,11 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
 
     def read_frames_webp_thread(self, bgr_frames, frame_start, frame_end, num_threads):
         """Feed pre-decoded BGR frames (from animated webp via PIL) into the processing queue."""
-        subset = bgr_frames[frame_start:frame_end] if frame_end > frame_start else bgr_frames[frame_start:]
+        overlap = getattr(self, '_segment_warmup_count', 0)
+        start = frame_start - overlap
+        subset = bgr_frames[start:frame_end] if frame_end > frame_start else bgr_frames[start:]
         queues = self.frames_queue   # bind this run's queues; see read_frames_thread
-        for num_frame, frame in enumerate(subset):
+        for num_frame, frame in enumerate(subset, start=-overlap):
             wait_while_paused()
             if not roop.globals.processing:
                 break
@@ -1882,6 +1925,60 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             return local
         return getattr(self, '_' + name, None)
 
+    def _video_temporal_state(self):
+        if getattr(self._tls, 'video_temporal_active', False):
+            return self._tls.video_temporal_state
+        return None
+
+    def _begin_video_temporal(self, frame, index, known_cut):
+        from roop.video_temporal import VideoTemporalState
+        state = getattr(self._tls, 'video_temporal_state', None)
+        epoch = getattr(self, '_dispatch_epoch', 0)
+        if state is None or getattr(self._tls, 'video_temporal_epoch', None) != epoch:
+            state = VideoTemporalState(getattr(self, '_video_fps', None) or 30.)
+            self._tls.video_temporal_state = state
+            self._tls.video_temporal_epoch = epoch
+            self._tls.last_found_bboxes = None
+        self._tls.video_temporal_active = True
+        if state.begin(frame, index, known_cut):
+            tracker, _ = self._dispatch_tracker()
+            if tracker is not None:
+                tracker.reset()
+            self._tls.last_found_bboxes = None
+            self._tls.frame_faces = None
+            self._tls.geometry_epoch = None
+            for name in ('interaction_masker', 'temporal_identity', 'temporal_occlusion',
+                         'target_appearance', 'temporal_compositing', 'temporal_quality',
+                         'landmark_smoother', 'hf_stabilizer', 'temporal_enhancer'):
+                engine = self._temporal_engine(name)
+                if engine is not None and getattr(engine, 'enabled', False):
+                    (getattr(engine, 'flush', None) or engine.reset)()
+            for engine in (self._cur_kps_stab(), self._cur_enh_stab(), self._cur_mask_stab()):
+                if engine is not None:
+                    engine.reset()
+        return state
+
+    def _track_video_faces(self, faces, frame, frame_idx, state):
+        from roop.video_temporal import MISS_GRACE
+        tracker, may_coast = self._dispatch_tracker()
+        if tracker is None:
+            return faces
+        detected = tracker.update(faces, frame_idx)
+        predicted = tracker.coast(frame_idx, frame_shape=frame.shape, occupied=faces) if may_coast else []
+        predicted = [face for face in predicted
+                     if tracker.tracks[face['_track_id']].missed <= MISS_GRACE]
+        if predicted:
+            _audit_hit('recovered on Kalman prediction (occluded)', len(predicted))
+        faces = list(detected) + list(predicted)
+        for face in faces:
+            tid = self._temporal_track_id(face)
+            if tid is not None:
+                state.geometry(face, tid)
+        if self.options.swap_mode in ('first', 'all_input'):
+            state.slots.update(faces, frame_idx, 1 if self.options.swap_mode == 'first'
+                               else len(self.input_face_datas))
+        return faces
+
     def _reset_dispatch_tracker(self):
         """Start a fresh dispatch tracker and invalidate every per-thread clone.
 
@@ -1889,7 +1986,13 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         in thread-local storage that nothing else clears. The epoch is what makes
         a stale clone detectable without having to reach into other threads.
         """
-        self._dispatch_face_tracker = FaceTracker(max_age=30)
+        if getattr(self, '_video_temporal_enabled', False):
+            from roop.multi_face_tracker import MultiFaceTracker
+            from roop.video_temporal import MISS_GRACE
+            self._dispatch_face_tracker = MultiFaceTracker(max_age=30, max_coast=MISS_GRACE,
+                                                          min_hits_to_coast=2)
+        else:
+            self._dispatch_face_tracker = FaceTracker(max_age=30)
         self._dispatch_epoch = getattr(self, '_dispatch_epoch', 0) + 1
         # Assume ordered until a dispatch loop says otherwise, so a previous
         # round-robin run cannot leave the next one permanently un-coasted.
@@ -1991,6 +2094,15 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             else:
                 frame_idx, frame = item
                 del item
+                if frame_idx < 0:
+                    self._tls.vfx_warmup = True
+                    try:
+                        self._process_frame_uncounted(frame, frame_idx=frame_idx)
+                    except Exception as exc:
+                        _swallowed('ProcessMgr:segment_preroll', exc, 'video overlap frame skipped')
+                    finally:
+                        self._tls.vfx_warmup = False
+                    continue
                 resimg = None
                 fallback_frame = _owned_fallback_frame(frame)
                 self._runtime_worker_enter(threadindex)
@@ -2452,6 +2564,8 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         # NOT `n_blocks`: the per-chunk dispatch below binds that name itself, and
         # this value has to survive the whole run.
         WU, block, stab_width, blocks_per_chunk = self._stab_parallel_geometry(threads)
+        overlap = getattr(self, '_segment_warmup_count', 0)
+        decode_start = frame_start - overlap
         CHUNK = blocks_per_chunk * block
         try:
             explicit_chunk = int(os.environ.get('ROOP_STAB_CHUNK', '0') or '0')
@@ -2507,7 +2621,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         def _gen_frames():
             nonlocal cap
             if awebp_frames is not None:
-                subset = awebp_frames[frame_start:frame_end] if frame_end > frame_start else awebp_frames[frame_start:]
+                subset = awebp_frames[decode_start:frame_end] if frame_end > frame_start else awebp_frames[decode_start:]
                 for fr in subset:
                     yield fr
             else:
@@ -2530,19 +2644,19 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     source_height,
                     source_fps,
                     fallback_capture=cap,
-                    start_frame=frame_start,
+                    start_frame=decode_start,
                     tag='stabilized decode',
                 )
-                if frame_start > 0:
-                    cap.set(cv2.CAP_PROP_POS_FRAMES, frame_start)
+                if decode_start > 0:
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, decode_start)
                 produced = 0
-                while produced < frame_count:
+                while produced < frame_count + overlap:
                     # Instrumented like the sequential reader at _prof('decode').
                     # Without this the stage table has no `decode` row on the
                     # STABILIZED path -- which is the path production takes, so
                     # Phase 2's "decode FPS" was unmeasurable on the real
                     # pipeline while looking fine on the path nobody runs.
-                    with frame_trace_scope(frame_start + produced + 1), _prof('decode'):
+                    with frame_trace_scope(decode_start + produced + 1), _prof('decode'):
                         ret, fr = cap.read()
                     if not ret or fr is None:
                         break
@@ -2550,7 +2664,8 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     produced += 1
 
         gen = _gen_frames()
-        carry = []
+        from itertools import islice
+        carry = list(islice(gen, overlap)) if overlap else []
         chunk_start = 0
         # One bounded slot lets decode overlap the current processing chunk
         # without multiplying the multi-hundred-MB chunk buffers.
@@ -3185,16 +3300,17 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     self._tls.last_found_bboxes = None
                     self._tls.temporal_block = True
                     ca = _base + a
+                    warmup = max(WU, overlap) if _base_global + ca == 0 else WU
                     # Measured, not derived: the warm-up frames this block actually
                     # runs (the first block of a clip has fewer than WU) against the
                     # frames it outputs. baseline_probe.report() turns them into the
                     # redundant share; the counts below are split out as "main+warmup".
                     _bp.count('stab.blocks')
-                    _bp.count('stab.warmup_frames', ca - max(0, ca - WU))
+                    _bp.count('stab.warmup_frames', ca - max(0, ca - warmup))
                     _bp.count('stab.output_frames', b - a)
                     _bp.warmup_enter()
                     try:
-                        for ci in range(max(0, ca - WU), ca):   # warm-up: prime filter, discard
+                        for ci in range(max(0, ca - warmup), ca):   # warm-up: prime filter, discard
                             if not roop.globals.processing:
                                 return
                             self._tls.t = _base_global + ci
@@ -3496,7 +3612,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         # never read, so scrubbing the timeline or re-rendering the preview while
         # a batch ran overwrote the batch's live frame — the processing box would
         # show whatever frame the user was inspecting instead of the render.
-        if getattr(self, 'is_preview', False):
+        if getattr(self, 'is_preview', False) or getattr(self._tls, 'vfx_warmup', False):
             return
         _live_preview.publish(frame)
 
@@ -3545,7 +3661,8 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     self._count_stage3('passthrough_frames')
                     return frame
                 # Active range entry: flush temporal buffers if previous frame was inactive
-                if frame_idx > 0 and not active_mask[frame_idx - 1]:
+                if (frame_idx > 0 and not active_mask[frame_idx - 1]
+                        and not getattr(self, '_video_temporal_enabled', False)):
                     try:
                         from roop.scene_detector import flush_pipeline_temporal_buffers
                         flush_pipeline_temporal_buffers(self)
@@ -3584,6 +3701,8 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         num_swapped, resimg = self.swap_faces(
             frame, None, stabilize=True, frame_idx=frame_idx,
             frame_absolute=frame_absolute)
+        temporal = self._video_temporal_state()
+        reuse = temporal if temporal is not None else self
         if capture_vfx and frame_idx is not None:
             try:
                 matte_layers = getattr(self._tls, 'vfx_mattes', {}) or {}
@@ -3608,14 +3727,14 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             if roop.globals.no_face_action == eNoFaceAction.SKIP_FRAME_IF_DISSIMILAR:
                 if len(self.input_face_datas) > num_swapped:
                     return None
-            self.num_frames_no_face = 0
+            reuse.num_frames_no_face = 0
             # A last-frame copy is only observable for USE_LAST_SWAPPED. Avoid
             # retaining and copying a full-resolution frame for the other
             # no-face policies; the returned composite already owns its buffer.
             if roop.globals.no_face_action == eNoFaceAction.USE_LAST_SWAPPED:
-                self.last_swapped_frame = temp_frame.copy()
+                reuse.last_swapped_frame = temp_frame.copy()
             else:
-                self.last_swapped_frame = None
+                reuse.last_swapped_frame = None
             self._publish_live(temp_frame)
             try:
                 from roop import debug_snapshot
@@ -3631,9 +3750,9 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 _swallowed("ProcessMgr:debug_snapshot", _snap_err)
             return temp_frame
         if roop.globals.no_face_action == eNoFaceAction.USE_LAST_SWAPPED:
-            if self.last_swapped_frame is not None and self.num_frames_no_face < self.options.max_num_reuse_frame:
-                self.num_frames_no_face += 1
-                ret = self.last_swapped_frame.copy()
+            if reuse.last_swapped_frame is not None and reuse.num_frames_no_face < self.options.max_num_reuse_frame:
+                reuse.num_frames_no_face += 1
+                ret = reuse.last_swapped_frame.copy()
                 self._publish_live(ret)
                 return ret
             self._publish_live(frame)
@@ -4023,7 +4142,14 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         # entirely — so every face-free frame paid an extra detector pass over an
         # arbitrary rectangle, and the rescue could hand back a face found
         # nowhere near where this frame's face was.
-        _last_bboxes = getattr(self._tls, 'last_found_bboxes', None)
+        self._tls.video_temporal_active = False
+        self._tls.video_color_context = None
+        state = None
+        cuts = getattr(self, '_shot_boundaries', None)
+        if stabilize and frame_idx is not None and getattr(self, '_video_temporal_enabled', False):
+            state = self._begin_video_temporal(frame, frame_idx, frame_idx in (cuts or ()))
+        _last_bboxes = getattr(self._tls, 'last_found_bboxes', None) if frame_idx is not None else None
+        self._tls.frame_faces = None
 
         # Tick once per frame if any stabilizer is active. Parallel path uses a
         # per-thread frame index (TLS) instead of this shared counter.
@@ -4031,7 +4157,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 and (self.kps_stabilizer is not None or self.enh_stabilizer is not None
                      or self.mask_stabilizer is not None)):
             self._stab_t += 1
-            if (self._stab_history is not None and
+            if (state is None and self._stab_history is not None and
                     self._stab_history.observe_frame(frame, self._stab_t)):
                 # Seed this new shot from its first real frame.  A scene cut is
                 # a true discontinuity, not a missing-frame gap, so carrying an
@@ -4043,21 +4169,21 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                         _stab.reset()
                 bar_write(f'[Stabilize] scene cut at frame {frame_idx}; rolling history reset')
                 gc.collect()
-        if getattr(self, '_trajectory', None) is not None and frame_idx is not None:
+        if getattr(self, '_trajectory', None) is not None and frame_idx is not None and frame_idx >= 0:
             assert frame_idx in self._trajectory, (
                 f"Processing frame {frame_idx} is out of bounds for Stage 2 Trajectory Cache "
                 f"(range={self._trajectory.frame_range}, total={self._trajectory.meta.get('total_frames')})"
             )
             _ = self._trajectory.get_frame(frame_idx)
         cuts = getattr(self, '_shot_boundaries', None)
-        if cuts and frame_idx is not None and frame_idx in cuts:
+        if state is None and cuts and frame_idx is not None and frame_idx in cuts:
             from roop.scene_detector import flush_pipeline_temporal_buffers
             flush_pipeline_temporal_buffers(self)
             for _stab in (self._cur_kps_stab(), self._cur_enh_stab(), self._cur_mask_stab(),
                           self.kps_stabilizer, self.enh_stabilizer, self.mask_stabilizer):
                 if _stab is not None and hasattr(_stab, 'reset'):
                     _stab.reset()
-        do_kps_stab = stabilize and self._stab_active and self._cur_kps_stab() is not None
+        do_kps_stab = state is None and stabilize and self._stab_active and self._cur_kps_stab() is not None
         # 2-pass parallel stabilization: replace kps with the value precomputed
         # for this frame in pass 1 instead of running the (stateful) stabilizer.
         precomp = stabilize and self._precomputed_mode and frame_idx is not None
@@ -4108,13 +4234,15 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             # of silently leaving it un-swapped (see the coverage guard in
             # _precompute_temporal).
             if frame_idx < self._temporal_covered:
-                _tfaces = self._temporal_faces.get(frame_idx)
+                cache = getattr(self, '_segment_temporal_faces', {}) if frame_idx < 0 else self._temporal_faces
+                _tfaces = cache.get(frame_idx)
                 if not _tfaces:
                     self._tls.retry_detected_faces = None
                     self._tls.last_found_bboxes = None
                     _audit_hit('frames with no face detected at all')
                     return num_faces_found, frame
-                _tfaces = _apply_trajectory(_tfaces)
+                _tfaces = _apply_trajectory(_tfaces) if _plan_has_frame else [
+                    Face(dict(face)) if isinstance(face, dict) else face for face in _tfaces]
 
         if self.options.swap_mode == "first":
             if not (0 <= self.options.selected_index < len(self.input_face_datas)):
@@ -4124,7 +4252,20 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 _audit_hit('refused: source faceset has no faces')
                 return num_faces_found, frame
             if _tfaces:
-                face = min(_tfaces, key=lambda f: f.bbox[0])
+                face = next((f for f in _tfaces if f.get('_temporal_source_slot') == 0), None)
+                if face is None and state is None:
+                    face = min(_tfaces, key=lambda f: f.bbox[0])
+            elif state is not None:
+                with _prof('detect'), _gpu_guard(pooled=analysis_pooled(), owner='analysis'):
+                    detections = get_all_faces(frame)
+                    if not detections and _last_bboxes is not None:
+                        recovered = _detect_face_in_roi(frame, _last_bboxes[0])
+                        if recovered is not None:
+                            detections = [recovered]
+                tracked = self._track_video_faces(detections, frame, frame_idx, state)
+                face = next((f for f in tracked if f.get('_temporal_source_slot') == 0), None)
+                if face is not None:
+                    face = _apply_trajectory([face])[0]
             else:
                 with _prof('detect'), _gpu_guard(pooled=analysis_pooled(), owner='analysis'):  # detect: lock-free when pooled
                     face = get_first_face(frame)
@@ -4190,8 +4331,12 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                             faces.append(f)
                             _audit_hit('recovered via ROI redetect (partial miss)')
             self._tls.retry_detected_faces = list(faces) if faces else None
-            _tracker, _may_coast = self._dispatch_tracker()
-            if (not _tfaces) and _tracker is not None:
+            _tracker, _may_coast = (self._dispatch_tracker()
+                                    if not _tfaces and state is None and stabilize and frame_idx is not None
+                                    else (None, False))
+            if not _tfaces and state is not None:
+                faces = self._track_video_faces(faces, frame, frame_idx, state)
+            elif _tracker is not None:
                 # Detector order commonly follows x-coordinate.  Once two faces
                 # cross, that order swaps and ``all_input`` would otherwise paste
                 # each source onto the other person.  Hungarian association keeps
@@ -4270,18 +4415,17 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 _audit_hit('faces seen', len(faces))
                 for i, face in enumerate(faces):
                     num_faces_found += 1
-                    if i < len(self.input_face_datas):
-                        pending.append((i, face))
+                    slot = face.get('_temporal_source_slot') if state is not None and isinstance(face, dict) else i
+                    if slot is not None and slot < len(self.input_face_datas):
+                        pending.append((slot, face))
                         _audit_hit('swapped (nth face -> nth source)')
                         _audit_swapped_gapfill(face)
                     else:
-                        # The loop STOPS here, so every remaining face is refused
-                        # too — counted, or `faces seen` would not add up.
-                        _audit_hit('refused: no source faceset for that person',
-                                   len(faces) - i)
-                        break
+                        _audit_hit('refused: no source faceset for that person')
 
-            elif self.options.swap_mode in ("selected", "selected_multi") and getattr(self, '_track_mode', False) and frame_idx is not None:
+            elif (self.options.swap_mode in ("selected", "selected_multi")
+                  and getattr(self, '_track_mode', False) and frame_idx is not None
+                  and (state is None or _tfaces)):
                 # Identity-lock: use the source assigned to this person's TRACK in
                 # the pre-pass (matched by combination of spatial distance and embedding cosine similarity),
                 # so the source can't flip frame-to-frame as it can with per-frame embedding matching.
@@ -5048,7 +5192,12 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     # Typed rather than wrapped: a Face IS a dict here, and a
                     # caller that hands this something else has a defect worth
                     # seeing, not a swap to silently stop holding.
-                    if not _tsm or not _sel_sources or not isinstance(face, dict):
+                    if not _sel_sources or not isinstance(face, dict):
+                        return None
+                    if state is not None and not _tfaces:
+                        src = state.selected_sources.get(face.get('_track_id'))
+                        return src if src in _sel_sources else None
+                    if not _tsm:
                         return None
                     if isinstance(_tsm, MappingProxyType):
                         return locked_source(_tsm, face, _sel_sources)
@@ -5115,7 +5264,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     unreliable=face_contact.unreliable,
                     track_binding=_bound_source,
                     hold_threshold=_hold_threshold,
-                    locked_bindings=isinstance(_tsm, MappingProxyType),
+                    locked_bindings=isinstance(_tsm, MappingProxyType) and (state is None or bool(_tfaces)),
                 )
 
                 if _DEBUG_MATCH:
@@ -5327,6 +5476,12 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                            len(pending) - len(_paintable))
                 pending = _paintable
             num_faces_found = len(pending)
+            if state is not None and not _tfaces and self.options.swap_mode in ('selected', 'selected_multi'):
+                from roop.procmgr_tracking import is_synthetic_face
+                for slot, face in pending:
+                    tid = self._temporal_track_id(face)
+                    if tid is not None and not is_synthetic_face(face):
+                        state.selected_sources[tid] = slot
 
             # Apply precomputed or stabilized kps ONLY to faces actually being swapped
             if precomp:
@@ -5846,6 +6001,9 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         itself.
         """
         self._tls.face_index = int(face_index)
+        _video_temporal = self._video_temporal_state()
+        _video_tid = self._temporal_track_id(target_face)
+        self._tls.video_color_context = None
         if getattr(self, '_vfx_session', None) is not None and not getattr(self._tls, 'vfx_warmup', False):
             self._tls.vfx_face_channels = set()
         # Gap-filled (`_interpolated`) and coasted (`_coasted`) faces ARE swap
@@ -5896,6 +6054,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         orig_fh, orig_fw = frame.shape[:2]
 
         enhanced_frame = None
+        _enhanced_by = None
         # Mask output is 1 = restore target / 0 = generated face.  Keep the
         # observation so the later identity-detail pass cannot write source
         # marks through an occluder or a manually excluded region.
@@ -6024,6 +6183,10 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     _face_get = (target_face.get if hasattr(target_face, 'get')
                                  else lambda _key, _default=None: getattr(target_face, _key, _default))
                     _pose = _face_get('_pose_pnp')
+                    if (_pose is None and _video_temporal is not None
+                            and _video_temporal.index < 0):
+                        from roop.pose_router import estimate_head_pose
+                        _pose = estimate_head_pose(target_face.kps, frame_shape=plate.shape)
                     if _pose is None:
                         _pose = (_face_get('_adaptive_yaw', 0.0),
                                  _face_get('_adaptive_pitch', 0.0),
@@ -6052,17 +6215,27 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     _pose_template = warp_template(
                         _rot_pose, subsample_size, swap_template,
                         source_anchors=source_silhouette_anchors(target_face, _rot_pose[0]))
+                def validate_matrix(matrix):
+                    cut = bool(_video_temporal and _video_temporal.cut)
+                    self._tls.geometry_guard.validate_matrix(
+                        _video_tid, getattr(self._tls, 'frame_idx', None), matrix,
+                        cut=cut or getattr(self._tls, 'frame_idx', None) in (getattr(self, '_shot_boundaries', None) or ()),
+                        sar=float(getattr(roop.globals, 'video_sar', 1.) or 1.))
+                    if _video_temporal is not None and _video_tid is not None and rotation_action is None:
+                        with _prof('temporal_affine'):
+                            _video_temporal.matrix(_video_tid, matrix, subsample_size,
+                                                   (swap_template, subsample_size, face_index))
+
                 aligned_img, M, _alignment = canonicalize_face_alignment(
                     plate, target_face, subsample_size, swap_template, dst=crop_dst,
-                    matrix_guard=lambda matrix: self._tls.geometry_guard.validate_matrix(
-                        self._temporal_track_id(target_face), getattr(self._tls, 'frame_idx', None),
-                        matrix, cut=(getattr(self._tls, 'frame_idx', None) in
-                                     (getattr(self, '_shot_boundaries', None) or set())),
-                        sar=float(getattr(roop.globals, 'video_sar', 1.) or 1.)),
+                    matrix_guard=validate_matrix,
                     matrix_override=_affine_override,
                     matrix_override_size=int(target_face.get('_stabilized_affine_size', 112)
                                               if hasattr(target_face, 'get') else 112),
                     pose_template=_pose_template)
+                if _video_temporal is not None and _video_tid is not None and rotation_action is None:
+                    self._tls.video_color_context = (_video_temporal, _video_tid, int(face_index))
+                    self._tls.video_color_call = 0
             except InvalidAlignment as exc:
                 _audit_hit('refused: invalid alignment')
                 self._tls.alignment_refusals = getattr(self._tls, 'alignment_refusals', 0) + 1
@@ -6217,9 +6390,12 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         # is contention on the hot path for a verdict nobody will ask for.
         if nonfrontal_routing_enabled():
             try:
-                self._nonfrontal_router.observe(
-                    getattr(target_face, 'kps', None), tgt_pitch_deg,
-                    getattr(self._tls, 'frame_idx', None))
+                args = (getattr(target_face, 'kps', None), tgt_pitch_deg,
+                        getattr(self._tls, 'frame_idx', None))
+                if _video_temporal is not None:
+                    _video_temporal.nonfrontal_router.observe(*args)
+                else:
+                    self._nonfrontal_router.observe(*args)
             except Exception as _degrade_error:
                 _swallowed("roop/ProcessMgr.py:5487", _degrade_error, "fallback continued")
                 pass   # the router re-scores in process_mask regardless
@@ -6639,8 +6815,13 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     is_smart_skip_enabled, get_track_patch, get_dense_flow_warper, patch_is_reusable)
                 if is_smart_skip_enabled():
                     _cur_fi = getattr(self._tls, 'frame_idx', None)
-                    _exp_fi = (_cur_fi - 1) if _cur_fi is not None and _cur_fi > 0 else None
-                    _prev_entry = get_track_patch(_temporal_tid, expected_frame_idx=_exp_fi)
+                    _exp_fi = _cur_fi - 1 if _cur_fi is not None else None
+                    _prev_entry = get_track_patch(
+                        _temporal_tid, expected_frame_idx=_exp_fi,
+                        cache=_video_temporal.patches if _video_temporal is not None else None)
+                    if (_video_temporal is not None
+                            and (_prev_entry or {}).get('source_slot') != face_index):
+                        _prev_entry = None
                     if _prev_entry is not None and _prev_entry.get('patch') is not None:
                         _prev_patch = _prev_entry['patch']
                         if isinstance(_prev_patch, np.ndarray) and _prev_patch.size > 0:
@@ -6976,7 +7157,8 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                   and _temporal_tid is not None
                   and self._enhance_gate.should_skip(
                       target_face,
-                      (_seg_id, _temporal_tid))):
+                      _temporal_tid if _video_temporal is not None else (_seg_id, _temporal_tid),
+                      history=_video_temporal.enhancer_gate if _video_temporal is not None else None)):
                 # Face too small for a 512 restoration to survive the paste back
                 # down: leave `enhanced_frame` as it is (None unless an earlier
                 # restorer produced one) so the swap crop itself is pasted. This
@@ -7120,6 +7302,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                             except Exception as _aligned_err:
                                 _swallowed("roop/ProcessMgr.py:aligned_img", _aligned_err)
                         enhanced_frame, scale_factor = p.Run(_fs, target_face, enh_input)
+                        _enhanced_by = getattr(p, 'processorname', None)
                         if target_face is not None and hasattr(target_face, 'aligned_img'):
                             target_face.aligned_img = None
                             target_face._aligned_M = None
@@ -7187,8 +7370,18 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         # motion-adaptive blend across frames removes enhancer texture shimmer
         # without ghosting on movement. Skipped when autorotate rebound the face
         # (rotated crop space is inconsistent frame-to-frame).
+        _restorer = next((getattr(p, 'processorname', None) for p in self.processors
+                          if p.type == 'enhance'), None)
+        _new_texture = (_video_temporal is not None and _video_tid is not None
+                        and rotation_action is None and enhanced_frame is not None
+                        and _restorer in ('gpen_realistic', 'ultramax'))
+        if _new_texture and _enhanced_by == _restorer:
+            with _prof('temporal_texture'):
+                enhanced_frame = _video_temporal.texture(
+                    _video_tid, ('texture', _restorer, int(face_index), enhanced_frame.shape[:2]),
+                    enhanced_frame, aligned_img, _unified_keep)
         _es = self._cur_enh_stab()
-        if (self._stab_active and _es is not None
+        if (not _new_texture and self._stab_active and _es is not None
                 and enhanced_frame is not None and rotation_action is None):
             with _prof('stabilize'):
                 enhanced_frame = _es.apply(
@@ -7209,7 +7402,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         # registered to this one and the flow would be solved between two
         # different frames of reference.
         _hf = self._temporal_engine('hf_stabilizer')
-        if (_hf is not None and _hf.enabled and enhanced_frame is not None
+        if (not _new_texture and _hf is not None and _hf.enabled and enhanced_frame is not None
                 and rotation_action is None):
             with _prof('stabilize'):
                 enhanced_frame = _hf.stabilize(
@@ -7229,7 +7422,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         # hair and background that the paste restores from the plate by design (the first regression render read the
         # whole crop and reset the blend on 299 of 312 faces).
         _te = self._temporal_engine('temporal_enhancer')
-        if (_te is not None and _te.enabled and enhanced_frame is not None
+        if (not _new_texture and _te is not None and _te.enabled and enhanced_frame is not None
                 and rotation_action is None):
             _occ_keep, _occ_region = None, None
             if _unified_keep is not None:
@@ -7745,6 +7938,8 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     aligned_img,
                     _composite_frame_idx or 0,
                     has_enhanced=(enhanced_frame is not None),
+                    cache=_video_temporal.patches if _video_temporal is not None else None,
+                    source_slot=face_index,
                     scale_factor=scale_factor,
                     swap_model_mask=getattr(self._tls, 'swap_model_mask', None),
                 )

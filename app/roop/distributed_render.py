@@ -24,6 +24,7 @@ shared cache directory at once on a cold cache.
 from __future__ import annotations
 
 import argparse
+from bisect import bisect_right
 import copy
 import json
 import os
@@ -47,6 +48,7 @@ if str(_APP_DIR) not in sys.path:
 
 from roop.ffmpeg_path import ffmpeg_binary, ffprobe_binary
 from roop import project_io
+from roop.segment_output import SEGMENT_WARMUP
 
 
 @dataclass(frozen=True)
@@ -57,10 +59,21 @@ class Chunk:
     start_time: Fraction
     end_time: Fraction
     first_packet_hash: str = ""
+    decode_start: tuple[int, Fraction, str] | None = None
 
     @property
     def frames(self) -> int:
         return self.end_frame - self.start_frame
+
+    @property
+    def preroll_frames(self) -> int:
+        return self.start_frame - self.decode_start[0] if self.decode_start is not None else 0
+
+    def decode_slice(self) -> Chunk:
+        if self.decode_start is None:
+            return self
+        index, time, digest = self.decode_start
+        return Chunk(self.index, index, self.end_frame, time, self.end_time, digest)
 
 
 def _run(command: list[str], *, timeout: int | None = None,
@@ -134,9 +147,20 @@ def plan_chunks(path: str, target_seconds: float = 10.0,
     edges.append(end)
     if any(not ordered[index].get("data_hash") for index in edges[:-1]):
         raise ValueError("ffprobe did not provide keyframe packet hashes")
-    chunks = [Chunk(n, a, b, times[a], times[b] if b < len(times) else times[-1] + period,
-                    ordered[a].get("data_hash", ""))
-              for n, (a, b) in enumerate(zip(edges, edges[1:]))]
+    keyframes = sorted(keys)
+    chunks = []
+    for n, (a, b) in enumerate(zip(edges, edges[1:])):
+        # Stream-copy from an earlier random-access frame. The worker seeks
+        # to the last SEGMENT_WARMUP frames of that prefix and discards them.
+        first = keyframes[max(0, bisect_right(keyframes, a - SEGMENT_WARMUP) - 1)]
+        decode_start = None
+        if first < a:
+            digest = ordered[first].get('data_hash')
+            if not digest:
+                raise ValueError('ffprobe did not provide the overlap keyframe packet hash')
+            decode_start = (first, times[first], digest)
+        chunks.append(Chunk(n, a, b, times[a], times[b] if b < len(times) else times[-1] + period,
+                            ordered[a]['data_hash'], decode_start))
     return chunks, codec, rate
 
 
@@ -227,10 +251,12 @@ def _project_for_chunk(document: dict, project_path: str, source: str,
             project_io.resolve_media(ref, project_path), destination,
             kind="source", asset_id=ref.get("id"))}
         for ref in item["media"].get("sources", [])]
-    item["timeline"]["frame_start"] = 0
-    item["timeline"]["frame_end"] = chunk.frames
+    local_start = chunk.preroll_frames
+    local_end = local_start + chunk.frames
+    item["timeline"]["frame_start"] = local_start
+    item["timeline"]["frame_end"] = local_end
     item["automation"] = copy.deepcopy(item.get("automation") or {})
-    item["automation"]["in_out"] = {"in": 0, "out": chunk.frames}
+    item["automation"]["in_out"] = {"in": local_start, "out": local_end}
     # Absolute-frame automation cannot be silently applied to local chunks.
     for name in ("keyframes", "fidelity_ramps", "mask_parameters"):
         if item["automation"].get(name):
@@ -254,8 +280,11 @@ def _project_for_chunk(document: dict, project_path: str, source: str,
     mode = item["settings"].get("mouth_custody_mode") or (
         "audio_driven_sync" if item["settings"].get("lipsync_enabled") else "off")
     if mode == "audio_driven_sync":
-        driving = item["settings"].get("override_audio_path") or item["settings"].get("lipsync_audio_path") or source
-        item["settings"].update({"override_audio_path": driving, "lipsync_frame_offset": int(chunk.start_frame)})
+        driving = item["settings"].get("override_audio_path") or item["settings"].get("lipsync_audio_path")
+        if not driving:
+            driving = project_io.resolve_media(document['media']['target'], project_path) or source
+        item["settings"].update({"override_audio_path": driving,
+                                 "lipsync_frame_offset": int(chunk.start_frame - local_start)})
     # A project file is private to the worker; don't reuse an old checkpoint.
     project_io.save_project(destination, item, journal=False)
 
@@ -334,7 +363,7 @@ def render_distributed(project_path: str, output: str, *, target_seconds: float 
                 sliced = str(root / f"{name}_source.mp4")
                 rendered = str(root / f"{name}_render.mp4")
                 child_project = str(root / f"{name}.roop")
-                copy_slice(source, chunk, codec, sliced)
+                copy_slice(source, chunk.decode_slice(), codec, sliced)
                 _project_for_chunk(document, project_path, sliced, chunk, rendered, child_project)
                 env = os.environ.copy()
                 env["CUDA_VISIBLE_DEVICES"] = device

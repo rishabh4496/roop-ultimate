@@ -460,6 +460,19 @@ class ColorTransferMixin:
                 out, target, appearance, strength, support=mask)
         return out
 
+    def _video_color_stats(self, kind, source_mean, source_spread, target_mean, target_spread):
+        stats = source_mean, source_spread, target_mean, target_spread
+        tls = getattr(self, '_tls', None)
+        context = getattr(tls, 'video_color_context', None)
+        if context is None:
+            return stats
+        state, track_id, slot = context
+        call = tls.video_color_call
+        tls.video_color_call += 1
+        from roop.procmgr_runtime import _prof
+        with _prof('temporal_color'):
+            return state.color(track_id, ('lab', kind, slot, call), stats)
+
     def _color_transfer_rct(self, source, target, mask=None):
         """Legacy LAB mean/std transfer kept as a named internal path."""
 
@@ -473,6 +486,8 @@ class ColorTransferMixin:
             mask8 = None
         source_mean, source_std = cv2.meanStdDev(source, mask=mask8)
         target_mean, target_std = cv2.meanStdDev(target, mask=mask8)
+        source_mean, source_std, target_mean, target_std = self._video_color_stats(
+            'rct', source_mean, source_std, target_mean, target_std)
         source_mean = source_mean.reshape(1, 1, 3)
         source_std  = np.maximum(source_std.reshape(1, 1, 3), 1.0)  # guard near-zero
         target_mean = target_mean.reshape(1, 1, 3)
@@ -619,6 +634,7 @@ class ColorTransferMixin:
         denominator_t = max(1, t_centered.shape[0] - 1)
         Cs = (s_centered.T @ s_centered) / denominator_s + eps
         Ct = (t_centered.T @ t_centered) / denominator_t + eps
+        s_mean, Cs, t_mean, Ct = self._video_color_stats('lct', s_mean, Cs, t_mean, Ct)
 
         w_s, V_s = np.linalg.eigh(Cs)
         minv_s = (V_s * (1.0 / np.sqrt(np.clip(w_s, 1e-6, None)))) @ V_s.T

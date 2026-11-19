@@ -75,24 +75,25 @@ class EnhanceGate:
     def enabled(self) -> bool:
         return self.threshold > 0
 
-    def should_skip(self, face, track_key=None) -> bool:
+    def should_skip(self, face, track_key=None, *, history=None) -> bool:
         """True when this face is too small to restore. Unknown size never skips."""
         if not self.enabled:
             return False
         size = face_px(face)
+        skipping = self._skipping if history is None else history
         with self._lock:
             self.seen += 1
             if size is None:
                 return False
             if self.smallest is None or size < self.smallest:
                 self.smallest = size
-            was_skipped = self._skipping.get(track_key, False) if track_key is not None else False
+            was_skipped = skipping.get(track_key, False) if track_key is not None else False
             limit = self.threshold * (RESUME_RATIO if was_skipped else 1.0)
             skip = size < limit
             if track_key is not None:
-                if len(self._skipping) >= _MAX_TRACKS and track_key not in self._skipping:
-                    self._skipping.clear()
-                self._skipping[track_key] = skip
+                if len(skipping) >= _MAX_TRACKS and track_key not in skipping:
+                    skipping.clear()
+                skipping[track_key] = skip
             if skip:
                 self.skipped += 1
             return skip

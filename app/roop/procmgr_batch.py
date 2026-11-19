@@ -112,6 +112,11 @@ class BatchProcessingMixin:
         self._lipsync_fps = fps
         # The pre-pass's 1-euro filter states its cutoffs in Hz, so it needs the clip's frame rate too.
         self._video_fps = fps
+        from roop.segment_output import SEGMENT_WARMUP
+        self._video_temporal_enabled = not self.options.frame_processing
+        self._reset_dispatch_tracker()
+        self._segment_temporal_faces = {}
+        self._segment_warmup_count = min(SEGMENT_WARMUP, max(0, int(frame_start or 0))) if self._video_temporal_enabled else 0
         # Stage 17: a distributed GOP chunk renders as its own local clip (frames 0..n) but its driving audio is the WHOLE
         # source track, so the chunk's absolute start frame is added here. 0 everywhere else.
         self._lipsync_frame_start = frame_start + int(getattr(roop.globals, 'lipsync_frame_offset', 0) or 0)
@@ -234,7 +239,7 @@ class BatchProcessingMixin:
         _temporal_quality_enabled = bool(
             getattr(getattr(self, '_temporal_quality', None), 'enabled', False))
         self._temporal_mode = bool(
-            getattr(roop.globals, 'temporal_detection', False)
+            self._video_temporal_enabled or getattr(roop.globals, 'temporal_detection', False)
             or _temporal_state_enabled or _temporal_compositing_enabled
             or _temporal_quality_enabled
             # Track-scoped affine filtering and the pose router need ordered
@@ -330,7 +335,7 @@ class BatchProcessingMixin:
         # been safe at full width.
         _want_temporal_identity = _temporal_identity_enabled
         _want_temporal_occlusion = _temporal_occlusion_enabled
-        _want_temporal_ordered = (_want_temporal_identity or _want_temporal_occlusion
+        _want_temporal_ordered = (self._video_temporal_enabled or _want_temporal_identity or _want_temporal_occlusion
                                   or _target_appearance_enabled
                                   or _temporal_compositing_enabled
                                   or _temporal_quality_enabled)
@@ -360,7 +365,8 @@ class BatchProcessingMixin:
             _label = ('TemporalIdentity' if _want_temporal_identity
                       else 'TemporalOcclusion' if _want_temporal_occlusion
                       else 'TemporalCompositing' if _temporal_compositing_enabled
-                      else 'TemporalQuality')
+                      else 'TemporalQuality' if _temporal_quality_enabled
+                      else 'Video stabilization')
             print(f'[{_label}] ordered output history and no parallel-block '
                   f'path available: this run gets ONE worker instead of '
                   f'{threads}.', flush=True)
@@ -751,6 +757,7 @@ class BatchProcessingMixin:
                           f'interrupted run — resuming at frame {frame_start + skip}. '
                           f'(Delete {os.path.basename(target_video)}.resume.json to force a fresh render.)')
                     frame_start += skip
+                    self._segment_warmup_count = min(SEGMENT_WARMUP, frame_start) if self._video_temporal_enabled else 0
                     frame_count -= skip
             else:
                 codec = roop.globals.video_encoder
@@ -1028,7 +1035,8 @@ class BatchProcessingMixin:
                 # A resumed project loads the hand-off its interrupted run sealed (faces, track
                 # assignments, source map, cuts) instead of re-detecting. Not with SAM2 (its per-frame
                 # masks are not part of the cache) and not for an animated-WebP target.
-                if _stage_cache is not None and sam2_p is None and not is_awebp:
+                if (_stage_cache is not None and sam2_p is None and not is_awebp
+                        and not self._segment_warmup_count):
                     _stage2_restored = bool(_stage_cache.restore_stage2(
                         self, frame_start=frame_start, frame_count=frame_count))
                 if _stage2_restored:
@@ -1044,6 +1052,7 @@ class BatchProcessingMixin:
                         if _stage_cache.save_stage2(self, frame_start=frame_start, frame_count=frame_count):
                             # Recorded AFTER stage2 (recording stage2 drops a trajectory; this puts the new one in).
                             _stage_cache.save_trajectory(getattr(self, '_trajectory', None))
+                self._assign_video_source_slots()
                 # SAM 2 follows Stage 2 (the plan names the frames it may track) and runs BEFORE the analysis
                 # models are released below, since a run seeded by detection needs them. Its own failure is
                 # contained inside the helper; it must not read as a failed pre-pass.
@@ -1154,7 +1163,7 @@ class BatchProcessingMixin:
                 scheduler_enabled and self._runtime_scheduler is not None and
                 self._runtime_scheduler.frame_pipeline_allowed(
                     stateful_stabilization=_streaming_stabilization) and
-                not use_parallel_stab)
+                not use_parallel_stab and not self._segment_warmup_count)
             if scheduler_enabled and self._runtime_scheduler is not None:
                 print('[RuntimeScheduler] unified coordinator ON: '
                       f"mode={'frame' if use_unified_scheduler else 'ordered-chunk'}, "
@@ -1323,6 +1332,9 @@ class BatchProcessingMixin:
             self._stage0 = None
             self._precomputed_kps = None
             self._temporal_mode = False
+            self._video_temporal_enabled = False
+            self._segment_temporal_faces = {}
+            self._segment_warmup_count = 0
             self._temporal_faces = None
             self.stage2_frame_plan = {}
             self._temporal_covered = 0

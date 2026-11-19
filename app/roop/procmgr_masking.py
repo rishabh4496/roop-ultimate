@@ -889,6 +889,16 @@ class MaskingMixin:
                 _occ_pct = (100.0 * float(np.sum(_occluder[_support])) / float(np.count_nonzero(_support))
                             if _support.any() else 0.0)
             alpha = alpha * (1. - _occluder)
+        _video_state = getattr(getattr(self, '_tls', None), 'video_color_context', None)
+        if (_video_state is not None and track_id is not None and target_crop is not None
+                and frame_index == _video_state[0].index):
+            _temporal, _, _source_slot = _video_state
+            _coast_age = int(target_face.get('_coast_age', target_face.get('_temporal_miss_age', 0)) or 0) if isinstance(target_face, dict) else 0
+            with _prof('temporal_alpha'):
+                alpha = _temporal.mask(track_id, alpha, target_crop, coast=bool(_coast_age),
+                                       source_slot=_source_slot, occluder=_occluder)
+                if _coast_age:
+                    alpha *= max(0.25, 1. - .18 * _coast_age)
         if _timeline_state.reporting():
             self._report_paste_for_preview(IM, target_img, target_face, track_id, _parse, _sem_alpha,
                                            _occluder, _occ_pct, target_crop, (h, w))
@@ -907,10 +917,8 @@ class MaskingMixin:
                 borderMode=cv2.BORDER_CONSTANT, borderValue=0.)
         strict_support = img_matte.copy()
 
-        # Phase 12 keeps the canonical matte in a tiny per-track EMA before it
-        # is warped. This is the only stateful mask operation; all downstream
-        # trimming remains authoritative for overlap and occlusion.
-        if (temporal_compositor is not None
+        # Legacy compositor fallback when the ordered video stabilizer is inactive.
+        if (_video_state is None and temporal_compositor is not None
                 and getattr(temporal_compositor, 'enabled', False)
                 and track_id is not None):
             try:
@@ -1081,6 +1089,10 @@ class MaskingMixin:
                 (target_img.shape[1], target_img.shape[0]))
             roi_paste, coverage = paste[y0:y1,x0:x1], full_coverage[y0:y1,x0:x1]
         roi_matte = np.minimum(roi_matte, coverage[...,None])
+        if getattr(self, '_capture_temporal_metrics', False):
+            self._tls.video_metric_paste = (np.array(face_kps, copy=True),
+                                            np.array(target_face.bbox, copy=True),
+                                            alpha.copy())
         roi_target = target_img[y0:y1, x0:x1].astype(np.float32)
 
         # ── Rim-only illumination match ──────────────────────────────────────
@@ -1720,7 +1732,8 @@ class MaskingMixin:
             # 1.0 is the threshold; the router latches it, because a bare
             # threshold on a noisy score flips up to 123 times per 400 frames on
             # a still head tilted up 30 degrees.
-            router = getattr(self, '_nonfrontal_router', None)
+            temporal = getattr(self._tls, 'video_temporal_state', None) if getattr(self._tls, 'video_temporal_active', False) else None
+            router = temporal.nonfrontal_router if temporal is not None else getattr(self, '_nonfrontal_router', None)
             if router is not None and not _NO_HYST:
                 # verdict() scores the face itself — do not score it again here
                 # just to hand it over; this runs per face per mask processor.
@@ -1935,7 +1948,8 @@ class MaskingMixin:
         # and when autorotate rebound the face (rotated crop space is
         # inconsistent frame-to-frame, same caveat as the enhancer stabilizer).
         _ms = self._cur_mask_stab() if p_name in dense_maskers else None
-        if (self._stab_active and _ms is not None and kps is not None
+        if (not getattr(self._tls, 'video_temporal_active', False)
+                and self._stab_active and _ms is not None and kps is not None
                 and rotation_action is None):
             with _prof('stabilize'):
                 _current_mask = np.asarray(img_mask,np.float32).copy()

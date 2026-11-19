@@ -30,6 +30,19 @@ def test_plan_gop_boundaries_and_stream_copy(tmp_path):
         dist.copy_slice(str(source), chunk, codec, str(sliced))
         assert dist._count(str(sliced)) == chunk.frames
         assert dist._first_nal_is_idr(str(sliced), codec)
+    chunk = chunks[2]
+    overlapped = tmp_path / 'overlapped.mp4'
+    dist.copy_slice(str(source), chunk.decode_slice(), codec, str(overlapped))
+    assert chunk.preroll_frames >= dist.SEGMENT_WARMUP
+    assert dist._count(str(overlapped)) == chunk.preroll_frames + chunk.frames
+
+    def decoded_hashes(path):
+        result = dist._run([dist.ffmpeg_binary(), '-v', 'error', '-i', str(path),
+                            '-map', '0:v:0', '-f', 'framemd5', '-'])
+        return [row.rsplit(',', 1)[1].strip() for row in result.stdout.splitlines()
+                if row and not row.startswith('#')]
+
+    assert decoded_hashes(overlapped)[chunk.preroll_frames:] == decoded_hashes(tmp_path / 'slice2.mp4')
     listing = tmp_path / "concat.txt"
     listing.write_text("".join(f"file 'slice{i}.mp4'\n" for i in range(4)),
                        encoding="utf-8")
@@ -118,6 +131,24 @@ def test_an_empty_timeline_does_not_block_a_chunk(tmp_path):
     dist._project_for_chunk(doc, str(tmp_path / "job.roop"), str(tmp_path / "slice.mp4"),
                             chunk, str(tmp_path / "out.mp4"), str(tmp_path / "worker.roop"))
     assert (tmp_path / "worker.roop").exists()
+
+
+def test_worker_trims_overlap_and_references_original_driving_audio(tmp_path):
+    project = tmp_path / 'job.roop'
+    source = tmp_path / 'full.mp4'
+    source.touch()
+    doc = {'format': 'roop-session', 'project_version': 1,
+           'media': {'target': dist.project_io.media_reference(str(source), str(project), kind='target')},
+           'timeline': {}, 'settings': {'mouth_custody_mode': 'audio_driven_sync'}}
+    chunk = dist.Chunk(1, 40, 60, Fraction(2), Fraction(3), decode_start=(20, Fraction(1), 'sha256'))
+    worker = tmp_path / 'worker.roop'
+    dist._project_for_chunk(doc, str(project), str(tmp_path / 'slice.mp4'), chunk,
+                            str(tmp_path / 'render.mp4'), str(worker))
+    saved = dist.project_io.load_project(str(worker))
+    assert saved['timeline']['frame_start'] == 20
+    assert saved['timeline']['frame_end'] == 40
+    assert saved['settings']['lipsync_frame_offset'] == 20
+    assert saved['settings']['override_audio_path'] == str(source)
 
 
 # --- multi-GPU worker isolation (Stage 5) -----------------------------------

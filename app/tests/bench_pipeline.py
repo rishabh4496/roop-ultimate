@@ -286,6 +286,8 @@ def run_pipeline_benchmark(
     warmup_frames: int = 2,
     sync_config: bool = True,
     simulated_yaws: Optional[List[float]] = None,
+    threads: int = 20,
+    temporal: bool = True,
 ) -> Dict[str, Any]:
     """Execute end-to-end benchmark measurement capturing telemetry and metrics."""
     # Ensure absolute path resolution before changing directories
@@ -301,6 +303,8 @@ def run_pipeline_benchmark(
 
     clean_enhancer = None if not restorer or str(restorer).lower() in ("none", "off", "") else str(restorer)
     clean_mask = None if not mask_engine or str(mask_engine).lower() in ("none", "off", "") else str(mask_engine)
+    if clean_mask == 'RealityUX':
+        clean_mask = 'mask_realityux'
 
     g = ab.init_pipeline(
         provider="cuda",
@@ -310,6 +314,7 @@ def run_pipeline_benchmark(
         cuda_device_id=device_id,
         sync_config=sync_config,
     )
+    g.execution_threads = threads
     options = ab.build_options(g, swap_model=swap_model, mask_engine=clean_mask)
 
     source_faces, _ = resolve_source_face(source_path)
@@ -319,10 +324,14 @@ def run_pipeline_benchmark(
     process_mgr = ProcessMgr(progress=None)
     process_mgr.is_preview = True
     process_mgr.initialize(source_faces, source_faces, options)
+    process_mgr._video_temporal_enabled = temporal
+    process_mgr._capture_temporal_metrics = True
+    process_mgr._reset_dispatch_tracker()
 
     # Initialize Telemetry and Quality Metrics
     telemetry = StageTelemetry(device_id=device_id, sample_interval_s=0.03)
     metrics_tracker = BenchmarkMetricsTracker()
+    applied_tracker = BenchmarkMetricsTracker()
 
     cap = cv2.VideoCapture(abs_video_path)
     if not cap.isOpened():
@@ -339,6 +348,8 @@ def run_pipeline_benchmark(
 
     # Reset video pointer to frame 0 for measurement
     cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+    process_mgr._reset_dispatch_tracker()
+    process_mgr._tls.__dict__.clear()
 
     processed_frames = 0
     telemetry.start()
@@ -354,6 +365,7 @@ def run_pipeline_benchmark(
 
             orig_frame = frame.copy()
             frame_idx = processed_frames
+            process_mgr._tls.video_metric_paste = None
 
             with telemetry.frame_scope(frame_idx):
                 # 1. Video Decode
@@ -362,6 +374,8 @@ def run_pipeline_benchmark(
                 # 2. Pipeline processing (process_mgr internally fires _prof hooks for
                 # detect, alignment, faceset_lookup, swap, lighting, mask, enhance, stabilize, blend)
                 out_frame = process_mgr.process_frame(frame, frame_idx=frame_idx)
+                if out_frame is None:
+                    out_frame = orig_frame
 
                 # 3. Video Encode simulation
                 t_enc0 = time.perf_counter()
@@ -372,7 +386,7 @@ def run_pipeline_benchmark(
             # Analyze frame for visual quality & stability metrics
             detected_faces = roop.face_analyser.get_all_faces(orig_frame)
             is_detected = len(detected_faces) > 0
-            is_swapped = (out_frame is not None)
+            is_swapped = process_mgr._tls.video_metric_paste is not None and not np.array_equal(out_frame, orig_frame)
 
             face_roi = None
             landmarks = None
@@ -414,6 +428,11 @@ def run_pipeline_benchmark(
                 yaw=yaw_deg,
                 bbox=bbox,
             )
+            actually_pasted = process_mgr._tls.video_metric_paste if is_swapped else None
+            kps, applied_box, applied_mask = actually_pasted if actually_pasted is not None else (None, None, None)
+            applied_tracker.add_frame(frame_idx, image=out_frame, target_image=orig_frame,
+                                      landmarks=kps, bbox=applied_box, mask=applied_mask,
+                                      is_detected=is_detected, is_swapped=is_swapped, yaw=yaw_deg)
 
             processed_frames += 1
 
@@ -424,6 +443,7 @@ def run_pipeline_benchmark(
     timing_summary = telemetry.get_summary(total_frames=max(1, processed_frames))
     raw_metrics = metrics_tracker.compute_summary()
     metrics_summary = raw_metrics.to_dict() if hasattr(raw_metrics, "to_dict") else raw_metrics
+    metrics_summary['applied_flicker'] = applied_tracker.compute_flicker_metrics().to_dict()
 
     return {
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -435,6 +455,8 @@ def run_pipeline_benchmark(
             "restorer": str(clean_enhancer),
             "mask_engine": str(clean_mask),
             "device_id": device_id,
+            "threads": threads,
+            "video_temporal": temporal,
         },
         "telemetry": timing_summary,
         "metrics": metrics_summary,
@@ -458,6 +480,12 @@ def format_quality_metrics_table(metrics: Dict[str, Any]) -> str:
     lines.append(f"{'Mask-Area Normalized Variance':<50} {flicker.get('mask_area_variance', 0.0):>34.6f}")
     lines.append(f"{'Valid Inter-frame Transitions Analyzed':<50} {flicker.get('valid_transitions', 0):>34d}")
     lines.append(f"{'Scene Cuts Excluded from Flicker Analysis':<50} {flicker.get('scene_cuts_excluded', 0):>34d}")
+
+    applied = metrics.get('applied_flicker')
+    if applied:
+        lines.append(f"{'Applied Face L1 Luminance Delta':<50} {applied['mean_l1_luminance_delta']:>34.4f}")
+        lines.append(f"{'Applied Landmark Jitter (px)':<50} {applied['mean_landmark_jitter_px']:>34.4f}")
+        lines.append(f"{'Canonical Alpha Area Variance':<50} {applied['mask_area_variance']:>34.6f}")
 
     overall = metrics.get("overall_stability", {})
     lines.append("-" * 86)
@@ -615,11 +643,16 @@ def main() -> int:
     parser.add_argument("--synthetic", action="store_true", help="Generate and benchmark lightweight synthetic multi-angle video")
     parser.add_argument("--device-id", type=int, default=0, help="CUDA device index (default: 0)")
     parser.add_argument("--warmup", type=int, default=2, help="Warmup frames (default: 2)")
+    parser.add_argument("--threads", type=int, default=20, help="Pipeline execution threads (default: 20)")
+    parser.add_argument("--disable-temporal", action="store_true", help="Run the legacy frame path as a control")
+    parser.add_argument("--inspect-baseline", action="store_true", help="Print the snapshot supplied by --compare")
 
     args = parser.parse_args()
 
-    # Mode 1: Pure comparison inspection if --compare is provided without video/synthetic
-    if args.compare and not args.video and not args.synthetic:
+    # Explicit snapshot inspection. A plain --compare runs the synthetic fixture.
+    if args.inspect_baseline:
+        if not args.compare:
+            parser.error('--inspect-baseline requires --compare')
         compare_path = os.path.abspath(args.compare)
         if not os.path.isfile(compare_path):
             print(f"Error: Comparison baseline file not found: {compare_path}", file=sys.stderr)
@@ -637,8 +670,6 @@ def main() -> int:
         if met_data:
             print("\n" + format_quality_metrics_table(met_data))
 
-        # Print comparison table against baseline
-        print("\n" + compare_benchmarks(base_data, base_data))
         return 0
 
     # Mode 2: Run benchmark
@@ -652,8 +683,10 @@ def main() -> int:
     out_json = (
         os.path.abspath(os.path.join(initial_cwd, args.output_json))
         if args.output_json
-        else os.path.join(out_dir, "baseline.json")
+        else os.path.join(out_dir, "current.json" if compare_abs else "baseline.json")
     )
+    if compare_abs and os.path.normcase(out_json) == os.path.normcase(compare_abs):
+        parser.error('output JSON must differ from the comparison baseline')
 
     temp_dir = None
     target_video = args.video
@@ -684,6 +717,8 @@ def main() -> int:
             device_id=args.device_id,
             warmup_frames=args.warmup,
             simulated_yaws=simulated_yaws,
+            threads=args.threads,
+            temporal=not args.disable_temporal,
         )
 
         # Print reports

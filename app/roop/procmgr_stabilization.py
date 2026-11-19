@@ -40,7 +40,9 @@ class StabilizationSchedulingMixin:
                 return max(0, int(raw))
             except ValueError:
                 pass
-        need = 0
+        # At least the dispatch tracker's three missed observations plus the
+        # previous canonical output, even if all legacy filters are disabled.
+        need = 4 if getattr(self, '_video_temporal_enabled', False) else 0
         # The opt-in temporal engines are stabilizers in every sense that matters
         # here: each keeps a per-track recurrence over frames, so a block that
         # starts mid-clip is primed from the wrong seed exactly as the kps/mask/
@@ -256,6 +258,8 @@ class StabilizationSchedulingMixin:
         """
         if os.environ.get('ROOP_STAB_DEDUP', '1').strip().lower() in ('0', 'false', 'no', 'off'):
             return None, 'disabled by ROOP_STAB_DEDUP=0'
+        if getattr(self, '_video_temporal_enabled', False):
+            return None, 'ordered affine and colour change the inputs before swap and restore'
         if warmup <= 0:
             return None, 'no warm-up to deduplicate'
         if warmup > block:

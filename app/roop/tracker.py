@@ -680,7 +680,7 @@ class FaceTracker:
         warm-up frames the stabilizers use, so its tracks re-establish from the
         frames just before it rather than from another block's.
         """
-        return FaceTracker(
+        return type(self)(
             max_age=self.max_age,
             max_cost=self.max_cost,
             process_noise=self.process_noise,

@@ -159,6 +159,14 @@ class TrackingMixin:
         try:
             runs, source = sam2_runs.choose(getattr(self, 'stage2_frame_plan', None),
                                             getattr(self, '_active_ranges', None), int(frame_count or 0))
+            cuts = sorted(c for c in (getattr(self, '_shot_boundaries', None) or ()) if c > 0)
+            if any(first < cut <= last for first, last, _ in runs for cut in cuts):
+                split = []
+                for first, last, boxes in runs:
+                    boundaries = [first, *(c for c in cuts if first < c <= last), last + 1]
+                    split.extend((lo, hi - 1, boxes if lo == first else None)
+                                 for lo, hi in zip(boundaries, boundaries[1:]))
+                runs, source = split, 'shot boundaries'
             n, pct = sam2_runs.coverage(runs, int(frame_count or 0))
             if source != 'clip':
                 print(f'[SAM2] gated to the {source}: {len(runs)} run(s) covering {n} of {frame_count} frame(s) '
@@ -776,7 +784,8 @@ class TrackingMixin:
             if f_idx in shot_boundaries:
                 byte_tracker.reset()
                 byte_to_track.clear()
-                flush_pipeline_temporal_buffers(self)
+                if not getattr(self, '_video_temporal_enabled', False):
+                    flush_pipeline_temporal_buffers(self)
                 if active:
                     retired.extend(active)
                     active = []
@@ -1224,7 +1233,9 @@ class TrackingMixin:
                 # come out of the finally block and mask the real failure.
                 reader = _t
             from roop.scene_detector import ContentAwareSceneDetector, flush_pipeline_temporal_buffers
-            _scene_tracker = ContentAwareSceneDetector()
+            from roop.video_temporal import ShotBoundaryDetector
+            _ordered_cuts = bool(getattr(self, '_video_temporal_enabled', False))
+            _scene_tracker = ShotBoundaryDetector() if _ordered_cuts else ContentAwareSceneDetector()
             idx = 0
             prev_idx = None
             scanned_count = 0
@@ -1278,8 +1289,10 @@ class TrackingMixin:
                 # Discontinuity / gap between active ranges: treat as a shot cut
                 if prev_idx is not None and idx > prev_idx + 1:
                     shot_boundaries.add(idx)
-                    flush_pipeline_temporal_buffers(self)
-                    if _scene_tracker is not None:
+                    if _ordered_cuts:
+                        _scene_tracker.previous = None
+                    else:
+                        flush_pipeline_temporal_buffers(self)
                         _scene_tracker.reset()
                 prev_idx = idx
 
@@ -1293,18 +1306,14 @@ class TrackingMixin:
                 # very frame it applies to, whether consumption happens inline
                 # or later out of the in-flight queue (it is keyed by frame
                 # index, not by when it runs).
-                if _scene_tracker is not None and isinstance(frame, np.ndarray):
-                    if _scene_tracker.observe_frame(frame, idx):
+                if isinstance(frame, np.ndarray):
+                    if (_scene_tracker.observe(frame) if _ordered_cuts else _scene_tracker.observe_frame(frame, idx)):
                         shot_boundaries.add(idx)
-                        flush_pipeline_temporal_buffers(self)
-                        # Freeing the previous shot's cached frames here is the
-                        # behaviour this hook already had; it is kept, but it is
-                        # no longer the ONLY thing a cut does.
-                        import gc
-                        gc.collect()
+                        if not _ordered_cuts:
+                            flush_pipeline_temporal_buffers(self)
 
                 # Skip frames to speed up detection and save memory
-                if TRACK_STEP > 1 and idx > 0 and idx % TRACK_STEP != 0:
+                if TRACK_STEP > 1 and idx > 0 and idx % TRACK_STEP != 0 and idx not in shot_boundaries:
                     scanned_count += 1
                     pbar.update(1)
                     continue
@@ -2631,10 +2640,29 @@ class TrackingMixin:
                 _swallowed("procmgr_tracking.py:keyframes", _exc, "keyframe prescan unavailable")
                 _kf_set = set()
         self._keyframe_indices = _kf_set
-        tracks = self._precompute_tracks(source_video, frame_start, frame_end, frame_count,
-                                         awebp_frames=awebp_frames, step=scan_step, collect_obs=True,
-                                         desc='Analyzing faces')
-        self._temporal_faces = self._build_temporal_faces(tracks or [], gap_max)
+        overlap = int(getattr(self, '_segment_warmup_count', 0))
+        active = getattr(self, '_active_ranges', None)
+        if active is not None and overlap:
+            self._active_ranges = ([(0, overlap - 1)] if active and active[0][0] == 0 else []) + [
+                (lo + overlap, hi + overlap) for lo, hi in active]
+        if overlap:
+            self._stage1_cut_hints = [index + overlap for index in self._stage1_cut_hints]
+            self._temporal_frame_start -= overlap
+        try:
+            tracks = self._precompute_tracks(source_video, frame_start - overlap, frame_end, frame_count + overlap,
+                                             awebp_frames=awebp_frames, step=scan_step, collect_obs=True,
+                                             desc='Analyzing faces')
+            faces = self._build_temporal_faces(tracks or [], gap_max)
+        finally:
+            if overlap:
+                self._active_ranges = active
+                self._temporal_frame_start = frame_start
+        self._segment_temporal_faces = {i - overlap: row for i, row in faces.items() if i < overlap}
+        self._temporal_faces = {i - overlap: row for i, row in faces.items() if i >= overlap}
+        if overlap:
+            self._track_scanned = max(0, self._track_scanned - overlap)
+            self._shot_boundaries = {i - overlap for i in (self._shot_boundaries or ())}
+            self._track_assignments = {i - overlap: row for i, row in (self._track_assignments or {}).items()}
         n_frames = len(self._temporal_faces)
         n_faces = sum(len(v) for v in self._temporal_faces.values())
         n_interp = sum(1 for v in self._temporal_faces.values()
@@ -2772,6 +2800,21 @@ class TrackingMixin:
             self.stage2_frame_plan = {}
         self._seal_trajectory(frame_start, frame_count)
 
+    def _assign_video_source_slots(self):
+        if not self._video_temporal_enabled or self.options.swap_mode not in ('first', 'all_input'):
+            return
+        from roop.video_temporal import SourceSlots
+        capacity = 1 if self.options.swap_mode == 'first' else len(self.input_face_datas)
+        slots = SourceSlots()
+        cuts = iter(sorted(self._shot_boundaries or ()))
+        cut = next(cuts, None)
+        for frames in (self._segment_temporal_faces, self._temporal_faces or {}):
+            for index, row in sorted(frames.items()):
+                while cut is not None and cut <= index:
+                    slots = SourceSlots()
+                    cut = next(cuts, None)
+                slots.update(row, index, capacity)
+
     def _seal_trajectory(self, frame_start, frame_count=None, restored=False):
         """The smoothed trajectory of this job's faces: build it (or map the project's checkpointed one when
         Stage 2 was restored and it matches exactly), make it the active cache the HUD reads
@@ -2805,7 +2848,9 @@ class TrackingMixin:
                     mode=getattr(_swap_proc, 'model_template', 'arcface'),
                     min_cutoff=float(getattr(self.options, 'stabilize_min_cutoff', 0.05)),
                     beta=float(getattr(self.options, 'stabilize_beta', 0.25)),
-                    d_cutoff=8.0)
+                    d_cutoff=8.0,
+                    smooth_landmarks=not (getattr(self, '_video_temporal_enabled', False)
+                                          and getattr(self.options, 'stabilize_method', 'one_euro') == 'one_euro'))
             self._trajectory = cache
             self._trajectory_plan = cache
             _tc.set_active(cache, getattr(stage_cache, 'project_id', None))
@@ -3087,12 +3132,17 @@ class TrackingMixin:
                 self.options, 'dropout_prediction_frames', 8)))))
         except (TypeError, ValueError):
             max_coast = min(max_coast, 8)
+        video_temporal = getattr(self, '_video_temporal_enabled', False)
+        if video_temporal:
+            from roop.video_temporal import MISS_GRACE
+            max_coast = min(max_coast, MISS_GRACE)
         if max_coast <= 0 or len(idxs) < 2:
             return 0, 0
 
         shape = getattr(self, '_temporal_frame_shape', None)
         lo, hi = int(idxs[0]), int(idxs[-1])
-        holes = [i for i in range(lo + 1, hi) if i not in merged]
+        tail = min(max_coast, max(0, self._track_scanned - hi - 1)) if video_temporal else 0
+        holes = [i for i in range(lo + 1, hi + tail + 1) if i not in merged]
         if not holes:
             return 0, 0
         hole_set = set(holes)
@@ -3117,7 +3167,7 @@ class TrackingMixin:
             """
             pos = bisect_right(idxs, frame_idx) - 1
             left = idxs[pos] if pos >= 0 else lo
-            right = idxs[pos + 1] if pos + 1 < len(idxs) else hi
+            right = idxs[pos + 1] if pos + 1 < len(idxs) else frame_idx
             return _cut_between(left, right)
 
         def _run(order):
@@ -3137,6 +3187,8 @@ class TrackingMixin:
                 if i not in hole_set:
                     continue
                 produced = tracker.coast(step, frame_shape=shape, occupied=[])
+                if video_temporal:
+                    produced = [f for f in produced if tracker.tracks[f['_track_id']].missed <= max_coast]
                 if produced:
                     # `coast` walks tracks in id order, so the first is the
                     # oldest -- the established one. A second track here means
@@ -3145,7 +3197,7 @@ class TrackingMixin:
                     found[i] = produced[0]
             return found
 
-        forward = _run(list(range(lo, hi + 1)))
+        forward = _run(list(range(lo, hi + tail + 1)))
         backward = _run(list(range(hi, lo - 1, -1)))
 
         filled = refused = 0
@@ -3184,6 +3236,10 @@ class TrackingMixin:
         from roop import orientation
         stab_on = bool(getattr(self.options, 'stabilize_face', False))
         method = getattr(self.options, 'stabilize_method', 'one_euro')
+        video_geometry = getattr(self, '_video_temporal_enabled', False) and method == 'one_euro'
+        if video_geometry:
+            from roop.video_temporal import VideoTemporalState
+            geometry = VideoTemporalState(getattr(self, '_video_fps', None) or 30.)
         mc = float(getattr(self.options, 'stabilize_min_cutoff', 0.05))
         bt = float(getattr(self.options, 'stabilize_beta', 0.02))
         out = {}
@@ -3319,6 +3375,8 @@ class TrackingMixin:
                         continue
                     for g in range(prev + 1, i):
                         cand = self._interp_face(a, b, (g - prev) / span, emb_mean)
+                        if video_geometry and span <= 4 and int(getattr(_tracker_state, 'detect_interval', 1) or 1) == 1:
+                            cand['_temporal_miss_age'] = g - prev
                         if bridged is not None and g in bridged:
                             # Flow supplies the SHAPE of the path through the
                             # dropout; the closing detection pins its end.
@@ -3398,7 +3456,14 @@ class TrackingMixin:
                 except InvalidAlignment:
                     del merged[_i]
 
-            if stab_on:
+            if video_geometry:
+                for index, face in sorted(merged.items()):
+                    if index in cuts:
+                        geometry.reset()
+                    geometry.index = index
+                    geometry.geometry(face, t['id'])
+                geometry.reset()
+            elif stab_on:
                 # Per-track sequential smoothing. Explicit local dictionaries keep
                 # each track's filter state cleanly isolated and resettable.
                 _seg_id = getattr(getattr(roop.globals, '_segment_spec', None), 'index', 0) or 0
@@ -3557,7 +3622,7 @@ class TrackingMixin:
                     if line:
                         self._landmark_smooth_lines.append(
                             'track %s %s' % (t['id'], line))
-            if stab_on and _studio.maximum('stabilization_strength', float(getattr(self.options, 'stabilization_strength', 0.5) or 0.0)) > 0.0:
+            if not video_geometry and stab_on and _studio.maximum('stabilization_strength', float(getattr(self.options, 'stabilization_strength', 0.5) or 0.0)) > 0.0:
                 # This pass runs in the same ordered, per-track prepass as the
                 # legacy landmark smoother. Swap workers only consume its
                 # immutable frame annotations; they never share filter state.

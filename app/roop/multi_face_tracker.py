@@ -95,13 +95,21 @@ class MultiFaceTracker(FaceTracker):
                     for c, fi in enumerate(indices):
                         f = faces[fi]
                         iou = _bbox_iou(self.measurement_to_bbox(t.state[:4]), _face_field(f, 'bbox'))
-                        sim = _cosine_similarity(t.embedding, self._embedding(f))
+                        embedding = self._embedding(f)
+                        sim = _cosine_similarity(t.embedding, embedding)
                         dirty = bool(_face_field(f, '_emb_contam', 0) > .4)
                         if geometry_only or dirty:
                             if iou >= .10:
                                 cost[r, c] = 1 - iou
-                        elif iou >= .01 and (t.embedding is None or self._embedding(f) is None or sim >= .3):
-                            cost[r, c] = .55 * (1 - iou) + .45 * (1 - sim)
+                        elif t.embedding is None or embedding is None:
+                            if iou >= .35:
+                                cost[r, c] = 1 - iou
+                        else:
+                            # Strong geometric continuity retains a track through a noisy
+                            # profile. A weak spatial claim needs stronger identity evidence.
+                            threshold = .24 if iou >= .45 and t.missed <= 2 else .44
+                            if iou >= .01 and sim >= threshold:
+                                cost[r, c] = self._MOTION_WEIGHT * (1 - iou) + self._IDENTITY_WEIGHT * (1 - sim)
                 used = set()
                 if cost.size:
                     # Gate BEFORE assignment; invalid edges cannot steal valid ones.

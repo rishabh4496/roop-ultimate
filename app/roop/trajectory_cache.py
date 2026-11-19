@@ -558,7 +558,7 @@ class TrajectoryPlan(TrajectoryCache):
               frame_shape: Any = None, cuts: Optional[set[int]] = None,
               mode: str = TEMPLATE, pts: Any = None,
               min_cutoff: float = 0.05, beta: float = 0.25,
-              d_cutoff: float = 8.0) -> "TrajectoryPlan":
+              d_cutoff: float = 8.0, smooth_landmarks: bool = True) -> "TrajectoryPlan":
         from roop.pose_router import estimate_head_pose
         from roop.pose_template import source_silhouette_anchors, warp_template
         from roop.temporal_stabilizer import forward_backward_one_euro
@@ -596,7 +596,7 @@ class TrajectoryPlan(TrajectoryCache):
         cuts_abs = {int(frame_start) + int(c) for c in (cuts or ())}
         # Split each track at a frame gap or shot cut so filter state never
         # crosses a discontinuity. Each chunk is filtered in timestamp order.
-        for tid in np.unique(tracks):
+        for tid in np.unique(tracks) if smooth_landmarks else ():
             inds = np.flatnonzero(tracks == tid)
             if not len(inds):
                 continue

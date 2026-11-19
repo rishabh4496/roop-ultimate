@@ -13,6 +13,17 @@ Source: DIAGNOSTIC_PLAN §2.4/§2.5/§3.2/§6, on top of the Bug #2 Stage 2 matt
 
 **Not verified / not changed.** No 600-frame counterbalanced render A/B and no real-footage visual acceptance of the hair gate or the colour redo beyond the numbers above; the bench fixture is synthetic and its "swap coverage" is `out_frame is not None` (always 100%). RTX 3060 not run. The occluder blur stays a constant on-screen width (`test_occluder_edge.py` pins it; a face-width-proportional edge would bring back the close-up halo it fixed). Mouth, eye and beard/dark-frame halos were not changed. Small-crop restorer bypass already exists (`smart_restorer_bypass.py`, 256-384 px ramp, `ultramax_ramp`).
 
+## 2026-11-19 — Video temporal stabilization
+
+- Video face swaps detect hard cuts on downscaled frames before association and clear the current worker's temporal state. Kalman and ArcFace association retain source slots through crossings and carry established faces through up to three guarded misses. The One Euro filter couples landmarks and bounding boxes and filters the similarity transform before warping.
+- The paste stabilizes combined alpha in canonical face coordinates. Current occlusions limit the history contribution. LAB transfer statistics follow the current target on motion or an exposure change. GPEN Realistic and UltraMax blend only high-frequency luminance where the target crop is stable.
+- Split renders prime from up to 12 preceding frames. Distributed workers stream-copy from an earlier IDR, then discard the warm-up before encoding. Single-image swaps bypass the video state.
+- `bench_pipeline.py --compare bench_results/baseline.json` now renders before comparing and preserves the snapshot. The benchmark reports rendered landmarks, canonical alpha and confirmed output changes alongside the historical metrics.
+
+The 30-frame snapshot comparison measured luminance L1 of 18.3660 → 18.3571, detector jitter of 0.9149 → 0.9149 px and historical mask variance of 0.037418 → 0.038167. A fresh legacy arm measured applied jitter of 0.9390 px versus 0.9488 px with stabilization, and canonical alpha variance of 0.052927 versus 0.051084. The requested large reduction remains unverified. A 42-frame GPEN Realistic smoke recorded 42 restorer and 42 texture stabilization calls. Another test process shared the GPU, so the smoke timings are unsuitable for throughput comparison. Real-footage visual acceptance and RTX 3060 validation remain open.
+
+Focused tests passed for the filters, source assignment, cut resets and FFmpeg overlap trimming. An earlier 600-frame RTX 4070 regression run passed with 597 changed frames before the trajectory sealing change that removed the duplicate landmark smoothing pass. The final light pytest run reported 2,908 passed and 12 failed. The GPU suite and a fresh 600-frame run remain pending while another test process owns GPU resources.
+
 ## 2026-11-19 — UI overhaul Stage 15: PiP transport + A/B, expression maths + live pill, ANSI key remapper, saved layouts by monitor shape
 
 All `react-ui`; no backend change.

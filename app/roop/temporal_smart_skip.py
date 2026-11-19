@@ -298,26 +298,30 @@ def _normalize_track_key(track_id: Any, segment_id: Optional[int] = None) -> Opt
 
 
 def set_track_patch(track_id: Any, patch: np.ndarray, aligned_img: np.ndarray, frame_idx: int,
-                    segment_id: Optional[int] = None, **kwargs) -> None:
+                    segment_id: Optional[int] = None, cache=None, **kwargs) -> None:
     """Record final composited face patch for persistent (segment_id, track_id)."""
+    entry = {"patch": patch.copy(), "aligned_img": aligned_img.copy() if aligned_img is not None else None,
+             "frame_idx": int(frame_idx), **kwargs}
+    if cache is not None:
+        cache[track_id] = entry
+        return
     key = _normalize_track_key(track_id, segment_id=segment_id)
     if key is None:
         return
     with _PATCH_LOCK:
-        _PATCH_CACHE[key] = {
-            "patch": patch.copy(),
-            "aligned_img": aligned_img.copy() if aligned_img is not None else None,
-            "frame_idx": int(frame_idx),
-            **kwargs,
-        }
+        _PATCH_CACHE[key] = entry
 
 
 def get_track_patch(track_id: Any, expected_frame_idx: Optional[int] = None,
-                    segment_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
+                    segment_id: Optional[int] = None, cache=None) -> Optional[Dict[str, Any]]:
     """Retrieve previous frame's composited face patch for persistent (segment_id, track_id).
 
     If expected_frame_idx is provided, returns None unless the cached patch matches that frame index.
     """
+    if cache is not None:
+        entry = cache.get(track_id)
+        return entry if entry is not None and (expected_frame_idx is None or
+                                               entry['frame_idx'] == expected_frame_idx) else None
     key = _normalize_track_key(track_id, segment_id=segment_id)
     if key is None:
         return None
