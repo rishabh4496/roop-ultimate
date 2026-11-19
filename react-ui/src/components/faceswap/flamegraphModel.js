@@ -20,7 +20,47 @@ export const TRACE_STAGES = [
   { key: 'restore', label: 'Restore Ultra / UltraMax', aliases: ['restore', 'enhancement', 'enhance', 'enhance_recombine', 'identity_detail'], color: '#f59e0b' },
   { key: 'color', label: 'LUT / Color', aliases: ['lut_color', 'color', 'lighting', 'detail_transfer', 'realism', 'blend'], color: '#ec4899' },
   { key: 'encode', label: 'NVHardwareVideoWriter Encode', aliases: ['encoding', 'encode'], color: '#64748b' },
+  // DERIVED, never measured: end-to-end frame time minus the lanes above. The backend also times stabilize, temporal_*,
+  // expression, lipsync, verify and faceset_lookup, but those timers are not mapped to a lane on purpose: several
+  // others (mask_refine / mask_stabilize / occlusion_analysis inside `mask`, interaction_occlusion / temporal_alpha inside
+  // `blend`) run INSIDE a mapped timer, so summing them as well would count the same milliseconds twice. The residual
+  // is correct by construction whichever of them nests where.
+  { key: 'other', label: 'Unattributed (stabilize, temporal, verify, ...)', aliases: [], derived: true, color: '#94a3b8' },
 ];
+
+/**
+ * One backend trace row -> per-lane milliseconds.
+ *
+ * `rawStages` is the row's `stage_ms` (profiler name -> ms), `frameMs` its `frame_ms` (end-to-end, or null).
+ * A lane with no measured alias is `null` (absent, never a default). `other` is `frameMs - sum(measured lanes)`, or
+ * `null` when there is no end-to-end figure. If the measured lanes add up to MORE than the end-to-end time (a nested
+ * timer was counted, or frames overlapped), `other` is 0 and the excess is returned as `overAttributedMs` so the
+ * caller can say so instead of showing a stack taller than the frame.
+ */
+export function traceStageMs(rawStages, frameMs) {
+  const stageMs = {};
+  for (const stage of TRACE_STAGES) {
+    if (!stage.derived) stageMs[stage.key] = sumMeasuredValues(rawStages, stage.aliases);
+  }
+  const detectionMs = stageMs.detection;
+  const embeddingMs = stageMs.embedding;
+  if (detectionMs != null && embeddingMs != null) {
+    // The detector wrapper measures the full FaceAnalysis call. The recognizer timer is nested within it, so
+    // subtract that exact call time to keep the stacked detection/embedding bars from counting ArcFace twice.
+    stageMs.detection = Math.max(0, Number((detectionMs - embeddingMs).toFixed(3)));
+  }
+  const measured = Object.values(stageMs).filter(Number.isFinite).reduce((sum, v) => sum + v, 0);
+  const end = frameMs != null && Number.isFinite(Number(frameMs)) ? Number(frameMs) : null;
+  let overAttributedMs = 0;
+  let other = null;
+  if (end !== null) {
+    const residual = end - measured;
+    other = residual > 0 ? Number(residual.toFixed(3)) : 0;
+    overAttributedMs = residual < 0 ? Number((-residual).toFixed(3)) : 0;
+  }
+  stageMs.other = other;
+  return { stageMs, measuredMs: Number(measured.toFixed(3)), overAttributedMs };
+}
 
 export const firstMeasuredValue = (record, aliases) => {
   if (!record || typeof record !== 'object') return null;

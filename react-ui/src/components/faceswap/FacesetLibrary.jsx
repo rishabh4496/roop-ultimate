@@ -4,6 +4,7 @@ import { useApi } from '../../useApi';
 import { Button, FocusedInput } from '../ui';
 import { confirmDialog, promptDialog } from '../confirm';
 import { Icon } from '../../icons';
+import PoseCoverageBadge from '../facemgr/PoseCoverageBadge';
 
 // Persistent, named .fsz facesets on disk. Save the selected source faceset here
 // once and reload it any time without re-uploading. Point the library folder
@@ -225,6 +226,7 @@ export default function FacesetLibrary({ canSave, onLoaded, notify }) {
                               {e.faces > 1 && <span className="text-muted"> · {e.faces} faces</span>}
                             </span>
                           )}
+                          {renaming !== e.filename && <PoseCoverageBadge entry={e} className="shrink-0" />}
                           {/* focus-within as well as group-hover — these are
                               real tab stops, and opacity-0 alone left a
                               keyboard user focused on invisible controls. */}

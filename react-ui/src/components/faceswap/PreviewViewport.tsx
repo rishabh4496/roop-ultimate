@@ -57,9 +57,14 @@ import {
 // @ts-ignore
 import { drawAmplifiedHeatmap } from './heatmap';
 import FacePoseGizmo from './FacePoseGizmo';
-import BroadcastScopesDock from './BroadcastScopesDock';
-import CompareSlider from './CompareSlider';
+import BroadcastScopesDockJs from './BroadcastScopesDock';
+import CompareSliderJs from './CompareSlider';
 import { clampPan, focusPanFor, panAnchoredAt, uiScale, wheelZoomDelta } from './zoomPan';
+
+// These two are plain-JS modules, so tsc infers their props from destructuring defaults (`x = null` becomes
+// `null | undefined`) and rejects the real call sites. Same runtime objects, typed loosely at this boundary only.
+const BroadcastScopesDock = BroadcastScopesDockJs as unknown as React.ComponentType<Record<string, unknown>>;
+const CompareSlider = CompareSliderJs as unknown as React.ComponentType<Record<string, unknown>>;
 
 // ── Types & Interfaces ─────────────────────────────────────────────────────────
 
@@ -1646,7 +1651,7 @@ export const PreviewViewport: React.FC<PreviewViewportProps> = ({
           <div
             className="vfx-subpixel-grid"
             aria-hidden="true"
-            style={{ '--vfx-pixel-cell': '1px' }}
+            style={{ '--vfx-pixel-cell': '1px' } as React.CSSProperties}
           />
         )}
 

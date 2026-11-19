@@ -80,6 +80,7 @@ UI_SETTINGS = (
     ('perf_nvenc_preset', 'NVENC preset', 'Advanced performance'),
     ('perf_gpu_affine', 'CUDA affine warp', 'Advanced performance'),
     ('perf_pinned_buffers', 'Pinned host buffers (zero-copy)', 'Advanced performance'),
+    ('perf_zerocopy_enhance', 'Zero-copy restorer buffers (GPU)', 'Advanced performance'),
     ('temporal_step', 'Face tracking interval (frames)', 'Advanced performance'),
     ('enhance_min_face_px', 'Skip restorer below face size (px)', 'Advanced performance'),
     # Identity & tracking
@@ -169,6 +170,8 @@ ENV_SETTINGS = (
     ('perf_nvenc_preset', 'ROOP_NVENC_PRESET', 'value'),
     ('perf_gpu_affine', 'ROOP_GPU_AFFINE', 'tristate'),
     ('perf_pinned_buffers', 'ROOP_PINNED_BUFFERS', 'tristate'),
+    # optimized_processor.zero_copy_enabled() reads it at USE time; 'auto' leaves the shipped default (on) alone.
+    ('perf_zerocopy_enhance', 'ROOP_ZEROCOPY_ENHANCE', 'tristate'),
     ('temporal_step', 'ROOP_TEMPORAL_STEP', 'value'),
     # Both read at USE time, once per pre-pass (TemporalFaceTracker.from_env, _build_temporal_faces).
     ('prepass_detect_interval', 'ROOP_PREPASS_DETECT_INTERVAL', 'value'),
@@ -213,7 +216,7 @@ ENV_SETTINGS = (
 # key here whose variable IS read at import would make the panel lie: it would
 # re-export a value nothing reads again.
 LIVE_ENV_SETTINGS = ('perf_batch_max', 'perf_nvenc_preset', 'perf_gpu_affine',
-                     'perf_pinned_buffers', 'temporal_step', 'enhance_min_face_px', 'auto_bypass_restorer_native_swap', 'temporal_smart_skip',
+                     'perf_pinned_buffers', 'perf_zerocopy_enhance', 'temporal_step', 'enhance_min_face_px', 'auto_bypass_restorer_native_swap', 'temporal_smart_skip',
                      'prepass_detect_interval', 'prepass_landmark_filter',
                      'identity_confidence_threshold',
                      'hdr_pipeline', 'hdr_source_transfer', 'hdr_source_primaries',
@@ -1443,6 +1446,10 @@ class Settings:
         # Page-locked host buffers for decoded frames and crops
         # (ROOP_PINNED_BUFFERS). auto = on whenever CUDA is available.
         self.perf_pinned_buffers = self.default_get(data, 'perf_pinned_buffers', 'auto')
+        # CUDA/TensorRT zero-copy ring for the GPEN Realistic / RestoreFormer++ restorers (ROOP_ZEROCOPY_ENHANCE,
+        # roop/optimized_processor.ZeroCopyBufferPool). auto = the shipped default (on); off = the host path.
+        # An older config.yaml without the key reads as 'auto', i.e. exactly what it ran before.
+        self.perf_zerocopy_enhance = self.default_get(data, 'perf_zerocopy_enhance', 'auto')   # auto|on|off
         # Tracking pre-pass scan stride (ROOP_TEMPORAL_STEP). 1 detects every
         # frame. N > 1 detects every Nth frame and INTERPOLATES the rest:
         # measured 6x worse landmark error on turned heads at 2 (13.9% of
@@ -1775,6 +1782,7 @@ class Settings:
             'perf_nvenc_preset': self.perf_nvenc_preset,
             'perf_gpu_affine': self.perf_gpu_affine,
             'perf_pinned_buffers': self.perf_pinned_buffers,
+            'perf_zerocopy_enhance': self.perf_zerocopy_enhance,
             'temporal_step': self.temporal_step,
             'prepass_detect_interval': self.prepass_detect_interval,
             'prepass_landmark_filter': self.prepass_landmark_filter,

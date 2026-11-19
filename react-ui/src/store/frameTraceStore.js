@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react';
-import { TRACE_STAGES, sumMeasuredValues } from '../components/faceswap/flamegraphModel';
+import { TRACE_STAGES, traceStageMs } from '../components/faceswap/flamegraphModel';
 
 const LIMIT = 480;
 let samples = [];
@@ -38,25 +38,16 @@ export function recordFrameTrace(frame) {
   for (const row of rows) {
     const frameNumber = Number(row?.frame);
     if (!Number.isFinite(frameNumber) || frameNumber < 1) continue;
-    const rawStages = row.stage_ms || {};
-    const stageMs = Object.fromEntries(TRACE_STAGES.map((stage) => [
-      stage.key,
-      sumMeasuredValues(rawStages, stage.aliases),
-    ]));
-    const detectionMs = stageMs.detection;
-    const embeddingMs = stageMs.embedding;
-    if (detectionMs != null && embeddingMs != null) {
-      // The detector wrapper measures the full FaceAnalysis call. The recognizer
-      // timer is nested within it, so subtract that exact call time to keep the
-      // stacked detection/embedding bars from counting the ArcFace work twice.
-      stageMs.detection = Math.max(0, Number((detectionMs - embeddingMs).toFixed(3)));
-    }
+    const frameMs = row.frame_ms != null && Number.isFinite(Number(row.frame_ms)) ? Number(row.frame_ms) : null;
+    const { stageMs, measuredMs, overAttributedMs } = traceStageMs(row.stage_ms || {}, frameMs);
     if (!Object.values(stageMs).some((value) => value !== null) && row.frame_ms == null) continue;
     const next = {
       frame: Math.round(frameNumber),
-      frameMs: row.frame_ms != null && Number.isFinite(Number(row.frame_ms)) ? Number(row.frame_ms) : null,
+      frameMs,
       stageMs,
-      totalStageMs: Object.values(stageMs).filter(Number.isFinite).reduce((sum, value) => sum + value, 0),
+      // Measured lanes only: the derived `other` lane is the residual, not a measurement.
+      totalStageMs: measuredMs,
+      overAttributedMs,
     };
     const old = byFrame.get(next.frame);
     if (old && old.frameMs === next.frameMs

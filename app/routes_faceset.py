@@ -29,6 +29,7 @@ from api_media import _bgr_to_jpg_dataurl
 from source_gallery import (_frontality, _ingest_faceset,
                             _shrink_for_thumb, _source_faces_payload)
 from roop.faceset_v2 import read_faceset_archive, write_faceset_v2
+from roop.faceset_coverage import coverage_for_fsz
 
 
 router = APIRouter()
@@ -130,6 +131,9 @@ def _library_entries() -> list:
             "mtime": st.st_mtime,
             "faces": _faceset_face_count(fsz_path),
             "thumb": _library_thumb_dataurl(fsz_path),
+            # Left / front / right yaw coverage from the archive's own metadata; null = legacy archive, angles
+            # unknown (react-ui facemgr/poseCoverage.js reads exactly this shape).
+            "pose_coverage": coverage_for_fsz(fsz_path),
         })
     entries.sort(key=lambda e: e["name"].lower())
     return entries

@@ -14,6 +14,7 @@ import MouthCustodyPanel from './faceswap/MouthCustodyPanel';
 import useTargetAudio from './faceswap/useTargetAudio';
 import { modeOf, overridePatch, requestFields, clampOffset, MODE_LABELS } from './faceswap/mouthCustody';
 import PipelineControls from './faceswap/PipelineControls';
+import PerformanceQuickControls from './faceswap/PerformanceQuickControls';
 import {
   buildFaceMappingArray,
   buildTargetSelectionState,
@@ -4212,6 +4213,12 @@ export default function FaceSwap({
           <div id="pipeline-controls-heading" className="text-nano font-bold uppercase tracking-[0.16em] text-white/60">3-stage pipeline</div>
           <PipelineControls values={p} models={meta.swap_models} onChange={set} onChangeMany={setMany} />
         </div>
+
+        {/* The hardware switches (zero-copy, FP16, NVDEC, NVENC, micro-batch), compact. The global defaults and the long
+            help stay in #/settings; both edit the same settings object. Detection stride is the K slider above. */}
+        <InspectorGroup id="performance" title="Performance" icon={Icon.meter}>
+          <PerformanceQuickControls values={p} onChangeMany={setMany} />
+        </InspectorGroup>
 
         {/* Stage 12: every recorded change as a clickable state, with non-destructive branching. */}
         <HistoryInspectorGroup />

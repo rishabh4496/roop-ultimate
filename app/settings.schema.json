@@ -46,6 +46,7 @@
     "perf_nvenc_preset",
     "perf_gpu_affine",
     "perf_pinned_buffers",
+    "perf_zerocopy_enhance",
     "temporal_step",
     "enhance_min_face_px",
     "recognizer",
@@ -1523,6 +1524,18 @@
       },
       "env": {
         "var": "ROOP_PINNED_BUFFERS",
+        "kind": "tristate"
+      }
+    },
+    "perf_zerocopy_enhance": {
+      "default": "auto",
+      "type": "str",
+      "ui": {
+        "label": "Zero-copy restorer buffers (GPU)",
+        "section": "Advanced performance"
+      },
+      "env": {
+        "var": "ROOP_ZEROCOPY_ENHANCE",
         "kind": "tristate"
       }
     },

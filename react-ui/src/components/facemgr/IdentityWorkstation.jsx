@@ -3,6 +3,7 @@ import { getJSON, postJSON, postFile, fileUrl } from '../../api';
 import { eventMatches } from '../../store/shortcutStore';
 import { Button } from '../ui';
 import CoverageRadar from './CoverageRadar';
+import PoseCoverageBadge from './PoseCoverageBadge';
 import {
   applyClick, clampThumb, facePose, filterLibrary, fmtBytes, libraryTags, marqueeSelect, mergeGroups,
   outliersBelow, qualityFromWidth, ranksOf, rectFromPoints, resolveHero, splitGroup,
@@ -354,6 +355,7 @@ export default function IdentityWorkstation({ notify, setTab, facesetState, onFa
                     <span className="block truncate text-sm font-semibold text-white/90">{e.name}</span>
                     <span className="flex flex-wrap items-center gap-1 text-nano text-muted">
                       <span>{e.faces} face{e.faces === 1 ? '' : 's'}</span>
+                      <PoseCoverageBadge entry={e} />
                       <span className="px-1 rounded bg-white/10 text-white/70 tabular-nums" data-testid="ws-size">{fmtBytes(e.size)}</span>
                       {libraryTags(e).map((t) => <span key={t} className="text-white/70">#{t}</span>)}
                     </span>

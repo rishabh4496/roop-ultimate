@@ -62,6 +62,7 @@ export const SETTINGS_CATALOG = [
   { key: 'perf_nvenc_preset', label: 'NVENC preset', section: 'Advanced performance' },
   { key: 'perf_gpu_affine', label: 'CUDA affine warp', section: 'Advanced performance' },
   { key: 'perf_pinned_buffers', label: 'Pinned host buffers (zero-copy)', section: 'Advanced performance' },
+  { key: 'perf_zerocopy_enhance', label: 'Zero-copy restorer buffers (GPU)', section: 'Advanced performance' },
   { key: 'temporal_step', label: 'Face tracking interval (frames)', section: 'Advanced performance' },
   { key: 'enhance_min_face_px', label: 'Skip restorer below face size (px)', section: 'Advanced performance' },
 
