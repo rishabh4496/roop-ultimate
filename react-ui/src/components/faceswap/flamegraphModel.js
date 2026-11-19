@@ -8,6 +8,43 @@ export const FLAMEGRAPH_STAGES = [
   { key: 'encode', label: 'Encode', model: 'NVENC', color: '#64748b', bgClass: 'bg-slate-500', textClass: 'text-slate-400', residency: 'GPU (NVENC / Direct)' },
 ];
 
+// These are the backend's measured worker-time columns. Values are emitted in
+// milliseconds per delivered frame; absent columns stay absent instead of
+// being replaced with demo/default timings.
+export const TRACE_STAGES = [
+  { key: 'decode', label: 'Decode', aliases: ['decode'], color: '#06b6d4' },
+  { key: 'detection', label: 'Detection', aliases: ['detection', 'detect', 'alignment'], color: '#a855f7' },
+  { key: 'embedding', label: 'ArcFace Embedding', aliases: ['arcface_embedding', 'embedding'], color: '#c084fc' },
+  { key: 'swap', label: 'Hyperswap / Swapper', aliases: ['swap'], color: '#10b981' },
+  { key: 'mask', label: 'XSeg 3 Mask', aliases: ['xseg3', 'xseg', 'mask'], color: '#3b82f6' },
+  { key: 'restore', label: 'Restore Ultra / UltraMax', aliases: ['restore', 'enhancement', 'enhance', 'enhance_recombine', 'identity_detail'], color: '#f59e0b' },
+  { key: 'color', label: 'LUT / Color', aliases: ['lut_color', 'color', 'lighting', 'detail_transfer', 'realism', 'blend'], color: '#ec4899' },
+  { key: 'encode', label: 'NVHardwareVideoWriter Encode', aliases: ['encoding', 'encode'], color: '#64748b' },
+];
+
+export const firstMeasuredValue = (record, aliases) => {
+  if (!record || typeof record !== 'object') return null;
+  for (const key of aliases) {
+    const value = Number(record[key]);
+    if (Number.isFinite(value) && value >= 0) return value;
+  }
+  return null;
+};
+
+export const sumMeasuredValues = (record, aliases) => {
+  if (!record || typeof record !== 'object') return null;
+  let total = 0;
+  let found = false;
+  for (const key of aliases) {
+    const value = Number(record[key]);
+    if (Number.isFinite(value) && value >= 0) {
+      total += value;
+      found = true;
+    }
+  }
+  return found ? total : null;
+};
+
 /** Canonical per-stage model timings (Tech Requirement 3d / Stage 27) */
 export const MODEL_PASS_STAGES = [
   { key: 'detect_scrfd', modelKey: 'SCRFD-gnkps', label: 'SCRFD-gnkps', stageKey: 'detect', category: 'Detect / 5-Point Align', color: '#a855f7', bgClass: 'bg-purple-500', textClass: 'text-purple-400', residency: 'GPU (TensorRT FP16)', defaultMs: 7.8 },

@@ -847,10 +847,19 @@ class MaskingMixin:
                 _parse = _sem_alpha = None
         if _sem_alpha is None:
             alpha = inward_alpha(alpha, _feather, yaw)
-        elif getattr(roop.globals, 'debug_mask_channels', False):
+        debug_face_index = getattr(roop.globals, 'debug_mask_face_index', None)
+        active_face_index = getattr(self._tls, 'face_index', None)
+        debug_face_match = debug_face_index is None or (
+            active_face_index is not None and int(active_face_index) == int(debug_face_index))
+        if getattr(roop.globals, 'debug_mask_channels', False) and debug_face_match:
             try:
                 from roop.mask_composer import debug_channels, publish_debug
-                publish_debug(debug_channels(np.clip(upsk_face, 0, 255).astype(np.uint8), _parse, _sem_alpha))
+                publish_debug(debug_channels(
+                    np.clip(upsk_face, 0, 255).astype(np.uint8),
+                    parse=_parse,
+                    result=_sem_alpha,
+                    final_alpha=alpha,
+                    xseg3_mask=getattr(self._tls, 'xseg3_mask_debug', None)))
             except Exception as exc:
                 _swallowed("roop/procmgr_masking.py:mask_debug", exc, "debug channels skipped")
         if 'swap_opacity' in _tl and float(_tl['swap_opacity']) < 1.0:
@@ -1974,6 +1983,12 @@ class MaskingMixin:
             except Exception as _degrade_error:
                 _swallowed("roop/procmgr_masking.py:1380", _degrade_error, "fallback continued")
                 pass
+
+        if p_name == 'mask_xseg3' and getattr(roop.globals, 'debug_mask_channels', False):
+            try:
+                self._tls.xseg3_mask_debug = np.asarray(img_mask, dtype=np.float32).copy()
+            except (TypeError, ValueError):
+                self._tls.xseg3_mask_debug = None
 
         if defer_composite:
             return target, img_mask

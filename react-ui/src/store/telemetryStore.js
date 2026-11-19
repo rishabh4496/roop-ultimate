@@ -74,6 +74,7 @@ export const FAST_FIELDS = Object.keys(EMPTY_RUN);
 // live state of Stage 1-3, `summary` the report the backend builds when the render ends ({} until then).
 // Objects, not flat fields, so they are compared by value below instead of with `!==`.
 const EMPTY_PIPELINE = { stage: null, stages: {}, summary: {} };
+const EMPTY_SEAMS = [];
 
 export const EMPTY_ENHANCER = {
   instantaneous_fps: 0,
@@ -96,6 +97,7 @@ export const useTelemetryStore = create(() => ({
   run: EMPTY_RUN,
   pipeline: EMPTY_PIPELINE,
   dashboard: EMPTY_DASHBOARD,
+  seamEvents: EMPTY_SEAMS,
   /** /api/system/telemetry: gpu, vram_used/total, cpu_percent, ram_*, threads. */
   system: null,
   /** UltraMax / Enhancer telemetry and compilation status. */
@@ -149,6 +151,15 @@ export function setDashboardTelemetry(frame) {
   const cur = useTelemetryStore.getState().dashboard;
   if (cur && JSON.stringify(cur) === JSON.stringify(frame.dashboard)) return;
   useTelemetryStore.setState({ dashboard: frame.dashboard });
+}
+
+/** Keep structured mask watchdog events separate from fast numeric run fields. */
+export function setMaskSeamTelemetry(frame) {
+  if (!frame || !Array.isArray(frame.mask_seam_events)) return;
+  const next = frame.mask_seam_events;
+  const cur = useTelemetryStore.getState().seamEvents;
+  if (JSON.stringify(cur) === JSON.stringify(next)) return;
+  useTelemetryStore.setState({ seamEvents: next });
 }
 
 export function resetRunTelemetry() {

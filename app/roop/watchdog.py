@@ -97,6 +97,8 @@ class RuntimeWatchdog:
         self._last_zero_swap_alert_frame = -1
         # (stream_key, thread id, mask shape) -> (area, frame_idx, scene_cut_id)
         self._mask_baselines: Dict[Any, Tuple[int, int, Optional[int]]] = {}
+        self._mask_seam_events: Deque[Dict[str, Any]] = collections.deque(maxlen=64)
+        self._mask_seam_event_seq = 0
         self._vram_warned_at: float = 0.0
 
         # Global active breadcrumbs
@@ -114,6 +116,8 @@ class RuntimeWatchdog:
             self._consecutive_zero_swaps = 0
             self._last_zero_swap_alert_frame = -1
             self._mask_baselines.clear()
+            self._mask_seam_events.clear()
+            self._mask_seam_event_seq = 0
             self._vram_warned_at = 0.0
             self._active_frame_idx = None
             self._active_model_name = "unknown"
@@ -379,6 +383,10 @@ class RuntimeWatchdog:
         scene_cut_id: Optional[int] = None,
         jump_threshold: float = 0.70,
         stream_key: Any = None,
+        face_id: Any = None,
+        face_index: Optional[int] = None,
+        mask_name: Optional[str] = None,
+        bbox: Optional[Any] = None,
     ) -> bool:
         """Detect if occlusion mask area suddenly drops to 0px or fluctuates > 70% within the same scene cut.
 
@@ -415,8 +423,41 @@ class RuntimeWatchdog:
                 return True
 
             if prev_area is not None and prev_area > 0:
+                def record_event(kind: str, ratio: float) -> None:
+                    try:
+                        box = np.asarray(bbox, dtype=float).reshape(-1)[:4].tolist() if bbox is not None else None
+                    except Exception:
+                        box = None
+                    event = {
+                        "frame_idx": int(frame_idx),
+                        "frame": int(frame_idx) + 1,
+                        "kind": kind,
+                        "severity": "rose" if kind == "collapse" else "amber",
+                        "face_id": str(face_id) if face_id is not None else None,
+                        "face_index": int(face_index) if face_index is not None else None,
+                        "thread_id": int(threading.get_ident()),
+                        "mask_name": str(mask_name or "mask"),
+                        "mask_shape": [int(v) for v in arr.shape],
+                        "previous_area": int(prev_area),
+                        "current_area": int(curr_area),
+                        "delta_pct": round(float(ratio) * 100.0, 1),
+                        "bbox": box,
+                    }
+                    try:
+                        from roop.frame_trace import current_source_frame
+                        source_frame = current_source_frame()
+                        if source_frame is not None:
+                            event["frame"] = int(source_frame)
+                    except Exception:
+                        pass
+                    with self._lock:
+                        self._mask_seam_event_seq += 1
+                        event["id"] = self._mask_seam_event_seq
+                        self._mask_seam_events.append(event)
+
                 # Sudden collapse to 0px
                 if curr_area == 0:
+                    record_event("collapse", 1.0)
                     msg = (
                         f"Mask collapse detected at frame {frame_idx}: BiSeNet occlusion mask area "
                         f"suddenly dropped from {prev_area}px to 0px within same scene cut."
@@ -429,6 +470,7 @@ class RuntimeWatchdog:
                     diff = abs(curr_area - prev_area)
                     ratio = diff / float(prev_area)
                     if ratio > jump_threshold:
+                        record_event("seam_jump", ratio)
                         msg = (
                             f"Mask seam jump detected at frame {frame_idx}: BiSeNet occlusion mask area "
                             f"fluctuated by {ratio * 100:.1f}% ({prev_area}px -> {curr_area}px) within scene cut."
@@ -439,6 +481,11 @@ class RuntimeWatchdog:
             return True
         except Exception:
             return True
+
+    def get_mask_seam_events(self) -> List[Dict[str, Any]]:
+        """Return the bounded, structured mask seam events for the active/last job."""
+        with self._lock:
+            return [dict(event) for event in self._mask_seam_events]
 
     # ── Anomaly 4: Zero-Copy Fallback & VRAM Pressure Watchdog ───────────────
 
@@ -523,8 +570,15 @@ def check_mask_geometry(
     scene_cut_id: Optional[int] = None,
     jump_threshold: float = 0.70,
     stream_key: Any = None,
+    face_id: Any = None,
+    face_index: Optional[int] = None,
+    mask_name: Optional[str] = None,
+    bbox: Optional[Any] = None,
 ) -> bool:
-    return WATCHDOG.check_mask_geometry(frame_idx, mask, scene_cut_id, jump_threshold, stream_key)
+    return WATCHDOG.check_mask_geometry(
+        frame_idx, mask, scene_cut_id, jump_threshold, stream_key,
+        face_id=face_id, face_index=face_index, mask_name=mask_name, bbox=bbox,
+    )
 
 
 def check_vram_pressure(threshold_ratio: float = 0.92) -> Optional[float]:

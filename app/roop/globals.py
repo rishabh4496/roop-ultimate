@@ -153,6 +153,7 @@ skin_lab_match = 1.0
 skin_lab_match_mode = 'reinhard'
 # Per-request: publish parsing_overlay / final_alpha_mask for the preview API.
 debug_mask_channels = False
+debug_mask_face_index = None
 # Persistent source identity detail from FaceSet V2. Unlike the setting above,
 # this never reads the target crop's texture and is confidence/visibility gated.
 # 0 = off (bit-identical legacy path), 0..1 = controlled restoration strength.

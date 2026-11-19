@@ -125,6 +125,7 @@ import { outputMediaUrl, outputSource } from './outputUrl';
 import { useFrameSocketHold } from '../transport/useFrameSocket';
 import { logFailure, reportFailure } from '../failureLog';
 import { useHistoryStore } from '../store/historyStore';
+import { consumeFrameTraceSeek } from '../store/frameTraceStore';
 import { useSlotStore, SLOT_IDS, assignRecipeToSlot } from '../store/slotStore';
 import { useHistoryChannel, MASK_CHANNEL, ROTO_CHANNEL, PINS_CHANNEL } from '../history/historyChannels';
 import useSnapshotSlots from './faceswap/useSnapshotSlots';
@@ -137,6 +138,14 @@ export default function FaceSwap({
   progress, setProgress, startTime, setStartTime, onOpenProcessing, onStopRun
 }) {
   const { postJSON, getJSON, postFiles, postFile } = useApi();
+  const seamEvents = useTelemetryStore((s) => s.seamEvents);
+  const [preflightState, setPreflightState] = useState({ loading: true, status: 'checking', blockers: [] });
+  const handlePreflightReadinessChange = useCallback((next) => {
+    setPreflightState((current) => current.loading === next.loading
+      && current.status === next.status
+      && current.blockerMessage === next.blockerMessage
+      ? current : { ...next, blockerMessage: next.blockers?.[0]?.message || '' });
+  }, []);
   const [sourceFaces, setSourceFaces] = useState([]);
   const [sourceFacesInfo, setSourceFacesInfo] = useState([]);
   // Identity Blender recipe. Rides inside every preview/swap payload, so the
@@ -169,6 +178,24 @@ export default function FaceSwap({
   const [selTargetFace, setSelTargetFace] = useState(0);
   const [frame, setFrame] = useState(1);
   const [maxFrames, setMaxFrames] = useState(1);
+  useEffect(() => {
+    if (!targets.length) return;
+    const requestedFrame = consumeFrameTraceSeek();
+    if (requestedFrame == null) return;
+    const targetLimit = Number(targets[selTarget]?.frames || maxFrames || requestedFrame);
+    setFrame(Math.max(1, Math.min(requestedFrame, targetLimit)));
+  }, [targets, selTarget, maxFrames]);
+  useEffect(() => {
+    const onFrameTraceSeek = (event) => {
+      const requestedFrame = Number(event.detail);
+      if (!targets.length || !Number.isFinite(requestedFrame) || requestedFrame < 1) return;
+      consumeFrameTraceSeek();
+      const targetLimit = Number(targets[selTarget]?.frames || maxFrames || requestedFrame);
+      setFrame(Math.max(1, Math.min(requestedFrame, targetLimit)));
+    };
+    window.addEventListener('roop:frame-trace-seek', onFrameTraceSeek);
+    return () => window.removeEventListener('roop:frame-trace-seek', onFrameTraceSeek);
+  }, [targets, selTarget, maxFrames]);
   const startFrame = targets[selTarget]?.start_frame || 1;
   const endFrame = targets[selTarget]?.end_frame || maxFrames;
   const [previewSrc, setPreviewSrc] = useState('');
@@ -197,6 +224,8 @@ export default function FaceSwap({
   const [previewSar, setPreviewSar] = useState(1.0);
   const [previewDar, setPreviewDar] = useState(0.0);
   const [previewColorBadge, setPreviewColorBadge] = useState('');
+  const [seamInspection, setSeamInspection] = useState(null);
+  const [previewMaskDebug, setPreviewMaskDebug] = useState(null);
   // Manual mask painted in the preview box (PNG data URL) + the face keypoints
   // it was painted against. maskVersion is a cheap token for the preview cache
   // key so the multi-KB data URL never has to be stringified per render.
@@ -451,6 +480,11 @@ export default function FaceSwap({
   }, [activeTargetMediaId, frame]);
 
   useEffect(() => {
+    setSeamInspection(null);
+    setPreviewMaskDebug(null);
+  }, [activeTargetMediaId]);
+
+  useEffect(() => {
     if (selectedDetectedFaceIndex !== null
         && selectedDetectedFaceIndex >= previewFaces.length) {
       setSelectedDetectedFace(null);
@@ -642,6 +676,24 @@ export default function FaceSwap({
     selectedReferenceFaceId,
     sourceIdentityIds: sourceFacesInfo.map((info, index) => info?.id || `memory-slot-${index}`),
   });
+
+  const preflightFaceAssignments = getFaceMappingArray();
+  const preflightAssignmentSummary = (() => {
+    const assigned = preflightFaceAssignments.filter((value) => Number.isInteger(Number(value)) && Number(value) >= 0).length;
+    const mode = p.face_detection_mode || 'All faces';
+    const hasTargetPeople = targetGroups.length > 0 || targetPersonIds.length > 0;
+    if (mode === 'Selected face') {
+      const expected = hasTargetPeople ? 1 : 0;
+      return { expected, missing: Math.max(0, expected - Math.min(assigned, 1)), partial: 0 };
+    }
+    if (mode === 'Selected people') {
+      const expected = assigned > 0 ? assigned : (hasTargetPeople ? 1 : 0);
+      return { expected, missing: Math.max(0, expected - assigned), partial: 0 };
+    }
+    const expected = preflightFaceAssignments.length;
+    const missing = Math.max(0, expected - assigned);
+    return { expected, missing, partial: missing > 0 && assigned > 0 ? 1 : 0 };
+  })();
 
   const sourceNameAt = (index) => sourceFacesInfo[index]?.name
     || (sourceFaces[index] ? `Face ${index + 1}` : null);
@@ -1281,6 +1333,23 @@ export default function FaceSwap({
   // just made would never be rendered.
   const refreshPreviewRef = useRef(null);
 
+  const inspectSeamEvent = useCallback((event) => {
+    if (!event) return;
+    setSeamInspection(event);
+    setPreviewMaskDebug(null);
+    setFrame(Number(event.frame) || frame);
+    requestAnimationFrame(() => {
+      dualViewportApiRef.current?.setViewMode?.('Occlusion Mask');
+      dualViewportApiRef.current?.focusBBox?.(event.bbox, 2.8);
+    });
+  }, [frame]);
+
+  const activeSeamEvent = useMemo(() => {
+    const matches = (Array.isArray(seamEvents) ? seamEvents : [])
+      .filter((event) => Number(event.frame) === Number(frame));
+    return matches[matches.length - 1] || null;
+  }, [seamEvents, frame]);
+
   // p = the swap parameters, seeded from CFG (settings) and patched locally.
   const p = settings || {};
   // Stage 17: does the selected video have audio? Answers the panel's silent-video advisory and whether the timeline shows an
@@ -1292,7 +1361,7 @@ export default function FaceSwap({
   // the region panel would mean toggling a region also reverted its grow.
   const setMany = (patch) => setSettings((s) => ({ ...s, ...patch }));
 
-  const handlePreFlightAutoFix = useCallback(async (action) => {
+  const handlePreFlightAutoFix = useCallback(async (action, fix = {}) => {
     if (action === 'switch_nvenc') {
       setSettings((s) => ({ ...s, output_video_codec: 'h264_nvenc' }));
       try {
@@ -1322,7 +1391,7 @@ export default function FaceSwap({
       setSettings((s) => ({ ...s, ultramax_batch_size: 1 }));
       try {
         await postJSON('/api/settings', { ultramax_batch_size: 1 });
-        notify?.('Clamped UltraMax batch size to 1 to fit 12 GB VRAM budget');
+        notify?.('Clamped UltraMax batch size to 1 based on live VRAM headroom');
       } catch (e) {
         notify?.(e.message, 'error');
       }
@@ -1336,6 +1405,27 @@ export default function FaceSwap({
       }
     } else if (action === 'open_facemgr') {
       window.location.hash = '#/facemgr';
+    } else if (action === 'align_active_provider' && fix.provider) {
+      setSettings((s) => ({ ...s, provider: fix.provider }));
+      try {
+        await postJSON('/api/settings', { provider: fix.provider });
+        notify?.(`Saved ${fix.provider} to match the active inference provider`);
+      } catch (e) { notify?.(e.message, 'error'); }
+    } else if (action === 'clear_lut') {
+      setSettings((s) => ({ ...s, lut_path: '', lut_bake: false }));
+      try {
+        await postJSON('/api/settings', { lut_path: '', lut_bake: false });
+        notify?.('Cleared the unavailable LUT and disabled LUT baking');
+      } catch (e) { notify?.(e.message, 'error'); }
+    } else if (action === 'switch_compatible_output') {
+      const patch = { output_video_codec: fix.codec || 'libx264', output_video_format: fix.video_format || 'mp4' };
+      setSettings((s) => ({ ...s, ...patch }));
+      try {
+        await postJSON('/api/settings', patch);
+        notify?.(`Set a compatible ${patch.output_video_format.toUpperCase()} output codec`);
+      } catch (e) { notify?.(e.message, 'error'); }
+    } else if (action === 'review_assignments') {
+      document.getElementById('target-source-mapping')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
   }, [notify, postJSON, setSettings]);
 
@@ -1921,10 +2011,18 @@ export default function FaceSwap({
         return;
       }
       if (res.faces) setPreviewFaces(res.faces);
+      setPreviewMaskDebug(res.mask_debug || null);
       setPreviewPersonIds(res.person_ids || []);
       setPreviewKps(res.kps || []);
       setPreviewAnchors(res.anchors || []);
       setPreviewPose(res.pose || []);
+      if (seamInspection && Number(seamInspection.frame) === Number(fr)) {
+        const flaggedIndex = Number(seamInspection.face_index);
+        if (Number.isInteger(flaggedIndex) && flaggedIndex >= 0 && flaggedIndex < (res.faces || []).length) {
+          setSelectedDetectedFace({ mediaId: requestedMediaId, frame: Number(fr), index: flaggedIndex });
+        }
+        requestAnimationFrame(() => dualViewportApiRef.current?.focusBBox?.(seamInspection.bbox, 2.8));
+      }
       if (res.sar_val !== undefined) setPreviewSar(res.sar_val);
       if (res.dar_val !== undefined) setPreviewDar(res.dar_val);
       if (res.color_badge !== undefined) setPreviewColorBadge(res.color_badge);
@@ -2117,11 +2215,24 @@ export default function FaceSwap({
   // Auto-refresh preview when the target list, selected target, or frame
   // changes (targets.length covers initial rehydrate after a page refresh).
   useEffect(() => {
-    if (targets.length === 0 || progress.processing || isScrubbing || isPlaying) return;
+    if (targets.length === 0 || progress.processing || isScrubbing || isPlaying
+        || (seamInspection && Number(seamInspection.frame) === Number(frame))) return;
     const t = setTimeout(() => refreshPreview(), 250);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selTarget, frame, targets.length, isScrubbing, isPlaying]);
+  }, [selTarget, frame, targets.length, isScrubbing, isPlaying, seamInspection]);
+
+  useEffect(() => {
+    if (!seamInspection || Number(seamInspection.frame) !== Number(frame) || progress.processing
+        || isScrubbing || isPlaying || targets.length === 0) return;
+    const debugFaceIndex = seamInspection.face_index == null ? null : Number(seamInspection.face_index);
+    refreshPreviewRef.current?.({
+      force: true,
+      frame,
+      debug_mask_channels: true,
+      debug_mask_face_index: Number.isInteger(debugFaceIndex) ? debugFaceIndex : null,
+    });
+  }, [seamInspection, frame, progress.processing, isScrubbing, isPlaying, targets.length]);
 
   useEffect(() => {
     if (targets.length === 0 || isScrubbing || isPlaying) return;
@@ -2626,6 +2737,14 @@ export default function FaceSwap({
 
   // ── start / stop ──
   const start = async () => {
+    if (preflightState.loading || preflightState.status === 'checking') {
+      notify('Waiting for the render readiness check to finish', 'info');
+      return;
+    }
+    if (preflightState.status === 'blocked' || (preflightState.blockers || []).length > 0) {
+      notify(preflightState.blockerMessage || 'Resolve the Pre-Flight blockers before dispatching.', 'error');
+      return;
+    }
     // Scene overrides inside the In/Out range cannot ride in one payload (a run has one trim range
     // and one set of settings), so the range goes out as one job per piece and the queue joins
     // them. Without this a Start with overrides on the timeline would quietly render the clip's own
@@ -2665,6 +2784,9 @@ export default function FaceSwap({
   const startBlockedReason = progress.processing ? ''
     : targets.length === 0 ? 'Add a target video or image to start.'
     : sourceFaces.length === 0 ? 'Add a source face to start.'
+    : preflightState.loading || preflightState.status === 'checking' ? 'Checking render readiness…'
+    : preflightState.status === 'blocked' || (preflightState.blockers || []).length > 0
+      ? (preflightState.blockerMessage || 'Resolve Pre-Flight blockers before dispatch.')
     : '';
 
   const runBarSync = useRunBarSync({
@@ -3900,7 +4022,8 @@ export default function FaceSwap({
       <WorkspaceSplitLayout leftOpen={showRightPanel} rightOpen={showLeftPanel}
         onToggleLeft={() => setDrawers((v) => ({ ...v, right: !v.right }))}
         onToggleRight={() => setDrawers((v) => ({ ...v, left: !v.left }))}
-        left={<div className="space-y-3">          <Section title="Target media" icon={Icon.faceswap}>
+      left={<div className="space-y-3">          <Section title="Target media" icon={Icon.faceswap}>
+            <div id="target-source-mapping">
             <PersonGroups
               targetFaces={targetFaces}
               targetGroups={targetGroups}
@@ -3942,6 +4065,7 @@ export default function FaceSwap({
               maxFrames={maxFrames}
               onUseSelectedPeople={() => set('face_detection_mode', 'Selected people')}
             />
+            </div>
           </Section>
 
           <Section title="Target file(s)">
@@ -5133,6 +5257,9 @@ export default function FaceSwap({
                     identityKeys={identityTrack}
                     curveEditor={curveEditor}
                     sceneApiRef={sceneApiRef}
+                    seamEvents={seamEvents}
+                    onInspectSeam={inspectSeamEvent}
+                    settings={p}
                     swapModels={meta.swap_models}
                     detectionMode={p.face_detection_mode}
                     baseValues={{
@@ -5178,20 +5305,23 @@ export default function FaceSwap({
                 and offers the way over to it. */}
             {/* One row when the column is wide enough (controls left, Pre-Flight right), two when it is not:
                 the pinned bar costs vertical room on every screen, so it should not be two rows by default. */}
-            <div className="w-full flex flex-wrap items-start gap-2">
+            <div className="w-full flex flex-col gap-2">
               <PreFlightLinter
                 target={targets[selTarget]}
                 targetFacesInfo={targetFacesInfo}
+                faceAssignments={preflightFaceAssignments}
+                assignmentSummary={preflightAssignmentSummary}
                 settings={settings}
                 onAutoFix={handlePreFlightAutoFix}
+                onReadinessChange={handlePreflightReadinessChange}
                 batchCount={1}
-                className="order-2 flex-1 min-w-[17rem]"
+                className="w-full"
                 compact
               />
               {/* flex-wrap, not md:flex-row: the centre column is often under 500px wide, where the old
                   column/row switch squeezed "Start Swapping" onto two lines. Buttons keep their text on one
                   line and the status line wraps beneath them instead. */}
-              <div className="rounded-2xl glass-panel p-2.5 sm:p-3 order-1 grow flex flex-wrap items-center justify-between gap-x-4 gap-y-2 shadow-xl border border-white/5">
+              <div className="rounded-2xl glass-panel p-2.5 sm:p-3 w-full flex flex-wrap items-center justify-between gap-x-4 gap-y-2 shadow-xl border border-white/5">
                 <div className="flex flex-wrap items-center gap-2.5">
                   {progress.processing ? (
                     <Button variant="stop" size="md" onClick={confirmStop} aria-describedby="run-status" className="justify-center whitespace-nowrap !px-3">■ Cancel render</Button>
@@ -5638,6 +5768,42 @@ export default function FaceSwap({
                       colorBadge={previewColorBadge || targets[selTarget]?.color_badge || ''}
                     />
                   )}
+                    {activeSeamEvent && (
+                      <div className="absolute right-3 top-3 z-[70] flex max-w-[calc(100%-24px)] flex-wrap items-center gap-2 rounded-xl border border-amber-300/30 bg-[#100d09]/95 px-2.5 py-2 text-nano text-amber-100 shadow-xl backdrop-blur" role="status" data-testid="seam-watchdog-hud">
+                        <span className={`h-2 w-2 rounded-full ${activeSeamEvent.severity === 'rose' ? 'bg-rose-400 shadow-[0_0_8px_rgba(251,113,133,0.9)]' : 'bg-amber-300 shadow-[0_0_8px_rgba(252,211,77,0.85)]'}`} />
+                        <span>Mask boundary {activeSeamEvent.kind === 'collapse' ? 'collapse' : 'jump'} · face {Number(activeSeamEvent.face_index ?? -1) + 1} · thread {activeSeamEvent.thread_id ?? '—'}</span>
+                        <button type="button" onClick={() => inspectSeamEvent(activeSeamEvent)} className="rounded-lg border border-amber-200/30 bg-amber-300/15 px-2 py-1 font-bold text-amber-100 hover:bg-amber-300/25">Inspect Seam Delta</button>
+                      </div>
+                    )}
+                    {seamInspection && Number(seamInspection.frame) === Number(frame) && (
+                      <div className="absolute bottom-3 right-3 z-[70] max-w-[calc(100%-24px)] rounded-xl border border-white/15 bg-[#080b11]/95 p-2 shadow-2xl backdrop-blur" data-testid="seam-mask-debug">
+                        <div className="mb-1.5 flex items-center justify-between gap-3 text-nano font-semibold text-white/80">
+                          <span>Frame {frame} · face {Number(seamInspection.face_index ?? -1) + 1} · mask channels</span>
+                          <button type="button" onClick={() => setSeamInspection(null)} className="text-white/50 hover:text-white" aria-label="Close seam inspection">×</button>
+                        </div>
+                        {previewMaskDebug ? (
+                          <div className="grid grid-cols-2 gap-1.5">
+                            {[
+                              ['xseg3_overlay', 'XSeg 3 boundary overlay'],
+                              ['final_mask_overlay', 'Face-mask alpha overlay'],
+                              ['parsing_overlay', 'Semantic parse'],
+                            ].filter(([key]) => previewMaskDebug[key]).map(([key, label]) => (
+                              <figure key={key} className="min-w-0 overflow-hidden rounded-lg border border-white/10 bg-black/60">
+                                <img src={previewMaskDebug[key]} alt={`${label} crop`} className="h-24 w-28 object-contain" />
+                                <figcaption className="px-1 py-0.5 text-center text-[9px] text-white/60">{label}</figcaption>
+                              </figure>
+                            ))}
+                            {!previewMaskDebug.xseg3_overlay && (
+                              <div className="col-span-2 rounded-lg border border-amber-200/15 bg-amber-300/5 px-2 py-2 text-center text-[9px] leading-snug text-amber-100/70">
+                                XSeg 3 channel unavailable for this preview. Active masks: {[p.mask_engine, p.mask_engine_2].filter((name) => name && name !== 'None').join(' + ') || 'none'}.
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <div className="max-w-64 py-5 text-center text-nano text-white/50">Waiting for the flagged face's mask channels from the preview.</div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
               )

@@ -19,6 +19,7 @@ import {
 import { overrideCandidates } from './timeline/hit';
 import { IDLE, reverseTick, shuttleKey, shuttleLabel, shuttleRate, stepSize } from './timeline/shuttle';
 import { eventMatches } from '../../store/shortcutStore';
+import FrameFlamegraph from './FrameFlamegraph';
 import {
   clamp, fitRange, fmtSeconds, fmtTimecode, followFrame, frameAtX, isZoomed, normalizeView, panView, placeView,
   spanAtFraction, thumbSlots, viewSpan, zoomFraction, zoomView,
@@ -169,6 +170,7 @@ export default function Timeline({
   sceneOverrides,
   swapModels = EMPTY,
   detectionMode = '',
+  settings = {},
   baseValues,
   onPresenceSelect,
   onRenderRange,
@@ -203,6 +205,8 @@ export default function Timeline({
    * this scene" - cuts at the same shots the lanes show. Absent = nothing is published.
    */
   sceneApiRef = null,
+  seamEvents = EMPTY,
+  onInspectSeam = null,
 }) {
   // ── View window ───────────────────────────────────────────────────────────
   // The lanes show [view.start, view.end] rather than the whole clip. Fall back to the whole clip
@@ -648,6 +652,9 @@ export default function Timeline({
     : '';
   const overrideNote = 'Right-click a scene or the In/Out range and choose + Add Scene Override';
   const rangeIsWhole = startFrame <= 1 && endFrame >= maxFrames;
+  const frameSeamEvents = (Array.isArray(seamEvents) ? seamEvents : [])
+    .filter((event) => inView(Number(event.frame)))
+    .slice(-160);
 
   return (
     <div className="contain-panel space-y-2 select-none" data-testid="timeline"
@@ -712,6 +719,26 @@ export default function Timeline({
           onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerLeave={onPointerLeave}
         />
         <CacheLane view={v} maxFrames={maxFrames} spans={spans} />
+
+        <div className="relative h-2 overflow-hidden rounded-sm bg-black/20" role="group" aria-label="Mask seam watchdog events">
+          {frameSeamEvents.map((event) => {
+            const eventFrame = Number(event.frame);
+            const rose = event.severity === 'rose' || event.kind === 'collapse';
+            return (
+              <button
+                key={event.id ?? `${eventFrame}-${event.face_index}-${event.thread_id}`}
+                type="button"
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => { e.stopPropagation(); setFrame(eventFrame); onInspectSeam?.(event); }}
+                className={`absolute inset-y-0 z-10 w-[3px] transition-shadow ${rose ? 'bg-rose-400 shadow-[0_0_7px_rgba(251,113,133,0.9)]' : 'bg-amber-300 shadow-[0_0_6px_rgba(252,211,77,0.85)]'} hover:w-1.5`}
+                style={{ left: `${clamp(pctOf(eventFrame), 0, 100)}%` }}
+                title={`${rose ? 'Mask collapse' : 'Mask seam jump'} · frame ${eventFrame} · face ${Number(event.face_index ?? -1) + 1}`}
+                aria-label={`Inspect mask seam event at frame ${eventFrame}`}
+              />
+            );
+          })}
+          <span className="pointer-events-none absolute left-1 top-0 z-20 -translate-y-1/2 rounded bg-black/80 px-1 text-[8px] font-bold uppercase tracking-wide text-white/50">Seam</span>
+        </div>
 
         {/* Filmstrip + waveform: the scrub surface */}
         <div className="relative mt-1">
@@ -1032,6 +1059,21 @@ export default function Timeline({
         ))}
         {!tracks.renderVideoMatches && <span className="opacity-70">· face-free / smart-skip fill in after a run</span>}
       </div>
+
+      <section className="rounded-xl border border-white/10 bg-black/20 p-2.5" aria-label="Timeline frame trace inspector">
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2 text-mini font-semibold text-white/80">
+            <span>Frame Trace Inspector</span>
+            <span className="font-mono text-nano text-white/45">{frameSeamEvents.length} seam flag{frameSeamEvents.length === 1 ? '' : 's'} in view</span>
+          </div>
+          {frameSeamEvents.length > 0 && (
+            <button type="button" onClick={() => { setFrame(Number(frameSeamEvents[frameSeamEvents.length - 1].frame)); onInspectSeam?.(frameSeamEvents[frameSeamEvents.length - 1]); }} className="rounded-lg border border-amber-400/25 bg-amber-400/10 px-2 py-1 text-nano font-semibold text-amber-200 hover:bg-amber-400/20">
+              Inspect latest seam delta
+            </button>
+          )}
+        </div>
+        <FrameFlamegraph compact settings={settings} onSeek={setFrame} currentFrame={frame} progress={{ total_frames: maxFrames }} />
+      </section>
 
       {selectedOverride && (
         <OverrideInspector

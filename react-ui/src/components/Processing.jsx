@@ -17,6 +17,7 @@ import ProviderBenchmark from './faceswap/ProviderBenchmark';
 import PipelinePill from './faceswap/PipelinePill';
 import LiveProcessingPeek from './faceswap/LiveProcessingPeek';
 import FrameFlamegraph from './faceswap/FrameFlamegraph';
+import { requestFrameTraceSeek } from '../store/frameTraceStore';
 import useTelemetry from './faceswap/useTelemetry';
 import { useThrottledSelector, shallowEqual } from '../store/liveSubscribe';
 import { UI_HZ, framesOf, etaMsOf, engineTextOf } from '../store/telemetryStore';
@@ -216,7 +217,15 @@ export default function Processing({ progress, settings, notify, setTab,
           counts, passthrough / GPU frames, peak VRAM, Stage 4 verification, speedup estimate). Above the
           live/finished split on purpose: the report arrives when the run ENDS, i.e. in the finished view. */}
       <PipelineHud runtime={progress.runtime} />
-      <FrameFlamegraph progress={progress} settings={settings} completed={completed} />
+      <FrameFlamegraph
+        progress={progress}
+        settings={settings}
+        completed={completed}
+        onSeek={(frame) => {
+          requestFrameTraceSeek(frame);
+          setTab('faceswap');
+        }}
+      />
       {/* The console's own dashboard (four stages, per-frame latency split, bottleneck, hit rates): the backend paints
           the terminal from the object it sends here, so the numbers are the terminal's. Renders nothing before a job. */}
       <ConsoleMirror />

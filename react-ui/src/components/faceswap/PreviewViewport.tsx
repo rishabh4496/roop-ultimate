@@ -59,7 +59,7 @@ import { drawAmplifiedHeatmap } from './heatmap';
 import FacePoseGizmo from './FacePoseGizmo';
 import BroadcastScopesDock from './BroadcastScopesDock';
 import CompareSlider from './CompareSlider';
-import { clampPan, panAnchoredAt, uiScale, wheelZoomDelta } from './zoomPan';
+import { clampPan, focusPanFor, panAnchoredAt, uiScale, wheelZoomDelta } from './zoomPan';
 
 // ── Types & Interfaces ─────────────────────────────────────────────────────────
 
@@ -552,8 +552,19 @@ export const PreviewViewport: React.FC<PreviewViewportProps> = ({
       setPan(nextPan);
       return true;
     },
+    focusBBox: (bbox: number[], requestedZoom = 2.6) => {
+      const stage = containerRef.current;
+      if (!stage || !Array.isArray(bbox)) return false;
+      const nextZoom = Math.max(1.5, Math.min(6, Number(requestedZoom) || 2.6));
+      const nextPan = focusPanFor(bbox, naturalDim, stage, nextZoom);
+      if (!nextPan) return false;
+      setZoom(nextZoom);
+      setPan(nextPan);
+      return true;
+    },
+    setViewMode: (mode: ViewportViewMode) => setViewMode(mode),
     fit: () => { setZoom(1); setPan({ x: 0, y: 0 }); },
-  }), [zoom, pan, setZoom, setPan, mediaContentBounds]);
+  }), [zoom, pan, setZoom, setPan, mediaContentBounds, naturalDim, setViewMode]);
 
   useEffect(() => {
     onViewportTransform?.(zoom, pan);

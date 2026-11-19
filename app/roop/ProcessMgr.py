@@ -65,6 +65,7 @@ from roop.target_selection import (normalize_target_selection, resolve_processin
 from roop import live_preview as _live_preview
 from roop.procmgr_runtime import AUDIT_BOUND_CHILD as _BOUND_CHILD, AUDIT_UNBOUND_CHILD as _UNBOUND_CHILD, _PROFILE, _SELECTED_HOLD_DIST, _UNBOUND_SAME_PERSON, _TRACK_VETO_DIST, _TRACK_VETO_MARGIN, _TRACK_VETO_SINGLE, _TRACK_EMB_MAX, _DEBUG_MATCH, COLOR_RESET, COLOR_CYAN, COLOR_YELLOW, COLOR_PURPLE, _prof, _prof_report, _prof_reset, _gpu_guard, PROGRESS_BAR_FORMAT, wait_while_paused, pause_controller, pause_scope, pause_aware, ChunkedProgress, bar_write, publish_eta as _publish_eta, _audit_hit, audit_over_threshold as _audit_over_threshold, audit_frame_seen, audit_detect_frame_begin, audit_detect_miss, audit_face_begin, _audit_swapped_gapfill, _audit_reset, _audit_report, audit_frame_failed, VETO_SOURCE_REUSED, VETO_SINGLE_ABS, VETO_OTHER_FITS, VETO_FAR_FROM_OWN, AUDIT_SWAP_MOVED, VERIFY_MIN_OFFAXIS, VERIFY_SWAP, VERIFY_AWAY_YAW, VERIFY_AWAY_MOVED_TOL, VERIFY_AWAY_SHAPE_TOL, LOCK_MIN_DET, set_runtime_monitor, set_detailed_profiler
 from roop.stage_profiler import StageProfiler
+from roop.frame_trace import frame_trace_scope
 from roop.runtime_optimizer import RuntimeOptimizer, RuntimeMonitor, SafeAdaptiveController
 from roop.runtime_scheduler import UnifiedRuntimeScheduler
 from roop.video_stream import NVHardwareVideoReader, open_video_capture
@@ -1821,8 +1822,9 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             wait_while_paused()
             if not roop.globals.processing:
                 break
-            with _prof('decode'):
-                ret, frame = cap.read()
+            with frame_trace_scope(frame_start + num_frame + 1):
+                with _prof('decode'):
+                    ret, frame = cap.read()
             if not ret:
                 break
             _thr = num_frame % num_threads
@@ -1990,7 +1992,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 fallback_frame = _owned_fallback_frame(frame)
                 self._runtime_worker_enter(threadindex)
                 try:
-                    with _prof('frame_total'):
+                    with frame_trace_scope(frame_start + frame_idx + 1), _prof('frame_total'):
                         if self.options.frame_processing:
                             with _gpu_guard():
                                 out = frame
@@ -2102,7 +2104,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                         raise RuntimeError(f'frame queue metadata mismatch: expected {nextindex-1}, got {emitted_index}')
                 if frame is not None:
                     try:
-                        with _prof('encode'):
+                        with frame_trace_scope(frame_start + nextindex), _prof('encode'):
                             if self.output_to_file:
                                 self.videowriter.write_frame(frame)
                                 self._encoded_frame_count = (getattr(self, '_encoded_frame_count', None) or 0) + 1
@@ -2172,12 +2174,14 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 # the stabilization reader at the same name. Without this the
                 # scheduler's frame pipeline reports no decode stage at all, and
                 # Phase 13 reads the absence as "decode costs nothing".
-                with _prof('decode'):
+                with state_lock:
+                    if state['remaining'] <= 0:
+                        return None
+                    source_frame = frame_start + state['next'] + 1
+                    state['next'] += 1
+                    state['remaining'] -= 1
+                with frame_trace_scope(source_frame), _prof('decode'):
                     try:
-                        with state_lock:
-                            if state['remaining'] <= 0:
-                                return None
-                            state['remaining'] -= 1
                         return next(frames)
                     except StopIteration:
                         return None
@@ -2186,11 +2190,13 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 cap.set(cv2.CAP_PROP_POS_FRAMES, frame_start)
 
             def decode():
-                with _prof('decode'):
-                    with state_lock:
-                        if state['remaining'] <= 0:
-                            return None
-                        state['remaining'] -= 1
+                with state_lock:
+                    if state['remaining'] <= 0:
+                        return None
+                    source_frame = frame_start + state['next'] + 1
+                    state['next'] += 1
+                    state['remaining'] -= 1
+                with frame_trace_scope(source_frame), _prof('decode'):
                     ret, frame = cap.read()
                     return frame if ret else None
 
@@ -2201,7 +2207,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             self._runtime_worker_enter(worker_id)
             fallback_frame = _owned_fallback_frame(frame)
             try:
-                with _prof('frame_total'):
+                with frame_trace_scope(frame_start + frame_idx + 1), _prof('frame_total'):
                     if self.options.frame_processing:
                         if not pause_controller.begin(lambda: bool(roop.globals.processing)):
                             return frame
@@ -2244,7 +2250,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             # by _prof. With the scheduler defaulted on, every encoder metric in
             # that table read 0.0/None while the sequential path reported 0.79s
             # and 759 fps for the identical arm.
-            with _prof('encode'):
+            with frame_trace_scope(frame_start + frame_idx + 1), _prof('encode'):
                 if self.output_to_file:
                     self.videowriter.write_frame(frame)
                 if self.output_to_cam:
@@ -2533,7 +2539,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     # STABILIZED path -- which is the path production takes, so
                     # Phase 2's "decode FPS" was unmeasurable on the real
                     # pipeline while looking fine on the path nobody runs.
-                    with _prof('decode'):
+                    with frame_trace_scope(frame_start + produced + 1), _prof('decode'):
                         ret, fr = cap.read()
                     if not ret or fr is None:
                         break
@@ -2704,7 +2710,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                             if self.output_to_file:
                                 # Same reason as the decode probe above: the stage
                                 # table had no `encode` row on the stabilized path.
-                                with _prof('encode'):
+                                with frame_trace_scope(frame_start + gi + 1), _prof('encode'):
                                     self.videowriter.write_frame(fr)
                             if self.output_to_cam:
                                 self.streamwriter.WriteToStream(fr)
@@ -3218,7 +3224,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                             # counted: they are primed twice by design, and
                             # including them would inflate the frame count and
                             # deflate ms/frame on exactly the path production uses.
-                            with _prof('frame_total'):
+                            with frame_trace_scope(frame_start + gi + 1), _prof('frame_total'):
                                 allowed, out = _process_stab_frame(
                                     _combined[ci], frame_idx=gi, output_pending=True,
                                     pristine=fallback_frame,
@@ -5793,6 +5799,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         competing with another face for pixels; None when it has the frame to
         itself.
         """
+        self._tls.face_index = int(face_index)
         # Gap-filled (`_interpolated`) and coasted (`_coasted`) faces ARE swap
         # candidates. They exist to hold the swap across the frames the detector
         # misses -- a hand or a microphone crossing the face, motion blur, a
@@ -5854,6 +5861,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         # the cross-frame batcher path) would inherit the previous face's mask on
         # the same worker and get trimmed to someone else's geometry.
         self._tls.swap_model_mask = None
+        self._tls.xseg3_mask_debug = None
 
         rotation_action = None
         applied_rotation_action = None
@@ -6856,7 +6864,11 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                                        if _bb is not None else ('face', face_index))
                         watchdog.check_mask_geometry(
                             _cur_fidx if _cur_fidx is not None else 0, _img_mask,
-                            stream_key=(_wd_key, face_index, getattr(p, 'processorname', None)))
+                            stream_key=(_wd_key, face_index, getattr(p, 'processorname', None)),
+                            face_id=_wd_key,
+                            face_index=face_index,
+                            mask_name=getattr(p, 'processorname', None),
+                            bbox=getattr(target_face, 'bbox', None))
                     except Exception:
                         pass
                 if self._stab_history is not None and _img_mask is not None:

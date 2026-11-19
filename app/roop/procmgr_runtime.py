@@ -778,6 +778,14 @@ def _prof(stage):
             sink(stage, dt)
         if live_ops:
             _stage_telemetry.record_op(stage, dt)
+            # The live canvas asks for source-frame samples. The dashboard's
+            # latency_ms remains a rolling worker-time average; this separate
+            # bounded trace preserves the exact frame attribution.
+            try:
+                from roop.frame_trace import record_stage
+                record_stage(stage, dt)
+            except Exception:
+                pass
 
 
 def _prof_reset():

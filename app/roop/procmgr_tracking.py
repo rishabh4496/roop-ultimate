@@ -8,6 +8,7 @@ no detection of its own for tracked runs.
 A mixin, so the method bodies move verbatim and `self` is unchanged.
 """
 from roop.degrade import swallowed as _swallowed
+from roop.frame_trace import frame_trace_scope
 from typing import Optional, Any, Dict, List, Set, Tuple
 
 import os
@@ -618,7 +619,8 @@ class TrackingMixin:
                     return _DetectionResult([], mode='coast')
                 with _prof('track_detect'), _gpu_guard(pooled=True):
                     # Symbolic frame tokens (unit tests feed them; see the isinstance guard above) have no shape.
-                    with _prof('detection'), _studio.frame_scope(
+                    source_frame = int(absolute_index) + 1 if absolute_index is not None else None
+                    with frame_trace_scope(source_frame), _prof('detection'), _studio.frame_scope(
                             absolute_index, fr.shape if isinstance(fr, np.ndarray) else None):
                         return _run_detect(fr, crop_bbox, expected_count, rescue_ok,
                                            rotation_action)
@@ -1385,7 +1387,7 @@ class TrackingMixin:
                             _rok = (rescue_backoff.allow(idx, cut=(idx in shot_boundaries))
                                     if rescue_backoff is not None else True)
                             with _prof('track_detect'), _gpu_guard(pooled=analysis_pooled(), owner='analysis'):
-                                with _prof('detection'):
+                                with frame_trace_scope(frame_start + idx + 1), _prof('detection'):
                                     faces = _run_detect(frame, crop_bbox, expected_count, _rok,
                                                         getattr(detect_plan, 'rotation_action', None))
                         with _prof('track_consume'):

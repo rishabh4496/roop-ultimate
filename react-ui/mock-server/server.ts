@@ -1812,6 +1812,9 @@ async function startServer() {
     const diskWarn = ratio < 1.5;
     const diskCheck = {
       ok: !diskWarn,
+      available: true,
+      severity: diskWarn ? 'warning' : 'ok',
+      path: 'mock-output',
       free_bytes: freeBytes,
       free_gb: +(freeBytes / (1024 ** 3)).toFixed(2),
       required_bytes: requiredBytes,
@@ -1827,6 +1830,7 @@ async function startServer() {
     const encoderMismatch = hasNvidia && (codec === 'libx264' || codec === 'libx265' || codec.startsWith('libx'));
     const encoderCheck = {
       ok: !encoderMismatch,
+      severity: encoderMismatch ? 'warning' : 'ok',
       has_nvidia: hasNvidia,
       current_codec: codec,
       recommended_codec: hasNvidia ? 'h264_nvenc' : codec,
@@ -1836,63 +1840,130 @@ async function startServer() {
       auto_fix: encoderMismatch ? 'switch_nvenc' : null,
     };
 
-    const isTrt = appSettings.provider === 'tensorrt';
+    const requestedProvider = String(p.provider || appSettings.provider || 'auto').toLowerCase();
+    const activeProvider = requestedProvider === 'tensorrt' && !isDesktop ? 'cuda' : requestedProvider === 'auto' ? (isDesktop ? 'cuda' : 'cuda') : requestedProvider;
+    const providerMismatch = requestedProvider !== 'auto' && requestedProvider !== activeProvider;
+    const providerCheck = {
+      ok: !providerMismatch,
+      severity: providerMismatch ? 'warning' : 'ok',
+      requested_provider: requestedProvider,
+      active_provider: activeProvider,
+      warning: providerMismatch ? `Requested provider '${requestedProvider}' is unavailable on this mock hardware profile; '${activeProvider}' is active.` : null,
+      auto_fix: providerMismatch ? 'align_active_provider' : null,
+    };
+    const isTrt = requestedProvider === 'tensorrt';
     const trtReady = !isTrt || isDesktop;
-    const trtStatus = trtReady ? '[TRT Ready]' : '[Will Compile ~90s]';
+    const trtStatus = !isTrt ? 'Not selected' : trtReady ? '[TRT Ready]' : '[Engine Build Required]';
     const trtCheck = {
       ok: trtReady,
+      severity: trtReady ? 'ok' : 'warning',
       is_trt: isTrt,
       status: trtStatus,
-      warning: trtReady ? null : 'First-run TensorRT engine compile will occur (~90s).',
+      warning: trtReady ? null : 'TensorRT engine cache is not ready; dispatch may build required engines before rendering.',
     };
 
     let maxFacePx = 0;
-    for (const f of targetFacesInfoList) {
-      if (f.width && f.height) {
-        maxFacePx = Math.max(maxFacePx, f.width, f.height);
-      } else if (f.bbox && f.bbox.length >= 4) {
-        maxFacePx = Math.max(maxFacePx, Math.round(f.bbox[2]), Math.round(f.bbox[3]));
+    if (p.face_dimensions_known !== false) {
+      for (const f of targetFacesInfoList) {
+        if (f.width && f.height) {
+          maxFacePx = Math.max(maxFacePx, f.width, f.height);
+        } else if (f.bbox && f.bbox.length >= 4) {
+          maxFacePx = Math.max(maxFacePx, Math.round(Math.abs(f.bbox[2] - f.bbox[0])), Math.round(Math.abs(f.bbox[3] - f.bbox[1])));
+        }
       }
     }
     if (maxFacePx <= 0 && p.max_face_px) {
       maxFacePx = Number(p.max_face_px);
     }
     const enhancer = String(p.selected_enhancer || appSettings.selected_enhancer || '');
-    const isRestoreUltra = enhancer === 'Restore Ultra' || (enhancer !== '' && enhancer !== 'None' && appSettings.restore_ultra_frequency_blend);
-    const resolutionMismatch = (maxFacePx > 256) && !isRestoreUltra;
+    const enhancerNames = Array.isArray(p.selected_enhancers) && p.selected_enhancers.length
+      ? p.selected_enhancers.map((name: unknown) => String(name || '')) : [enhancer];
+    const isRestoreUltra = enhancerNames.every((name: string) => name === 'Restore Ultra'
+      || (name !== '' && name !== 'None' && appSettings.restore_ultra_frequency_blend));
+    const faceDimensionsKnown = p.face_dimensions_known === false ? false : maxFacePx > 0;
+    const resolutionMismatch = faceDimensionsKnown && (maxFacePx > 256) && !isRestoreUltra;
     const resolutionCheck = {
-      ok: !resolutionMismatch,
-      max_face_px: maxFacePx,
+      ok: faceDimensionsKnown && !resolutionMismatch,
+      severity: resolutionMismatch ? 'warning' : !faceDimensionsKnown ? 'unknown' : 'ok',
+      max_face_px: maxFacePx || null,
+      dimensions_known: faceDimensionsKnown,
       selected_enhancer: enhancer,
       is_restore_ultra: isRestoreUltra,
       warning: resolutionMismatch
         ? `Target face bounding box is ${maxFacePx}×${maxFacePx}px (>256px), but Restore Ultra is disabled. A 128px raw swap upscaled to ${maxFacePx}px will look soft.`
-        : null,
+        : !faceDimensionsKnown ? 'Target face dimensions are unavailable; restore-resolution compatibility could not be checked.' : null,
       auto_fix: resolutionMismatch ? 'enable_restore_ultra' : null,
     };
 
+    const vramTotal = isDesktop ? 12 : 6;
+    const vramFree = isDesktop ? 3.1 : 2.0;
+    const vramSeverity = vramFree < 0.75 ? 'blocker' : vramFree < 2 ? 'warning' : 'ok';
+    const vramWarning = vramSeverity === 'ok' ? null : `Only ${vramFree.toFixed(2)} GB of ${vramTotal.toFixed(2)} GB VRAM is free before dispatch.`;
+    const vramCheck = { ok: !vramWarning, available: true, severity: vramSeverity, free_gb: vramFree, used_gb: +(vramTotal - vramFree).toFixed(2), total_gb: vramTotal, pixel_boost: Number(p.pixel_boost || 256), ultramax_batch_size: Number(p.ultramax_batch_size || 1), warning: vramWarning, auto_fix: vramWarning && Number(p.ultramax_batch_size || 1) > 1 ? 'clamp_vram_budget' : null };
+
+    const lutPath = String(p.lut_path || appSettings.lut_path || '').trim();
+    const lutBake = Boolean(p.lut_bake ?? appSettings.lut_bake);
+    const lutWarning = lutBake && !lutPath ? 'LUT baking is enabled, but no .cube LUT file is selected.' : null;
+    const lutCheck = { ok: !lutWarning, severity: lutWarning ? 'blocker' : 'ok', path: lutPath || null, active: lutBake, exists: lutPath ? true : null, warning: lutWarning, auto_fix: lutWarning ? 'clear_lut' : null };
+
+    const outputFormat = String(p.video_format || appSettings.output_video_format || 'mp4').toLowerCase().replace(/^\./, '');
+    const outputCodec = codec;
+    const codecContainers = { mp4: ['libx264', 'libx265', 'h264_nvenc', 'hevc_nvenc', 'av1_nvenc', 'libsvtav1'], mkv: ['libx264', 'libx265', 'h264_nvenc', 'hevc_nvenc', 'av1_nvenc', 'libsvtav1', 'libvpx-vp9', 'libvpx', 'ffv1'], mov: ['libx264', 'libx265', 'h264_nvenc', 'hevc_nvenc', 'prores_ks'], webm: ['libvpx-vp9', 'libvpx', 'libsvtav1'] };
+    const targetWidth = Number(p.target_width || 0);
+    const targetHeight = Number(p.target_height || 0);
+    const targetDimensions = Array.isArray(p.target_dimensions) ? p.target_dimensions.map((item: any) => ({
+      width: Number(item?.width || item?.video_width || 0),
+      height: Number(item?.height || item?.video_height || 0),
+      name: String(item?.name || ''),
+    })) : [];
+    if (!targetDimensions.length && (targetWidth > 0 || targetHeight > 0)) targetDimensions.push({ width: targetWidth, height: targetHeight, name: '' });
+    const offendingDimensions = targetDimensions.filter((item) => item.width > 16384 || item.height > 16384);
+    const codecCompatible = Boolean(codecContainers[outputFormat]?.includes(outputCodec));
+    const dimensionsCompatible = offendingDimensions.length === 0;
+    const dimensionsKnown = targetDimensions.length > 0 && targetDimensions.every((item) => item.width > 0 && item.height > 0);
+    const outputCompatible = codecCompatible && dimensionsCompatible && dimensionsKnown;
+    const firstOffending = offendingDimensions[0];
+    const outputWarning = outputCompatible ? null
+      : !codecContainers[outputFormat] ? `Output container '${outputFormat}' is not recognized by the preflight compatibility table.`
+        : !codecCompatible ? `Codec '${outputCodec}' is not a compatible pair with the '${outputFormat}' output container.`
+          : !dimensionsCompatible ? `Target resolution ${firstOffending.width}×${firstOffending.height}${firstOffending.name ? ` for '${firstOffending.name}'` : ''} exceeds the supported 16384×16384 preflight limit.`
+            : 'Target output dimensions are unavailable; resolution compatibility could not be checked.';
+    const outputFixCodec = hasNvidia ? 'h264_nvenc' : 'libx264';
+    const outputCheck = { ok: outputCompatible, severity: outputWarning && (!codecContainers[outputFormat] || !codecCompatible || !dimensionsCompatible) ? 'blocker' : !dimensionsKnown ? 'unknown' : 'ok', format: outputFormat, codec: outputCodec, width: targetWidth || null, height: targetHeight || null, dimensions_known: dimensionsKnown, dimensions: targetDimensions, compatible: outputCompatible, warning: outputWarning, recommended_codec: outputFixCodec, auto_fix: outputWarning && (!codecContainers[outputFormat] || !codecCompatible) ? 'switch_compatible_output' : null };
+
+    const assignmentSummary = p.assignment_summary || {};
+    const assignmentExpected = Math.max(0, Number(assignmentSummary.expected || 0));
+    const assignmentMissing = Math.max(0, Number(assignmentSummary.missing || 0));
+    const assignmentPartial = Math.max(0, Number(assignmentSummary.partial || 0));
+    const assignmentBlocker = assignmentExpected > 0 && assignmentMissing >= assignmentExpected;
+    const assignmentWarn = assignmentBlocker || assignmentMissing > 0 || assignmentPartial > 0;
+    const assignmentWarning = assignmentBlocker
+      ? `No source assignment is ready for ${assignmentExpected} selected face/job item(s).`
+      : assignmentWarn ? `${assignmentMissing} of ${assignmentExpected} face/job items are unassigned; ${assignmentPartial} mapping(s) are partial.` : null;
+    const assignmentCheck = { ok: !assignmentWarn, severity: assignmentBlocker ? 'blocker' : assignmentWarn ? 'warning' : 'ok', expected: assignmentExpected, missing: assignmentMissing, partial: assignmentPartial, warning: assignmentWarning, auto_fix: assignmentWarn ? 'review_assignments' : null };
+
+    const fszCheck = { ok: false, severity: 'unknown', faceset_file: p.faceset_file || '', missing_angles: [], warning: 'Faceset angle coverage was not measured by this pre-flight probe.', auto_fix: null };
+    const segmentsCheck = { ok: true, severity: 'ok', keep_segments: p.keep_segments !== false, retention_path: p.segment_retention_path || '.segments/', warning: null, auto_fix: null };
+
     const warnings: Array<{ check: string; message: string }> = [];
-    const autoFixes: Array<{ action: string; label: string; codec?: string; enhancer?: string }> = [];
-    if (diskCheck.warning) warnings.push({ check: 'disk', message: diskCheck.warning });
-    if (encoderCheck.warning) {
-      warnings.push({ check: 'encoder', message: encoderCheck.warning });
-      autoFixes.push({ action: 'switch_nvenc', label: 'Switch to NVENC', codec: 'h264_nvenc' });
+    const autoFixes: Array<{ action: string; label: string; codec?: string; enhancer?: string; provider?: string; video_format?: string; batch_size?: number; keep_segments?: boolean; route?: string }> = [];
+    const checks = { disk: diskCheck, encoder: encoderCheck, provider: providerCheck, trt: trtCheck, resolution: resolutionCheck, vram: vramCheck, fsz: fszCheck, segments: segmentsCheck, lut: lutCheck, output: outputCheck, assignments: assignmentCheck };
+    const labels: Record<string, string> = { switch_nvenc: 'Switch to NVENC', align_active_provider: `Use ${activeProvider}`, enable_restore_ultra: 'Enable Restore Ultra', clamp_vram_budget: 'Clamp batch to 1', clear_lut: 'Clear invalid LUT', switch_compatible_output: `Use ${outputFixCodec} + MP4`, review_assignments: 'Review assignments' };
+    const fixData: Record<string, Record<string, any>> = { switch_nvenc: { codec: 'h264_nvenc' }, align_active_provider: { provider: activeProvider }, enable_restore_ultra: { enhancer: 'Restore Ultra' }, clamp_vram_budget: { batch_size: 1 }, clear_lut: {}, switch_compatible_output: { codec: outputFixCodec, video_format: 'mp4' }, review_assignments: {} };
+    for (const [check, value] of Object.entries(checks)) {
+      if (!value.warning) continue;
+      const action = value.auto_fix;
+      const severity = value.severity || (value.ok ? 'ok' : 'warning');
+      warnings.push({ check, message: value.warning, severity, ...(action ? { auto_fix: action, auto_fix_label: labels[action] } : {}) });
+      if (action) autoFixes.push({ action, label: labels[action] || 'Review', ...(fixData[action] || {}) });
     }
-    if (trtCheck.warning) warnings.push({ check: 'trt', message: trtCheck.warning });
-    if (resolutionCheck.warning) {
-      warnings.push({ check: 'resolution', message: resolutionCheck.warning });
-      autoFixes.push({ action: 'enable_restore_ultra', label: 'Enable Restore Ultra', enhancer: 'Restore Ultra' });
-    }
+    const blockers = warnings.filter((warning) => warning.severity === 'blocker');
 
     res.json({
-      status: warnings.length === 0 ? 'ready' : 'warning',
-      checks: {
-        disk: diskCheck,
-        encoder: encoderCheck,
-        trt: trtCheck,
-        resolution: resolutionCheck,
-      },
+      status: blockers.length ? 'blocked' : warnings.length ? 'warning' : 'ready',
+      checks,
       warnings,
+      blockers,
       auto_fixes: autoFixes,
     });
   });

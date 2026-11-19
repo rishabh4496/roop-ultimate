@@ -52,55 +52,53 @@ export default function BatchSwap({ settings = {}, meta = {}, notify, onUpdateSe
   const [loadingState, setLoadingState] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [showFacesetLib, setShowFacesetLib] = useState(false);
+  const [preflightState, setPreflightState] = useState({ loading: true, status: 'checking', blockers: [] });
 
   // Queue handle
   const queue = useQueue({ notify });
 
-  const handleBatchAutoFix = useCallback(async (action) => {
+  const handleBatchAutoFix = useCallback(async (action, fix = {}) => {
+    const persist = async (patch, message, jobPatch = patch) => {
+      Object.entries(patch).forEach(([key, value]) => onUpdateSetting?.(key, value));
+      setStagedJobs((current) => current.map((job) => ({
+        ...job,
+        payload: { ...(job.payload || {}), ...jobPatch },
+      })));
+      try {
+        await postJSON('/api/settings', patch);
+        notify?.(message);
+      } catch (error) {
+        notify?.(error.message, 'error');
+      }
+    };
     if (action === 'switch_nvenc') {
-      if (onUpdateSetting) {
-        onUpdateSetting('output_video_codec', 'h264_nvenc');
-      }
-      try {
-        await postJSON('/api/settings', { output_video_codec: 'h264_nvenc' });
-        notify?.('Switched batch video encoder to NVIDIA NVENC');
-      } catch (e) {
-        notify?.(e.message, 'error');
-      }
+      await persist({ output_video_codec: fix.codec || 'h264_nvenc' }, 'Switched batch video encoder to NVIDIA NVENC');
     } else if (action === 'enable_restore_ultra') {
-      if (onUpdateSetting) {
-        onUpdateSetting('selected_enhancer', 'Restore Ultra');
-      }
-      try {
-        await postJSON('/api/settings', {
-          selected_enhancer: 'Restore Ultra',
-          restore_ultra_frequency_blend: true,
-          auto_bypass_restorer_native_swap: false,
-        });
-        notify?.('Enabled Restore Ultra for batch matrix renders');
-      } catch (e) {
-        notify?.(e.message, 'error');
-      }
+      await persist({
+        selected_enhancer: fix.enhancer || 'Restore Ultra',
+        restore_ultra_frequency_blend: true,
+        auto_bypass_restorer_native_swap: false,
+      }, 'Enabled Restore Ultra for batch matrix renders', {
+        selected_enhancer: fix.enhancer || 'Restore Ultra',
+        enhancer: fix.enhancer || 'Restore Ultra',
+        restore_ultra_frequency_blend: true,
+        auto_bypass_restorer_native_swap: false,
+      });
     } else if (action === 'clamp_vram_budget') {
-      if (onUpdateSetting) {
-        onUpdateSetting('ultramax_batch_size', 1);
-      }
-      try {
-        await postJSON('/api/settings', { ultramax_batch_size: 1 });
-        notify?.('Clamped UltraMax batch size to 1 to fit 12 GB VRAM budget');
-      } catch (e) {
-        notify?.(e.message, 'error');
-      }
+      await persist({ ultramax_batch_size: Math.max(1, Number(fix.batch_size || 1)) }, 'Reduced UltraMax batch size based on live VRAM headroom');
     } else if (action === 'enable_segment_retention') {
-      if (onUpdateSetting) {
-        onUpdateSetting('keep_segments', true);
-      }
-      try {
-        await postJSON('/api/settings', { keep_segments: true });
-        notify?.('Enabled segment retention for batch matrix renders');
-      } catch (e) {
-        notify?.(e.message, 'error');
-      }
+      await persist({ keep_segments: true }, 'Enabled segment retention for batch matrix renders');
+    } else if (action === 'align_active_provider') {
+      await persist({ provider: fix.provider }, `Aligned batch provider to ${fix.provider || 'the active backend provider'}`);
+    } else if (action === 'clear_lut') {
+      await persist({ lut_bake: false, lut_path: '' }, 'Disabled LUT baking and cleared the invalid LUT path');
+    } else if (action === 'switch_compatible_output') {
+      await persist({
+        output_video_codec: fix.codec || 'libx264',
+        output_video_format: fix.video_format || 'mp4',
+      }, `Changed batch output to ${fix.video_format || 'mp4'} / ${fix.codec || 'libx264'}`);
+    } else if (action === 'review_assignments') {
+      document.getElementById('staged-job-assignment-review')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     } else if (action === 'open_facemgr') {
       window.location.hash = '#/facemgr';
     }
@@ -109,6 +107,45 @@ export default function BatchSwap({ settings = {}, meta = {}, notify, onUpdateSe
 
   // Staged jobs (ready to be sent to queue)
   const [stagedJobs, setStagedJobs] = useState([]);
+  const handlePreflightReadinessChange = useCallback((next) => {
+    setPreflightState((current) => current.loading === next.loading
+      && current.status === next.status
+      && current.blockerMessage === next.blockerMessage
+      ? current : { ...next, blockerMessage: next.blockers?.[0]?.message || '' });
+  }, []);
+  const stagedAssignmentData = useMemo(() => {
+    let expected = 0;
+    let missing = 0;
+    let partial = 0;
+    const assignments = [];
+    for (const job of stagedJobs) {
+      const payload = job.payload || {};
+      const mapping = Array.isArray(payload.face_mapping) ? payload.face_mapping : [];
+      assignments.push(...mapping);
+      const state = payload.selection_state || {};
+      const mappedRanks = (job.mappings || []).map((item) => Number(item.personRank)).filter((rank) => Number.isInteger(rank) && rank >= 0);
+      const selectedRanks = state.selection_mode === 'selected'
+        ? [Number.isInteger(Number(state.person_id)) ? Number(state.person_id) : (mappedRanks[0] ?? 0)]
+        : state.selection_mode === 'multi_person'
+          ? (state.person_ids || mappedRanks).map(Number).filter((rank) => Number.isInteger(rank) && rank >= 0)
+          : (mapping.length ? mapping.map((_, index) => index) : mappedRanks);
+      const ranks = selectedRanks.length ? [...new Set(selectedRanks)] : [0];
+      const jobMissing = ranks.filter((rank) => !Number.isInteger(mapping[rank]) || mapping[rank] < 0).length;
+      expected += ranks.length;
+      missing += jobMissing;
+      if (jobMissing > 0 && jobMissing < ranks.length) partial += 1;
+    }
+    return {
+      assignments,
+      summary: { expected, missing, partial },
+      targetDimensions: [...new Map(stagedJobs.map((job) => {
+        const target = targets[job.target_index];
+        return [job.target_index, target ? { ...target, name: job.target_name || target.name } : null];
+      }).filter((entry) => entry[1])).values()],
+      firstTarget: targets[stagedJobs[0]?.target_index] || targets[0] || null,
+      payloads: stagedJobs.map((job) => job.payload || {}),
+    };
+  }, [stagedJobs, targets]);
 
   // Active Batch Strategy: 'one_to_many' | 'grouped' | 'matrix' | 'recipes'
   const [batchMode, setBatchMode] = useState('one_to_many');
@@ -741,6 +778,14 @@ export default function BatchSwap({ settings = {}, meta = {}, notify, onUpdateSe
 
   const enqueueStagedJobs = async (autoStart = false) => {
     if (queue.busy) return;
+    if (preflightState.loading || preflightState.status === 'checking') {
+      notify?.('Wait for the current Pre-Flight check to finish before dispatching.', 'error');
+      return;
+    }
+    if (preflightState.status === 'blocked' || (preflightState.blockers || []).length > 0) {
+      notify?.(preflightState.blockerMessage || 'Resolve the Pre-Flight blockers before dispatching this batch.', 'error');
+      return;
+    }
     if (stagedJobs.length === 0) {
       notify?.('No staged jobs to enqueue', 'error');
       return;
@@ -1983,11 +2028,16 @@ export default function BatchSwap({ settings = {}, meta = {}, notify, onUpdateSe
           <div className="space-y-4">
             
             <PreFlightLinter
-              targets={targets}
-              target={targets[0]}
+              targets={stagedAssignmentData.targetDimensions}
+              target={null}
+              targetDimensions={stagedAssignmentData.targetDimensions}
+              jobPayloads={stagedAssignmentData.payloads}
+              faceAssignments={stagedAssignmentData.assignments}
+              assignmentSummary={stagedAssignmentData.summary}
               settings={settings}
               batchCount={stagedJobs.length || 1}
               onAutoFix={handleBatchAutoFix}
+              onReadinessChange={handlePreflightReadinessChange}
               className="w-full"
             />
 
@@ -2022,17 +2072,17 @@ export default function BatchSwap({ settings = {}, meta = {}, notify, onUpdateSe
                   🔍 Pre-flight Health Check
                 </Button>
 
-                <Button size="sm" variant="secondary" disabled={queue.busy} onClick={() => enqueueStagedJobs(false)}>
+                <Button size="sm" variant="secondary" disabled={queue.busy || preflightState.loading || preflightState.status === 'checking' || preflightState.status === 'blocked'} onClick={() => enqueueStagedJobs(false)}>
                   Enqueue to Queue
                 </Button>
-                <Button size="sm" variant="primary" disabled={queue.busy} onClick={() => enqueueStagedJobs(true)}>
+                <Button size="sm" variant="primary" disabled={queue.busy || preflightState.loading || preflightState.status === 'checking' || preflightState.status === 'blocked'} onClick={() => enqueueStagedJobs(true)}>
                   ▶ Enqueue & Start Batch
                 </Button>
               </div>
             </div>
 
             {/* Visual Pair Cards List */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-80 overflow-y-auto pr-1">
+            <div id="staged-job-assignment-review" className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-80 overflow-y-auto pr-1">
               {stagedJobs.map((job, idx) => (
                 <div
                   key={job.id}

@@ -506,8 +506,18 @@ export default function InteractivePreview({
       updateViewport(next, clampPan(anchored, next, stage, imageRef.current), true);
       return true;
     },
+    focusBBox: (bbox, requestedZoom = 2.6) => {
+      const stage = containerRef.current;
+      if (!stage || !imgDim || !Array.isArray(bbox)) return false;
+      const nextZoom = Math.max(1.5, Math.min(6, Number(requestedZoom) || 2.6));
+      const nextPan = focusPanFor(bbox, imgDim, stage, nextZoom);
+      if (!nextPan) return false;
+      setLockTargetFace(false);
+      updateViewport(nextZoom, nextPan, true);
+      return true;
+    },
     fit: () => updateViewport(1, { x: 0, y: 0 }, true),
-  }), [updateViewport]);
+  }), [updateViewport, imgDim, setCompareMode]);
 
   useEffect(() => {
     if (!viewportApiRef) return undefined;

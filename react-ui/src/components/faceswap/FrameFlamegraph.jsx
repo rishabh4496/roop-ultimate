@@ -1,460 +1,310 @@
-import React, { useMemo, useState, useEffect, useRef } from 'react';
-import { useTelemetryStore } from '../../store/telemetryStore';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Icon } from '../../icons';
-import {
-  FLAMEGRAPH_STAGES,
-  MODEL_PASS_STAGES,
-  DEFAULT_LATENCY_MS,
-  DEFAULT_MODEL_LATENCY_MS,
-  calcPercentile,
-} from './flamegraphModel';
+import { useTelemetryStore } from '../../store/telemetryStore';
+import { useFrameTrace } from '../../store/frameTraceStore';
+import { TRACE_STAGES } from './flamegraphModel';
 
-/**
- * Live Per-Frame Bottleneck Flamegraph & Telemetry Export (#/processing).
- *
- * Horizontal Stacked Frame-Time Flamegraph Bar (100% = total ms/frame):
- *   Decode / Stabilizer (Cyan) | Detect / SCRFD-gnkps (Purple) |
- *   Swap / HyperSwap (Emerald) | Mask / BiSeNet+XSeg (Blue) |
- *   Restore / UltraMax (Amber) | Blend / Laplacian Blend (Pink) | Encode / NVENC (Slate).
- *
- * Supports both high-level pipeline stages and detailed per-stage model timings:
- *   (SCRFD-gnkps, Stabilizer, BiSeNet+XSeg, HyperSwap, LivePortrait, UltraMax, Laplacian Blend).
- *
- * Hovering over any segment shows Min / Avg / P95 / Max (ms) and residency.
- * Completed runs offer 1-click Download Job Telemetry & Recipe Report (.json).
- */
+const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
+const fmtMs = (n) => Number.isFinite(n) ? `${n.toFixed(2)} ms` : '—';
+const LIMIT = 480;
+
+function measuredTotal(sample) {
+  return TRACE_STAGES.reduce((sum, stage) => sum + (sample.stageMs[stage.key] ?? 0), 0);
+}
+
+function percentile(values, p) {
+  if (!values.length) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[Math.floor((sorted.length - 1) * p)];
+}
+
+/** Canvas profiler for measured Stage 3 telemetry; a trace point stays linked to its source frame. */
 export default function FrameFlamegraph({
   progress = {},
   settings = {},
   telemetry = null,
   completed = false,
   className = '',
+  compact = false,
+  onSeek = null,
+  currentFrame = null,
+  frameOffset = 0,
 }) {
-  const dash = useTelemetryStore((s) => s.dashboard);
-  const latencyMs = dash?.telemetry?.latency_ms;
-  const modelLatencyMs = dash?.telemetry?.model_latency_ms;
+  const trace = useFrameTrace();
+  const system = useTelemetryStore((s) => s.system);
+  const displayStages = useMemo(() => {
+    const maskEngines = [settings?.mask_engine, settings?.mask_engine_2]
+      .filter((name) => name && name !== 'None');
+    const maskLabel = maskEngines.some((name) => /xseg[\s_-]?3/i.test(String(name)))
+      ? 'XSeg 3 Mask'
+      : maskEngines.length ? `Mask · ${maskEngines.join(' + ')}` : 'Mask Engine';
+    return TRACE_STAGES.map((stage) => stage.key === 'mask' ? { ...stage, label: maskLabel } : stage);
+  }, [settings?.mask_engine, settings?.mask_engine_2]);
+  const canvasRef = useRef(null);
+  const hostRef = useRef(null);
+  const [size, setSize] = useState({ width: 0, height: compact ? 112 : 174 });
+  const [visibleCount, setVisibleCount] = useState(compact ? 72 : 144);
+  const [hoverIndex, setHoverIndex] = useState(null);
 
-  const [viewMode, setViewMode] = useState('pipeline'); // 'pipeline' | 'models'
-
-  const historyRef = useRef({
-    decode: [],
-    detect: [],
-    swap: [],
-    mask: [],
-    restore: [],
-    blend: [],
-    encode: [],
-  });
-
-  const modelHistoryRef = useRef({
-    'SCRFD-gnkps': [],
-    'Stabilizer': [],
-    'BiSeNet+XSeg': [],
-    'HyperSwap': [],
-    'LivePortrait': [],
-    'UltraMax': [],
-    'Laplacian Blend': [],
-  });
-
-  const [hoveredStage, setHoveredStage] = useState(null);
-
-  // Accumulate timing samples
   useEffect(() => {
-    if (!latencyMs) return;
-    for (const stage of FLAMEGRAPH_STAGES) {
-      const val = latencyMs[stage.key];
-      if (typeof val === 'number' && Number.isFinite(val) && val > 0) {
-        const hist = historyRef.current[stage.key];
-        hist.push(val);
-        if (hist.length > 200) hist.shift();
-      }
-    }
-  }, [latencyMs]);
+    const host = hostRef.current;
+    if (!host || typeof ResizeObserver === 'undefined') return undefined;
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry) setSize((old) => ({ ...old, width: entry.contentRect.width }));
+    });
+    observer.observe(host);
+    return () => observer.disconnect();
+  }, []);
 
-  // Accumulate model timing samples
   useEffect(() => {
-    for (const m of MODEL_PASS_STAGES) {
-      const rawVal = modelLatencyMs?.[m.modelKey] ?? latencyMs?.[m.stageKey];
-      if (typeof rawVal === 'number' && Number.isFinite(rawVal) && rawVal > 0) {
-        const hist = modelHistoryRef.current[m.modelKey];
-        if (hist) {
-          hist.push(rawVal);
-          if (hist.length > 200) hist.shift();
-        }
+    setSize((old) => ({ ...old, height: compact ? 112 : 174 }));
+    setVisibleCount(compact ? 72 : 144);
+  }, [compact]);
+
+  const visible = useMemo(() => trace.slice(-visibleCount), [trace, visibleCount]);
+  const stageStats = useMemo(() => displayStages.map((stage) => {
+    const values = trace.map((sample) => sample.stageMs[stage.key]).filter(Number.isFinite);
+    const current = [...trace].reverse().find((sample) => sample.stageMs[stage.key] !== null)?.stageMs[stage.key];
+    return {
+      ...stage,
+      current: Number.isFinite(current) ? current : null,
+      avg: values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null,
+      p95: percentile(values, 0.95),
+    };
+  }), [trace, displayStages]);
+
+  const latest = trace[trace.length - 1] || null;
+  const bottleneck = latest
+    ? stageStats.reduce((top, stage) => (stage.current != null && (!top || stage.current > top.current) ? stage : top), null)
+    : null;
+  const totals = visible.map(measuredTotal);
+  const scaleMax = Math.max(1, percentile(totals, 0.95) || 1, ...totals) * 1.08;
+  const latencyValues = trace.map((sample) => sample.frameMs).filter((value) => value != null && value > 0);
+  const latencyMedian = percentile(latencyValues, 0.5);
+  const slowFrames = latencyMedian == null ? [] : visible.filter((sample) => sample.frameMs > latencyMedian * 1.35);
+  const hovered = hoverIndex == null ? null : visible[hoverIndex] || null;
+  const focusSample = hovered || latest;
+  const focusFrame = focusSample ? focusSample.frame + Number(frameOffset || 0) : null;
+  const currentAbsoluteFrame = Number(currentFrame ?? progress.current_frame);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || !size.width || !size.height) return;
+    const ratio = Math.max(1, window.devicePixelRatio || 1);
+    canvas.width = Math.round(size.width * ratio);
+    canvas.height = Math.round(size.height * ratio);
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.scale(ratio, ratio);
+    ctx.clearRect(0, 0, size.width, size.height);
+
+    const left = compact ? 34 : 42;
+    const right = 8;
+    const top = 8;
+    const bottom = compact ? 18 : 23;
+    const plotW = Math.max(1, size.width - left - right);
+    const plotH = Math.max(1, size.height - top - bottom);
+    ctx.font = '10px ui-monospace, SFMono-Regular, Menlo, monospace';
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    for (let i = 0; i <= 4; i += 1) {
+      const y = top + plotH - (plotH * i) / 4;
+      const ms = (scaleMax * i) / 4;
+      ctx.strokeStyle = 'rgba(255,255,255,0.10)';
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(left, y); ctx.lineTo(left + plotW, y); ctx.stroke();
+      ctx.fillStyle = 'rgba(203,213,225,0.64)';
+      ctx.fillText(ms >= 100 ? `${Math.round(ms)}` : ms.toFixed(0), left - 6, y);
+    }
+
+    if (!visible.length) {
+      ctx.textAlign = 'center';
+      ctx.fillStyle = 'rgba(203,213,225,0.58)';
+      ctx.fillText('Waiting for measured per-stage samples', left + plotW / 2, top + plotH / 2);
+      return;
+    }
+
+    const slot = plotW / visible.length;
+    const barW = Math.max(1, Math.min(10, slot * 0.72));
+    visible.forEach((sample, index) => {
+      const x = left + index * slot + (slot - barW) / 2;
+      let y = top + plotH;
+      for (const stage of displayStages) {
+        const ms = sample.stageMs[stage.key];
+        if (ms == null || ms <= 0) continue;
+        const h = Math.max(0.75, (ms / scaleMax) * plotH);
+        y -= h;
+        ctx.fillStyle = stage.color;
+        ctx.globalAlpha = hoverIndex === index ? 1 : 0.88;
+        ctx.fillRect(x, Math.max(top, y), barW, Math.min(h, plotH));
       }
-    }
-  }, [latencyMs, modelLatencyMs]);
-
-  // Compute live / windowed metrics per stage
-  const stageStats = useMemo(() => {
-    return FLAMEGRAPH_STAGES.map((s) => {
-      const current = typeof latencyMs?.[s.key] === 'number' && Number.isFinite(latencyMs[s.key])
-        ? latencyMs[s.key]
-        : DEFAULT_LATENCY_MS[s.key];
-
-      const history = historyRef.current[s.key];
-      const samples = history.length > 0 ? history : [current];
-      const sorted = [...samples].sort((a, b) => a - b);
-      const min = sorted[0];
-      const max = sorted[sorted.length - 1];
-      const sum = sorted.reduce((acc, v) => acc + v, 0);
-      const avg = sum / sorted.length;
-      const p95 = calcPercentile(sorted, 0.95);
-
-      return {
-        ...s,
-        current: Number(current.toFixed(1)),
-        min: Number(min.toFixed(1)),
-        avg: Number(avg.toFixed(1)),
-        p95: Number(p95.toFixed(1)),
-        max: Number(max.toFixed(1)),
-      };
+      ctx.globalAlpha = 1;
+      const endToEndSpike = latencyMedian != null && sample.frameMs > latencyMedian * 1.35;
+      if (endToEndSpike) {
+        ctx.fillStyle = '#fb7185';
+        ctx.fillRect(x - 0.5, top - 3, barW + 1, 3);
+      }
+      if (hoverIndex === index) {
+        ctx.strokeStyle = '#f8fafc';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(x - 1, top, barW + 2, plotH);
+      }
+      const shownFrame = sample.frame + Number(frameOffset || 0);
+      if (Number.isFinite(currentAbsoluteFrame) && shownFrame === currentAbsoluteFrame) {
+        ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+        ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(x + barW / 2, top); ctx.lineTo(x + barW / 2, top + plotH); ctx.stroke();
+      }
     });
-  }, [latencyMs]);
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillStyle = 'rgba(203,213,225,0.6)';
+    const firstFrame = visible[0].frame + Number(frameOffset || 0);
+    const lastFrame = visible[visible.length - 1].frame + Number(frameOffset || 0);
+    ctx.fillText(`f ${firstFrame}`, left, size.height - 3);
+    ctx.textAlign = 'right';
+    ctx.fillText(`f ${lastFrame}`, left + plotW, size.height - 3);
+  }, [visible, size, compact, hoverIndex, scaleMax, latencyMedian, frameOffset, currentAbsoluteFrame, displayStages]);
 
-  // Compute live / windowed metrics per model pass
-  const modelStats = useMemo(() => {
-    return MODEL_PASS_STAGES.map((m) => {
-      const rawVal = modelLatencyMs?.[m.modelKey] ?? latencyMs?.[m.stageKey];
-      const current = typeof rawVal === 'number' && Number.isFinite(rawVal)
-        ? rawVal
-        : DEFAULT_MODEL_LATENCY_MS[m.modelKey] || 0;
+  const sampleAtPointer = (event) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const left = compact ? 34 : 42;
+    const slot = (rect.width - left - 8) / Math.max(1, visible.length);
+    return clamp(Math.floor((event.clientX - rect.left - left) / slot), 0, Math.max(0, visible.length - 1));
+  };
 
-      const history = modelHistoryRef.current[m.modelKey];
-      const samples = history && history.length > 0 ? history : [current];
-      const sorted = [...samples].sort((a, b) => a - b);
-      const min = sorted[0];
-      const max = sorted[sorted.length - 1];
-      const sum = sorted.reduce((acc, v) => acc + v, 0);
-      const avg = sum / sorted.length;
-      const p95 = calcPercentile(sorted, 0.95);
-
-      return {
-        ...m,
-        current: Number(current.toFixed(1)),
-        min: Number(min.toFixed(1)),
-        avg: Number(avg.toFixed(1)),
-        p95: Number(p95.toFixed(1)),
-        max: Number(max.toFixed(1)),
-      };
-    });
-  }, [latencyMs, modelLatencyMs]);
-
-  const totalMs = useMemo(() => {
-    return Number(stageStats.reduce((acc, s) => acc + s.current, 0).toFixed(1));
-  }, [stageStats]);
-
-  const totalModelMs = useMemo(() => {
-    return Number(modelStats.reduce((acc, m) => acc + m.current, 0).toFixed(1));
-  }, [modelStats]);
-
-  const stagesWithShare = useMemo(() => {
-    const total = Math.max(0.1, totalMs);
-    return stageStats.map((s) => ({
-      ...s,
-      sharePct: Number(((s.current / total) * 100).toFixed(1)),
-    }));
-  }, [stageStats, totalMs]);
-
-  const modelsWithShare = useMemo(() => {
-    const total = Math.max(0.1, totalModelMs);
-    return modelStats.map((m) => ({
-      ...m,
-      sharePct: Number(((m.current / total) * 100).toFixed(1)),
-    }));
-  }, [modelStats, totalModelMs]);
-
-  // Active items based on viewMode
-  const activeItems = viewMode === 'models' ? modelsWithShare : stagesWithShare;
-
-  // Bottleneck
-  const bottleneck = useMemo(() => {
-    let top = stagesWithShare[0];
-    for (const s of stagesWithShare) {
-      if (s.sharePct > top.sharePct) top = s;
-    }
-    return top;
-  }, [stagesWithShare]);
-
-  const effectiveFps = totalMs > 0 ? (1000 / totalMs).toFixed(1) : '—';
-
-  // Export Telemetry & Recipe Report
   const downloadReport = () => {
-    const reportData = {
-      report_type: 'Roop Ultimate Job Telemetry & Recipe Report',
-      schema_version: 'v2.7-stage27',
+    const report = {
+      report_type: 'Roop Ultimate Frame Trace',
+      schema_version: 'v2.8-frame-trace',
       exported_at: new Date().toISOString(),
-      job_summary: {
+      job: {
         duration_s: progress.duration_s || progress.elapsed_s || null,
         total_frames: progress.total_frames || null,
         current_frame: progress.current_frame || null,
-        average_fps: progress.fps || Number(effectiveFps) || null,
-        status: completed ? 'COMPLETED' : progress.error ? 'FAILED' : 'STOPPED',
+        status: completed ? 'COMPLETED' : progress.error ? 'FAILED' : 'RUNNING',
       },
-      recipe_configuration: {
-        swapper_model: settings.swap_model || 'realswap',
-        selected_enhancer: settings.selected_enhancer || 'UltraMax',
-        trt_precision: settings.trt_precision || 'mixed',
-        provider: settings.provider || 'cuda',
-        video_encoder: settings.output_video_codec || settings.video_encoder || 'h264_nvenc',
-        threads: settings.max_threads || 10,
-        face_detection_mode: settings.face_detection_mode || 'many',
-        face_detector_size: settings.face_detector_size || 512,
-        temporal_detection: !!settings.temporal_detection,
-        track_identities: !!settings.track_identities,
-        restore_ultra_frequency_blend: !!settings.restore_ultra_frequency_blend,
-        ultramax_batch_size: settings.ultramax_batch_size || 1,
-        pixel_boost: settings.pixel_boost || 256,
+      recipe: {
+        swapper_model: settings.swap_model || null,
+        selected_enhancer: settings.selected_enhancer || null,
+        provider: settings.provider || null,
+        video_encoder: settings.output_video_codec || settings.video_encoder || null,
       },
-      frame_flamegraph_telemetry: {
-        total_frame_ms: totalMs,
-        effective_fps: Number(effectiveFps),
-        bottleneck_stage: bottleneck.label,
-        bottleneck_model: bottleneck.model || 'Unknown',
-        bottleneck_share_pct: bottleneck.sharePct,
-        stages: stagesWithShare.reduce((acc, s) => {
-          acc[s.key] = {
-            label: s.label,
-            model: s.model,
-            current_ms: s.current,
-            share_pct: s.sharePct,
-            min_ms: s.min,
-            avg_ms: s.avg,
-            p95_ms: s.p95,
-            max_ms: s.max,
-            residency: s.residency,
-          };
-          return acc;
-        }, {}),
-        model_passes: modelsWithShare.reduce((acc, m) => {
-          acc[m.modelKey] = {
-            model: m.modelKey,
-            category: m.category,
-            stage: m.stageKey,
-            current_ms: m.current,
-            share_pct: m.sharePct,
-            min_ms: m.min,
-            avg_ms: m.avg,
-            p95_ms: m.p95,
-            max_ms: m.max,
-            residency: m.residency,
-          };
-          return acc;
-        }, {}),
-      },
-      hardware_environment: {
-        gpu_util: (telemetry ?? useTelemetryStore.getState().system)?.gpu_util ?? null,
-        vram_used_gb: (telemetry ?? useTelemetryStore.getState().system)?.vram_used ?? null,
-        vram_total_gb: (telemetry ?? useTelemetryStore.getState().system)?.vram_total ?? null,
-        cpu_percent: (telemetry ?? useTelemetryStore.getState().system)?.cpu_percent ?? null,
-        active_pools: (telemetry ?? useTelemetryStore.getState().system)?.pools ?? null,
-      },
+      hardware: telemetry ?? system ?? null,
+      basis: latest?.sampleWindowS
+        ? `Backend stage worker-time, sampled over ${latest.sampleWindowS}s; stage values may overlap across worker threads.`
+        : 'Backend stage worker-time samples; stage values may overlap across worker threads.',
+      samples: trace,
     };
-
-    const blob = new Blob([JSON.stringify(reportData, null, 2)], { type: 'application/json' });
+    const blob = new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `job_telemetry_recipe_${Date.now()}.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `frame_trace_${Date.now()}.json`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
     URL.revokeObjectURL(url);
   };
 
   return (
-    <div
-      role="region"
-      aria-label="Frame Bottleneck Flamegraph"
+    <section
+      ref={hostRef}
+      aria-label="Per-frame bottleneck flamegraph and frame trace profiler"
       data-testid="frame-flamegraph"
-      className={`rounded-2xl border border-white/10 bg-black/45 p-4 shadow-xl backdrop-blur-md space-y-3 select-none ${className}`}
+      className={`rounded-xl border border-white/10 bg-black/40 ${compact ? 'p-2.5 space-y-2' : 'p-4 space-y-3'} ${className}`}
     >
-      {/* ── Header ── */}
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/5 pb-2.5">
-        <div className="flex items-center gap-2">
-          <span className="grid place-items-center h-6 w-6 rounded-md bg-[var(--accent)]/15 text-accent border border-[var(--accent)]/30">
-            <Icon.meter size={14} />
-          </span>
-          <div>
-            <div className="text-xs font-bold uppercase tracking-wider text-white/90 flex items-center gap-2 flex-wrap">
-              <span>Frame Bottleneck Flamegraph</span>
-              <span className="font-mono text-micro text-accent font-semibold px-1.5 py-0.5 rounded bg-accent/10 border border-accent/20">
-                100% = {viewMode === 'models' ? totalModelMs : totalMs} ms/frame
+      <header className="flex flex-wrap items-center justify-between gap-2">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2 text-xs font-bold uppercase tracking-wider text-white/90">
+            <Icon.meter size={14} className="text-cyan-300" />
+            <span>{compact ? 'Frame Trace Inspector' : 'Per-Frame Bottleneck Flamegraph'}</span>
+            {bottleneck && (
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-rose-400/40 bg-rose-500/15 px-2 py-0.5 text-micro normal-case tracking-normal text-rose-100 shadow-[0_0_14px_rgba(244,63,94,0.22)] animate-pulse">
+                <span className="h-1.5 w-1.5 rounded-full bg-rose-300" />
+                Bottleneck · {bottleneck.label} · {fmtMs(bottleneck.current)}
               </span>
-              {/* View Mode Toggle */}
-              <div className="inline-flex rounded-lg border border-white/10 bg-black/40 p-0.5 text-nano font-mono">
-                <button
-                  type="button"
-                  onClick={() => setViewMode('pipeline')}
-                  className={`px-2 py-0.5 rounded-md font-bold transition-colors ${
-                    viewMode === 'pipeline'
-                      ? 'bg-accent/20 text-accent border border-accent/30'
-                      : 'text-white/60 hover:text-white'
-                  }`}
-                >
-                  Pipeline Stages
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setViewMode('models')}
-                  className={`px-2 py-0.5 rounded-md font-bold transition-colors ${
-                    viewMode === 'models'
-                      ? 'bg-accent/20 text-accent border border-accent/30'
-                      : 'text-white/60 hover:text-white'
-                  }`}
-                >
-                  Model Timings (7 Models)
-                </button>
-              </div>
+            )}
+          </div>
+          <p className="mt-1 text-micro font-mono text-white/50">
+            {trace.length
+              ? `${trace.length} measured samples · ${latest?.sampleWindowS ? `${latest.sampleWindowS}s backend window` : 'backend timing window'} · worker time can overlap`
+              : 'No measured stage samples yet; values are never estimated here.'}
+            {latest?.frameMs != null ? ` · end-to-end ${fmtMs(latest.frameMs)}` : ''}
+          </p>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <button type="button" onClick={() => setVisibleCount((n) => clamp(Math.round(n / 1.4), 24, LIMIT))}
+            disabled={visibleCount <= 24} className="rounded-md border border-white/10 px-2 py-1 text-micro text-white/70 hover:bg-white/10 disabled:opacity-40" aria-label="Zoom in on frame trace">−</button>
+          <span className="min-w-12 text-center font-mono text-micro text-white/50">{visible.length} samples</span>
+          <button type="button" onClick={() => setVisibleCount((n) => clamp(Math.round(n * 1.4), 24, LIMIT))}
+            disabled={visibleCount >= Math.max(24, trace.length)} className="rounded-md border border-white/10 px-2 py-1 text-micro text-white/70 hover:bg-white/10 disabled:opacity-40" aria-label="Zoom out on frame trace">+</button>
+          {completed && !compact && (
+            <button type="button" onClick={downloadReport} className="ml-1 inline-flex items-center gap-1 rounded-md border border-white/10 px-2 py-1 text-micro text-white/70 hover:bg-white/10">
+              <Icon.download size={12} /> Export
+            </button>
+          )}
+        </div>
+      </header>
+
+      <div className="relative overflow-hidden rounded-lg border border-white/10 bg-[#07090d]" onWheel={(event) => {
+        if (Math.abs(event.deltaY) < Math.abs(event.deltaX)) return;
+        event.preventDefault();
+        setVisibleCount((n) => clamp(Math.round(n * (event.deltaY < 0 ? 0.82 : 1.22)), 24, LIMIT));
+      }}>
+        <canvas
+          ref={canvasRef}
+          className={`block w-full ${onSeek ? 'cursor-crosshair' : 'cursor-default'}`}
+          style={{ height: size.height }}
+          role="img"
+          aria-label="Stacked frame time breakdown. Click a sample to move the timeline playhead."
+          onPointerMove={(event) => setHoverIndex(sampleAtPointer(event))}
+          onPointerLeave={() => setHoverIndex(null)}
+          onClick={(event) => {
+            if (!onSeek || !visible.length) return;
+            const sample = visible[sampleAtPointer(event)];
+            if (sample) onSeek(clamp(sample.frame + Number(frameOffset || 0), 1, Number(progress.total_frames) + Number(frameOffset || 0) || Number.MAX_SAFE_INTEGER));
+          }}
+          title={onSeek ? 'Click a frame sample to seek the timeline' : 'Frame samples are visible in the Processing HUD'}
+        />
+        {focusSample && hovered && (
+          <div className="pointer-events-none absolute right-2 top-2 z-10 max-w-[min(420px,90%)] rounded-lg border border-white/15 bg-[#090b10]/95 p-2.5 shadow-xl backdrop-blur">
+            <div className="mb-1 flex items-center justify-between gap-3 font-mono text-micro text-white/80">
+              <span>Frame {focusFrame}</span>
+              <span>{focusSample.frameMs != null ? `end-to-end ${fmtMs(focusSample.frameMs)}` : 'stage timing sample'}</span>
             </div>
-            <div className="text-micro text-muted font-mono">
-              ~{effectiveFps} fps pipeline ceiling &bull; Bottleneck:{' '}
-              <span className="font-bold text-amber-300">
-                {bottleneck.label} ({bottleneck.model ? `${bottleneck.model} · ` : ''}{bottleneck.sharePct}%)
-              </span>
+            <div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
+              {displayStages.filter((stage) => focusSample.stageMs[stage.key] != null).map((stage) => (
+                <span key={stage.key} className="flex items-center justify-between gap-2 font-mono text-nano text-white/65">
+                  <span className="flex min-w-0 items-center gap-1 truncate"><i className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: stage.color }} />{stage.label}</span>
+                  <b className="shrink-0 text-white/90">{fmtMs(focusSample.stageMs[stage.key])}</b>
+                </span>
+              ))}
             </div>
           </div>
-        </div>
-
-        {/* Completed Job Export Button */}
-        {completed && (
-          <button
-            type="button"
-            onClick={downloadReport}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-white/10 hover:bg-white/20 text-white border border-white/15 transition-all shadow-sm cursor-pointer"
-            title="Download full JSON report with flamegraph timings, recipe parameters, and hardware telemetry"
-          >
-            <Icon.download size={14} className="text-accent" />
-            <span>Download Job Telemetry &amp; Recipe Report (.json)</span>
-          </button>
         )}
       </div>
 
-      {/* ── Horizontal Stacked Flamegraph Bar ── */}
-      <div className="relative pt-1 pb-1">
-        <div
-          role="group"
-          aria-label={viewMode === 'models' ? 'Per-model latency split' : 'Stacked frame latency split'}
-          className="relative h-7 w-full overflow-hidden rounded-xl bg-white/5 p-0.5 flex items-stretch border border-white/10 shadow-inner"
-        >
-          {activeItems.map((item) => {
-            const isHovered = (hoveredStage?.key || hoveredStage?.modelKey) === (item.key || item.modelKey);
-            const displayLabel = item.modelKey || item.label;
-            return (
-              <div
-                key={item.key || item.modelKey}
-                onMouseEnter={() => setHoveredStage(item)}
-                onMouseLeave={() => setHoveredStage(null)}
-                style={{
-                  width: `${Math.max(2.5, item.sharePct)}%`,
-                  backgroundColor: item.color,
-                }}
-                className={`relative h-full transition-all duration-200 cursor-pointer flex items-center justify-center overflow-hidden border-r border-black/20 last:border-r-0 ${
-                  isHovered ? 'brightness-125 z-10 scale-y-105 shadow-lg' : 'hover:brightness-110 opacity-90'
-                }`}
-                title={`${displayLabel}: ${item.current}ms (${item.sharePct}%) - ${item.residency}`}
-              >
-                {/* Truncated label inside bar if width allows */}
-                {item.sharePct >= 8 && (
-                  <span className="text-micro font-mono font-bold text-white bg-black/80 rounded truncate px-1">
-                    {displayLabel.split('/')[0].split('-')[0]} {item.current}ms
-                  </span>
-                )}
-              </div>
-            );
-          })}
-        </div>
+      <div className="flex flex-wrap gap-x-3 gap-y-1">
+        {displayStages.map((stage) => (
+          <span key={stage.key} className="inline-flex items-center gap-1 font-mono text-nano text-white/60">
+            <i className="h-1.5 w-1.5 rounded-full" style={{ background: stage.color }} />{stage.label}
+          </span>
+        ))}
+        {slowFrames.length > 0 && <span className="font-mono text-nano text-rose-300">{slowFrames.length} slow samples</span>}
       </div>
 
-      {/* ── Interactive Detail Cards / Hover Tooltip ── */}
-      {hoveredStage ? (
-        <div className="p-2.5 rounded-xl bg-white/5 border border-white/15 animate-in fade-in duration-150">
-          <div className="flex items-center justify-between gap-2 border-b border-white/10 pb-1.5 mb-2 font-mono text-xs flex-wrap">
-            <div className="flex items-center gap-2">
-              <span className="h-3 w-3 rounded-full shrink-0" style={{ backgroundColor: hoveredStage.color }} />
-              <span className="font-bold text-white text-sm">
-                {hoveredStage.label}
-                {hoveredStage.model && hoveredStage.model !== hoveredStage.label && (
-                  <span className="ml-1 text-white/70 font-semibold">({hoveredStage.model})</span>
-                )}
-              </span>
-              <span className="text-white/50 text-xs">({hoveredStage.sharePct}% share)</span>
+      <div className={`grid gap-1.5 ${compact ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-2 sm:grid-cols-4 xl:grid-cols-8'}`}>
+        {stageStats.map((stage) => (
+          <div key={stage.key} className="min-w-0 rounded-lg border border-white/[0.06] bg-white/[0.025] px-2 py-1.5" title={`${stage.label}: observed backend measurements`}>
+            <div className="flex min-w-0 items-center gap-1 truncate text-micro font-semibold text-white/65">
+              <i className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: stage.color }} />{stage.label}
             </div>
-            <div className="flex items-center gap-2">
-              {hoveredStage.category && (
-                <span className="px-2 py-0.5 rounded text-micro bg-black/40 text-white/70 border border-white/5">
-                  {hoveredStage.category}
-                </span>
-              )}
-              <div className="px-2 py-0.5 rounded text-micro font-semibold bg-white/10 text-white/90">
-                Residency: <span className="text-accent font-bold">{hoveredStage.residency}</span>
-              </div>
-            </div>
+            <div className="mt-0.5 font-mono text-xs font-bold tabular-nums text-white/90">{fmtMs(stage.current)}</div>
+            {!compact && <div className="font-mono text-nano text-white/40">p95 {fmtMs(stage.p95)}</div>}
           </div>
-
-          <div className="grid grid-cols-4 gap-2 font-mono text-center">
-            <div className="p-1.5 rounded-lg bg-black/40 border border-white/5">
-              <div className="text-micro text-muted uppercase">Min</div>
-              <div className="text-xs font-bold text-emerald-400">{hoveredStage.min} ms</div>
-            </div>
-            <div className="p-1.5 rounded-lg bg-black/40 border border-white/5">
-              <div className="text-micro text-muted uppercase">Avg</div>
-              <div className="text-xs font-bold text-white">{hoveredStage.avg} ms</div>
-            </div>
-            <div className="p-1.5 rounded-lg bg-black/40 border border-white/5">
-              <div className="text-micro text-muted uppercase">P95</div>
-              <div className="text-xs font-bold text-amber-300">{hoveredStage.p95} ms</div>
-            </div>
-            <div className="p-1.5 rounded-lg bg-black/40 border border-white/5">
-              <div className="text-micro text-muted uppercase">Max</div>
-              <div className="text-xs font-bold text-red-400">{hoveredStage.max} ms</div>
-            </div>
-          </div>
-        </div>
-      ) : (
-        /* Legend Strip when not hovering */
-        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-nano font-mono pt-1">
-          {activeItems.map((item) => (
-            <div
-              key={item.key || item.modelKey}
-              onMouseEnter={() => setHoveredStage(item)}
-              className="flex items-center gap-1.5 text-white/70 hover:text-white cursor-pointer transition-colors"
-            >
-              <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: item.color }} />
-              <span>{item.modelKey || item.label}:</span>
-              <span className="text-white font-bold">{item.current}ms</span>
-              <span className="text-white/60">({item.sharePct}%)</span>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* ── Sub-panel: Per-Stage Model Timing Matrix (SCRFD-gnkps, Stabilizer, BiSeNet+XSeg, HyperSwap, LivePortrait, UltraMax, Laplacian Blend) ── */}
-      <div className="pt-2 border-t border-white/5">
-        <div className="flex items-center justify-between text-nano font-mono text-muted mb-1.5">
-          <span className="uppercase font-bold tracking-wider text-white/70">Per-Stage Model Timings:</span>
-          <span>7 Hardware-Resident Passes</span>
-        </div>
-        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-1.5 font-mono text-micro">
-          {modelsWithShare.map((m) => (
-            <div
-              key={m.modelKey}
-              onMouseEnter={() => setHoveredStage(m)}
-              onMouseLeave={() => setHoveredStage(null)}
-              className="p-1.5 rounded-lg bg-white/[0.03] border border-white/5 hover:border-white/20 transition-all cursor-pointer"
-            >
-              <div className="flex items-center gap-1 truncate text-white/80 font-bold">
-                <span className="h-1.5 w-1.5 rounded-full shrink-0" style={{ backgroundColor: m.color }} />
-                <span className="truncate">{m.modelKey}</span>
-              </div>
-              <div className="flex items-baseline justify-between mt-0.5">
-                <span className="text-white font-semibold">{m.current} ms</span>
-                <span className="text-white/50 text-nano">{m.sharePct}%</span>
-              </div>
-            </div>
-          ))}
-        </div>
+        ))}
       </div>
-    </div>
+    </section>
   );
 }

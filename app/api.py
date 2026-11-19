@@ -5199,7 +5199,7 @@ def _apply_parser_region_settings(payload):
 # ── Live preview swap ────────────────────────────────────────────────────────
 def _mask_debug_fields(payload):
     """``{"mask_debug": {name: dataurl}}`` for a preview that asked for
-    ``debug_mask_channels`` (parsing_overlay, final_alpha_mask), else ``{}``.
+    ``debug_mask_channels`` (parser, mask and crop-overlay channels), else ``{}``.
 
     The channels are those of the LAST face pasted by this preview; a frame with
     several faces reports the final one. The store is always drained so a stale
@@ -5345,6 +5345,11 @@ def preview(payload: dict = Body(...)):
         roop_globals.skin_lab_match = float(payload.get("skin_lab_match", getattr(roop_globals.CFG, "skin_lab_match", 1.0)))
         roop_globals.skin_lab_match_mode = str(payload.get("skin_lab_match_mode", getattr(roop_globals.CFG, "skin_lab_match_mode", "reinhard")))
         roop_globals.debug_mask_channels = bool(payload.get("debug_mask_channels", False))
+        try:
+            roop_globals.debug_mask_face_index = (int(payload["debug_mask_face_index"])
+                                                  if payload.get("debug_mask_face_index") is not None else None)
+        except (TypeError, ValueError):
+            roop_globals.debug_mask_face_index = None
         roop_globals.identity_detail_strength = float(payload.get("identity_detail_strength", getattr(roop_globals.CFG, "identity_detail_strength", 0.0)))
         roop_globals.expression_restore_strength = float(payload.get("expression_restore_strength", getattr(roop_globals.CFG, "expression_restore_strength", 0.0)))
         roop_globals.expression_restore_region = payload.get("expression_restore_region", getattr(roop_globals.CFG, "expression_restore_region", "all"))
@@ -6624,6 +6629,7 @@ def _run_swap(payload):
         roop_globals.skin_lab_match = float(payload.get("skin_lab_match", getattr(roop_globals.CFG, "skin_lab_match", 1.0)))
         roop_globals.skin_lab_match_mode = str(payload.get("skin_lab_match_mode", getattr(roop_globals.CFG, "skin_lab_match_mode", "reinhard")))
         roop_globals.debug_mask_channels = bool(payload.get("debug_mask_channels", False))
+        roop_globals.debug_mask_face_index = None
         roop_globals.identity_detail_strength = float(payload.get("identity_detail_strength", getattr(roop_globals.CFG, "identity_detail_strength", 0.0)))
         roop_globals.expression_restore_strength = float(payload.get("expression_restore_strength", getattr(roop_globals.CFG, "expression_restore_strength", 0.0)))
         roop_globals.expression_restore_region = payload.get("expression_restore_region", getattr(roop_globals.CFG, "expression_restore_region", "all"))
@@ -7314,13 +7320,14 @@ def render_preflight(payload: dict = Body(default=None)):
 
     # Check 1: Disk Space Custody
     output_dir = os.path.abspath(getattr(roop_globals, "output_path", None) or os.path.join(os.path.dirname(__file__), "output"))
-    if not os.path.exists(output_dir):
-        output_dir = os.path.abspath(os.path.dirname(__file__))
+    disk_probe_path = output_dir if os.path.isdir(output_dir) else os.path.dirname(output_dir)
     try:
-        total, used, free = shutil.disk_usage(output_dir)
+        if not disk_probe_path or not os.path.isdir(disk_probe_path):
+            raise OSError("output directory and parent are unavailable")
+        total, used, free = shutil.disk_usage(disk_probe_path)
     except Exception as exc:
-        _swallowed("api.py:render_preflight_disk", exc, "fallback to default disk quota")
-        total, used, free = (100 * 1024**3, 50 * 1024**3, 50 * 1024**3)
+        _swallowed("api.py:render_preflight_disk", exc, "disk readiness is unknown")
+        total, used, free = (0, 0, 0)
 
     target_size = float(p.get("target_size") or 0)
     batch_count = max(1, int(p.get("batch_count") or 1))
@@ -7330,17 +7337,23 @@ def render_preflight(payload: dict = Body(default=None)):
         target_size = max(50 * 1024 * 1024, max_frames * 100 * 1024)
 
     required_bytes = target_size * 2.5 * batch_count
-    ratio = round(free / max(1.0, required_bytes), 2)
-    disk_warn = ratio < 1.5
+    disk_available = total > 0
+    ratio = round(free / max(1.0, required_bytes), 2) if disk_available else None
+    disk_warn = not disk_available or ratio < 1.5
     disk_message = (
-        f"Low disk space: estimated {required_bytes / (1024**3):.1f} GB required (output + GOP segment footprint), "
-        f"but only {free / (1024**3):.1f} GB free on output drive (<1.5x buffer)."
+        (f"Cannot read free space for the configured output drive ({output_dir})."
+         if not disk_available else
+         f"Low disk space: estimated {required_bytes / (1024**3):.1f} GB required (output + GOP segment footprint), "
+         f"but only {free / (1024**3):.1f} GB free on output drive (<1.5x buffer).")
         if disk_warn else None
     )
     disk_check = {
-        "ok": not disk_warn,
+        "ok": disk_available and not disk_warn,
+        "available": disk_available,
+        "severity": "blocker" if not disk_available or (ratio is not None and ratio < 1.0) else ("warning" if disk_warn else "ok"),
+        "path": output_dir,
         "free_bytes": free,
-        "free_gb": round(free / (1024**3), 2),
+        "free_gb": round(free / (1024**3), 2) if disk_available else None,
         "required_bytes": required_bytes,
         "required_gb": round(required_bytes / (1024**3), 2),
         "ratio": ratio,
@@ -7359,6 +7372,7 @@ def render_preflight(payload: dict = Body(default=None)):
     )
     encoder_check = {
         "ok": not encoder_mismatch,
+        "severity": "warning" if encoder_mismatch else "ok",
         "has_nvidia": has_nvidia,
         "current_codec": codec,
         "recommended_codec": "h264_nvenc" if has_nvidia else codec,
@@ -7366,10 +7380,40 @@ def render_preflight(payload: dict = Body(default=None)):
         "auto_fix": "switch_nvenc" if encoder_mismatch else None,
     }
 
+    # Compare the provider this install requested with the execution provider
+    # the already-loaded sessions actually use. A config label alone is not a
+    # successful GPU admission receipt.
+    try:
+        provider_meta = _get_provider_meta()
+    except Exception as exc:
+        _swallowed("api.py:render_preflight_provider", exc, "provider readiness is unknown")
+        provider_meta = {}
+    provider_status = provider_meta.get("provider_status") or {}
+    requested_provider = str(p.get("provider") or provider_meta.get("requested_provider") or provider or "auto").lower()
+    active_provider = str(provider_meta.get("active_provider") or active_prov or "unknown").lower()
+    provider_known = active_provider not in ("", "unknown", "none")
+    provider_degraded = bool(provider_status.get("degraded")) or bool(
+        provider_meta.get("degradation_reason"))
+    provider_warning = provider_meta.get("degradation_reason") if provider_degraded else None
+    if not provider_warning and requested_provider not in ("", "auto", active_provider):
+        provider_warning = f"Requested provider '{requested_provider}' is not the active provider '{active_provider}'."
+        provider_degraded = True
+    if not provider_warning and not provider_known:
+        provider_warning = "The active inference provider could not be read; provider readiness is unknown."
+    provider_check = {
+        "ok": provider_known and not provider_degraded,
+        "severity": "warning" if provider_degraded else "unknown" if not provider_known else "ok",
+        "requested_provider": requested_provider,
+        "active_provider": active_provider,
+        "warning": provider_warning,
+        "auto_fix": "align_active_provider" if provider_degraded and active_provider not in ("", "unknown") else None,
+    }
+
     # Check 3: Precision / TRT Warmth Check
     is_trt = "tensorrt" in provider or "tensorrt" in active_prov
     trt_ready = True
-    trt_status = "[TRT Ready]"
+    trt_status = "Not selected" if not is_trt else "[TRT Ready]"
+    trt_severity = "ok"
     trt_warning = None
     if is_trt:
         try:
@@ -7382,91 +7426,118 @@ def render_preflight(payload: dict = Body(default=None)):
                 trt_status = "[TRT Ready]"
             else:
                 trt_ready = False
-                trt_status = "[Will Compile ~90s]"
-                trt_warning = "First-run TensorRT engine compile will occur (~90s)."
+                trt_severity = "warning"
+                trt_status = "[Engine Build Required]"
+                trt_warning = "TensorRT engine cache is not ready; dispatch may build required engines before rendering."
         except Exception as exc:
             _swallowed("api.py:render_preflight_trt", exc, "trt status probe fallback")
             trt_ready = False
-            trt_status = "[Will Compile ~90s]"
-            trt_warning = "First-run TensorRT engine compile will occur (~90s)."
+            trt_severity = "unknown"
+            trt_status = "[Status Unknown]"
+            trt_warning = "TensorRT engine cache readiness could not be read."
     trt_check = {
         "ok": trt_ready,
+        "severity": trt_severity,
         "is_trt": is_trt,
         "status": trt_status,
         "warning": trt_warning,
     }
 
     # Check 4: Pose / Resolution Mismatch
-    faces_info = _target_faces_info()
+    # A staged batch may target another clip than the selected preview. When
+    # the client supplies an explicit measurement, use only that measurement;
+    # older clients can still fall back to the active preview's face boxes.
+    face_dimensions_reported = "face_dimensions_known" in p
+    faces_info = [] if face_dimensions_reported else _target_faces_info()
     max_face_px = 0
     for f in faces_info:
         w = f.get("width") or 0
         h = f.get("height") or 0
         max_face_px = max(max_face_px, w, h)
 
-    if max_face_px <= 0 and p.get("max_face_px"):
-        max_face_px = int(p.get("max_face_px"))
+    try:
+        supplied_face_px = max(0, int(p.get("max_face_px") or 0))
+        max_face_px = (supplied_face_px if p.get("face_dimensions_known") else 0) if face_dimensions_reported else max(max_face_px, supplied_face_px)
+    except (TypeError, ValueError):
+        pass
+    face_dimensions_known = max_face_px > 0
 
     enhancer = str(p.get("selected_enhancer") or getattr(getattr(roop_globals, "CFG", None), "selected_enhancer", "") or "")
     freq_blend = getattr(getattr(roop_globals, "CFG", None), "restore_ultra_frequency_blend", False)
-    is_restore_ultra = (enhancer == "Restore Ultra") or (enhancer not in ("", "None") and freq_blend)
+    enhancer_names = p.get("selected_enhancers")
+    if not isinstance(enhancer_names, list) or not enhancer_names:
+        enhancer_names = [enhancer]
+    is_restore_ultra = all(
+        (str(name or "") == "Restore Ultra")
+        or (str(name or "") not in ("", "None") and freq_blend)
+        for name in enhancer_names
+    )
 
-    resolution_mismatch = (max_face_px > 256) and not is_restore_ultra
+    resolution_mismatch = face_dimensions_known and (max_face_px > 256) and not is_restore_ultra
     resolution_warning = (
         f"Target face bounding box is {max_face_px}×{max_face_px}px (>256px), but Restore Ultra is disabled. "
         f"A 128px raw swap upscaled to {max_face_px}px without restoration will look soft."
-        if resolution_mismatch else None
+        if resolution_mismatch else (
+            "Target face dimensions are unavailable; restore-resolution compatibility could not be checked."
+            if not face_dimensions_known else None
+        )
     )
     resolution_check = {
-        "ok": not resolution_mismatch,
-        "max_face_px": max_face_px,
+        "ok": face_dimensions_known and not resolution_mismatch,
+        "severity": "warning" if resolution_mismatch else "unknown" if not face_dimensions_known else "ok",
+        "max_face_px": max_face_px or None,
+        "dimensions_known": face_dimensions_known,
         "selected_enhancer": enhancer,
         "is_restore_ultra": is_restore_ultra,
         "warning": resolution_warning,
         "auto_fix": "enable_restore_ultra" if resolution_mismatch else None,
     }
 
-    # Check 5: 12 GB VRAM Budget (Pixel Boost + UltraMax batch size)
+    # Check 5: current, device-specific headroom (RTX 4070 and RTX 3060 laptop
+    # must never be collapsed into a fictional 12 GB budget).
+    try:
+        from roop.watchdog import get_vram_info
+        cuda_device_id = int(getattr(roop_globals, "cuda_device_id", 0) or 0)
+        vram_info = get_vram_info(cuda_device_id)
+    except Exception as exc:
+        _swallowed("api.py:render_preflight_vram", exc, "VRAM readiness is unknown")
+        vram_info = {"available": False, "free_bytes": 0, "total_bytes": 0, "allocated_bytes": 0}
+    vram_available = bool(vram_info.get("available")) and int(vram_info.get("total_bytes") or 0) > 0
+    vram_total_gb = round(int(vram_info.get("total_bytes") or 0) / (1024 ** 3), 2) if vram_available else None
+    vram_free_gb = round(int(vram_info.get("free_bytes") or 0) / (1024 ** 3), 2) if vram_available else None
+    vram_used_gb = round(max(0, int(vram_info.get("total_bytes") or 0) - int(vram_info.get("free_bytes") or 0)) / (1024 ** 3), 2) if vram_available else None
+    vram_severity = ("blocker" if vram_free_gb < 0.75 else "warning" if vram_free_gb < 2.0 else "ok") if vram_available else "unknown"
+    vram_warning = (
+        f"Only {vram_free_gb:.2f} GB of {vram_total_gb:.2f} GB VRAM is free before dispatch."
+        if vram_available and vram_severity != "ok" else
+        ("Live VRAM telemetry is unavailable; device headroom could not be checked." if not vram_available else None)
+    )
     pixel_boost = int(p.get("pixel_boost") or getattr(getattr(roop_globals, "CFG", None), "pixel_boost", 256) or 256)
     ultramax_batch = max(1, int(p.get("ultramax_batch_size") or getattr(getattr(roop_globals, "CFG", None), "ultramax_batch_size", 1) or 1))
-    tile_factor = 9 if pixel_boost >= 768 else (4 if pixel_boost >= 512 else 1)
-    is_um = "ultramax" in enhancer.lower()
-    est_vram_gb = round(4.5 + (tile_factor * 0.45) + (ultramax_batch * (2.3 if is_um else 1.4)), 1)
-    vram_warn = est_vram_gb > 12.0
     vram_check = {
-        "ok": not vram_warn,
-        "estimated_vram_gb": est_vram_gb,
-        "budget_gb": 12.0,
+        "ok": vram_available and not (vram_available and vram_severity != "ok"),
+        "available": vram_available,
+        "severity": vram_severity,
+        "free_gb": vram_free_gb,
+        "used_gb": vram_used_gb,
+        "total_gb": vram_total_gb,
         "pixel_boost": pixel_boost,
         "ultramax_batch_size": ultramax_batch,
-        "warning": (
-            f"Estimated VRAM ({est_vram_gb} GB) exceeds 12 GB budget (Pixel Boost {pixel_boost}px + UltraMax batch {ultramax_batch})."
-            if vram_warn else None
-        ),
-        "auto_fix": "clamp_vram_budget" if vram_warn else None,
+        "warning": vram_warning,
+        "auto_fix": "clamp_vram_budget" if vram_warning and ultramax_batch > 1 else None,
     }
 
-    # Check 6: Missing .fsz profile angles
+    # Check 6: the current preflight request does not carry the faceset's
+    # measured per-face pose rows. Do not call an empty radar and report its
+    # synthetic five missing buckets as either coverage or a real deficiency.
     fsz_file = str(p.get("faceset_file") or getattr(getattr(roop_globals, "CFG", None), "faceset_file", "") or "")
-    missing_angles = []
-    if fsz_file:
-        try:
-            from roop import identity_lab
-            # Quick query from active radar if available
-            r = identity_lab.radar(identity_lab.face_rows([], []))
-            missing_angles = r.get("missing") or []
-        except Exception:
-            missing_angles = []
-    fsz_warn = bool(fsz_file and missing_angles)
     fsz_check = {
-        "ok": not fsz_warn,
+        "ok": False,
+        "severity": "unknown",
         "faceset_file": fsz_file,
-        "missing_angles": missing_angles,
-        "warning": (
-            f"Active faceset is missing profile angles ({', '.join(missing_angles)}). Swaps at extreme yaw will drift."
-            if fsz_warn else None
-        ),
-        "auto_fix": "open_facemgr" if fsz_warn else None,
+        "missing_angles": [],
+        "warning": "Faceset angle coverage was not measured by this pre-flight probe.",
+        "auto_fix": None,
     }
 
     # Check 7: Segment retention paths
@@ -7476,6 +7547,7 @@ def render_preflight(payload: dict = Body(default=None)):
     seg_warn = is_chunked and not keep_segs
     segments_check = {
         "ok": not seg_warn,
+        "severity": "warning" if seg_warn else "ok",
         "keep_segments": keep_segs,
         "retention_path": ret_path,
         "warning": (
@@ -7485,41 +7557,166 @@ def render_preflight(payload: dict = Body(default=None)):
         "auto_fix": "enable_segment_retention" if seg_warn else None,
     }
 
+    # Check 8: requested provider versus the provider attached to live sessions.
+    if provider_check.get("warning") and not provider_check.get("auto_fix"):
+        provider_check["auto_fix"] = None
+
+    # Check 9: only validate LUT files when the render will bake one.
+    lut_path = str(p.get("lut_path") or getattr(getattr(roop_globals, "CFG", None), "lut_path", "") or "").strip()
+    lut_bake = bool(p.get("lut_bake", getattr(getattr(roop_globals, "CFG", None), "lut_bake", False)))
+    lut_exists = bool(lut_path and os.path.isfile(os.path.expanduser(lut_path)))
+    lut_valid = not lut_bake or lut_exists
+    lut_warning = None
+    if lut_bake and not lut_path:
+        lut_warning = "LUT baking is enabled, but no .cube LUT file is selected."
+    elif lut_bake and not lut_exists:
+        lut_warning = f"The selected LUT file does not exist: {lut_path}"
+    elif lut_bake and os.path.splitext(lut_path)[1].lower() != ".cube":
+        lut_valid = False
+        lut_warning = "LUT baking is enabled, but the selected file is not a .cube LUT."
+    lut_check = {
+        "ok": lut_valid,
+        "severity": "blocker" if not lut_valid else "ok",
+        "path": lut_path or None,
+        "active": lut_bake,
+        "exists": lut_exists if lut_path else None,
+        "warning": lut_warning,
+        "auto_fix": "clear_lut" if lut_warning else None,
+    }
+
+    # Check 10: output container/codec pair and known output dimensions.
+    video_format = str(p.get("video_format") or getattr(getattr(roop_globals, "CFG", None), "output_video_format", "mp4") or "mp4").lower().lstrip(".")
+    codec_for_check = str(p.get("codec") or getattr(getattr(roop_globals, "CFG", None), "output_video_codec", "libx264") or "libx264").lower()
+    codec_containers = {
+        "mp4": {"libx264", "libx265", "h264_nvenc", "hevc_nvenc", "av1_nvenc", "libsvtav1"},
+        "mkv": {"libx264", "libx265", "h264_nvenc", "hevc_nvenc", "av1_nvenc", "libsvtav1", "libvpx-vp9", "libvpx", "ffv1"},
+        "mov": {"libx264", "libx265", "h264_nvenc", "hevc_nvenc", "prores_ks"},
+        "webm": {"libvpx-vp9", "libvpx", "libsvtav1"},
+    }
+    format_known = video_format in codec_containers
+    codec_compatible = format_known and codec_for_check in codec_containers[video_format]
+    width = int(p.get("target_width") or 0)
+    height = int(p.get("target_height") or 0)
+    supplied_dimensions = p.get("target_dimensions") or []
+    dimensions = []
+    if isinstance(supplied_dimensions, list):
+        for item in supplied_dimensions:
+            if not isinstance(item, dict):
+                continue
+            try:
+                item_width = max(0, int(item.get("width") or item.get("video_width") or 0))
+                item_height = max(0, int(item.get("height") or item.get("video_height") or 0))
+            except (TypeError, ValueError):
+                continue
+            dimensions.append({"name": str(item.get("name") or ""), "width": item_width, "height": item_height})
+    if not dimensions and (width > 0 or height > 0):
+        dimensions = [{"name": "", "width": width, "height": height}]
+    dimensions_known = bool(dimensions) and all(item["width"] > 0 and item["height"] > 0 for item in dimensions)
+    offending_dimensions = [item for item in dimensions if item["width"] > 16384 or item["height"] > 16384]
+    if dimensions:
+        width = max((item["width"] for item in dimensions), default=width)
+        height = max((item["height"] for item in dimensions), default=height)
+    dimensions_compatible = not offending_dimensions
+    output_warning = None
+    if not format_known:
+        output_warning = f"Output container '{video_format}' is not recognized by the preflight compatibility table."
+    elif not codec_compatible:
+        output_warning = f"Codec '{codec_for_check}' is not a compatible pair with the '{video_format}' output container."
+    elif not dimensions_compatible:
+        item = offending_dimensions[0]
+        target_label = f" for '{item['name']}'" if item["name"] else ""
+        output_warning = f"Target resolution {item['width']}×{item['height']}{target_label} exceeds the supported 16384×16384 preflight limit."
+    elif not dimensions_known:
+        output_warning = "Target output dimensions are unavailable; resolution compatibility could not be checked."
+
+    output_fix_codec = "h264_nvenc" if has_nvidia else "libx264"
+    output_check = {
+        "ok": output_warning is None,
+        "severity": "blocker" if output_warning and (not format_known or not codec_compatible or not dimensions_compatible) else "unknown" if not dimensions_known else "ok",
+        "format": video_format,
+        "codec": codec_for_check,
+        "width": width or None,
+        "height": height or None,
+        "dimensions_known": dimensions_known,
+        "dimensions": dimensions,
+        "compatible": codec_compatible and dimensions_compatible and dimensions_known,
+        "warning": output_warning,
+        "recommended_codec": output_fix_codec,
+        "auto_fix": "switch_compatible_output" if output_warning and (not format_known or not codec_compatible) else None,
+    }
+
+    # Check 11: the selected faces need at least one source assignment. The
+    # client sends counts from the same mapping array used by the render payload.
+    assignment = p.get("assignment_summary") or {}
+    try:
+        assignment_expected = max(0, int(assignment.get("expected", 0) or 0))
+        assignment_missing = max(0, int(assignment.get("missing", 0) or 0))
+        assignment_partial = max(0, int(assignment.get("partial", 0) or 0))
+    except (TypeError, ValueError):
+        assignment_expected = assignment_missing = assignment_partial = 0
+    assignment_blocker = assignment_expected > 0 and assignment_missing >= assignment_expected
+    assignment_warn = assignment_blocker or assignment_missing > 0 or assignment_partial > 0
+    assignment_warning = None
+    if assignment_blocker:
+        assignment_warning = f"No source assignment is ready for {assignment_expected} selected face/job item(s)."
+    elif assignment_warn:
+        assignment_warning = f"{assignment_missing} of {assignment_expected} face/job items are unassigned; {assignment_partial} mapping(s) are partial."
+    assignment_check = {
+        "ok": not assignment_warn,
+        "severity": "blocker" if assignment_blocker else "warning" if assignment_warn else "ok",
+        "expected": assignment_expected,
+        "missing": assignment_missing,
+        "partial": assignment_partial,
+        "warning": assignment_warning,
+        "auto_fix": "review_assignments" if assignment_warn else None,
+    }
+
+    all_checks = {
+        "disk": disk_check,
+        "encoder": encoder_check,
+        "provider": provider_check,
+        "trt": trt_check,
+        "resolution": resolution_check,
+        "vram": vram_check,
+        "fsz": fsz_check,
+        "segments": segments_check,
+        "lut": lut_check,
+        "output": output_check,
+        "assignments": assignment_check,
+    }
+    fix_labels = {
+        "switch_nvenc": ("Switch to NVENC", {"codec": "h264_nvenc"}),
+        "align_active_provider": ("Use active provider", {"provider": active_provider}),
+        "enable_restore_ultra": ("Enable Restore Ultra", {"enhancer": "Restore Ultra"}),
+        "clamp_vram_budget": ("Clamp batch to 1", {"batch_size": 1}),
+        "open_facemgr": ("Inspect Face Manager", {"route": "#/facemgr"}),
+        "enable_segment_retention": ("Retain segments", {"keep_segments": True}),
+        "clear_lut": ("Clear invalid LUT", {}),
+        "switch_compatible_output": (f"Use {output_fix_codec} + MP4", {"codec": output_fix_codec, "video_format": "mp4"}),
+        "review_assignments": ("Review assignments", {}),
+    }
     warnings = []
     auto_fixes = []
-    if disk_check["warning"]:
-        warnings.append({"check": "disk", "message": disk_check["warning"]})
-    if encoder_check["warning"]:
-        warnings.append({"check": "encoder", "message": encoder_check["warning"]})
-        auto_fixes.append({"action": "switch_nvenc", "label": "Switch to NVENC", "codec": "h264_nvenc"})
-    if trt_check["warning"]:
-        warnings.append({"check": "trt", "message": trt_check["warning"]})
-    if resolution_check["warning"]:
-        warnings.append({"check": "resolution", "message": resolution_check["warning"]})
-        auto_fixes.append({"action": "enable_restore_ultra", "label": "Enable Restore Ultra", "enhancer": "Restore Ultra"})
-    if vram_check["warning"]:
-        warnings.append({"check": "vram", "message": vram_check["warning"]})
-        auto_fixes.append({"action": "clamp_vram_budget", "label": "Clamp UltraMax Batch to 1", "batch_size": 1})
-    if fsz_check["warning"]:
-        warnings.append({"check": "fsz", "message": fsz_check["warning"]})
-        auto_fixes.append({"action": "open_facemgr", "label": "Inspect in Face Manager", "route": "#/facemgr"})
-    if segments_check["warning"]:
-        warnings.append({"check": "segments", "message": segments_check["warning"]})
-        auto_fixes.append({"action": "enable_segment_retention", "label": "Retain Segment Chunks", "keep_segments": True})
-
-    status = "ready" if not warnings else "warning"
+    for check_name, check in all_checks.items():
+        message = check.get("warning")
+        if not message:
+            continue
+        action = check.get("auto_fix")
+        severity = check.get("severity") or ("warning" if not check.get("ok") else "ok")
+        label, payload_data = fix_labels.get(action, (None, {}))
+        warning = {"check": check_name, "message": message, "severity": severity}
+        if action:
+            warning["auto_fix"] = action
+            warning["auto_fix_label"] = label
+            auto_fixes.append({"action": action, "label": label, **payload_data})
+        warnings.append(warning)
+    blockers = [warning for warning in warnings if warning.get("severity") == "blocker"]
+    status = "blocked" if blockers else "warning" if warnings else "ready"
     return {
         "status": status,
-        "checks": {
-            "disk": disk_check,
-            "encoder": encoder_check,
-            "trt": trt_check,
-            "resolution": resolution_check,
-            "vram": vram_check,
-            "fsz": fsz_check,
-            "segments": segments_check,
-        },
+        "checks": all_checks,
         "warnings": warnings,
+        "blockers": blockers,
         "auto_fixes": auto_fixes,
     }
 
@@ -7932,6 +8129,21 @@ def _telemetry_snapshot():
     if processing and desc.startswith('Processing frame'):
         _stage_telemetry.set_main_progress(done, total, eta)
     _dashboard_frame = _terminal_dashboard.telemetry_frame()
+    try:
+        from roop import watchdog as _watchdog
+        mask_seam_events = _watchdog.get_mask_seam_events()
+    except Exception as _degrade_error:
+        _swallowed('api.py:_telemetry_snapshot_mask_seams', _degrade_error,
+                   'telemetry frame sent without mask seam events')
+        mask_seam_events = []
+    try:
+        from roop.frame_trace import get_frame_trace_snapshot
+        frame_trace_epoch, frame_trace = get_frame_trace_snapshot()
+    except Exception as _degrade_error:
+        _swallowed('api.py:_telemetry_snapshot_frame_trace', _degrade_error,
+                   'telemetry frame sent without per-frame timings')
+        frame_trace = []
+        frame_trace_epoch = None
     return {
         'processing': processing,
         'paused': bool(_progress.get('paused')),
@@ -7958,6 +8170,9 @@ def _telemetry_snapshot():
         # split, the bottleneck and the optimizer hit rates, exactly as the console printed them. Idle it is the constant
         # {"schema": 1, "active": False}, so the change-only sampler stays quiet; the profile is on the REST route.
         'dashboard': _dashboard_frame,
+        'frame_trace': frame_trace,
+        'frame_trace_epoch': frame_trace_epoch,
+        'mask_seam_events': mask_seam_events,
         **_mouth_custody_flat(_dashboard_frame, processing),
         **_video_io_flat(),
         # "Compiling TensorRT Engine..." / canary state (roop/pipeline_status.py), flat and non-ticking

@@ -51,7 +51,9 @@ class TestStage27PreFlightLinter(unittest.TestCase):
         self.assertFalse(disk["ok"])
         self.assertIsNotNone(disk["warning"])
         self.assertIn("Low disk space", disk["warning"])
-        self.assertEqual(data["status"], "warning")
+        # A request beyond the available disk capacity is a hard preflight
+        # blocker; warning is reserved for the 1.0x–1.5x safety-margin band.
+        self.assertEqual(data["status"], "blocked")
 
     def test_preflight_encoder_mismatch_detection(self):
         """When NVIDIA GPU is active but codec is CPU libx264, encoder mismatch warning & auto-fix are emitted."""

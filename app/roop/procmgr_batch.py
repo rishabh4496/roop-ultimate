@@ -87,6 +87,7 @@ class BatchProcessingMixin:
         from roop import runtime_banner as _runtime_banner
         from roop import terminal_dashboard as _dash
         from roop import gpu_event_timer as _gpu_event_timer
+        from roop.frame_trace import clear_frame_trace as _clear_frame_trace
         import roop.util_ffmpeg as util_ffmpeg
         from roop.degrade import swallowed as _swallowed
         # Stabilization scheduling (temporal smoothing needs frames in order; the
@@ -211,6 +212,7 @@ class BatchProcessingMixin:
         # together, so one of them accumulating across clips while the other does
         # not is worse than either being wrong alone.
         _prof_reset()
+        _clear_frame_trace()
         # Temporal detection (anti-flicker): its pre-pass gap-fills detection
         # misses AND applies the kps/lm106 smoothing itself, so the per-frame
         # kps stabilizer and the kps-only 2-pass become redundant — disable

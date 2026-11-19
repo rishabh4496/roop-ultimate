@@ -215,9 +215,45 @@ def take_debug() -> dict:
     return out
 
 
-def debug_channels(crop_bgr, parse: fp.ParseResult, result: ComposeResult) -> dict:
-    """``parsing_overlay`` (class colours on the crop) and ``final_alpha_mask`` (0..255)."""
-    return {
-        'parsing_overlay': fp.overlay(crop_bgr, parse.labels),
-        'final_alpha_mask': np.clip(result.alpha * 255.0 + 0.5, 0, 255).astype(np.uint8),
-    }
+def _debug_mask_overlay(crop_bgr, mask, color_bgr):
+    """Tint an aligned face crop with one measured mask for visual comparison."""
+    base = np.clip(np.asarray(crop_bgr), 0, 255).astype(np.uint8)
+    matte = np.asarray(mask, dtype=np.float32)
+    if matte.ndim > 2:
+        matte = np.squeeze(matte)
+    if matte.ndim != 2:
+        return base
+    if matte.shape != base.shape[:2]:
+        matte = cv2.resize(matte, (base.shape[1], base.shape[0]), interpolation=cv2.INTER_LINEAR)
+    matte = np.nan_to_num(matte, nan=0.0, posinf=0.0, neginf=0.0)
+    if matte.size and float(np.max(matte)) > 1.0:
+        matte = matte / 255.0
+    alpha = np.clip(matte, 0.0, 1.0)[..., None] * 0.48
+    color = np.empty_like(base)
+    color[:] = tuple(int(value) for value in color_bgr)
+    return np.clip(base.astype(np.float32) * (1.0 - alpha)
+                   + color.astype(np.float32) * alpha, 0, 255).astype(np.uint8)
+
+
+def debug_channels(crop_bgr, parse: fp.ParseResult = None, result: ComposeResult = None,
+                   final_alpha=None, xseg3_mask=None) -> dict:
+    """Return measured parser, XSeg 3 and final face-alpha channels when available."""
+    channels = {}
+    if parse is not None:
+        channels['parsing_overlay'] = fp.overlay(crop_bgr, parse.labels)
+    alpha = result.alpha if result is not None else final_alpha
+    if alpha is not None:
+        alpha_array = np.asarray(alpha, dtype=np.float32)
+        channels['final_alpha_mask'] = np.clip(alpha_array * 255.0 + 0.5, 0, 255).astype(np.uint8)
+        channels['final_mask_overlay'] = _debug_mask_overlay(crop_bgr, alpha_array, (255, 190, 40))
+    if xseg3_mask is not None:
+        mask = np.asarray(xseg3_mask, dtype=np.float32)
+        if mask.ndim > 2:
+            mask = np.squeeze(mask)
+        if mask.shape[:2] != crop_bgr.shape[:2]:
+            mask = cv2.resize(mask, (crop_bgr.shape[1], crop_bgr.shape[0]), interpolation=cv2.INTER_LINEAR)
+        if mask.size and float(np.nanmax(mask)) <= 1.0:
+            mask = mask * 255.0
+        channels['xseg3_mask'] = np.clip(np.nan_to_num(mask) + 0.5, 0, 255).astype(np.uint8)
+        channels['xseg3_overlay'] = _debug_mask_overlay(crop_bgr, xseg3_mask, (30, 120, 255))
+    return channels

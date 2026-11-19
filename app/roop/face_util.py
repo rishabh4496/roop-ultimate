@@ -997,9 +997,22 @@ def _hybrid_detector_faces(frame, fa, bboxes, kpss, aux=True):
             for taskname, model in fa.models.items():
                 if taskname == 'detection':
                     continue
-                model.get(frame, face)
+                if taskname == 'recognition':
+                    _run_profiled_arcface(lambda: model.get(frame, face))
+                else:
+                    model.get(frame, face)
         ret.append(face)
     return ret
+
+
+def _run_profiled_arcface(call):
+    """Time just the recognizer call when the frame trace scope is active."""
+    try:
+        from roop.procmgr_runtime import _prof
+    except ImportError:
+        return call()
+    with _prof('arcface_embedding'):
+        return call()
 
 
 def _hybrid_yolo_faces(frame, fa, det_size, det_thresh, aux=True):
@@ -1128,7 +1141,19 @@ def _detect_faces_raw(frame, det_size=None, det_thresh=None, aux=True, unclamped
                 else:
                     faces = _hybrid_detector_faces(frame, fa, bboxes, kpss, aux=False)
             else:
-                faces = fa.get(frame)
+                # Keep FaceAnalysis.get's documented detect -> per-model order,
+                # while timing the recognition inference separately from its
+                # enclosing detection pass for the frame trace.
+                bboxes, kpss = fa.det_model.detect(frame, max_num=0, metric='default')
+                faces = _faces_like_insightface(bboxes, kpss)
+                for face in faces:
+                    for taskname, model in fa.models.items():
+                        if taskname == 'detection':
+                            continue
+                        if taskname == 'recognition':
+                            _run_profiled_arcface(lambda: model.get(frame, face))
+                        else:
+                            model.get(frame, face)
         finally:
             if orig_input_size is not None and (det_size is not None or engine in ('retinaface_r50', 'retinaface', 'scrfd')):
                 fa.det_model.input_size = orig_input_size
@@ -2153,7 +2178,7 @@ def _prescan_embed(rec, image, faces):
         if kps is None or np.asarray(kps).shape != (5, 2):
             continue
         try:
-            rec.get(image, f)
+            _run_profiled_arcface(lambda: rec.get(image, f))
         except Exception as exc:
             _swallowed("roop/face_util.py:_prescan_embed", exc, "embedding skipped")
 

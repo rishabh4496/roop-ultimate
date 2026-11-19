@@ -25,7 +25,8 @@ import { useHistoryChannel, SETTINGS_CHANNEL } from './history/historyChannels';
 import { installHistoryDom } from './history/historyDom';
 import './store';
 import { useWorkspaceStore, LAYOUT_PRESETS } from './store/workspaceStore';
-import { setRunTelemetry, setPipelineTelemetry, setDashboardTelemetry, selectProg, etaMsOf, clearEngineTelemetry } from './store/telemetryStore';
+import { setRunTelemetry, setPipelineTelemetry, setDashboardTelemetry, setMaskSeamTelemetry, selectProg, etaMsOf, clearEngineTelemetry } from './store/telemetryStore';
+import { recordFrameTrace } from './store/frameTraceStore';
 import { LiveText, LiveBar } from './components/LiveTelemetry';
 import { themeByName, allThemes, applyThemeToDom } from './themes';
 import { SETTINGS_CATALOG, focusSetting } from './components/settingsCatalog';
@@ -308,6 +309,9 @@ export default function App() {
     setRunTelemetry(pr.processing ? pr : {
       ...pr, current_frame: 0, total_frames: 0, fps: 0, fps_now: null, frame_ms: null,
     });
+    setDashboardTelemetry(pr);
+    setMaskSeamTelemetry(pr);
+    recordFrameTrace(pr);
     setProgress((prev) => {
       const next = { ...prev, ...pr };
       // A run that has ENDED must not keep the last live counters around, or
@@ -503,6 +507,8 @@ export default function App() {
     setRunTelemetry(frame);
     setPipelineTelemetry(frame);
     setDashboardTelemetry(frame);
+    setMaskSeamTelemetry(frame);
+    recordFrameTrace(frame);
     const structural = {
       processing: frame.processing,
       paused: frame.paused,
