@@ -20,6 +20,7 @@ import { eventMatches } from '../store/shortcutStore';
 import StereoVRViewport, { DEFAULT_VR_PARAMS } from './faceswap/StereoVRViewport';
 import ExtrasMediaViewport from './extras/ExtrasMediaViewport';
 import ExtrasTimeline from './extras/ExtrasTimeline';
+import ColorGradingPanel from './faceswap/ColorGradingPanel';
 import { drawZebraOverlay } from './faceswap/falseColorZebra';
 import {
   createReferenceChannel,
@@ -279,7 +280,12 @@ export default function Extras({ notify, registerFileListener, meta, settings, s
     if (!file) { notify('Pick a file first', 'error'); return; }
     setBusy(true);
     try {
-      const res = await postFile('/api/extras/apply', file, opts, { timeout: 0 });
+      const res = await postFile('/api/extras/apply', file, {
+        ...opts,
+        lut_path: settings?.lut_path || '',
+        lut_bake: Boolean(settings?.lut_path && settings?.lut_bake),
+        lut_opacity: settings?.lut_opacity ?? 1,
+      }, { timeout: 0 });
       setResult(res); notify('Done');
     } catch (e) { notify(e.message, 'error'); } finally { setBusy(false); }
   };
@@ -420,6 +426,17 @@ export default function Extras({ notify, registerFileListener, meta, settings, s
 
           {file && fileUrlSrc && (file.type?.startsWith('video') || /\.(mp4|mkv|mov|avi|webm|gif)$/i.test(fileName)) && (
             <ExtrasTimeline key={fileUrlSrc} file={file} url={fileUrlSrc} videoRef={mediaElemRef} />
+          )}
+
+          {settings && setSettings && (
+            <Section title="Color & 3D LUT grading" icon={Icon.tune}>
+              <ColorGradingPanel
+                params={settings}
+                previewSource={() => mediaElemRef.current}
+                onChange={(patch) => setSettings((current) => ({ ...(current || {}), ...patch }))}
+                notify={notify}
+              />
+            </Section>
           )}
 
           <Select label="Resize width" value={opts.resolution} onChange={(v) => set('resolution', v)} options={RESOLUTIONS} />

@@ -1,3 +1,16 @@
+## 2026-11-19 — UI overhaul Stage 14: grading, identity algebra, and studio delivery
+
+- **Color and 3D LUT grading.** Face Swap and Editor share a local `.cube` shelf, a current-frame comparison, and a LUT intensity control. Display mode keeps the grade in the preview. Bake mode feeds the intensity into the NVENC and software video writers. The shelf lives in the user's Roop data folder so clearing render outputs keeps the grades available.
+- **Identity algebra.** The Face Swap blender and Face Manager Morph Lab expose the normalized ArcFace vector and retain `.fsz` export. The Face Swap pad maps pointer movement into the same weights used by its sliders and render recipe.
+- **Studio delivery.** File renders can emit separate XSeg 3, face parsing, and difference matte sequences beside the beauty file. The manifest names the available passes and maps their frame numbers to the source trim. Trimmed timeline exports carry queued cuts and markers in CMX3600 EDL and OpenTimelineIO. EDL markers use comments. OTIO carries native markers and uses separate tracks for overlapping cuts.
+- **Provenance.** Completed Face Swap outputs receive an HMAC-SHA256 manifest signed with a per-user key. The inspector checks the final file hash and the manifest signature. Supported containers also carry an embedded signature. The Stage 13 preflight mount and trace frame offsets were corrected while checking the delivery flow.
+
+LUT baking covers the SDR video writers. Matte sequences use the in-memory video path and require installed mask models. The first export for an inactive engine may trigger a TensorRT build. A resumed render's new sequence starts at the resume offset.
+
+**Verification.** 169 focused Python tests, five browser checks, TypeScript, API parity, and the production build passed. A real FFmpeg check verified LUT intensity in decoded pixels. OpenTimelineIO read the exported trim, marker, and overlapping cuts. On the RTX 4070, the 600-frame regression benchmark ran with 20 threads and recorded changed face pixels in 597 frames and a verified signature for the finished MP4. The full pytest run reported failures, including failures reproduced on the Stage 13 commit, and was stopped at 99% during the Face Engine Ultra quality checks.
+
+The delivery smoke verified a signed HEVC NVENC beauty render, a baked LUT, and 12 frames in each matte sequence using CUDA for inference. The first smoke was stopped during the cold XSeg 3 TensorRT build.
+
 ## 2026-11-19 — UI overhaul Stage 12: curve drawer, face menu + role badges, snapshot bank + Quad compare, history branching
 
 Builds on Stages 19/23/25 (curve editor, face menu, slots, undo). All `react-ui`; no backend change.

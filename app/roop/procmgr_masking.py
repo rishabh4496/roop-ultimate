@@ -1520,6 +1520,33 @@ class MaskingMixin:
             return None
         return x0, y0, x1, y1, crop_x0, crop_y0, crop_x1, crop_y1
 
+    def _vfx_channel_requested(self, processor_name):
+        if getattr(self, '_vfx_session', None) is None or getattr(self._tls, 'vfx_warmup', False):
+            return False
+        layers = self._vfx_requested_layers
+        if processor_name == 'mask_xseg3':
+            return 'xseg3' in layers or 'difference' in layers
+        if processor_name == 'mask_faceparser':
+            return 'face_parser' in layers or 'difference' in layers
+        return False
+
+    def _capture_vfx_mask(self, processor_name, restore_mask, crop_shape, matrix, frame_shape):
+        from roop.unified_matte import mask2d
+
+        layer = 'xseg3' if processor_name == 'mask_xseg3' else 'face_parser'
+        try:
+            alpha = 1.0 - mask2d(restore_mask, crop_shape)
+            inverse = cv2.invertAffineTransform(np.asarray(matrix, dtype=np.float32)[:2])
+            height, width = frame_shape[:2]
+            full_alpha = cv2.warpAffine(alpha, inverse, (width, height),
+                                        flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
+            layers = self._tls.vfx_mattes
+            prior = layers.get(layer)
+            layers[layer] = full_alpha if prior is None else np.maximum(prior, full_alpha)
+            self._tls.vfx_face_channels.add(processor_name)
+        except (ValueError, TypeError, cv2.error) as exc:
+            _swallowed('procmgr_masking:vfx_matte', exc, 'matte channel skipped for this face')
+
     def process_mask(self, processor, frame:Frame, target:Frame, orig_frame:Frame=None, target_face:Face=None, M=None, tgt_pitch_deg:float=0.0, reuse_mask=None, rotation_action=None, region=None, defer_composite=False):
         """Mask `target` back toward `frame`. Returns (result, img_mask).
 
@@ -1824,6 +1851,9 @@ class MaskingMixin:
                 if p_name == 'mask_xseg' and mask_guided_filter_enabled():
                     with _prof('mask_refine'):
                         img_mask = refine_mask_edges(img_mask, frame)
+
+        if self._vfx_channel_requested(p_name) and M is not None and orig_frame is not None:
+            self._capture_vfx_mask(p_name, img_mask, frame.shape, M, orig_frame.shape)
 
         # Specific improvement for the occluder family: threshold and blur to
         # prevent ghosting (xseg_3 shares the face_occluder output convention).

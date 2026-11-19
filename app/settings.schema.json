@@ -72,6 +72,9 @@
     "vfx_multi_pass",
     "vfx_export_matte",
     "vfx_export_crops",
+    "vfx_export_xseg3",
+    "vfx_export_face_parser",
+    "vfx_export_difference",
     "enable_provenance_signer",
     "embed_provenance_watermark",
     "provenance_disclosure",
@@ -989,7 +992,7 @@
       "default": true,
       "type": "bool",
       "ui": {
-        "label": "VFX export combined matte pass",
+        "label": "VFX export matte sequences",
         "section": "Output"
       }
     },
@@ -998,6 +1001,30 @@
       "type": "bool",
       "ui": {
         "label": "VFX export aligned face crops & JSON",
+        "section": "Output"
+      }
+    },
+    "vfx_export_xseg3": {
+      "default": true,
+      "type": "bool",
+      "ui": {
+        "label": "VFX export XSeg 3 matte",
+        "section": "Output"
+      }
+    },
+    "vfx_export_face_parser": {
+      "default": true,
+      "type": "bool",
+      "ui": {
+        "label": "VFX export face parsing matte",
+        "section": "Output"
+      }
+    },
+    "vfx_export_difference": {
+      "default": false,
+      "type": "bool",
+      "ui": {
+        "label": "VFX export mask difference matte",
         "section": "Output"
       }
     },

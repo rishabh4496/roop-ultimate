@@ -38,6 +38,8 @@ import ParserRegions from './faceswap/ParserRegions';
 import InteractivePreview from './faceswap/InteractivePreview';
 import PreviewViewport from './faceswap/PreviewViewport';
 import NleTimeline from './faceswap/NleTimeline';
+import StudioDeliveryPanel from './faceswap/StudioDeliveryPanel';
+import ColorGradingPanel from './faceswap/ColorGradingPanel';
 import StudioParameters from './faceswap/StudioParameters';
 import { studioPayload } from './faceswap/studioControls';
 import { serializeStudioTimeline } from './faceswap/studioProjectModel';
@@ -137,6 +139,7 @@ export default function FaceSwap({
   meta, settings, setSettings, notify, registerFileListener,
   progress, setProgress, startTime, setStartTime, onOpenProcessing, onStopRun
 }) {
+  const p = settings || {};
   const { postJSON, getJSON, postFiles, postFile } = useApi();
   const seamEvents = useTelemetryStore((s) => s.seamEvents);
   const [preflightState, setPreflightState] = useState({ loading: true, status: 'checking', blockers: [] });
@@ -972,78 +975,6 @@ export default function FaceSwap({
     } catch (e) { notify('Failed to export recipe: ' + e.message, 'error'); }
   };
 
-  const handleExportEdl = async () => {
-    try {
-      const currentTarget = targets[selTarget];
-      const fps = currentTarget?.fps || 30.0;
-      const totalFrames = currentTarget?.frames || 1800;
-      const res = await postJSON('/api/timeline/export_edl', {
-        document: {
-          name: currentTarget?.name || 'Roop_Ultimate_Timeline',
-          total_frames: totalFrames,
-          timeline: {
-            fps,
-            frame_start: 0,
-            frame_end: totalFrames,
-            face_segments: [],
-          },
-        },
-        fps,
-      });
-      if (res?.edl_text) {
-        const blob = new Blob([res.edl_text], { type: 'text/plain' });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        const stem = (currentTarget?.name || 'roop_timeline').replace(/\.[^/.]+$/, '');
-        link.download = `${stem}_TrackV2.edl`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        URL.revokeObjectURL(url);
-        notify?.('Exported CMX3600 EDL timeline (Track V1 source, Track V2 face-swapped)');
-      }
-    } catch (err) {
-      notify?.(`Failed to export EDL: ${err.message}`, 'error');
-    }
-  };
-
-  const handleExportOtio = async () => {
-    try {
-      const currentTarget = targets[selTarget];
-      const fps = currentTarget?.fps || 30.0;
-      const totalFrames = currentTarget?.frames || 1800;
-      const res = await postJSON('/api/timeline/export_otio', {
-        document: {
-          name: currentTarget?.name || 'Roop_Ultimate_Timeline',
-          total_frames: totalFrames,
-          timeline: {
-            fps,
-            frame_start: 0,
-            frame_end: totalFrames,
-            face_segments: [],
-          },
-        },
-        fps,
-      });
-      if (res?.otio_json) {
-        const blob = new Blob([res.otio_json], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        const stem = (currentTarget?.name || 'roop_timeline').replace(/\.[^/.]+$/, '');
-        link.download = `${stem}_TrackV2.otio.json`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        URL.revokeObjectURL(url);
-        notify?.('Exported OpenTimelineIO JSON timeline (V1 source, V2 face-swap)');
-      }
-    } catch (err) {
-      notify?.(`Failed to export OTIO: ${err.message}`, 'error');
-    }
-  };
-
   const importRecipe = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -1350,8 +1281,6 @@ export default function FaceSwap({
     return matches[matches.length - 1] || null;
   }, [seamEvents, frame]);
 
-  // p = the swap parameters, seeded from CFG (settings) and patched locally.
-  const p = settings || {};
   // Stage 17: does the selected video have audio? Answers the panel's silent-video advisory and whether the timeline shows an
   // audio row at all. The envelope it asks for is the one the timeline's waveform already builds, so this costs nothing extra.
   const targetHasAudio = useTargetAudio(getJSON, selTarget, !!targets[selTarget] && targets[selTarget].frames > 1);
@@ -1901,6 +1830,7 @@ export default function FaceSwap({
         setPreviewAnchors(cached.anchors || []);
         setPreviewPose(cached.pose || []);
         setPreviewDiagnostic(cached.diagnostic || null);
+        setPreviewMaskDebug(null);
         setPreviewSolo(cached.solo || null);
         if (cached.sar !== undefined) setPreviewSar(cached.sar);
         if (cached.dar !== undefined) setPreviewDar(cached.dar);
@@ -2229,8 +2159,10 @@ export default function FaceSwap({
     refreshPreviewRef.current?.({
       force: true,
       frame,
-      debug_mask_channels: true,
-      debug_mask_face_index: Number.isInteger(debugFaceIndex) ? debugFaceIndex : null,
+      overrides: {
+        debug_mask_channels: true,
+        debug_mask_face_index: Number.isInteger(debugFaceIndex) ? debugFaceIndex : null,
+      },
     });
   }, [seamInspection, frame, progress.processing, isScrubbing, isPlaying, targets.length]);
 
@@ -4752,48 +4684,25 @@ export default function FaceSwap({
           <Toggle label="Auto rotate horizontal faces" checked={!!p.autorotate_faces} onChange={(v) => set('autorotate_faces', v)} />
         </InspectorGroup>
 
-        <InspectorGroup id="vfx-multipass" title="VFX Multi-Pass & NLE Export" icon={Icon.film}>
-          <Toggle
-            label="VFX multi-pass export"
-            info="Simultaneously exports 10-bit Beauty, 10-bit grayscale Combined Matte Pass, and uncomposited aligned face crops with 3x3 inverse affine transform matrices."
-            checked={!!p.vfx_multi_pass}
-            onChange={(v) => set('vfx_multi_pass', v)}
-          />
-          {p.vfx_multi_pass && (
-            <>
-              <Toggle
-                label="Export combined matte pass"
-                info="10-bit grayscale matte merging Stage 7 XSeg 3 occlusion mask, vector roto zones, and edge feathering."
-                checked={p.vfx_export_matte ?? true}
-                onChange={(v) => set('vfx_export_matte', v)}
-              />
-              <Toggle
-                label="Export uncomposited crops & JSON inverse affine transforms"
-                info="Aligned face crop sequence accompanied by per-frame JSON 3x3 inverse affine matrices and corner pins for Nuke/Fusion."
-                checked={p.vfx_export_crops ?? true}
-                onChange={(v) => set('vfx_export_crops', v)}
-              />
-            </>
-          )}
-          <div className="pt-2 border-t border-white/10 flex gap-2">
-            <button
-              type="button"
-              onClick={handleExportEdl}
-              className="flex-1 py-1.5 px-2 rounded-lg text-micro font-bold bg-white/5 border border-white/10 hover:bg-white/10 text-white transition-colors"
-              title="Export CMX3600 EDL (V1 untouched source, V2 face-swapped cuts)"
-            >
-              Export EDL (CMX3600)
-            </button>
-            <button
-              type="button"
-              onClick={handleExportOtio}
-              className="flex-1 py-1.5 px-2 rounded-lg text-micro font-bold bg-white/5 border border-white/10 hover:bg-white/10 text-white transition-colors"
-              title="Export OpenTimelineIO JSON (V1 source clip, V2 face-swapped clips & gaps)"
-            >
-              Export OTIO (.json)
-            </button>
-          </div>
+        <InspectorGroup id="color-lut" title="Color & 3D LUT grading" icon={Icon.tune}>
+          <ColorGradingPanel params={p} previewSource={stageAfterSrc || rawUrl} onChange={setMany} notify={notify} />
         </InspectorGroup>
+
+        <StudioDeliveryPanel
+          target={targets[selTarget]}
+          output={out}
+          fps={targets[selTarget]?.fps || 25}
+          markers={chapterMarkers.markers}
+          trimIn={Math.max(0, startFrame - 1)}
+          trimOut={Math.max(0, endFrame - 1)}
+          segmentBlocks={nleSegmentBlocks}
+          settings={p}
+          onSettingsChange={setMany}
+          previewMaskDebug={previewMaskDebug}
+          onPreviewMattes={() => refreshPreview({ force: true, frame, fake: true, overrides: { debug_mask_channels: true } })}
+          previewBusy={previewing || progress.processing || isPlaying || isScrubbing}
+          notify={notify}
+        />
 
         <Section title="Clip advisor" collapsible defaultOpen={false}>
           <button type="button" disabled={advisorBusy || !targets.length || progress.processing} onClick={runAdvisor}
@@ -5766,6 +5675,9 @@ export default function FaceSwap({
                       sarVal={previewSar}
                       darVal={previewDar}
                       colorBadge={previewColorBadge || targets[selTarget]?.color_badge || ''}
+                      gradingSettings={p}
+                      gradingPreviewSource={stageAfterSrc || rawUrl}
+                      onGradingChange={(patch) => setSettings((current) => ({ ...current, ...patch }))}
                     />
                   )}
                     {activeSeamEvent && (

@@ -75,6 +75,21 @@ def _face_segments(document: Mapping[str, Any]) -> list[dict]:
     return [dict(item) for item in ((document.get("timeline") or {}).get("face_segments") or [])]
 
 
+def _timeline_markers(document: Mapping[str, Any]) -> list[dict]:
+    timeline = document.get("timeline") or {}
+    markers = timeline.get("markers") or document.get("markers") or []
+    result = []
+    for marker in markers:
+        if not isinstance(marker, Mapping):
+            continue
+        try:
+            frame = int(marker.get("frame"))
+        except (TypeError, ValueError, OverflowError):
+            continue
+        result.append({**marker, "frame": frame})
+    return sorted(result, key=lambda marker: marker["frame"])
+
+
 def _face_asset(segment: Mapping[str, Any], document: Mapping[str, Any], project_path: str) -> str:
     from roop.project_io import resolve_media
     ref = segment.get("alpha_asset") or segment.get("asset") or {}
@@ -316,6 +331,15 @@ def export_cmx3600_edl(
         "",
     ]
 
+    for marker in _timeline_markers(document):
+        marker_frame = marker["frame"]
+        if not start_frame <= marker_frame < total_frames:
+            continue
+        label = str(marker.get("label") or marker.get("note") or "Marker").replace("\n", " ").strip()
+        lines.append(f"* MARKER: {frames_to_timecode(marker_frame, rate, drop_frame)} {label}")
+        if marker.get("note"):
+            lines.append(f"* MARKER NOTE: {str(marker['note']).replace(chr(10), ' ').strip()}")
+
     segments = list(document.get("segments") or timeline.get("face_segments") or [])
     event_idx = 2
     for seg in segments:
@@ -456,68 +480,77 @@ def export_otio_json(
     }
 
     segments = list(document.get("segments") or timeline.get("face_segments") or [])
-    segments.sort(key=lambda s: int(s.get("in", s.get("frame_in", 0))))
+    segments.sort(key=lambda seg: int(seg.get("in", seg.get("frame_in", 0))))
+    # OTIO clips on one track are sequential. Overlapping queued cuts need
+    # separate tracks to retain their starts relative to the trimmed source.
+    lanes = [{"cursor": start_frame, "children": []}]
+    swap_url = (v1_track["children"][0]["media_reference"]["target_url"]
+                if document.get("segments_use_source") else swap_name)
 
-    v2_children = []
-    cursor = start_frame
-    for seg in segments:
-        s_in = int(seg.get("in", seg.get("frame_in", 0)))
-        s_out = int(seg.get("out", seg.get("frame_out", s_in + 1)))
-        speaker = str(seg.get("speaker_cluster_id", seg.get("face_id", "person_1")))
+    def time_range(start, duration):
+        return {
+            "OTIO_SCHEMA": "TimeRange.1",
+            "start_time": {"OTIO_SCHEMA": "RationalTime.1", "value": start, "rate": rate},
+            "duration": {"OTIO_SCHEMA": "RationalTime.1", "value": duration, "rate": rate},
+        }
 
-        if s_in > cursor:
-            gap_dur = s_in - cursor
-            v2_children.append({
+    def add_gap(lane, end):
+        if end > lane["cursor"]:
+            lane["children"].append({
                 "OTIO_SCHEMA": "Gap.1",
-                "source_range": {
-                    "OTIO_SCHEMA": "TimeRange.1",
-                    "start_time": {"OTIO_SCHEMA": "RationalTime.1", "value": cursor, "rate": rate},
-                    "duration": {"OTIO_SCHEMA": "RationalTime.1", "value": gap_dur, "rate": rate},
-                },
+                "source_range": time_range(0, end - lane["cursor"]),
             })
 
-        clip_dur = max(1, s_out - s_in)
-        v2_children.append({
+    for seg in segments:
+        s_in = max(start_frame, int(seg.get("in", seg.get("frame_in", 0))))
+        s_out = min(total_frames, int(seg.get("out", seg.get("frame_out", s_in + 1))))
+        if s_out <= s_in:
+            continue
+        lane = next((lane for lane in lanes if lane["cursor"] <= s_in), None)
+        if lane is None:
+            lane = {"cursor": start_frame, "children": []}
+            lanes.append(lane)
+        add_gap(lane, s_in)
+        speaker = str(seg.get("speaker_cluster_id", seg.get("face_id", "person_1")))
+        lane["children"].append({
             "OTIO_SCHEMA": "Clip.1",
             "name": f"FaceSwap_{speaker}_{s_in}_{s_out}",
-            "source_range": {
-                "OTIO_SCHEMA": "TimeRange.1",
-                "start_time": {"OTIO_SCHEMA": "RationalTime.1", "value": s_in, "rate": rate},
-                "duration": {"OTIO_SCHEMA": "RationalTime.1", "value": clip_dur, "rate": rate},
-            },
+            "source_range": time_range(s_in, s_out - s_in),
             "metadata": {
                 "roop": {
                     "track": "V2",
                     "speaker_cluster_id": speaker,
                     "face_id": seg.get("face_id", speaker),
-                }
+                },
             },
-            "media_reference": {
-                "OTIO_SCHEMA": "ExternalReference.1",
-                "target_url": swap_name,
-            },
+            "media_reference": {"OTIO_SCHEMA": "ExternalReference.1", "target_url": swap_url},
         })
-        cursor = s_out
+        lane["cursor"] = s_out
 
-    if cursor < total_frames:
-        gap_dur = total_frames - cursor
-        v2_children.append({
-            "OTIO_SCHEMA": "Gap.1",
-            "source_range": {
-                "OTIO_SCHEMA": "TimeRange.1",
-                "start_time": {"OTIO_SCHEMA": "RationalTime.1", "value": cursor, "rate": rate},
-                "duration": {"OTIO_SCHEMA": "RationalTime.1", "value": gap_dur, "rate": rate},
-            },
+    v2_tracks = []
+    for index, lane in enumerate(lanes):
+        add_gap(lane, total_frames)
+        v2_tracks.append({
+            "OTIO_SCHEMA": "Track.1",
+            "metadata": {},
+            "name": "V2_FaceSwap" if index == 0 else f"V{index + 2}_FaceSwap",
+            "kind": "Video",
+            "children": lane["children"],
         })
 
-    v2_track = {
-        "OTIO_SCHEMA": "Track.1",
-        "metadata": {},
-        "name": "V2_FaceSwap",
-        "kind": "Video",
-        "children": v2_children,
-    }
-
+    marker_colors = {"#38bdf8": "BLUE", "#34d399": "GREEN", "#fbbf24": "YELLOW",
+                     "#fb7185": "RED", "#a78bfa": "PURPLE"}
+    native_markers = [
+        {
+            "OTIO_SCHEMA": "Marker.2",
+            "name": str(marker.get("label") or marker.get("note") or "Marker"),
+            "color": marker_colors.get(str(marker.get("color", "")).lower(), "YELLOW"),
+            "marked_range": time_range(marker["frame"] - start_frame, 1),
+            "metadata": {"roop": {"id": marker.get("id"), "color": marker.get("color"), "note": marker.get("note", "")}},
+        }
+        for marker in _timeline_markers(document)
+        if start_frame <= marker["frame"] < total_frames
+    ]
     otio_doc = {
         "OTIO_SCHEMA": "Timeline.1",
         "metadata": {"roop_version": "2.1.0"},
@@ -531,7 +564,8 @@ def export_otio_json(
             "OTIO_SCHEMA": "Stack.1",
             "metadata": {},
             "name": "tracks",
-            "children": [v1_track, v2_track],
+            "markers": native_markers,
+            "children": [v1_track, *v2_tracks],
         },
     }
 

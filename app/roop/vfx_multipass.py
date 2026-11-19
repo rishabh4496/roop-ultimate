@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
+import threading
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -133,13 +135,87 @@ def create_combined_matte(
 class VfxMultiPassSession:
     """Manages metadata and file recording for a multi-pass VFX export."""
 
-    def __init__(self, output_dir: str, *, fps: float = 30.0) -> None:
+    def __init__(self, output_dir: str, *, fps: float = 30.0, resume_offset: int = 0) -> None:
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.crops_dir = self.output_dir / "vfx_crops"
         self.crops_dir.mkdir(parents=True, exist_ok=True)
+        self.mattes_dir = None
         self.fps = fps
+        self.resume_offset = resume_offset
         self.records: list[dict[str, Any]] = []
+        self.matte_records: dict[int, dict[str, Any]] = {}
+        self.failed_channels: set[str] = set()
+        self._matte_lock = threading.Lock()
+
+    def record_mattes(self, frame_index: int, layers: Mapping[str, np.ndarray], *, requested: Sequence[str]) -> dict[str, Any]:
+        """Write only mask channels actually emitted by the render's active mask engines."""
+        frame = int(frame_index)
+        entry: dict[str, Any] = {"frame_index": frame, "layers": {}}
+        for layer in requested:
+            matte = layers.get(layer)
+            if matte is None:
+                continue
+            values = np.asarray(matte, dtype=np.float32)
+            if values.ndim > 2:
+                values = np.squeeze(values)
+            if values.size == 0:
+                continue
+            values = np.clip(values, 0.0, 1.0)
+            png = np.round(values * 255.0).astype(np.uint8)
+            ok, encoded = cv2.imencode('.png', png)
+            if not ok:
+                raise IOError(f"could not encode {layer} matte for frame {frame}")
+            entry["layers"][layer] = self._write_matte(frame, layer, encoded.tobytes())
+        with self._matte_lock:
+            self.matte_records[frame] = entry
+        return entry
+
+    def _write_matte(self, frame, layer, png_bytes):
+        with self._matte_lock:
+            if self.mattes_dir is None:
+                self.mattes_dir = Path(tempfile.mkdtemp(prefix='vfx_mattes_', dir=self.output_dir))
+        folder = self.mattes_dir / layer
+        folder.mkdir(parents=True, exist_ok=True)
+        path = folder / f"frame_{frame:06d}.png"
+        path.write_bytes(png_bytes)
+        return path.relative_to(self.output_dir).as_posix()
+
+    def finalize_mattes(self, *, requested: Sequence[str], frame_count=None, frame_shape=None, source_start=0) -> str:
+        """Write a manifest that distinguishes exported channels from absent engines."""
+        with self._matte_lock:
+            rows_by_index = dict(self.matte_records)
+        if frame_count is not None:
+            rows_by_index = {index: row for index, row in rows_by_index.items() if index < frame_count}
+        rows = [rows_by_index[index] for index in sorted(rows_by_index)]
+        counts = {layer: sum(layer in row["layers"] for row in rows) for layer in requested}
+        if frame_count is not None and frame_shape and any(counts.values()):
+            ok, blank = cv2.imencode('.png', np.zeros(frame_shape, dtype=np.uint8))
+            if not ok:
+                raise IOError('could not encode empty matte frame')
+            rows = []
+            for index in range(self.resume_offset, frame_count):
+                row = rows_by_index.get(index, {"frame_index": index, "layers": {}})
+                for layer, count in counts.items():
+                    if count and layer not in row["layers"]:
+                        row["layers"][layer] = self._write_matte(index, layer, blank.tobytes())
+                rows.append(row)
+        doc = {
+            "schema": "roop.vfx-mattes.v1",
+            "fps": self.fps,
+            "frames_recorded": len(rows),
+            "beauty_frames": frame_count,
+            "source_start_frame": source_start,
+            "resume_offset": self.resume_offset,
+            "requested_layers": list(requested),
+            "frame_counts": counts,
+            "unavailable_layers": [layer for layer, count in counts.items() if count == 0],
+            "frames": rows,
+            "alpha": "straight, 8-bit grayscale PNG sequence",
+        }
+        path = self.output_dir / "vfx_mattes.json"
+        path.write_text(json.dumps(doc, indent=2), encoding="utf-8")
+        return str(path)
 
     def record_frame(
         self,

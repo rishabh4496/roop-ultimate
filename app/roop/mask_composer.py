@@ -241,6 +241,9 @@ def debug_channels(crop_bgr, parse: fp.ParseResult = None, result: ComposeResult
     channels = {}
     if parse is not None:
         channels['parsing_overlay'] = fp.overlay(crop_bgr, parse.labels)
+        if parse.is_semantic:
+            labels = fp.resize_labels(parse.labels, crop_bgr.shape)
+            channels['parsing_matte'] = fp.class_mask(labels, fp.INTERIOR_CLASSES).astype(np.uint8) * 255
     alpha = result.alpha if result is not None else final_alpha
     if alpha is not None:
         alpha_array = np.asarray(alpha, dtype=np.float32)
@@ -255,5 +258,8 @@ def debug_channels(crop_bgr, parse: fp.ParseResult = None, result: ComposeResult
         if mask.size and float(np.nanmax(mask)) <= 1.0:
             mask = mask * 255.0
         channels['xseg3_mask'] = np.clip(np.nan_to_num(mask) + 0.5, 0, 255).astype(np.uint8)
+        channels['xseg3_matte'] = 255 - channels['xseg3_mask']
         channels['xseg3_overlay'] = _debug_mask_overlay(crop_bgr, xseg3_mask, (30, 120, 255))
+        if 'parsing_matte' in channels:
+            channels['difference_matte'] = cv2.absdiff(channels['xseg3_matte'], channels['parsing_matte'])
     return channels

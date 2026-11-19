@@ -5164,7 +5164,7 @@ def _apply_lipsync_settings(payload):
 
 def _apply_lut_grading_settings(payload):
     """Stage 18: WebGL2 3D .cube LUT grading & broadcast scope pipeline parameters."""
-    roop_globals.lut_path = str(payload.get("lut_path") or getattr(roop_globals.CFG, "lut_path", "") or "")
+    roop_globals.lut_path = str(payload.get("lut_path", getattr(roop_globals.CFG, "lut_path", "")) or "")
     roop_globals.lut_bake = bool(payload.get("lut_bake", getattr(roop_globals.CFG, "lut_bake", False)))
     try:
         roop_globals.lut_opacity = float(payload.get("lut_opacity", getattr(roop_globals.CFG, "lut_opacity", 1.0)))
@@ -5177,6 +5177,16 @@ def _apply_lut_grading_settings(payload):
         roop_globals.color_gain = float(payload.get("color_gain", getattr(roop_globals.CFG, "color_gain", 1.0)))
     except (TypeError, ValueError):
         pass
+
+
+def _apply_vfx_export_settings(payload):
+    """Stage 14: select the matte layers collected by the live frame pipeline."""
+    roop_globals.vfx_multi_pass = bool(payload.get("vfx_multi_pass", getattr(roop_globals.CFG, "vfx_multi_pass", False)))
+    roop_globals.vfx_export_matte = bool(payload.get("vfx_export_matte", getattr(roop_globals.CFG, "vfx_export_matte", True)))
+    roop_globals.vfx_export_crops = bool(payload.get("vfx_export_crops", getattr(roop_globals.CFG, "vfx_export_crops", True)))
+    roop_globals.vfx_export_xseg3 = bool(payload.get("vfx_export_xseg3", getattr(roop_globals.CFG, "vfx_export_xseg3", True)))
+    roop_globals.vfx_export_face_parser = bool(payload.get("vfx_export_face_parser", getattr(roop_globals.CFG, "vfx_export_face_parser", True)))
+    roop_globals.vfx_export_difference = bool(payload.get("vfx_export_difference", getattr(roop_globals.CFG, "vfx_export_difference", False)))
 
 
 def _apply_parser_region_settings(payload):
@@ -6648,6 +6658,7 @@ def _run_swap(payload):
         _apply_enhancer_settings(payload)
         _apply_lipsync_settings(payload)
         _apply_lut_grading_settings(payload)
+        _apply_vfx_export_settings(payload)
         roop_globals.video_encoder = roop_globals.CFG.output_video_codec
         roop_globals.video_quality = roop_globals.CFG.video_quality
         roop_globals.max_memory = roop_globals.CFG.memory_limit if roop_globals.CFG.memory_limit > 0 else None
@@ -6988,7 +6999,8 @@ def _record_last_output(source_entry=None):
     if not out or not os.path.isdir(out):
         return
     files = [os.path.join(out, f) for f in os.listdir(out)
-             if not f.startswith(".") and os.path.isfile(os.path.join(out, f))]
+             if not f.startswith(".") and not f.endswith(".provenance.json")
+             and os.path.isfile(os.path.join(out, f))]
     if not files:
         return
     latest = max(files, key=os.path.getmtime)
@@ -7808,6 +7820,7 @@ import routes_model_catalog as _routes_model_catalog
 import routes_angle_scan as _routes_angle_scan
 import routes_trajectory as _routes_trajectory
 import routes_identity as _routes_identity
+import routes_lut as _routes_lut
 import roop.api.enhancer_routes as _enhancer_routes
 app.include_router(_routes_diagnostics.router)
 app.include_router(_routes_trajectory.router)
@@ -7822,6 +7835,7 @@ app.include_router(_routes_benchmark.router)
 app.include_router(_routes_trt_cache.router)
 app.include_router(_routes_recognition.router)
 app.include_router(_routes_identity.router)
+app.include_router(_routes_lut.router)
 app.include_router(_routes_autotune.router)
 app.include_router(_routes_telemetry.router)
 app.include_router(_routes_pipeline_status.router)
@@ -8383,6 +8397,7 @@ async def timeline_export_edl(request: Request):
     from roop import nle_interchange
     data = await request.json() if request.headers.get("content-type") == "application/json" else {}
     doc = data.get("document") or data
+    _resolve_interchange_source(doc, data.get("target_media_id"))
     fps = float(data.get("fps") or doc.get("fps") or 30.0)
     drop_frame = bool(data.get("drop_frame", False))
 
@@ -8396,11 +8411,20 @@ async def timeline_export_otio(request: Request):
     from roop import nle_interchange
     data = await request.json() if request.headers.get("content-type") == "application/json" else {}
     doc = data.get("document") or data
+    _resolve_interchange_source(doc, data.get("target_media_id"))
     fps = float(data.get("fps") or doc.get("fps") or 30.0)
 
     otio_str = nle_interchange.export_otio_json(doc, fps=fps)
     title = str(doc.get("name") or "timeline").replace(" ", "_")
     return {"status": "ok", "otio": otio_str, "filename": f"{title}.otio"}
+
+
+def _resolve_interchange_source(document, target_media_id):
+    if target_media_id:
+        for entry in list_files_process:
+            if _ensure_target_media_id(entry) == target_media_id:
+                document["source_media"] = entry.filename
+                return
 
 
 @app.post("/api/timeline/import_edl")
@@ -8427,13 +8451,16 @@ async def timeline_import_otio(request: Request):
 
 
 @app.post("/api/provenance/verify")
-async def provenance_verify(request: Request):
+def provenance_verify(data: dict = Body(...)):
     from roop import provenance
-    data = await request.json() if request.headers.get("content-type") == "application/json" else {}
     file_path = str(data.get("file_path") or "")
-
-    valid, manifest, reason = provenance.extract_and_verify_file(file_path)
-    return {"status": "ok" if valid else "error", "verified": valid, "manifest": manifest, "reason": reason}
+    if file_path.startswith("/outputs/"):
+        file_path = os.path.join(roop_globals.output_path, file_path.removeprefix("/outputs/"))
+    file_path = _safe_paths.confine_file(file_path, [roop_globals.output_path])
+    if not file_path:
+        return {"status": "error", "verified": False, "reason": "Choose a file in the render output folder"}
+    result = provenance.verify_render_output(file_path)
+    return {"status": "ok" if result["verified"] else "error", **result}
 
 
 @app.get("/api/provenance/receipt")

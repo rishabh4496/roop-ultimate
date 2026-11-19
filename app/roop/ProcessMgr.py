@@ -721,6 +721,8 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         # single-thread. Factories rebuild fresh instances per worker block.
         self._parallel_stab = False
         self._tls = local()
+        self._vfx_session = None
+        self._vfx_requested_layers = ()
         self._kps_stab_factory = None
         self._enh_stab_factory = None
         self._mask_stab_factory = None
@@ -1958,7 +1960,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 if not roop.globals.processing or time.perf_counter() > deadline:
                     return
 
-    def process_videoframes(self, threadindex, progress) -> None:
+    def process_videoframes(self, threadindex, progress, frame_start=0) -> None:
         try:
             from core.cpu_topology import pin_current_thread_to_p_cores
             pin_current_thread_to_p_cores(high_priority=True)
@@ -2054,7 +2056,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 frame_counter += 1
 
 
-    def write_frames_thread(self):
+    def write_frames_thread(self, frame_start=0):
         nextindex = 0
         num_producers = self.num_threads
 
@@ -2800,7 +2802,11 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     finally:
                         self._tls.stage_count_off = False
                 if pristine is None:
-                    result = _once(frame, counted=False)   # warm-up priming: its frames are discarded, nothing to rescue
+                    self._tls.vfx_warmup = True
+                    try:
+                        result = _once(frame, counted=False)
+                    finally:
+                        self._tls.vfx_warmup = False
                 else:
                     # A device out-of-memory error reruns the frame alone after the caches are flushed
                     # (roop/gpu_recovery.py). `pristine` is the caller's untouched snapshot - the failed
@@ -3524,6 +3530,10 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         # runs only after the controller has granted the frame's work scope.
         if len(self.input_face_datas) < 1 and not self.options.show_face_masking:
             return frame
+        vfx_session = getattr(self, '_vfx_session', None)
+        capture_vfx = vfx_session is not None and not getattr(self._tls, 'vfx_warmup', False)
+        if capture_vfx:
+            self._tls.vfx_mattes = {}
 
         # Sparse auto-range passthrough fast-path: if frame is outside active ranges,
         # skip GPU face detection, swap, enhancement, and stabilization entirely.
@@ -3573,6 +3583,18 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         num_swapped, resimg = self.swap_faces(
             frame, None, stabilize=True, frame_idx=frame_idx,
             frame_absolute=frame_absolute)
+        if capture_vfx and frame_idx is not None:
+            try:
+                matte_layers = getattr(self._tls, 'vfx_mattes', {}) or {}
+                if ('xseg3' in matte_layers and 'face_parser' in matte_layers
+                        and 'difference' in self._vfx_requested_layers):
+                    matte_layers['difference'] = np.abs(matte_layers['xseg3'] - matte_layers['face_parser'])
+                vfx_session.record_mattes(
+                    frame_idx + vfx_session.resume_offset, matte_layers, requested=self._vfx_requested_layers)
+                self._tls.vfx_mattes = {}
+            except Exception as exc:
+                _swallowed('ProcessMgr:vfx_matte_export', exc,
+                           'matte sidecar skipped for this frame')
         try:
             from roop import watchdog
             _exp_faces = len(self._temporal_faces.get(frame_idx, [])) if (getattr(self, '_temporal_faces', None) is not None and frame_idx is not None) else 0
@@ -5766,20 +5788,43 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             return self.processors
         replacements = []
         if key:
-            with _studio.mask_build_lock:
-                bank = getattr(self, '_studio_masks', None)
-                if bank is None:
-                    bank = self._studio_masks = {}
-                if key not in bank:
-                    processor = str_to_class('roop.processors.' + self.plugins[key], self.plugins[key])
-                    processor.Initialize({'devicename': get_device()})
-                    bank[key] = processor
-                replacements = [bank[key]]
+            replacements = [self._studio_mask_processor(key)]
         # Keep the original swap -> mask -> enhance order even if the base
         # recipe had no masker. Other workers keep their own selected chain.
         chain = [p for p in self.processors if p.type != 'mask']
         index = next((i + 1 for i, p in enumerate(chain) if p.type == 'swap'), 0)
         return chain[:index] + replacements + chain[index:]
+
+    def _studio_mask_processor(self, key):
+        with _studio.mask_build_lock:
+            bank = getattr(self, '_studio_masks', None)
+            if bank is None:
+                bank = self._studio_masks = {}
+            if key not in bank:
+                processor = str_to_class('roop.processors.' + self.plugins[key], self.plugins[key])
+                processor.Initialize({'devicename': get_device()})
+                bank[key] = processor
+            return bank[key]
+
+    def _capture_missing_vfx_masks(self, crop, matrix, frame_shape, semantic_parse):
+        for key in ('mask_xseg3', 'mask_faceparser'):
+            if (not self._vfx_channel_requested(key) or key in self._tls.vfx_face_channels
+                    or key in self._vfx_session.failed_channels):
+                continue
+            try:
+                if key == 'mask_faceparser' and semantic_parse is not None and semantic_parse.is_semantic:
+                    from roop.face_parser import INTERIOR_CLASSES, class_mask
+                    restore = (~class_mask(semantic_parse.labels, INTERIOR_CLASSES)).astype(np.float32)
+                else:
+                    processor = next((p for p in self.processors if p.processorname == key), None)
+                    if processor is None:
+                        processor = self._studio_mask_processor(key)
+                    with _gpu_guard(pooled=getattr(processor, 'pool', None) is not None, owner='mask'):
+                        restore = processor.Run(crop, self.options.masking_text)
+                self._capture_vfx_mask(key, restore, crop.shape, matrix, frame_shape)
+            except Exception as exc:
+                self._vfx_session.failed_channels.add(key)
+                _swallowed('ProcessMgr:vfx_matte_channel', exc, f'{key} matte channel unavailable')
 
     @_person_overrides.scoped_face
     def process_face(self, face_index, target_face:Face, frame:Frame, plate:Frame=None, region=None):
@@ -5800,6 +5845,8 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         itself.
         """
         self._tls.face_index = int(face_index)
+        if getattr(self, '_vfx_session', None) is not None and not getattr(self._tls, 'vfx_warmup', False):
+            self._tls.vfx_face_channels = set()
         # Gap-filled (`_interpolated`) and coasted (`_coasted`) faces ARE swap
         # candidates. They exist to hold the swap across the frames the detector
         # misses -- a hand or a microphone crossing the face, motion blur, a
@@ -7672,6 +7719,8 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         # frontal path (RealityUX parsed this crop); a real inference on non-frontal faces, which the mask
         # engine parses from the unwarped box instead. See MaskingMixin._semantic_parse.
         _sem_parse = self._semantic_parse(aligned_img)
+        if getattr(self, '_vfx_session', None) is not None and not getattr(self._tls, 'vfx_warmup', False):
+            self._capture_missing_vfx_masks(aligned_img, M, plate.shape, _sem_parse)
         with _prof('blend'):
             if enhanced_frame is None:
                 scale_factor = int(upscale / orig_width)

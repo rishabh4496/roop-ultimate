@@ -14,7 +14,7 @@ from roop.video_stream import NVHardwareVideoWriter  # noqa: E402
 def test_nvenc_writer_accepts_every_segment_writer_option():
     # The exact keys SegmentedVideoWriter._writer_options splats into the constructor.
     options = ("preset", "bitrate", "threads", "ffmpeg_params", "colorspace", "sar", "dar", "color",
-               "lut_path", "lut_bake")
+               "lut_path", "lut_bake", "lut_opacity")
     params = inspect.signature(NVHardwareVideoWriter.__init__).parameters
     assert [o for o in options if o not in params] == []
 

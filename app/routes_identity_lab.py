@@ -333,7 +333,7 @@ def morph_blend(payload: dict = Body(...)):
         ids, resolved, summary = _summarise(payload)
     except ValueError as exc:
         return JSONResponse(status_code=400, content={"message": str(exc)})
-    summary.pop("embedding")
+    summary["embedding"] = summary["embedding"].tolist()
     summary["components"] = [{"id": i, "label": r[1]} for i, r in zip(ids, resolved)]
     return summary
 

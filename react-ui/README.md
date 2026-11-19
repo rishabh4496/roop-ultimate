@@ -459,8 +459,16 @@ Studio timeline interchange (CMX3600 EDL, OpenTimelineIO), active face catalogin
 | POST | `/api/timeline/export_otio` | FaceSwap |
 | POST | `/api/timeline/import_edl` | BatchSwap |
 | POST | `/api/timeline/import_otio` | BatchSwap |
-| POST | `/api/provenance/verify` | Settings |
-| GET | `/api/provenance/receipt` | Settings |
+| POST | `/api/provenance/verify` | Studio Delivery. Checks the completed file against its signed sidecar when present. |
+| GET | `/api/provenance/receipt` | Studio Delivery |
+
+### Color grading shelf
+
+| Method | Path | Called from |
+| --- | --- | --- |
+| GET | `/api/lut/shelf` | Color Grading. Lists saved `.cube` files. |
+| POST | `/api/lut/upload` | Color Grading. Accepts a multipart `.cube` file in `file`. |
+| POST | `/api/lut/read` | Color Grading. Accepts a JSON `path` returned by the shelf or upload and returns the LUT text. |
 
 ### Outputs, history & files
 

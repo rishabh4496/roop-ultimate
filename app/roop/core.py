@@ -1784,6 +1784,14 @@ def batch_process(output_method, files:list[ProcessEntry], use_new_method) -> No
             if synthetic_label.label_enabled():
                 for _out in fakeimages:
                     synthetic_label.label_file(_out)
+            from roop import provenance as _provenance
+            for _out in fakeimages:
+                try:
+                    _signed = _provenance.sign_render_output(_out)
+                    if _signed.get('signed'):
+                        update_status(f"[Provenance] Signed {os.path.basename(_out)} · SHA-256 {_signed['manifest']['payload_sha256'][:16]}…")
+                except Exception as _prov_err:
+                    update_status(f"[Provenance] Could not sign {os.path.basename(_out)}: {_prov_err}")
             origimages.clear()
             fakeimages.clear()
 
@@ -1810,6 +1818,7 @@ def batch_process(output_method, files:list[ProcessEntry], use_new_method) -> No
                     v.endframe = get_video_frame_total(v.filename)
 
                 is_streaming_only = output_method == "Virtual Camera"
+                vfx_destination = None
                 if is_streaming_only == False:
                     update_status(f'Creating {os.path.basename(v.finalname)} with {fps} FPS...')
 
@@ -1894,11 +1903,22 @@ def batch_process(output_method, files:list[ProcessEntry], use_new_method) -> No
                                 import shutil as _shutil
                                 _shutil.rmtree(orig_dir, ignore_errors=True)
                 else:
-                    if util.has_extension(v.filename, ['gif']) or util.is_animated_webp(v.filename):
+                    gif_output = util.has_extension(v.filename, ['gif']) or util.is_animated_webp(v.filename)
+                    if gif_output:
                         skip_audio = True
                     else:
                         skip_audio = roop.globals.skip_audio
-                    process_mgr.run_batch_inmem(output_method, v.filename, v.finalname, v.startframe, v.endframe, fps,roop.globals.execution_threads, skip_audio)
+                    if not is_streaming_only and getattr(roop.globals, 'vfx_multi_pass', False):
+                        # Freeze the timestamped name so the matte directory and
+                        # the beauty file share a stem across a long render.
+                        if gif_output:
+                            gifname = util.get_destfilename_from_path(v.filename, roop.globals.output_path, '.gif')
+                            vfx_destination = util.replace_template(gifname, index=index)
+                        else:
+                            vfx_destination = final_video_destination(v.finalname, v.filename, index)
+                    process_mgr.run_batch_inmem(output_method, v.filename, v.finalname, v.startframe, v.endframe,
+                                                fps, roop.globals.execution_threads, skip_audio,
+                                                vfx_destination=vfx_destination)
                 
                 # A Stop (React run-bar, Pinokio sidebar, Ctrl-C) must NOT skip the
                 # finalization below. By the time run_batch_inmem returns, the writer
@@ -1917,7 +1937,7 @@ def batch_process(output_method, files:list[ProcessEntry], use_new_method) -> No
                 if os.path.isfile(video_file_name):
                     if util.has_extension(v.filename, ['gif']) or util.is_animated_webp(v.filename):
                         gifname = util.get_destfilename_from_path(v.filename, roop.globals.output_path, '.gif')
-                        destination = util.replace_template(gifname, index=index)
+                        destination = vfx_destination or util.replace_template(gifname, index=index)
                         pathlib.Path(os.path.dirname(destination)).mkdir(parents=True, exist_ok=True)
 
                         update_status('Creating final GIF')
@@ -1928,7 +1948,7 @@ def batch_process(output_method, files:list[ProcessEntry], use_new_method) -> No
                             _remove_file_retry(video_file_name)
                     else:
                         skip_audio = roop.globals.skip_audio
-                        destination = final_video_destination(video_file_name, v.filename, index)
+                        destination = vfx_destination or final_video_destination(video_file_name, v.filename, index)
                         pathlib.Path(os.path.dirname(destination)).mkdir(parents=True, exist_ok=True)
 
                         # Dubbing against an uploaded track: mux THAT file's audio
@@ -1971,6 +1991,13 @@ def batch_process(output_method, files:list[ProcessEntry], use_new_method) -> No
                         from roop import synthetic_label
                         if synthetic_label.label_enabled():
                             synthetic_label.label_file(destination)
+                        try:
+                            from roop import provenance as _provenance
+                            _signed = _provenance.sign_render_output(destination)
+                            if _signed.get('signed'):
+                                update_status(f"[Provenance] Signed {os.path.basename(destination)} · SHA-256 {_signed['manifest']['payload_sha256'][:16]}…")
+                        except Exception as _prov_err:
+                            update_status(f"[Provenance] Could not sign {os.path.basename(destination)}: {_prov_err}")
 
                 elif is_streaming_only == False and not stopped:
                     update_status(f'Failed processing {os.path.basename(v.finalname)}!')

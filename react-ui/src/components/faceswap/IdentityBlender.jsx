@@ -6,6 +6,8 @@ import {
 } from './identityBlend';
 import { frameIndexOf } from './identityKeyframes';
 import { logFailure } from '../../failureLog';
+import { padVertices, pointAtWeights, toPercents, weightsAtPoint } from '../facemgr/morphPad';
+import EmbeddingReadout from './EmbeddingReadout';
 
 // Identity Blender: latent blend of up to five source identities on the ArcFace
 // hypersphere (Slerp / spherical mean, or the older normalised sum), attribute offsets along fitted directions,
@@ -35,6 +37,60 @@ const DIALS = [
 ];
 
 const pct = (v) => `${Math.round((v || 0) * 100)}%`;
+
+function IdentityAlgebraPad({ components, infoById, sourceFaces, onChange }) {
+  const n = components.length;
+  const weights = components.map((c) => Number(c.weight) || 0);
+  const point = pointAtWeights(weights, n);
+  const vertices = padVertices(n);
+  const dragging = useRef(false);
+  const padRef = useRef(null);
+  const applyPointer = (event) => {
+    const rect = padRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const p = [(event.clientX - rect.left) / rect.width, (event.clientY - rect.top) / rect.height];
+    onChange(weightsAtPoint(p, n).map((w) => w * 100));
+  };
+  const polygon = vertices.map(([x, y]) => `${x * 100},${y * 100}`).join(' ');
+  const percents = toPercents(weights);
+  return (
+    <div className="grid grid-cols-1 gap-3 rounded-xl border border-white/10 bg-black/25 p-2.5 sm:grid-cols-[minmax(150px,190px)_1fr]" data-testid="identity-algebra-pad">
+      <div className="min-w-0">
+        <div className="mb-1 text-nano font-semibold uppercase tracking-[0.14em] text-muted">Identity algebra pad</div>
+        <div ref={padRef} className="relative aspect-square touch-none select-none overflow-hidden rounded-lg border border-cyan-300/20 bg-[radial-gradient(ellipse_at_center,rgba(34,211,238,.12),rgba(3,7,18,.8))]"
+          onPointerDown={(event) => { dragging.current = true; event.currentTarget.setPointerCapture(event.pointerId); applyPointer(event); }}
+          onPointerMove={(event) => { if (dragging.current) applyPointer(event); }}
+          onPointerUp={() => { dragging.current = false; }}
+          onPointerCancel={() => { dragging.current = false; }}
+          role="application" aria-label={`Drag to blend ${n} ArcFace identities`}>
+          <svg viewBox="0 0 100 100" className="absolute inset-0 h-full w-full" aria-hidden="true">
+            {n === 2 ? <line x1={vertices[0][0] * 100} y1={vertices[0][1] * 100} x2={vertices[1][0] * 100} y2={vertices[1][1] * 100} stroke="rgba(103,232,249,.55)" strokeWidth="1.5" />
+              : <polygon points={polygon} fill="rgba(34,211,238,.06)" stroke="rgba(103,232,249,.55)" strokeWidth="1.4" />}
+            {vertices.map(([x, y], i) => <circle key={i} cx={x * 100} cy={y * 100} r="2.2" fill="#67e8f9" />)}
+          </svg>
+          {vertices.map(([x, y], i) => {
+            const info = infoById.get(components[i].source_id);
+            const thumb = info ? sourceFaces[info.index] : null;
+            return <div key={components[i].source_id} className="absolute h-8 w-8 -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-full border-2 border-cyan-200/70 bg-slate-900 shadow-[0_0_12px_rgba(34,211,238,.28)]"
+              style={{ left: `${x * 100}%`, top: `${y * 100}%` }} title={`${info?.name || 'Identity'} · ${percents[i]}%`}>
+              {thumb && <img src={thumb} alt="" className="h-full w-full object-cover" />}
+              <span className="sr-only">{info?.name || `Identity ${i + 1}`}</span>
+            </div>;
+          })}
+          <span className="absolute h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border border-white bg-cyan-300 shadow-[0_0_12px_rgba(34,211,238,.9)]" style={{ left: `${point[0] * 100}%`, top: `${point[1] * 100}%` }} />
+        </div>
+      </div>
+      <ul className="m-0 flex min-w-0 list-none flex-col justify-center gap-2 p-0">
+        {components.map((component, i) => (
+          <li key={component.source_id} className="flex justify-between gap-2 border-b border-white/10 pb-1 text-nano text-white/75">
+            <span className="truncate">{infoById.get(component.source_id)?.name || `Identity ${i + 1}`}</span>
+            <span className="font-mono tabular-nums text-cyan-200">{percents[i]}%</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
 
 function scoreBadge(entry) {
   if (!entry || entry.score == null || Number.isNaN(entry.score)) return null;
@@ -75,10 +131,13 @@ export default function IdentityBlender({
   // Diagnostics: debounced, and re-read whenever the recipe or gallery changes.
   const sig = JSON.stringify(recipe) + '|' + sourceFacesInfo.map((i) => i?.id).join(',');
   useEffect(() => {
+    const controller = new AbortController();
     const t = setTimeout(() => {
-      postJSON('/api/identity/blend', recipe, { abortOnUnmount: true }).then(setDiag).catch(logFailure('Updating the identity blend', { toast: false }));
+      postJSON('/api/identity/blend', recipe, { signal: controller.signal, abortOnUnmount: true })
+        .then((result) => { if (!controller.signal.aborted) setDiag(result); })
+        .catch(logFailure('Updating the identity blend', { toast: false }));
     }, 250);
-    return () => clearTimeout(t);
+    return () => { clearTimeout(t); controller.abort(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sig]);
 
@@ -223,6 +282,10 @@ export default function IdentityBlender({
             );
           })}
         </div>
+        {components.length >= 2 && (
+          <IdentityAlgebraPad components={components} infoById={infoById} sourceFaces={sourceFaces}
+            onChange={(weights) => setComponents(components.map((c, i) => ({ ...c, weight: weights[i] })))} />
+        )}
         <input ref={fileRef} type="file" accept="image/*" className="sr-only" aria-label="Choose a photo for this identity slot"
           onChange={(e) => { uploadInto(pendingSlot.current, Array.from(e.target.files || [])); e.target.value = ''; }} />
 
@@ -232,6 +295,7 @@ export default function IdentityBlender({
         {diag?.diagnostics?.missing?.length > 0 && (
           <p className="text-mini text-amber-300/80">{diag.diagnostics.missing.length} blended source(s) are no longer in the gallery and are skipped.</p>
         )}
+        <EmbeddingReadout embedding={diag?.diagnostics?.embedding} testId="identity-blender-vector" />
 
         {pair && pair.length >= 2 && (
           <div data-testid="identity-pairwise" className="space-y-1">

@@ -34,6 +34,7 @@ export const LONG_RUNNING = {
   'POST /api/advisor': 'analyses the target clip (detection over sampled frames)',
   'POST /api/quality/analyze': 'detects and embeds faces across an output',
   'POST /api/extras/apply': 'media edit / re-encode of an uploaded file',
+  'POST /api/provenance/verify': 'hash a completed render file',
   'POST /api/extras/enhance': 'AI upscale / colorize of an uploaded file',
 
   // ── scans of the target clip

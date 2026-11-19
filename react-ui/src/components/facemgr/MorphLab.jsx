@@ -7,6 +7,7 @@ import {
   togglePick, weightsAtPoint,
 } from './morphPad';
 import { usePipStore } from '../../store/pipStore';
+import EmbeddingReadout from '../faceswap/EmbeddingReadout';
 
 // Embedding Mixer & Morph Lab.
 //
@@ -350,6 +351,7 @@ export default function MorphLab({ notify, setTab }) {
                     </li>
                   ))}
                 </ul>
+                <EmbeddingReadout embedding={summary.embedding} testId="morph-arcface-vector" />
                 {summary.pairwise_cosine?.length >= 2 && (
                   <div data-testid="morph-pairwise">
                     <div className="mb-1 text-nano font-semibold uppercase tracking-[0.14em] text-muted">Pairwise cosine between the inputs</div>

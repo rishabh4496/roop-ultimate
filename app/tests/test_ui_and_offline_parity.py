@@ -114,7 +114,7 @@ TOOLS = [
     ("Snapshot Slots", "components/faceswap/SnapshotSlots.jsx", r"setReference"),
     ("Pre-flight Linter", "components/faceswap/PreFlightLinter.jsx", r"/api/render/preflight"),
     ("Frame Flamegraph", "components/faceswap/FrameFlamegraph.jsx", r"FrameFlamegraph"),
-    ("LUT bake", "components/faceswap/ColorGradingPanel.jsx", r"lut-bake-checkbox"),
+    ("LUT bake", "components/faceswap/ColorGradingPanel.jsx", r"Bake LUT into Hardware Encode"),
 ]
 
 

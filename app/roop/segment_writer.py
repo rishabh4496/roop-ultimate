@@ -176,7 +176,7 @@ class SegmentedVideoWriter:
                  source_video="", frame_start=0, frame_end=0, signature="",
                  preset=None, bitrate=None, threads=None,
                  ffmpeg_params=None, colorspace=None, checkpoint_callback=None,
-                 lut_path=None, lut_bake=False):
+                 lut_path=None, lut_bake=False, lut_opacity=None):
         self.target_video = target_video
         self.size = size
         self.fps = float(fps)
@@ -219,12 +219,18 @@ class SegmentedVideoWriter:
             "color": color,
             "lut_path": lut_path,
             "lut_bake": lut_bake,
+            "lut_opacity": lut_opacity,
         }
         self._checkpoint_callback = checkpoint_callback
         self._write_lock = threading.RLock()
 
         # Everything a resume must match on — resuming into a run with different
         # settings/trim/dims would silently mix outputs.
+        identity_options = dict(self._writer_options)
+        if not lut_bake or lut_opacity in (None, 1.0):
+            # The legacy manifest assumed full opacity. Preserve compatible
+            # partial renders when the LUT was inactive or at full strength.
+            identity_options.pop("lut_opacity")
         self._identity = {
             "version": MANIFEST_VERSION,
             "source": os.path.abspath(source_video) if source_video else "",
@@ -239,7 +245,7 @@ class SegmentedVideoWriter:
             # ColorPlan is a dataclass, not JSON: the manifest must store (and
             # a resume must compare) its plain-dict form.
             "writer_options": {k: (dataclasses.asdict(v) if dataclasses.is_dataclass(v) else v)
-                               for k, v in self._writer_options.items()},
+                               for k, v in identity_options.items()},
         }
         # Only present for a managed HDR render (roop/hdr_pipeline.py), so an
         # SDR manifest written before this key existed still matches (None ==

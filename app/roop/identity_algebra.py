@@ -1240,6 +1240,7 @@ def describe_blend(recipe: BlendRecipe, facesets: Iterable[Any],
         refs = [faceset_identity_vector(by_id[sid]) for sid in ref_ids]
         res = deidentify(final, refs, cfg["max_cosine"], cfg["min_primary_cosine"])
         if res is not None:
+            final = res.embedding
             out["deidentify"] = {"references": ref_ids, "max_cosine": cfg["max_cosine"],
                                  "applied": res.applied, "satisfied": res.satisfied, "reason": res.reason,
                                  "cosine_before": [round(x, 4) for x in res.cosine_before],
@@ -1249,4 +1250,9 @@ def describe_blend(recipe: BlendRecipe, facesets: Iterable[Any],
         out["missing"] += [sid for sid in cfg["references"] if sid not in by_id]
     if recipe.has_keyframes:
         out["keyframes"] = describe_keyframes(recipe, facesets)
+    if final is not None:
+        # The inspector renders this concrete centroid vector as a compact
+        # 512-D readout; the render path still resolves pose-aware embeddings
+        # against the selected face at its own frame.
+        out["embedding"] = np.asarray(final, dtype=np.float32).reshape(-1).tolist()
     return out

@@ -1,6 +1,25 @@
-import React, { useRef } from 'react';
+import React, { useEffect, useId, useRef, useState } from 'react';
 import { parseCubeLut } from './cubeLut.js';
 import { GRADING_DEFAULTS } from './webgl2GradingPipeline.js';
+import { useApi } from '../../useApi';
+
+const clamp01 = (v) => Math.max(0, Math.min(1, v));
+
+function lutColor(lut, rgb) {
+  const { size, data, domainMin, domainMax } = lut;
+  const p = rgb.map((v, c) => clamp01((v - domainMin[c]) / (domainMax[c] - domainMin[c])) * (size - 1));
+  const lo = p.map(Math.floor);
+  const t = p.map((v, c) => v - lo[c]);
+  const [first, second, third] = [0, 1, 2].sort((a, b) => t[b] - t[a]);
+  const strides = [3, size * 3, size * size * 3];
+  const base = lo[0] * strides[0] + lo[1] * strides[1] + lo[2] * strides[2];
+  const step = (axis) => lo[axis] < size - 1 ? strides[axis] : 0;
+  const a = base + step(first);
+  const b = a + step(second);
+  const c = b + step(third);
+  return [0, 1, 2].map((i) => data[base + i] * (1 - t[first])
+    + data[a + i] * (t[first] - t[second]) + data[b + i] * (t[second] - t[third]) + data[c + i] * t[third]);
+}
 
 /**
  * Stage 18: WebGL2 3D .cube LUT Grading Panel.
@@ -16,11 +35,25 @@ import { GRADING_DEFAULTS } from './webgl2GradingPipeline.js';
 export default function ColorGradingPanel({
   params = GRADING_DEFAULTS,
   onChange,
-  onLutLoaded,
   notify,
+  previewSource = null,
   className = '',
 }) {
   const fileInputRef = useRef(null);
+  const fileInputId = useId();
+  const originalCanvasRef = useRef(null);
+  const gradedCanvasRef = useRef(null);
+  const [activeLut, setActiveLut] = useState(null);
+  const [shelf, setShelf] = useState([]);
+  const { getJSON, postFile, postJSON } = useApi();
+
+  useEffect(() => {
+    let live = true;
+    getJSON('/api/lut/shelf').then((result) => {
+      if (live) setShelf(result.files || []);
+    }).catch(() => {});
+    return () => { live = false; };
+  }, [getJSON]);
 
   const update = (key, value) => {
     if (onChange) {
@@ -28,34 +61,26 @@ export default function ColorGradingPanel({
     }
   };
 
-  const handleFileChange = (e) => {
+  const handleFileChange = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const text = event.target?.result;
-      if (!text || typeof text !== 'string') return;
-
-      try {
-        const parsed = parseCubeLut(text);
-        update('lut_path', file.path || file.name);
-        if (onLutLoaded) {
-          onLutLoaded(parsed);
-        }
-        notify?.(`Loaded 3D LUT: ${parsed.title} (${parsed.size}×${parsed.size}×${parsed.size})`);
-      } catch (err) {
-        // Refuse invalid domain or malformed LUT with a clear UI notification
-        notify?.(`LUT Error: ${err.message}`, 'error');
-        if (fileInputRef.current) fileInputRef.current.value = '';
-      }
-    };
-    reader.readAsText(file);
+    try {
+      const parsed = parseCubeLut(await file.text());
+      const saved = await postFile('/api/lut/upload', file);
+      setActiveLut(parsed);
+      setShelf((previous) => previous.some((entry) => entry.path === saved.path) ? previous
+        : [...previous, { path: saved.path, name: file.name }]);
+      update('lut_path', saved.path);
+      notify?.(`Loaded ${parsed.title} · ${saved.size}³`);
+    } catch (err) {
+      notify?.(`LUT Error: ${err.message}`, 'error');
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
   };
 
   const clearLut = () => {
-    update('lut_path', '');
-    if (onLutLoaded) onLutLoaded(null);
+    onChange?.({ lut_path: '', lut_bake: false });
+    setActiveLut(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
     notify?.('Cleared 3D LUT');
   };
@@ -67,6 +92,74 @@ export default function ColorGradingPanel({
 
   const lutName = params.lut_path ? params.lut_path.split(/[/\\]/).pop() : '';
 
+  useEffect(() => {
+    if (!params.lut_path) { setActiveLut(null); return undefined; }
+    let live = true;
+    postJSON('/api/lut/read', { path: params.lut_path }, { abortOnUnmount: true })
+      .then((result) => {
+        if (!live) return;
+        const parsed = parseCubeLut(result.cube_text);
+        setActiveLut(parsed);
+      })
+      .catch(() => { if (live) setActiveLut(null); });
+    return () => { live = false; };
+  }, [params.lut_path, postJSON]);
+
+  useEffect(() => {
+    if (!activeLut) return undefined;
+    const previewImage = typeof previewSource === 'string' && previewSource ? new Image() : null;
+    if (previewImage) previewImage.src = previewSource;
+    let paintedSource;
+    let paintedTime;
+    const paint = () => {
+      const originalCanvas = originalCanvasRef.current;
+      const gradedCanvas = gradedCanvasRef.current;
+      const source = previewImage || (typeof previewSource === 'function' ? previewSource() : previewSource);
+      const sourceReady = source && (source.tagName !== 'VIDEO' || source.readyState >= 2)
+        && (source.tagName !== 'IMG' || (source.complete && source.naturalWidth > 0));
+      if (sourceReady && originalCanvas && gradedCanvas) {
+        const mediaTime = source.tagName === 'VIDEO' ? source.currentTime : source.currentSrc;
+        if (paintedSource === source && paintedTime === mediaTime) return;
+        const width = source.videoWidth || source.naturalWidth || source.width;
+        const height = source.videoHeight || source.naturalHeight || source.height;
+        if (!width || !height) return;
+        for (const canvas of [originalCanvas, gradedCanvas]) {
+          const ctx = canvas.getContext('2d', { willReadFrequently: canvas === gradedCanvas });
+          const scale = Math.min(canvas.width / width, canvas.height / height);
+          try {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(source, (canvas.width - width * scale) / 2, (canvas.height - height * scale) / 2,
+              width * scale, height * scale);
+          } catch { return; }
+        }
+        paintedSource = source;
+        paintedTime = mediaTime;
+        try {
+          const ctx = gradedCanvas.getContext('2d', { willReadFrequently: true });
+          const pixels = ctx.getImageData(0, 0, gradedCanvas.width, gradedCanvas.height);
+          const data = pixels.data;
+          const strength = clamp01(Number(params.lut_opacity ?? 1));
+          for (let i = 0; i < data.length; i += 4) {
+            const input = [data[i] / 255, data[i + 1] / 255, data[i + 2] / 255];
+            const graded = lutColor(activeLut, input);
+            data[i] = Math.round(clamp01(input[0] * (1 - strength) + graded[0] * strength) * 255);
+            data[i + 1] = Math.round(clamp01(input[1] * (1 - strength) + graded[1] * strength) * 255);
+            data[i + 2] = Math.round(clamp01(input[2] * (1 - strength) + graded[2] * strength) * 255);
+          }
+          ctx.putImageData(pixels, 0, 0);
+        } catch { /* keep the ungraded thumbnail visible if readback is unavailable */ }
+      }
+    };
+    if (previewImage) {
+      previewImage.onload = paint;
+      paint();
+      return () => { previewImage.onload = null; };
+    }
+    paint();
+    const timer = window.setInterval(paint, 250);
+    return () => window.clearInterval(timer);
+  }, [activeLut, previewSource, params.lut_opacity]);
+
   return (
     <div
       className={`glass-panel border border-white/15 rounded-2xl p-3 flex flex-col gap-3 select-none text-xs text-white/80 ${className}`}
@@ -76,8 +169,14 @@ export default function ColorGradingPanel({
       <div className="flex items-center justify-between border-b border-white/10 pb-2">
         <div className="flex items-center gap-1.5 font-bold text-mini tracking-wide text-white">
           <span className="h-2 w-2 rounded-full bg-[var(--accent)]" />
-          <span>3D .cube LUT & Color Grade</span>
+          <span>Color & 3D LUT grading</span>
         </div>
+
+        {shelf.length > 0 && <select aria-label="Saved LUTs" value={shelf.some((entry) => entry.path === params.lut_path) ? params.lut_path : ''}
+          onChange={(event) => update('lut_path', event.target.value)} className="w-full rounded-lg glass-input px-2 py-1.5 text-mini">
+          <option value="" disabled>Choose a saved LUT</option>
+          {shelf.map((entry) => <option key={entry.path} value={entry.path}>{entry.name}</option>)}
+        </select>}
         <button
           type="button"
           onClick={resetGrading}
@@ -117,15 +216,28 @@ export default function ColorGradingPanel({
             accept=".cube,.CUBE"
             onChange={handleFileChange}
             className="sr-only"
-            id="cube-lut-file-input"
+            id={fileInputId}
           />
           <label
-            htmlFor="cube-lut-file-input"
+            htmlFor={fileInputId}
             className="flex-1 py-1.5 px-3 rounded-lg bg-white/10 hover:bg-white/15 text-center text-nano font-bold text-white/90 cursor-pointer border border-white/10 transition-colors"
           >
             {lutName ? 'Replace .cube LUT' : 'Load .cube LUT file'}
           </label>
         </div>
+
+        {activeLut && (
+          <div className="grid grid-cols-2 gap-2" data-testid="lut-live-thumbnails">
+            <div className="min-w-0 rounded-lg border border-white/10 bg-black/30 p-1.5">
+              <div className="mb-1 truncate text-micro uppercase tracking-wider text-white/45">Current frame</div>
+              <canvas ref={originalCanvasRef} width="144" height="82" className="aspect-video w-full rounded object-cover" />
+            </div>
+            <div className="min-w-0 rounded-lg border border-cyan-300/20 bg-cyan-950/20 p-1.5">
+              <div className="mb-1 truncate text-micro uppercase tracking-wider text-cyan-100/70">LUT preview</div>
+              <canvas ref={gradedCanvasRef} width="144" height="82" className="aspect-video w-full rounded object-cover" />
+            </div>
+          </div>
+        )}
 
         {/* LUT Blend Opacity */}
         {params.lut_path && (
@@ -139,6 +251,7 @@ export default function ColorGradingPanel({
               min="0"
               max="1"
               step="0.01"
+              aria-label="LUT intensity"
               value={params.lut_opacity ?? 1.0}
               onChange={(e) => update('lut_opacity', parseFloat(e.target.value))}
               className="w-full h-1.5 rounded-lg appearance-none bg-white/10 accent-[var(--accent)] cursor-pointer"
@@ -146,24 +259,19 @@ export default function ColorGradingPanel({
           </div>
         )}
 
-        {/* Bake LUT into 10-bit FFmpeg Encode toggle */}
-        <label
-          htmlFor="lut-bake-checkbox"
-          aria-label="Bake into 10-bit FFmpeg Encode"
-          className="flex items-center justify-between p-2 rounded-xl bg-black/30 border border-white/10 cursor-pointer group"
-        >
-          <div className="space-y-0.5 pr-2">
-            <span className="block text-nano font-bold text-white/90 group-hover:text-white">Bake into 10-bit FFmpeg Encode</span>
-            <span className="block text-micro text-white/50">Tetrahedral 3D interpolation baked into output vs display preview</span>
+        <div className="space-y-1 rounded-xl border border-white/10 bg-black/30 p-2">
+          <div className="text-nano font-semibold uppercase tracking-wider text-white/50">LUT output mode</div>
+          <div className="grid grid-cols-2 gap-1" role="group" aria-label="LUT output mode">
+            {[[false, 'Display-Only Preview LUT'], [true, 'Bake LUT into Hardware Encode']].map(([bake, label]) => (
+              <button key={label} type="button" aria-pressed={!!params.lut_bake === bake} disabled={bake && !params.lut_path}
+                onClick={() => update('lut_bake', bake)}
+                className={`rounded-lg border px-2 py-1.5 text-micro font-bold transition-colors ${!!params.lut_bake === bake ? 'border-cyan-300/50 bg-cyan-400/15 text-cyan-100' : 'border-white/10 text-white/55 hover:border-white/25'}`}>
+                {label}
+              </button>
+            ))}
           </div>
-          <input
-            id="lut-bake-checkbox"
-            type="checkbox"
-            checked={!!params.lut_bake}
-            onChange={(e) => update('lut_bake', e.target.checked)}
-            className="h-4 w-4 rounded accent-[var(--accent)] bg-black/40 border-white/20 cursor-pointer"
-          />
-        </label>
+          <p className="m-0 text-micro text-white/40">Baking uses the same intensity value above in NVHardwareVideoWriter or its software fallback.</p>
+        </div>
       </div>
 
       {/* 3-Way Lift / Gamma / Gain */}

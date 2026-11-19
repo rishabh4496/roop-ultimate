@@ -113,6 +113,8 @@ export default function InteractivePreview({
   colorBadge = '',
   notify = null,
   onGradingChange = null,
+  gradingSettings = null,
+  gradingPreviewSource = null,
   onViewportTransform = null,
   onLoupeCoordinates = null,
   viewportApiRef = null,
@@ -259,7 +261,12 @@ export default function InteractivePreview({
   const [vrActive, setVrActive] = useState(false);
   const [vrParams, setVrParams] = useState(DEFAULT_VR_PARAMS);
   const [gradingParams, setGradingParams] = useState(GRADING_DEFAULTS);
-  const [_activeLut, setActiveLut] = useState(null);
+  useEffect(() => {
+    if (gradingSettings) {
+      setGradingParams(Object.fromEntries(Object.entries(GRADING_DEFAULTS)
+        .map(([key, fallback]) => [key, gradingSettings[key] ?? fallback])));
+    }
+  }, [gradingSettings]);
   // Feature: False-Color Luminance & Skin-Tone Zebra Overlay
   const [zebraActive, setZebraActive] = useState(false);
   const [monitorActive, setMonitorActive] = useState(false);
@@ -2736,12 +2743,12 @@ export default function InteractivePreview({
       {/* ── WebGL2 3D .cube LUT Grading Panel ── */}
       {gradingActive && (
         <ColorGradingPanel
-          params={gradingParams}
+          params={gradingSettings || gradingParams}
+          previewSource={gradingPreviewSource || afterSrc || beforeSrc}
           onChange={(patch) => {
             setGradingParams((prev) => ({ ...prev, ...patch }));
             if (onGradingChange) onGradingChange(patch);
           }}
-          onLutLoaded={setActiveLut}
           notify={notify}
           className="absolute bottom-16 left-3 w-[290px] z-40 max-h-[75vh] overflow-y-auto"
         />

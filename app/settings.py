@@ -106,8 +106,11 @@ UI_SETTINGS = (
     ('synthetic_watermark', 'Visible watermark on output', 'Output'),
     ('synthetic_watermark_text', 'Watermark text', 'Output'),
     ('vfx_multi_pass', 'VFX multi-pass output', 'Output'),
-    ('vfx_export_matte', 'VFX export combined matte pass', 'Output'),
+    ('vfx_export_matte', 'VFX export matte sequences', 'Output'),
     ('vfx_export_crops', 'VFX export aligned face crops & JSON', 'Output'),
+    ('vfx_export_xseg3', 'VFX export XSeg 3 matte', 'Output'),
+    ('vfx_export_face_parser', 'VFX export face parsing matte', 'Output'),
+    ('vfx_export_difference', 'VFX export mask difference matte', 'Output'),
     ('enable_provenance_signer', 'Local cryptographic provenance signer', 'Output'),
     ('embed_provenance_watermark', 'Imperceptible frequency-domain watermark', 'Output'),
     ('provenance_disclosure', 'Synthetic media disclosure text', 'Output'),
@@ -1256,6 +1259,9 @@ class Settings:
         self.vfx_multi_pass = bool(self.default_get(data, 'vfx_multi_pass', False))
         self.vfx_export_matte = bool(self.default_get(data, 'vfx_export_matte', True))
         self.vfx_export_crops = bool(self.default_get(data, 'vfx_export_crops', True))
+        self.vfx_export_xseg3 = bool(self.default_get(data, 'vfx_export_xseg3', True))
+        self.vfx_export_face_parser = bool(self.default_get(data, 'vfx_export_face_parser', True))
+        self.vfx_export_difference = bool(self.default_get(data, 'vfx_export_difference', False))
         self.enable_provenance_signer = bool(self.default_get(data, 'enable_provenance_signer', True))
         self.embed_provenance_watermark = bool(self.default_get(data, 'embed_provenance_watermark', False))
         self.provenance_disclosure = str(self.default_get(data, 'provenance_disclosure', 'AI-generated synthetic media produced with Roop Ultimate.'))
@@ -1678,6 +1684,9 @@ class Settings:
             'vfx_multi_pass': self.vfx_multi_pass,
             'vfx_export_matte': self.vfx_export_matte,
             'vfx_export_crops': self.vfx_export_crops,
+            'vfx_export_xseg3': self.vfx_export_xseg3,
+            'vfx_export_face_parser': self.vfx_export_face_parser,
+            'vfx_export_difference': self.vfx_export_difference,
             'enable_provenance_signer': self.enable_provenance_signer,
             'embed_provenance_watermark': self.embed_provenance_watermark,
             'provenance_disclosure': self.provenance_disclosure,

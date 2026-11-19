@@ -43,6 +43,7 @@ test.describe('Morph Lab (Face Manager)', () => {
     const ids = ['src:0', 'src:1', 'lib:Alice.fsz', 'lib:Bob.fsz', 'lib:S20 Mix A.fsz'];
     for (const id of ids) await page.getByTestId(`morph-pick-${id}`).click();
     await expect(page.getByTestId('morph-pad')).toBeVisible();
+    await expect(page.getByTestId('morph-arcface-vector')).toContainText('512D');
     await expect(page.getByTestId('morph-shares')).toHaveText(/Shares: .* 20% · .* 20% · .* 20% · .* 20% · .* 20%/);
     await expect(page.getByTestId('morph-weight-4')).toBeVisible();
 
@@ -132,6 +133,16 @@ test.describe('Identity Blender (Face Swap)', () => {
     await expect(blender.getByTestId('blend-mode-slerp')).toHaveAttribute('aria-pressed', 'true');
     await bindTwo(blender);
     await expect(blender.getByText('Drop a photo')).toHaveCount(3);
+    const pad = blender.getByRole('application', { name: 'Drag to blend 2 ArcFace identities' });
+    await expect(pad).toBeVisible();
+    await expect(blender.getByTestId('identity-blender-vector')).toContainText('512D');
+    const box = await pad.boundingBox();
+    const [padUpdate] = await Promise.all([
+      page.waitForRequest((r) => r.url().endsWith('/api/identity/blend') && r.method() === 'POST'
+        && JSON.parse(r.postData() || '{}').components?.[0]?.weight > 90),
+      pad.click({ position: { x: box.width * 0.1, y: box.height * 0.5 } }),
+    ]);
+    expect(JSON.parse(padUpdate.postData()).components).toHaveLength(2);
     await expect(blender.getByTestId('identity-pairwise')).toBeVisible();
     await expect(blender.getByTestId('identity-pairwise').locator('tbody tr')).toHaveCount(2);
 

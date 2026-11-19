@@ -41,7 +41,7 @@ def frame_capped_queue_depth(qdepth, threads, max_frames=None):
 class BatchProcessingMixin:
     """Own the per-clip batch lifecycle separately from face operations."""
 
-    def run_batch_inmem(self, output_method, source_video, target_video, frame_start, frame_end, fps, threads: int = 1, skip_audio=False):
+    def run_batch_inmem(self, output_method, source_video, target_video, frame_start, frame_end, fps, threads: int = 1, skip_audio=False, *, vfx_destination=None):
         try:
             from roop.temporal_smart_skip import clear_track_patches
             clear_track_patches()
@@ -687,6 +687,8 @@ class BatchProcessingMixin:
                         pass
                     cap = None
 
+        self._vfx_session = None
+        self._vfx_requested_layers = ()
         self.output_to_file = output_method != "Virtual Camera"
         self.output_to_cam = output_method == "Virtual Camera" or output_method == "Both"
 
@@ -718,6 +720,7 @@ class BatchProcessingMixin:
                 except (OSError, ValueError, KeyError, AttributeError, TypeError):
                     pass
             use_resume = (not is_awebp) and os.environ.get('ROOP_RESUME', '1') == '1'
+            skip = 0
             if use_resume:
                 from roop.segment_writer import SegmentedVideoWriter
                 self.videowriter = SegmentedVideoWriter(
@@ -728,7 +731,8 @@ class BatchProcessingMixin:
                     checkpoint_callback=getattr(
                         roop.globals, '_checkpoint_segment_callback', None),
                     lut_path=getattr(roop.globals, 'lut_path', None),
-                    lut_bake=bool(getattr(roop.globals, 'lut_bake', False)))
+                    lut_bake=bool(getattr(roop.globals, 'lut_bake', False)),
+                    lut_opacity=getattr(roop.globals, 'lut_opacity', 1.0))
                 skip = self.videowriter.resume_frames
                 if skip >= frame_count > 0:
                     # Everything was already encoded by the interrupted run —
@@ -785,6 +789,25 @@ class BatchProcessingMixin:
                         dar=_src_dar,
                         color=_src_color,
                     )
+            if (getattr(roop.globals, 'vfx_multi_pass', False)
+                    and getattr(roop.globals, 'vfx_export_matte', True)):
+                requested = []
+                if getattr(roop.globals, 'vfx_export_xseg3', True):
+                    requested.append('xseg3')
+                if getattr(roop.globals, 'vfx_export_face_parser', True):
+                    requested.append('face_parser')
+                if getattr(roop.globals, 'vfx_export_difference', False):
+                    requested.append('difference')
+                if requested:
+                    stem = os.path.splitext(vfx_destination or target_video)[0].removesuffix('__temp')
+                    vfx_dir = f'{stem}_vfx'
+                    from roop.vfx_multipass import VfxMultiPassSession
+                    try:
+                        self._vfx_session = VfxMultiPassSession(vfx_dir, fps=fps, resume_offset=skip)
+                    except OSError as exc:
+                        bar_write(f'[VFX] Could not create matte output folder: {exc}')
+                    else:
+                        self._vfx_requested_layers = tuple(requested)
         _dash.s1_step("segment/GOP probe")      # the writer above ran the resume / segment-custody probe
         if self.output_to_cam:
             self.streamwriter = StreamWriter((width, height), int(fps))
@@ -1191,7 +1214,7 @@ class BatchProcessingMixin:
                 readthread.daemon = True
                 readthread.start()
 
-                writethread = Thread(target=self.write_frames_thread)
+                writethread = Thread(target=self.write_frames_thread, args=(frame_start,))
                 writethread.daemon = True
                 writethread.start()
 
@@ -1206,7 +1229,8 @@ class BatchProcessingMixin:
                         with ThreadPoolExecutor(thread_name_prefix='swap_proc', max_workers=self.num_threads, initializer=pin_current_thread_to_p_cores) as executor:
                             futures = []
                             for threadindex in range(threads):
-                                future = executor.submit(self.process_videoframes, threadindex, lambda: self.update_progress(progress))
+                                future = executor.submit(self.process_videoframes, threadindex,
+                                                         lambda: self.update_progress(progress), frame_start)
                                 futures.append(future)
                             for future in as_completed(futures):
                                 future.result()
@@ -1241,6 +1265,15 @@ class BatchProcessingMixin:
                 # encode cost; write_frame alone misses the final lifecycle.
                 writer = self.videowriter
                 failed = self._writer_error is not None or sys.exc_info()[1] is not None
+                matte_frames_encoded = None
+                if not failed and getattr(self, '_vfx_session', None) is not None:
+                    # Segment custody clears its counters after promotion.
+                    # This total includes both the resume prefix and open part.
+                    matte_frames_encoded = getattr(writer, 'total_encoded', None)
+                    if matte_frames_encoded is None:
+                        matte_frames_encoded = getattr(self, '_encoded_frame_count', None)
+                    if matte_frames_encoded is None:
+                        matte_frames_encoded = getattr(writer, 'frames_written', getattr(writer, '_frames_written', None))
                 _custody_t0 = time.perf_counter()
                 _dash.manager.s4_begin()
                 try:
@@ -1266,6 +1299,17 @@ class BatchProcessingMixin:
                         bar_write(f'[ProcessMgr] output cleanup failed after render error: {exc}')
                     else:
                         raise
+                if getattr(self, '_vfx_session', None) is not None:
+                    try:
+                        if not failed:
+                            matte_manifest = self._vfx_session.finalize_mattes(
+                                requested=self._vfx_requested_layers, frame_count=matte_frames_encoded,
+                                frame_shape=(height, width), source_start=frame_start - skip)
+                            bar_write(f'[VFX] Matte manifest: {matte_manifest}')
+                    except Exception as exc:
+                        bar_write(f'[VFX] Matte manifest failed: {exc}')
+                    self._vfx_session = None
+                    self._vfx_requested_layers = ()
                 if not failed:
                     _dash.s4_step("segment custody & concat", time.perf_counter() - _custody_t0)
                 self.videowriter = None

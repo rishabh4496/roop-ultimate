@@ -40,7 +40,7 @@ def list_output():
     if out and os.path.isdir(out):
         for f in sorted(os.listdir(out), reverse=True):
             full = os.path.join(out, f)
-            if os.path.isfile(full) and not f.startswith("."):
+            if os.path.isfile(full) and not f.startswith(".") and not f.endswith(".provenance.json"):
                 kind = "video" if util.is_video(full) else ("image" if util.is_image(full) else "file")
                 items.append({"name": f, "kind": kind, "url": f"/outputs/{f}",
                               "path": f"/outputs/{f}", "absolute_path": full,

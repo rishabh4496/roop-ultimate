@@ -47,7 +47,9 @@ def extras_apply(file: UploadFile = File(...),
                        fps: float = Form(30.0),
                        crop_left: int = Form(0), crop_right: int = Form(0),
                        crop_top: int = Form(0), crop_bottom: int = Form(0),
-                       override_audio_path: str = Form(""), audio_offset_ms: float = Form(0.0)):
+                       override_audio_path: str = Form(""), audio_offset_ms: float = Form(0.0),
+                       lut_path: str = Form(""), lut_bake: bool = Form(False),
+                       lut_opacity: float = Form(1.0)):
     from ui.main import prepare_environment
     prepare_environment()
     # Stage 17: the audio half of mouth custody. A track from /api/lipsync/audio/add replaces the clip's audio and
@@ -107,6 +109,28 @@ def extras_apply(file: UploadFile = File(...),
     oh, ow = first.shape[:2]
     outpath = os.path.join(out_dir, "edited_" + os.path.splitext(os.path.basename(path))[0] + ".mp4")
     raw_tmp = os.path.join(out_dir, f".raw_edited_{os.path.splitext(os.path.basename(path))[0]}_{ow}x{oh}.mp4")
+    if lut_bake:
+        from roop.util_ffmpeg import mux_with_audio_track
+        from roop.video_stream import NVHardwareVideoWriter
+        from routes_lut import resolve_lut_asset
+
+        grade = str(resolve_lut_asset(lut_path))
+        try:
+            with NVHardwareVideoWriter(raw_tmp, ow, oh, fps, codec="h264_nvenc",
+                                       lut_path=grade, lut_bake=True, lut_opacity=lut_opacity) as writer:
+                writer.write_frame(first)
+                for i in range(2, total + 1):
+                    frame = get_video_frame(path, i)
+                    if frame is not None:
+                        writer.write_frame(_process_frame(frame))
+            if not mux_with_audio_track(raw_tmp, track or path, path, None, None, outpath, slip_ms):
+                return JSONResponse(status_code=500, content={"message": "could not mux the graded video"})
+        finally:
+            if os.path.isfile(raw_tmp):
+                os.remove(raw_tmp)
+        _label_output(outpath)
+        url = f"/outputs/{os.path.basename(outpath)}"
+        return {"path": url, "url": url, "name": os.path.basename(outpath), "absolute_path": outpath, "kind": "video"}
     writer = cv2.VideoWriter(raw_tmp, cv2.VideoWriter_fourcc(*"mp4v"), fps, (ow, oh))
     try:
         for i in range(1, total + 1):

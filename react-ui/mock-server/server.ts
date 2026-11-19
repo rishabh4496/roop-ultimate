@@ -1908,10 +1908,10 @@ async function startServer() {
 
     const outputFormat = String(p.video_format || appSettings.output_video_format || 'mp4').toLowerCase().replace(/^\./, '');
     const outputCodec = codec;
-    const codecContainers = { mp4: ['libx264', 'libx265', 'h264_nvenc', 'hevc_nvenc', 'av1_nvenc', 'libsvtav1'], mkv: ['libx264', 'libx265', 'h264_nvenc', 'hevc_nvenc', 'av1_nvenc', 'libsvtav1', 'libvpx-vp9', 'libvpx', 'ffv1'], mov: ['libx264', 'libx265', 'h264_nvenc', 'hevc_nvenc', 'prores_ks'], webm: ['libvpx-vp9', 'libvpx', 'libsvtav1'] };
+    const codecContainers: Record<string, string[]> = { mp4: ['libx264', 'libx265', 'h264_nvenc', 'hevc_nvenc', 'av1_nvenc', 'libsvtav1'], mkv: ['libx264', 'libx265', 'h264_nvenc', 'hevc_nvenc', 'av1_nvenc', 'libsvtav1', 'libvpx-vp9', 'libvpx', 'ffv1'], mov: ['libx264', 'libx265', 'h264_nvenc', 'hevc_nvenc', 'prores_ks'], webm: ['libvpx-vp9', 'libvpx', 'libsvtav1'] };
     const targetWidth = Number(p.target_width || 0);
     const targetHeight = Number(p.target_height || 0);
-    const targetDimensions = Array.isArray(p.target_dimensions) ? p.target_dimensions.map((item: any) => ({
+    const targetDimensions: Array<{ width: number; height: number; name: string }> = Array.isArray(p.target_dimensions) ? p.target_dimensions.map((item: any) => ({
       width: Number(item?.width || item?.video_width || 0),
       height: Number(item?.height || item?.video_height || 0),
       name: String(item?.name || ''),
@@ -1945,14 +1945,14 @@ async function startServer() {
     const fszCheck = { ok: false, severity: 'unknown', faceset_file: p.faceset_file || '', missing_angles: [], warning: 'Faceset angle coverage was not measured by this pre-flight probe.', auto_fix: null };
     const segmentsCheck = { ok: true, severity: 'ok', keep_segments: p.keep_segments !== false, retention_path: p.segment_retention_path || '.segments/', warning: null, auto_fix: null };
 
-    const warnings: Array<{ check: string; message: string }> = [];
+    const warnings: Array<{ check: string; message: string; severity: string; auto_fix?: string; auto_fix_label?: string }> = [];
     const autoFixes: Array<{ action: string; label: string; codec?: string; enhancer?: string; provider?: string; video_format?: string; batch_size?: number; keep_segments?: boolean; route?: string }> = [];
     const checks = { disk: diskCheck, encoder: encoderCheck, provider: providerCheck, trt: trtCheck, resolution: resolutionCheck, vram: vramCheck, fsz: fszCheck, segments: segmentsCheck, lut: lutCheck, output: outputCheck, assignments: assignmentCheck };
     const labels: Record<string, string> = { switch_nvenc: 'Switch to NVENC', align_active_provider: `Use ${activeProvider}`, enable_restore_ultra: 'Enable Restore Ultra', clamp_vram_budget: 'Clamp batch to 1', clear_lut: 'Clear invalid LUT', switch_compatible_output: `Use ${outputFixCodec} + MP4`, review_assignments: 'Review assignments' };
     const fixData: Record<string, Record<string, any>> = { switch_nvenc: { codec: 'h264_nvenc' }, align_active_provider: { provider: activeProvider }, enable_restore_ultra: { enhancer: 'Restore Ultra' }, clamp_vram_budget: { batch_size: 1 }, clear_lut: {}, switch_compatible_output: { codec: outputFixCodec, video_format: 'mp4' }, review_assignments: {} };
     for (const [check, value] of Object.entries(checks)) {
       if (!value.warning) continue;
-      const action = value.auto_fix;
+      const action = 'auto_fix' in value ? value.auto_fix : null;
       const severity = value.severity || (value.ok ? 'ok' : 'warning');
       warnings.push({ check, message: value.warning, severity, ...(action ? { auto_fix: action, auto_fix_label: labels[action] } : {}) });
       if (action) autoFixes.push({ action, label: labels[action] || 'Review', ...(fixData[action] || {}) });
@@ -3075,6 +3075,28 @@ async function startServer() {
     });
   });
 
+  const lutShelf = new Map<string, { name: string; cube_text: string; size: number }>();
+  app.get('/api/lut/shelf', (req, res) => {
+    res.json({ files: [...lutShelf].map(([path, { name }]) => ({ path, name })) });
+  });
+  app.post('/api/lut/upload', upload.single('file'), (req, res) => {
+    const name = req.file?.originalname || '';
+    const cube_text = req.file?.buffer.toString('utf8') || '';
+    const size = Number(cube_text.match(/LUT_3D_SIZE\s+(\d+)/)?.[1]);
+    if (!name.toLowerCase().endsWith('.cube') || !(size >= 2 && size <= 256)) {
+      res.status(400).json({ detail: 'Invalid .cube LUT' });
+      return;
+    }
+    const path = `/mock/luts/${name}`;
+    lutShelf.set(path, { name, cube_text, size });
+    res.json({ path, name, size });
+  });
+  app.post('/api/lut/read', (req, res) => {
+    const entry = lutShelf.get(req.body?.path);
+    if (entry) res.json(entry);
+    else res.status(404).json({ detail: 'LUT file is not available' });
+  });
+
   app.post('/api/timeline/export_edl', (req, res) => {
     const doc = req.body?.document || req.body || {};
     const title = (doc.name || 'ROOP_TIMELINE').replace(/\s+/g, '_');
@@ -3118,6 +3140,7 @@ async function startServer() {
     res.json({
       status: 'ok',
       verified: true,
+      file_verified: true,
       manifest: {
         schema: 'roop.provenance.v1',
         generator: 'Roop Ultimate',

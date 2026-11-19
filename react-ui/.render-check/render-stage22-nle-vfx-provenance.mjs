@@ -165,12 +165,16 @@ ok('BatchSwap has Import EDL/OTIO button', batchSwapCode.includes('Import EDL/OT
 ok('BatchSwap has NLE Timeline Cut List card', batchSwapCode.includes('NLE Timeline Cut List'));
 
 const faceSwapCode = fs.readFileSync(path.join(ROOT, 'src/components/FaceSwap.jsx'), 'utf-8');
-ok('FaceSwap has InspectorGroup for VFX multi-pass', faceSwapCode.includes('id="vfx-multipass"'));
-ok('FaceSwap binds vfx_multi_pass toggle', faceSwapCode.includes('vfx_multi_pass'));
-ok('FaceSwap binds vfx_export_matte toggle', faceSwapCode.includes('vfx_export_matte'));
-ok('FaceSwap binds vfx_export_crops toggle', faceSwapCode.includes('vfx_export_crops'));
-ok('FaceSwap has Export EDL button', faceSwapCode.includes('Export EDL (CMX3600)'));
-ok('FaceSwap has Export OTIO button', faceSwapCode.includes('Export OTIO (.json)'));
+const deliveryCode = fs.readFileSync(path.join(ROOT, 'src/components/faceswap/StudioDeliveryPanel.jsx'), 'utf-8');
+ok('FaceSwap mounts the delivery panel with its current marker and cut data',
+  faceSwapCode.includes('<StudioDeliveryPanel') && faceSwapCode.includes('markers={chapterMarkers.markers}')
+  && faceSwapCode.includes('segmentBlocks={nleSegmentBlocks}'));
+ok('Studio Delivery binds the master export and individual matte passes',
+  ['vfx_multi_pass', 'vfx_export_matte', 'vfx_export_xseg3', 'vfx_export_face_parser', 'vfx_export_difference']
+    .every((key) => deliveryCode.includes(key)));
+ok('EDL export reads the backend EDL field', deliveryCode.includes('/api/timeline/export_edl') && deliveryCode.includes('result.edl'));
+ok('OTIO export reads the backend OTIO field', deliveryCode.includes('/api/timeline/export_otio') && deliveryCode.includes('result.otio'));
+ok('Delivery distinguishes file verification from embedded signature verification', deliveryCode.includes('verification.file_verified'));
 
 const settingsCode = fs.readFileSync(path.join(ROOT, 'src/components/Settings.jsx'), 'utf-8');
 ok('Settings binds vfx_multi_pass', settingsCode.includes("bindToggle('vfx_multi_pass')"));

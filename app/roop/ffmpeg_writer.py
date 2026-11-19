@@ -172,7 +172,7 @@ class FFMPEG_VideoWriter:
                  preset="faster", bitrate=None,
                  logfile=None, threads=None, ffmpeg_params=None,
                  colorspace=None, sar=None, dar=None, color=None,
-                 lut_path=None, lut_bake=False):
+                 lut_path=None, lut_bake=None, lut_opacity=None):
 
         if logfile is None:
             logfile = sp.PIPE
@@ -182,6 +182,8 @@ class FFMPEG_VideoWriter:
         self._color = color
         self._lut_path = lut_path
         self._lut_bake = lut_bake
+        self._lut_opacity = lut_opacity
+        self._lut_mix_path = None
         self.filename = filename
         self.codec = codec
         self.ext = self.filename.split(".")[-1]
@@ -331,23 +333,15 @@ class FFMPEG_VideoWriter:
         if sar and str(sar).strip() not in ('', '1:1', '1/1'):
             filters.append(f'setsar={sar}')
 
-        # Stage 18: Tetrahedral 3D .cube LUT interpolation filter
-        lut_path = getattr(self, '_lut_path', None)
-        lut_bake = getattr(self, '_lut_bake', False)
-        if lut_path is None:
-            import roop.globals
-            lut_path = getattr(roop.globals, 'lut_path', '')
-            if not lut_path:
-                lut_path = os.environ.get('ROOP_LUT_PATH', '')
-        if not lut_bake:
-            import roop.globals
-            lut_bake = getattr(roop.globals, 'lut_bake', False)
-            if not lut_bake:
-                lut_bake = os.environ.get('ROOP_LUT_BAKE', '').lower() in ('1', 'true', 'yes')
-
-        if lut_bake and lut_path and os.path.isfile(lut_path):
-            clean_path = os.path.abspath(lut_path).replace('\\', '/').replace(':', '\\:')
-            filters.append(f"lut3d=file='{clean_path}':interp=tetrahedral")
+        from roop.lut_utils import ffmpeg_lut_filter
+        self._cleanup_lut_mix()
+        lut_filter, self._lut_mix_path = ffmpeg_lut_filter(
+            getattr(self, '_lut_path', None),
+            getattr(self, '_lut_bake', None),
+            getattr(self, '_lut_opacity', None),
+        )
+        if lut_filter:
+            filters.append(lut_filter)
 
         plan = getattr(self, '_color', None) if convert else None
         if plan is not None:
@@ -407,6 +401,15 @@ class FFMPEG_VideoWriter:
         ])
         return cmd
 
+    def _cleanup_lut_mix(self):
+        path = getattr(self, '_lut_mix_path', None)
+        self._lut_mix_path = None
+        if path:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
     def _spawn(self, codec):
         self.codec = codec
         cmd = self._build_cmd(codec)
@@ -423,7 +426,11 @@ class FFMPEG_VideoWriter:
         if os.name == "nt":
             popen_params["creationflags"] = 0x08000000  # CREATE_NO_WINDOW
 
-        self.proc = sp.Popen(cmd, **popen_params)
+        try:
+            self.proc = sp.Popen(cmd, **popen_params)
+        except OSError:
+            self._cleanup_lut_mix()
+            raise
 
     def _retry_as_software(self):
         """Respawn a dead HARDWARE encoder as its software equivalent.
@@ -556,6 +563,7 @@ class FFMPEG_VideoWriter:
         proc = self.proc
         self.proc = None
         if proc is None:
+            self._cleanup_lut_mix()
             return
 
         # ``stdin.close(); wait()`` used to discard the encoder's exit status.
@@ -600,6 +608,7 @@ class FFMPEG_VideoWriter:
                 except Exception as _degrade_error:
                     _swallowed("roop/ffmpeg_writer.py:528", _degrade_error, "fallback continued")
 
+        self._cleanup_lut_mix()
         if communication_error is not None:
             self._remove_failed_output()
             raise IOError(
@@ -642,6 +651,7 @@ class FFMPEG_VideoWriter:
                 pass
         finally:
             self._remove_failed_output()
+            self._cleanup_lut_mix()
 
     # Support the Context Manager protocol, to ensure that resources are cleaned up.
 

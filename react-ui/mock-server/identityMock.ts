@@ -210,6 +210,7 @@ export function describeBlend(recipe: MockRecipe) {
   if (ids.length) {
     const w = normed(recipe.components.map((c) => c.weight));
     const cos = ids.length >= 2 ? cosToEach(w, recipe.mode) : [1];
+    out.embedding = mockEmbedding(cos);
     out.components = ids.map((id, i) => ({ source_id: id, weight: w[i], cosine_to_blend: cos[i] }));
     if (ids.length >= 2) {
       out.pairwise_cosine = ids.map((_, i) => ids.map((__, j) => (i === j ? 1 : MOCK_PAIR_COSINE)));
@@ -249,10 +250,16 @@ export function morphSummary(weightsRaw: number[], mode: string, deid: { referen
   }
   return {
     mode,
+    embedding: mockEmbedding(finalCos),
     weights: w.map((x) => Number(x.toFixed(4))), weights_as_given: raw, cosine_to_each: finalCos.map((c) => Number(c.toFixed(4))), dominant,
     pairwise_cosine: w.map((_, i) => w.map((__, j) => (i === j ? 1 : MOCK_PAIR_COSINE))),
     deidentify: deidInfo,
     warning: !deidInfo && finalCos[dominant] < 0.5
       ? `the blend sits far from every source (cosine to the dominant one is ${finalCos[dominant].toFixed(2)}); the swap may not resemble any of them` : null,
   };
+}
+
+function mockEmbedding(values: number[]) {
+  const norm = Math.hypot(...values) || 1;
+  return Array.from({ length: 512 }, (_, index) => (values[index] ?? 0) / norm);
 }
