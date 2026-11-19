@@ -112,11 +112,11 @@ class BatchProcessingMixin:
         self._lipsync_fps = fps
         # The pre-pass's 1-euro filter states its cutoffs in Hz, so it needs the clip's frame rate too.
         self._video_fps = fps
-        from roop.segment_output import SEGMENT_WARMUP
+        from roop.segment_output import SEGMENT_WARMUP, get_segment_warmup
         self._video_temporal_enabled = not self.options.frame_processing
         self._reset_dispatch_tracker()
         self._segment_temporal_faces = {}
-        self._segment_warmup_count = min(SEGMENT_WARMUP, max(0, int(frame_start or 0))) if self._video_temporal_enabled else 0
+        self._segment_warmup_count = min(get_segment_warmup(), max(0, int(frame_start or 0))) if self._video_temporal_enabled else 0
         # Stage 17: a distributed GOP chunk renders as its own local clip (frames 0..n) but its driving audio is the WHOLE
         # source track, so the chunk's absolute start frame is added here. 0 everywhere else.
         self._lipsync_frame_start = frame_start + int(getattr(roop.globals, 'lipsync_frame_offset', 0) or 0)
@@ -757,7 +757,7 @@ class BatchProcessingMixin:
                           f'interrupted run — resuming at frame {frame_start + skip}. '
                           f'(Delete {os.path.basename(target_video)}.resume.json to force a fresh render.)')
                     frame_start += skip
-                    self._segment_warmup_count = min(SEGMENT_WARMUP, frame_start) if self._video_temporal_enabled else 0
+                    self._segment_warmup_count = min(get_segment_warmup(), frame_start) if self._video_temporal_enabled else 0
                     frame_count -= skip
             else:
                 codec = roop.globals.video_encoder

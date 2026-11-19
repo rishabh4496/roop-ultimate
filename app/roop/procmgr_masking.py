@@ -88,6 +88,93 @@ def mask_warn_counts():
         return dict(_MASK_WARN_SEEN)
 
 
+class CanonicalMaskEMA:
+    """Temporal EMA for combined face and occluder alpha masks in canonical face space.
+
+    Warp to canonical space before EMA, smooth with a motion-gated EMA factor, then warp back.
+    Never blends in raw screen space during camera motion.
+    """
+    def __init__(self, alpha: float = 0.25, enabled: bool = True, canonical_size: int = 256):
+        self.alpha = min(1.0, max(0.05, float(alpha)))
+        self.enabled = bool(enabled)
+        self.canonical_size = int(canonical_size)
+        self._states = {}
+        self._lock = _threading.RLock()
+
+    def reset(self):
+        with self._lock:
+            self._states.clear()
+
+    def smooth(self, mask: np.ndarray, track_id: any, frame_index: int = None,
+               M: np.ndarray = None, IM: np.ndarray = None,
+               motion: float = 0.0, confidence: float = 1.0, occluder: np.ndarray = None) -> np.ndarray:
+        """Smooth mask in canonical face space.
+
+        If M is provided, `mask` is treated as screen-space, warped to canonical space via M,
+        smoothed via motion-gated EMA, and warped back via IM.
+        If M is None, `mask` is assumed to be already in canonical space, smoothed, and returned.
+        """
+        if not self.enabled or track_id is None or mask is None:
+            return mask
+
+        mask_f = np.asarray(mask, dtype=np.float32)
+        if mask_f.ndim == 3:
+            mask_f = mask_f[..., 0]
+
+        h, w = mask_f.shape[:2]
+        c_size = self.canonical_size
+
+        if M is not None:
+            canonical = cv2.warpAffine(mask_f, np.asarray(M, dtype=np.float32), (c_size, c_size),
+                                       flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0.0)
+        else:
+            canonical = mask_f
+
+        key = track_id
+        with self._lock:
+            state = self._states.get(key)
+            if frame_index is None:
+                fi = 0 if state is None else state.get('frame', 0) + 1
+            else:
+                fi = int(frame_index)
+
+            if state is None or state.get('mask') is None or fi <= state.get('frame', -1):
+                self._states[key] = {'mask': canonical.copy(), 'frame': fi}
+                return mask
+
+            prev_canonical = state['mask']
+            if prev_canonical.shape != canonical.shape:
+                prev_canonical = cv2.resize(prev_canonical, (canonical.shape[1], canonical.shape[0]),
+                                            interpolation=cv2.INTER_LINEAR)
+
+            change = float(np.mean(np.abs(canonical - prev_canonical)))
+            m = min(1.0, max(0.0, float(motion) / 0.08))
+            conf = min(1.0, max(0.0, float(confidence)))
+
+            update = self.alpha + 0.45 * min(1.0, change / 0.15) + 0.35 * m
+            update = min(0.95, max(self.alpha, update * (0.70 + 0.30 * conf)))
+
+            delta = canonical - prev_canonical
+            entering_occluder = delta < -0.15
+            if np.any(entering_occluder):
+                alpha_eff = np.full_like(canonical, update)
+                alpha_eff[entering_occluder] = np.maximum(update, 0.75)
+                stable_canonical = (1.0 - alpha_eff) * prev_canonical + alpha_eff * canonical
+            else:
+                stable_canonical = (1.0 - update) * prev_canonical + update * canonical
+
+            stable_canonical = np.clip(stable_canonical, 0.0, 1.0).astype(np.float32)
+            state['mask'] = stable_canonical
+            state['frame'] = fi
+
+        if M is not None and IM is not None:
+            screen_back = cv2.warpAffine(stable_canonical, np.asarray(IM, dtype=np.float32), (w, h),
+                                         flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0.0)
+            return screen_back
+
+        return stable_canonical
+
+
 def reset_mask_warnings():
     """Clear the once-per-process record. Used by tests."""
     with _MASK_WARN_LOCK:
@@ -902,6 +989,25 @@ class MaskingMixin:
         if _timeline_state.reporting():
             self._report_paste_for_preview(IM, target_img, target_face, track_id, _parse, _sem_alpha,
                                            _occluder, _occ_pct, target_crop, (h, w))
+
+        # Smooth combined face/occluder alpha mask in canonical face space
+        # (never blend in raw screen space during camera motion!)
+        if (_video_state is None and temporal_compositor is not None
+                and getattr(temporal_compositor, 'enabled', False)
+                and track_id is not None):
+            try:
+                confidence = (target_face.get('_temporal_confidence', 1.0)
+                              if isinstance(target_face, dict) else
+                              getattr(target_face, '_temporal_confidence', 1.0))
+                with _prof('temporal_alpha'):
+                    alpha = temporal_compositor.stabilize_mask(
+                        track_id, alpha, frame_index=frame_index,
+                        confidence=confidence, motion=motion,
+                        occlusion=occlusion_score)
+            except Exception as exc:
+                _swallowed("roop/procmgr_masking.py:534", exc, "fallback continued")
+                warn_compositing_fallback('mask stabilisation', exc)
+
         # Crop support is strict, including frame-edge cutoffs.
         alpha[[0,-1],:] = 0.; alpha[:,[0,-1]] = 0.
         mox = moy = 0
@@ -916,26 +1022,6 @@ class MaskingMixin:
                 (target_img.shape[1],target_img.shape[0]), flags=cv2.INTER_LINEAR,
                 borderMode=cv2.BORDER_CONSTANT, borderValue=0.)
         strict_support = img_matte.copy()
-
-        # Legacy compositor fallback when the ordered video stabilizer is inactive.
-        if (_video_state is None and temporal_compositor is not None
-                and getattr(temporal_compositor, 'enabled', False)
-                and track_id is not None):
-            try:
-                confidence = (target_face.get('_temporal_confidence', 1.0)
-                              if isinstance(target_face, dict) else
-                              getattr(target_face, '_temporal_confidence', 1.0))
-                img_matte = temporal_compositor.stabilize_mask(
-                    track_id, img_matte, frame_index=frame_index,
-                    confidence=confidence, motion=motion,
-                    occlusion=occlusion_score)
-            except Exception as exc:
-                # Temporal compositing is a quality layer. A malformed optional
-                # track field must leave the established matte usable -- but
-                # not silently: falling back to the legacy paste on every face
-                # is indistinguishable from the feature having no effect.
-                _swallowed("roop/procmgr_masking.py:534", exc, "fallback continued")
-                warn_compositing_fallback('mask stabilisation', exc)
 
         # Cut this face's matte back where another face in the frame owns the
         # pixels (see roop.face_overlap). AFTER the feather deliberately: the

@@ -42,7 +42,17 @@ from typing import Iterable, List, Optional, Sequence
 from roop.ffmpeg_path import ffmpeg_binary, ffprobe_binary
 
 SEGMENTS_DIRNAME = ".segments"
-SEGMENT_WARMUP = 12
+
+
+def get_segment_warmup() -> int:
+    """Return tracker warmup frame count for segment boundaries (default: 12)."""
+    try:
+        return max(0, int(os.environ.get("ROOP_SEGMENT_WARMUP", "12") or "12"))
+    except ValueError:
+        return 12
+
+
+SEGMENT_WARMUP = get_segment_warmup()
 _SEG_RE = re.compile(r"^seg_(?P<idx>\d{4,})_(?P<start>\d+)_(?P<end>\d+)\.(?P<ext>[A-Za-z0-9]+)$")
 
 

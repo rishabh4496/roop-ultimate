@@ -263,7 +263,12 @@ class TemporalEnhancerBlend:
         mx, my = np.meshgrid(np.arange(w, dtype=np.float32), np.arange(h, dtype=np.float32))
         warped = cv2.remap(prev_crop, mx + flow_up[..., 0] * fx, my + flow_up[..., 1] * fy, cv2.INTER_LINEAR,
                            borderMode=cv2.BORDER_REPLICATE).astype(np.float32)
+        # Crisp blinking and speaking with zero ghosting:
+        # Where local displacement / error is high (blinking eyelids, moving lips),
+        # suppress the historical blend so expression changes remain 100% crisp.
+        dynamic_motion = cv2.dilate((err > 18.0).astype(np.float32), np.ones((3, 3), np.float32))
         gate = np.clip(1.0 - np.maximum(err - GATE_FLOOR, 0.0) / max(self.photo_t - GATE_FLOOR, 1.0), 0.0, 1.0)
+        gate = gate * (1.0 - dynamic_motion)
         gate = cv2.resize(gate, (w, h), interpolation=cv2.INTER_LINEAR)
         wgt = (blend * gate)[..., None]
         out = (1.0 - wgt) * crop.astype(np.float32) + wgt * warped

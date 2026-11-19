@@ -184,11 +184,24 @@ class TemporalCompositeController:
         return state
 
     def stabilize_mask(self, track_id, mask, frame_index=None, confidence=1.0,
-                       motion=0.0, occlusion=0.0):
-        """Return a canonical mask whose boundary cannot chatter frame to frame."""
-        if not self.enabled or track_id is None:
+                       motion=0.0, occlusion=0.0, M=None, IM=None):
+        """Return a canonical mask whose boundary cannot chatter frame to frame.
+
+        If M and IM are provided, warps screen-space mask into canonical space before EMA,
+        smooths with a motion-gated EMA factor, and warps back to screen space with IM.
+        Never blends in raw screen space during camera motion.
+        """
+        if not self.enabled or track_id is None or mask is None:
             return mask
-        current = _canonical_small(mask)
+        orig_shape = np.asarray(mask).shape[:2] if np.asarray(mask).ndim >= 2 else (64, 64)
+        if M is not None:
+            # Warp screen-space mask to canonical space before EMA
+            canonical_input = cv2.warpAffine(
+                np.asarray(mask, dtype=np.float32), np.asarray(M, dtype=np.float32),
+                (128, 128), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0.0)
+            current = _canonical_small(canonical_input, size=128)
+        else:
+            current = _canonical_small(mask, size=128 if max(orig_shape) >= 128 else 64)
         with self._lock:
             state = self._state(track_id)
             if state is None:
@@ -197,29 +210,29 @@ class TemporalCompositeController:
                 frame_index = int(frame_index)
             except (TypeError, ValueError):
                 frame_index = state.last_frame_index + 1
-            if state.mask is None or frame_index <= state.last_frame_index:
+            if state.mask is None or frame_index <= state.last_frame_index or state.mask.shape != current.shape:
                 state.mask = current.copy()
                 state.last_frame_index = frame_index
                 return mask
             change = float(np.mean(np.abs(current - state.mask)))
-            # Small detector/mask noise gets a slow EMA.  A real pose or
-            # occlusion change gets through faster, while still remaining
-            # continuous rather than hard/soft/hard.
+            # Small detector/mask noise gets a slow EMA. Motion increases update rate to prevent lag.
+            m = min(1.0, max(0.0, float(motion) / 0.08)) if motion else 0.0
             update = self.alpha + 0.55 * min(1.0, change / 0.12)
-            update += 0.20 * _clip(motion)
+            update += 0.30 * m
             update += 0.20 * _clip(occlusion)
             update *= 0.65 + 0.35 * _clip(confidence)
-            update = _clip(update, self.alpha, 0.92)
+            update = _clip(update, self.alpha, 0.95)
             stable = (1.0 - update) * state.mask + update * current
             state.mask = np.clip(stable, 0.0, 1.0).astype(np.float32)
             state.last_frame_index = frame_index
-            if np.asarray(mask).ndim == 3:
-                shape = np.asarray(mask).shape[:2]
-            else:
-                shape = np.asarray(mask).shape
-            if tuple(shape) == state.mask.shape:
+            if M is not None and IM is not None:
+                return cv2.warpAffine(
+                    state.mask, np.asarray(IM, dtype=np.float32),
+                    (int(orig_shape[1]), int(orig_shape[0])),
+                    flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0.0).astype(np.float32)
+            if tuple(orig_shape) == state.mask.shape:
                 return state.mask.copy()
-            return cv2.resize(state.mask, (int(shape[1]), int(shape[0])),
+            return cv2.resize(state.mask, (int(orig_shape[1]), int(orig_shape[0])),
                               interpolation=cv2.INTER_LINEAR).astype(np.float32)
 
     def plan(self, target_face=None, appearance=None, local_contrast=0.0,

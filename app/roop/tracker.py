@@ -107,6 +107,14 @@ LOW_CONFIDENCE = 0.5
 FAST_MOTION_SPEED = 5.0
 FAST_MOTION_COAST_MULTIPLIER = 2
 
+# Miss-grace buffer default (2-3 frames)
+DEFAULT_MISS_GRACE = 3
+
+# Hysteresis parameters for persistent tracking with anti-ID-jump
+MAINTAIN_SIM_THRESH = 0.20
+SWITCH_SIM_THRESH = 0.48
+HYSTERESIS_MARGIN = 0.15
+
 # Occlusion states stamped on a face as `occlusion_state`.
 STATE_VISIBLE = 'visible'
 STATE_PARTIAL = 'partial'
@@ -249,6 +257,9 @@ class FaceTracker:
 
     _MOTION_WEIGHT = 0.6
     _IDENTITY_WEIGHT = 0.4
+    MAINTAIN_SIM_THRESH = MAINTAIN_SIM_THRESH
+    SWITCH_SIM_THRESH = SWITCH_SIM_THRESH
+    HYSTERESIS_MARGIN = HYSTERESIS_MARGIN
 
     def __init__(self, max_age: int = MAX_LOST_FRAMES, max_cost: float = 0.85,
                  process_noise: float = 1.0, measurement_noise: float = 4.0,
@@ -391,6 +402,7 @@ class FaceTracker:
         matrix = np.empty((len(active), len(detections)), dtype=np.float32)
         for row, track in enumerate(active):
             predicted_bbox = self.measurement_to_bbox(track.state[:4])
+            is_active_continuity = (track.missed <= 1 and track.hits >= 2)
             for column, face in enumerate(detections):
                 detection_bbox = _face_field(face, 'bbox')
                 if detection_bbox is None:
@@ -398,8 +410,17 @@ class FaceTracker:
                     continue
                 iou = _bbox_iou(predicted_bbox, detection_bbox)
                 similarity = _cosine_similarity(track.embedding, self._embedding(face))
-                matrix[row, column] = (self._MOTION_WEIGHT * (1.0 - iou) +
-                                       self._IDENTITY_WEIGHT * (1.0 - similarity))
+                cost = (self._MOTION_WEIGHT * (1.0 - iou) +
+                        self._IDENTITY_WEIGHT * (1.0 - similarity))
+                # Anti-ID-Jump Hysteresis:
+                # Lower threshold to maintain active track continuity, higher threshold to switch IDs
+                is_continuation = is_active_continuity and (iou >= 0.20)
+                if is_continuation:
+                    cost = max(0.0, cost - self.HYSTERESIS_MARGIN)
+                elif is_active_continuity and track.embedding is not None and self._embedding(face) is not None:
+                    if similarity < self.SWITCH_SIM_THRESH:
+                        cost = cost + self.HYSTERESIS_MARGIN
+                matrix[row, column] = cost
         return matrix
 
     def update(self, detections: Sequence[Any],
@@ -629,12 +650,19 @@ class FaceTracker:
             _set_face_field(face, 'embedding', track.embedding.astype(np.float32))
         # Confidence decays with the length of the coast so anything reading
         # det_score sees a prediction weakening rather than a fresh detection.
-        decay = 1.0 - (track.coasted_run + 1) / float(self.max_coast + 1)
+        coast_age = int(track.coasted_run + 1)
+        decay = 1.0 - coast_age / float(self.max_coast + 1)
         _set_face_field(face, 'det_score',
                         np.float32(max(0.05, track.confidence * decay)))
+        # Miss-grace buffer: decayed opacity across 2-3 frame grace window
+        # (e.g. frame 1: 0.75, frame 2: 0.50, frame 3: 0.25) to propagate
+        # smoothed geometry rather than hard-dropping for 1 frame
+        opacity = max(0.2, 1.0 - (coast_age * 0.25))
+        _set_face_field(face, 'opacity', float(opacity))
+        _set_face_field(face, '_opacity', float(opacity))
         _set_face_field(face, '_track_id', int(track.track_id))
         _set_face_field(face, '_coasted', True)
-        _set_face_field(face, '_coast_age', int(track.coasted_run + 1))
+        _set_face_field(face, '_coast_age', coast_age)
         _set_face_field(face, '_interpolated', True)
         _set_face_field(face, 'occlusion_state', STATE_COASTED)
         return face

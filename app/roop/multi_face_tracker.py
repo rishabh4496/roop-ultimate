@@ -106,10 +106,17 @@ class MultiFaceTracker(FaceTracker):
                                 cost[r, c] = 1 - iou
                         else:
                             # Strong geometric continuity retains a track through a noisy
-                            # profile. A weak spatial claim needs stronger identity evidence.
-                            threshold = .24 if iou >= .45 and t.missed <= 2 else .44
+                            # profile with anti-ID-jump hysteresis. A weak spatial claim needs
+                            # stronger identity evidence.
+                            is_active_continuity = (t.missed <= 1 and t.hits >= 2 and iou >= 0.20)
+                            maintain_thresh = .20 if iou >= .40 else .28
+                            switch_thresh = .48
+                            threshold = maintain_thresh if is_active_continuity else switch_thresh
                             if iou >= .01 and sim >= threshold:
-                                cost[r, c] = self._MOTION_WEIGHT * (1 - iou) + self._IDENTITY_WEIGHT * (1 - sim)
+                                base_cost = self._MOTION_WEIGHT * (1 - iou) + self._IDENTITY_WEIGHT * (1 - sim)
+                                if is_active_continuity:
+                                    base_cost = max(0.0, base_cost - 0.15)
+                                cost[r, c] = base_cost
                 used = set()
                 if cost.size:
                     # Gate BEFORE assignment; invalid edges cannot steal valid ones.

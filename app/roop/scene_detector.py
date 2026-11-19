@@ -47,22 +47,31 @@ def is_pyscenedetect_available() -> bool:
 
 
 def flush_pipeline_temporal_buffers(mgr: Optional[Any] = None) -> Dict[str, bool]:
-    """Flush optical flow and landmark tracking buffers across all pipeline stages.
+    """Flush optical flow, tracking, stabilization, and appearance buffers across all pipeline stages.
 
-    Called at detected scene boundaries to prevent warp smearing and landmark
-    carry-over across cut transitions.
+    Called at detected scene boundaries and single-image bypass to prevent warp smearing,
+    phantom tracks, landmark carry-over, EMA mask ghosts, and color bleeding across cut transitions.
     """
     flushed = {
         'face_swapper_temporal': False,
         'landmark_smoother': False,
         'hf_stabilizer': False,
+        'temporal_enhancer': False,
         'target_appearance': False,
         'occlusion_mask': False,
         'smart_skip_patches': False,
         'temporal_color': False,
+        'temporal_identity': False,
+        'temporal_occlusion': False,
+        'temporal_expression': False,
+        'temporal_compositing': False,
+        'temporal_quality': False,
+        'video_temporal': False,
+        'dispatch_tracker': False,
+        'stabilizers': False,
     }
 
-    # 1. Flush face_swapper's global smoother, motion blur, and injected maskers
+    # 1. Flush face_swapper's global smoother (EMA masks), motion blur, and tracker
     try:
         from roop.processors.frame.face_swapper import clear_temporal_state
         clear_temporal_state()
@@ -78,7 +87,7 @@ def flush_pipeline_temporal_buffers(mgr: Optional[Any] = None) -> Dict[str, bool
     except Exception as _exc:
         _swallowed("scene_detector.py:flush_smart_skip", _exc, "fallback continued")
 
-    # 3. Flush ProcessMgr smoothers, stabilizers, and per-face EMA LAB color transfer
+    # 3. Flush ProcessMgr smoothers, stabilizers, trackers, and temporal engines
     if mgr is not None:
         landmark_smoother = getattr(mgr, '_landmark_smoother', None)
         if landmark_smoother is not None and hasattr(landmark_smoother, 'reset'):
@@ -97,9 +106,12 @@ def flush_pipeline_temporal_buffers(mgr: Optional[Any] = None) -> Dict[str, bool
                 _swallowed("scene_detector.py:flush_hf_stabilizer", _exc, "fallback continued")
 
         temporal_enhancer = getattr(mgr, '_temporal_enhancer', None)
-        if temporal_enhancer is not None and hasattr(temporal_enhancer, 'flush'):
+        if temporal_enhancer is not None:
             try:
-                temporal_enhancer.flush()          # histories only: a cut must not zero the end-of-run counters
+                if hasattr(temporal_enhancer, 'flush'):
+                    temporal_enhancer.flush()          # histories only: a cut must not zero the end-of-run counters
+                elif hasattr(temporal_enhancer, 'reset'):
+                    temporal_enhancer.reset()
                 flushed['temporal_enhancer'] = True
             except Exception as _exc:
                 _swallowed("scene_detector.py:flush_temporal_enhancer", _exc, "fallback continued")
@@ -113,9 +125,12 @@ def flush_pipeline_temporal_buffers(mgr: Optional[Any] = None) -> Dict[str, bool
                 _swallowed("scene_detector.py:flush_target_appearance", _exc, "fallback continued")
 
         masker = getattr(mgr, '_interaction_masker', None)
-        if masker is not None:
-            masker.reset()
-            flushed['occlusion_mask'] = True
+        if masker is not None and hasattr(masker, 'reset'):
+            try:
+                masker.reset()
+                flushed['occlusion_mask'] = True
+            except Exception as _exc:
+                _swallowed("scene_detector.py:flush_interaction_masker", _exc, "fallback continued")
 
         temporal_color = getattr(mgr, '_temporal_color', None)
         if temporal_color is not None and hasattr(temporal_color, 'reset'):
@@ -125,7 +140,186 @@ def flush_pipeline_temporal_buffers(mgr: Optional[Any] = None) -> Dict[str, bool
             except Exception as _exc:
                 _swallowed("scene_detector.py:flush_temporal_color", _exc, "fallback continued")
 
+        temporal_identity = getattr(mgr, '_temporal_identity', None)
+        if temporal_identity is not None and hasattr(temporal_identity, 'reset'):
+            try:
+                temporal_identity.reset()
+                flushed['temporal_identity'] = True
+            except Exception as _exc:
+                _swallowed("scene_detector.py:flush_temporal_identity", _exc, "fallback continued")
+
+        temporal_occlusion = getattr(mgr, '_temporal_occlusion', None)
+        if temporal_occlusion is not None and hasattr(temporal_occlusion, 'reset'):
+            try:
+                temporal_occlusion.reset()
+                flushed['temporal_occlusion'] = True
+            except Exception as _exc:
+                _swallowed("scene_detector.py:flush_temporal_occlusion", _exc, "fallback continued")
+
+        temporal_expression = getattr(mgr, '_temporal_expression', None)
+        if temporal_expression is not None and hasattr(temporal_expression, 'reset'):
+            try:
+                temporal_expression.reset()
+                flushed['temporal_expression'] = True
+            except Exception as _exc:
+                _swallowed("scene_detector.py:flush_temporal_expression", _exc, "fallback continued")
+
+        temporal_compositing = getattr(mgr, '_temporal_compositing', None)
+        if temporal_compositing is not None and hasattr(temporal_compositing, 'reset'):
+            try:
+                temporal_compositing.reset()
+                flushed['temporal_compositing'] = True
+            except Exception as _exc:
+                _swallowed("scene_detector.py:flush_temporal_compositing", _exc, "fallback continued")
+
+        temporal_quality = getattr(mgr, '_temporal_quality', None)
+        if temporal_quality is not None and hasattr(temporal_quality, 'reset'):
+            try:
+                temporal_quality.reset()
+                flushed['temporal_quality'] = True
+            except Exception as _exc:
+                _swallowed("scene_detector.py:flush_temporal_quality", _exc, "fallback continued")
+
+        video_temporal = getattr(mgr, '_video_temporal', None)
+        if video_temporal is not None and hasattr(video_temporal, 'reset'):
+            try:
+                video_temporal.reset()
+                flushed['video_temporal'] = True
+            except Exception as _exc:
+                _swallowed("scene_detector.py:flush_video_temporal", _exc, "fallback continued")
+
+        # Kalman dispatch face tracker
+        try:
+            if hasattr(mgr, '_reset_dispatch_tracker'):
+                mgr._reset_dispatch_tracker()
+                flushed['dispatch_tracker'] = True
+            elif hasattr(mgr, '_dispatch_face_tracker'):
+                tracker = getattr(mgr, '_dispatch_face_tracker', None)
+                if tracker is not None and hasattr(tracker, 'reset'):
+                    tracker.reset()
+                    flushed['dispatch_tracker'] = True
+        except Exception as _exc:
+            _swallowed("scene_detector.py:flush_dispatch_tracker", _exc, "fallback continued")
+
+        # One-Euro / Kalman / EMA stabilizers
+        try:
+            stabs_reset = False
+            cur_kps_fn = getattr(mgr, '_cur_kps_stab', None)
+            cur_enh_fn = getattr(mgr, '_cur_enh_stab', None)
+            cur_mask_fn = getattr(mgr, '_cur_mask_stab', None)
+            cur_kps = cur_kps_fn() if callable(cur_kps_fn) else None
+            cur_enh = cur_enh_fn() if callable(cur_enh_fn) else None
+            cur_mask = cur_mask_fn() if callable(cur_mask_fn) else None
+            for stab in (cur_kps, cur_enh, cur_mask,
+                         getattr(mgr, 'kps_stabilizer', None),
+                         getattr(mgr, 'enh_stabilizer', None),
+                         getattr(mgr, 'mask_stabilizer', None)):
+                if stab is not None and hasattr(stab, 'reset'):
+                    stab.reset()
+                    stabs_reset = True
+            if stabs_reset:
+                flushed['stabilizers'] = True
+        except Exception as _exc:
+            _swallowed("scene_detector.py:flush_stabilizers", _exc, "fallback continued")
+
+        # Thread-local state cleanups
+        tls = getattr(mgr, '_tls', None)
+        if tls is not None:
+            try:
+                vts = getattr(tls, 'video_temporal_state', None)
+                if vts is not None and hasattr(vts, 'reset'):
+                    vts.reset()
+                tls.video_temporal_state = None
+                tls.video_temporal_epoch = None
+                tls.last_found_bboxes = None
+                tls.frame_faces = None
+                tls.retry_detected_faces = None
+                tls.vfx_mattes = {}
+                tls.geometry_epoch = None
+                for tstab_name in ('kps', 'enh', 'mask', 'landmark_smoother', 'hf_stabilizer',
+                                   'interaction_masker', 'temporal_identity', 'temporal_occlusion',
+                                   'temporal_expression', 'target_appearance', 'temporal_compositing',
+                                   'temporal_quality', 'temporal_enhancer'):
+                    tstab = getattr(tls, tstab_name, None)
+                    if tstab is not None:
+                        if hasattr(tstab, 'reset'):
+                            tstab.reset()
+                        elif hasattr(tstab, 'flush'):
+                            tstab.flush()
+            except Exception as _exc:
+                _swallowed("scene_detector.py:flush_tls_temporal", _exc, "fallback continued")
+
+        # Clear lingering frame references
+        if hasattr(mgr, 'last_swapped_frame'):
+            mgr.last_swapped_frame = None
+        if hasattr(mgr, 'face_masks') and isinstance(mgr.face_masks, dict):
+            mgr.face_masks.clear()
+
     return flushed
+
+
+class ShotBoundaryDetector:
+    """Fast, lightweight shot-boundary detector using downscaled HSV histogram and chi-square / spatial differences.
+
+    Compares consecutive plates before tracking/detection in video processing to detect hard scene cuts with
+    minimal overhead (sub-millisecond downsampled HSV histogram and chi-square distance calculation).
+    """
+
+    def __init__(
+        self,
+        downscale_size: Tuple[int, int] = (64, 36),
+        spatial_cut_thresh: float = 58.0,
+        spatial_min_thresh: float = 23.0,
+        chisqr_thresh: float = 0.65,
+        bins: Tuple[int, int, int] = (12, 4, 8),
+    ):
+        self.downscale_size = downscale_size
+        self.spatial_cut_thresh = float(spatial_cut_thresh)
+        self.spatial_min_thresh = float(spatial_min_thresh)
+        self.chisqr_thresh = float(chisqr_thresh)
+        self.bins = bins
+        self.previous: Optional[Tuple[np.ndarray, np.ndarray]] = None
+        self.scene_cuts: List[int] = []
+        self._last_idx: int = -1
+
+    def reset(self) -> None:
+        """Reset internal running state."""
+        self.previous = None
+        self.scene_cuts.clear()
+        self._last_idx = -1
+
+    def observe(self, frame: np.ndarray) -> bool:
+        """Observe a frame and return True if a hard cut is detected against previous frame."""
+        if frame is None or not isinstance(frame, np.ndarray) or frame.size == 0:
+            return False
+
+        small = cv2.resize(frame[:, :, :3], self.downscale_size, interpolation=cv2.INTER_AREA)
+        hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
+        hist = cv2.calcHist([hsv], [0, 1, 2], None, list(self.bins), [0, 180, 0, 256, 0, 256])
+        denom = float(small.shape[0] * small.shape[1])
+        if denom > 0:
+            hist /= denom
+
+        previous = self.previous
+        self.previous = (small, hist)
+        if previous is None:
+            return False
+
+        spatial = float(sum(cv2.mean(cv2.absdiff(small, previous[0]))[:3]) / 3.0)
+        distribution = float(cv2.compareHist(previous[1], hist, cv2.HISTCMP_CHISQR_ALT))
+
+        return bool(spatial >= self.spatial_cut_thresh or (spatial >= self.spatial_min_thresh and distribution >= self.chisqr_thresh))
+
+    def observe_frame(self, frame: np.ndarray, frame_idx: int) -> bool:
+        """Observe frame at frame_idx and record cut if detected."""
+        is_cut = self.observe(frame)
+        self._last_idx = frame_idx
+        if is_cut:
+            self.scene_cuts.append(frame_idx)
+        return is_cut
+
+
+FastShotBoundaryDetector = ShotBoundaryDetector
 
 
 class ContentAwareSceneDetector:

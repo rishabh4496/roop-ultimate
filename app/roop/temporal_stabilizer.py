@@ -30,8 +30,8 @@ class OneEuroFilter:
     is geometrically coherent (detector jitter alone does not increase cutoff).
     """
 
-    def __init__(self, min_cutoff: float = 1.0, beta: float = 0.0,
-                 d_cutoff: float = 1.0):
+    def __init__(self, min_cutoff: float = 0.05, beta: float = 0.5,
+                 d_cutoff: float = 4.0):
         self.min_cutoff = max(1e-6, float(min_cutoff))
         self.beta = max(0.0, float(beta))
         self.d_cutoff = max(1e-6, float(d_cutoff))
@@ -173,6 +173,7 @@ class _TrackState:
     landmarks_filter: OneEuroFilter = field(default_factory=OneEuroFilter)
     dense_filter: OneEuroFilter = field(default_factory=OneEuroFilter)
     affine_filter: OneEuroFilter = field(default_factory=OneEuroFilter)
+    bbox_filter: OneEuroFilter = field(default_factory=OneEuroFilter)
     kalman: Any = None
     missed: int = 0
     last_bbox: Optional[np.ndarray] = None
@@ -210,7 +211,7 @@ class FaceTrackStabilizer:
         self.beta = 0.5 * self.strength
         self.min_cutoff = max(0.005, 0.5 - 0.45 * self.strength)
         for state in self._tracks.values():
-            for name in ('landmarks_filter', 'dense_filter', 'affine_filter'):
+            for name in ('landmarks_filter', 'dense_filter', 'affine_filter', 'bbox_filter'):
                 getattr(state, name).min_cutoff = self.min_cutoff
         if self.strength <= 0.0:
             self.reset()
@@ -223,6 +224,7 @@ class FaceTrackStabilizer:
             landmarks_filter=OneEuroFilter(self.min_cutoff, 0.0, self.d_cutoff),
             dense_filter=OneEuroFilter(self.min_cutoff, 0.0, self.d_cutoff),
             affine_filter=OneEuroFilter(self.min_cutoff, 0.0, self.d_cutoff),
+            bbox_filter=OneEuroFilter(self.min_cutoff, 0.0, self.d_cutoff),
         )
 
     @staticmethod
@@ -286,10 +288,12 @@ class FaceTrackStabilizer:
         else:
             state.motion_streak = 0
             state.motion_direction = None
+
         # Require a second coherent sample before opening the adaptive cutoff.
         # Independent ±4px point noise can fit an accidental similarity once,
         # but it does not preserve a common velocity direction across frames.
         motion_beta = self.beta if state.motion_streak >= 2 else 0.0
+
         filtered = np.asarray(state.landmarks_filter(kps, timestamp, beta=motion_beta), dtype=np.float32)
         state.last_raw_kps = kps.copy()
         dense_out = dense_landmarks
@@ -310,24 +314,27 @@ class FaceTrackStabilizer:
             state.last_affine = np.asarray(affine_out, dtype=np.float32)
 
         box = None if bbox is None else np.asarray(bbox, dtype=np.float32).reshape(4)
+        box_out = box
         p = None if pose is None else np.asarray(pose, dtype=np.float32).reshape(3)
         if box is not None:
+            box_smooth = np.asarray(state.bbox_filter(box, timestamp, beta=motion_beta), dtype=np.float32)
+            box_out = box_smooth
             if state.kalman is None:
-                state.kalman = self._init_kalman(box, p)
+                state.kalman = self._init_kalman(box_smooth, p)
             else:
                 self._set_transition(state.kalman, 1.0 / self.fps)
                 state.kalman.predict()
-                center = (box[:2] + box[2:]) * 0.5
-                scale = max(1.0, math.sqrt(max(1.0, float((box[2] - box[0]) * (box[3] - box[1])))))
+                center = (box_smooth[:2] + box_smooth[2:]) * 0.5
+                scale = max(1.0, math.sqrt(max(1.0, float((box_smooth[2] - box_smooth[0]) * (box_smooth[3] - box_smooth[1])))))
                 pv = np.zeros(3, dtype=np.float32) if p is None else p
                 measurement = np.asarray([[center[0]], [center[1]], [math.log(scale)],
                                           [pv[0]], [pv[1]], [pv[2]]], dtype=np.float32)
                 state.kalman.correct(measurement)
-            state.last_bbox, state.last_pose = box.copy(), p
+            state.last_bbox, state.last_pose = box_smooth.copy(), p
         state.missed = 0
         state.last_frame, state.last_timestamp = fi, timestamp
         return {"landmarks": filtered, "dense_landmarks": dense_out,
-                "bbox": box if box is not None else bbox, "pose": p if p is not None else pose,
+                "bbox": box_out if box_out is not None else bbox, "pose": p if p is not None else pose,
                 "affine": affine_out, "predicted": False}
 
     def _predict_state(self, track_id, state, frame_index, timestamp, landmarks, bbox, pose):
@@ -373,4 +380,6 @@ class FaceTrackStabilizer:
                 "affine": state.last_affine, "predicted": True}
 
 
-__all__ = ["OneEuroFilter", "FaceTrackStabilizer", "forward_backward_one_euro"]
+from roop.one_euro import AdaptiveGeometryStabilizer
+
+__all__ = ["OneEuroFilter", "FaceTrackStabilizer", "forward_backward_one_euro", "AdaptiveGeometryStabilizer"]

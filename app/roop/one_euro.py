@@ -11,6 +11,7 @@ Time `t` here is a monotonically increasing per-frame index (dt = 1 frame), so
 import math
 import os
 from collections import defaultdict, deque
+from typing import Any, Optional
 import numpy as np
 
 
@@ -819,3 +820,165 @@ class MaskStabilizer(EnhancerStabilizer):
                             'track_id': track_id, 'stream_key': stream_key,
                             'yaw': yaw_from_kps(kps)})
         return mask
+
+
+class AdaptiveGeometryStabilizer:
+    """Adaptive per-track One-Euro Filter on Geometry (landmarks, bbox, affine).
+
+    Smooths 5-point keypoints, bounding box [x0, y0, x1, y1], and 2x3 affine warp
+    parameters across frames. The affine matrix is filtered in similarity space
+    [tx, ty, log(scale), angle] and reconstructed without shear.
+    Includes a 2-3 frame miss-grace buffer that propagates predicted geometry
+    with decayed opacity when a detector temporarily drops out.
+    """
+
+    def __init__(self, min_cutoff: float = 0.05, beta: float = 1.5,
+                 d_cutoff: float = 2.0, miss_grace: int = 3, fps: float = 30.0):
+        self.min_cutoff = float(min_cutoff)
+        self.beta = float(beta)
+        self.d_cutoff = float(d_cutoff)
+        self.miss_grace = int(miss_grace)
+        self.fps = max(1.0, float(fps))
+        self.tracks = {}
+
+    def reset(self):
+        self.tracks.clear()
+
+    def reset_track(self, track_id):
+        self.tracks.pop(track_id, None)
+
+    def warmup_frames(self, eps=0.01):
+        return ema_warmup_frames(_alpha(1.0, self.min_cutoff), eps)
+
+    @staticmethod
+    def _decompose_affine(matrix: np.ndarray) -> np.ndarray:
+        m = np.asarray(matrix, dtype=np.float64).reshape(2, 3)
+        a, b = m[0, 0], m[0, 1]
+        c, d = m[1, 0], m[1, 1]
+        scale = max(1e-8, 0.5 * (math.hypot(a, c) + math.hypot(b, d)))
+        angle = math.atan2(c - b, a + d)
+        return np.asarray([m[0, 2], m[1, 2], math.log(scale), angle], dtype=np.float64)
+
+    @staticmethod
+    def _recompose_affine(params: np.ndarray) -> np.ndarray:
+        tx, ty, log_scale, angle = np.asarray(params, dtype=np.float64).reshape(4)
+        scale = math.exp(float(np.clip(log_scale, -12.0, 12.0)))
+        c, s = math.cos(float(angle)), math.sin(float(angle))
+        return np.asarray([[scale * c, -scale * s, tx],
+                           [scale * s, scale * c, ty]], dtype=np.float32)
+
+    def _get_or_create_track(self, track_id: Any, t: float):
+        tr = self.tracks.get(track_id)
+        if tr is None:
+            tr = {
+                'landmarks': OneEuroFilter(self.min_cutoff, self.beta, self.d_cutoff),
+                'bbox': OneEuroFilter(self.min_cutoff, self.beta, self.d_cutoff),
+                'affine': OneEuroFilter(self.min_cutoff, self.beta, self.d_cutoff),
+                'last_t': t,
+                'missed': 0,
+                'last_landmarks': None,
+                'last_bbox': None,
+                'last_affine': None,
+            }
+            self.tracks[track_id] = tr
+        return tr
+
+    @staticmethod
+    def _adaptive_beta(value, prev_value, base_beta, jitter_thresh=0.55, fast_thresh=3.0):
+        if prev_value is None:
+            return 0.0
+        val = np.asarray(value, dtype=np.float64).reshape(-1, 2)
+        prev = np.asarray(prev_value, dtype=np.float64).reshape(-1, 2)
+        displacement = float(np.linalg.norm(val - prev, axis=1).mean())
+        if displacement <= jitter_thresh:
+            return 0.0
+        ratio = float(np.clip((displacement - jitter_thresh) / max(1e-3, fast_thresh - jitter_thresh), 0.0, 1.0))
+        return base_beta * ratio
+
+    def apply(self, landmarks=None, bbox=None, affine=None, t=0,
+              track_id=0, detected=True):
+        """Filter geometry or propagate miss-grace prediction with decayed opacity.
+
+        Returns:
+            dict containing:
+              - 'landmarks': smoothed (5, 2) float32 array
+              - 'bbox': smoothed (4,) float32 array
+              - 'affine': smoothed (2, 3) similarity matrix
+              - 'opacity': float in [0.0, 1.0]
+              - 'predicted': bool (True if within miss-grace buffer, False if real detection)
+        """
+        tr = self._get_or_create_track(track_id, t)
+        if not detected:
+            tr['missed'] += 1
+            if tr['missed'] <= self.miss_grace and tr['last_landmarks'] is not None:
+                # Decayed opacity across miss-grace buffer (1.0 -> 0.75 -> 0.50 -> 0.25)
+                opacity = max(0.2, 1.0 - tr['missed'] * 0.25)
+                return {
+                    'landmarks': tr['last_landmarks'].copy() if tr['last_landmarks'] is not None else None,
+                    'bbox': tr['last_bbox'].copy() if tr['last_bbox'] is not None else None,
+                    'affine': tr['last_affine'].copy() if tr['last_affine'] is not None else None,
+                    'opacity': opacity,
+                    'predicted': True,
+                }
+            else:
+                return {
+                    'landmarks': None,
+                    'bbox': None,
+                    'affine': None,
+                    'opacity': 0.0,
+                    'predicted': False,
+                }
+
+        tr['missed'] = 0
+        tr['last_t'] = t
+
+        # 1. Smooth landmarks with adaptive beta
+        smooth_lm = None
+        if landmarks is not None:
+            lm = np.asarray(landmarks, dtype=np.float64)
+            if lm.shape == (5, 2) and np.isfinite(lm).all():
+                beta = self._adaptive_beta(lm, tr['landmarks'].x_prev, self.beta, jitter_thresh=0.55, fast_thresh=3.0)
+                old_beta = tr['landmarks'].beta
+                tr['landmarks'].beta = beta
+                smooth_lm = tr['landmarks'](lm, t).astype(np.float32)
+                tr['landmarks'].beta = old_beta
+                tr['last_landmarks'] = smooth_lm
+
+        # 2. Smooth bounding box with adaptive beta
+        smooth_bbox = None
+        if bbox is not None:
+            bb = np.asarray(bbox, dtype=np.float64)
+            if bb.shape == (4,) and np.isfinite(bb).all():
+                beta = self._adaptive_beta(bb, tr['bbox'].x_prev, self.beta, jitter_thresh=1.0, fast_thresh=5.0)
+                old_beta = tr['bbox'].beta
+                tr['bbox'].beta = beta
+                smooth_bbox = tr['bbox'](bb, t).astype(np.float32)
+                tr['bbox'].beta = old_beta
+                tr['last_bbox'] = smooth_bbox
+
+        # 3. Smooth affine matrix
+        smooth_aff = None
+        if affine is not None:
+            aff = np.asarray(affine, dtype=np.float64)
+            if aff.shape == (2, 3) and np.isfinite(aff).all():
+                params = self._decompose_affine(aff)
+                if tr['affine'].x_prev is not None:
+                    prev_angle = float(tr['affine'].x_prev[3])
+                    params[3] = prev_angle + ((params[3] - prev_angle + math.pi) % (2 * math.pi) - math.pi)
+                beta = self._adaptive_beta(params[:2], tr['affine'].x_prev[:2] if tr['affine'].x_prev is not None else None,
+                                           self.beta, jitter_thresh=1.0, fast_thresh=5.0)
+                old_beta = tr['affine'].beta
+                tr['affine'].beta = beta
+                smooth_params = tr['affine'](params, t)
+                tr['affine'].beta = old_beta
+                smooth_aff = self._recompose_affine(smooth_params)
+                tr['last_affine'] = smooth_aff
+
+        return {
+            'landmarks': smooth_lm if smooth_lm is not None else landmarks,
+            'bbox': smooth_bbox if smooth_bbox is not None else bbox,
+            'affine': smooth_aff if smooth_aff is not None else affine,
+            'opacity': 1.0,
+            'predicted': False,
+        }
+

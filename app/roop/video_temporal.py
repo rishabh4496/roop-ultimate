@@ -12,24 +12,7 @@ from roop.nonfrontal import NonFrontalRouter
 MISS_GRACE = 3
 
 
-class ShotBoundaryDetector:
-    """Compare consecutive plates before detection, including very short shots."""
-
-    def __init__(self):
-        self.previous = None
-
-    def observe(self, frame):
-        small = cv2.resize(frame[:, :, :3], (64, 36), interpolation=cv2.INTER_AREA)
-        hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
-        hist = cv2.calcHist([hsv], [0, 1, 2], None, [12, 4, 8], [0, 180, 0, 256, 0, 256])
-        hist /= small.shape[0] * small.shape[1]
-        previous = self.previous
-        self.previous = (small, hist)
-        if previous is None:
-            return False
-        spatial = sum(cv2.mean(cv2.absdiff(small, previous[0]))[:3]) / 3.0
-        distribution = cv2.compareHist(previous[1], hist, cv2.HISTCMP_CHISQR_ALT)
-        return spatial >= 58.0 or (spatial >= 23.0 and distribution >= 0.65)
+from roop.scene_detector import ShotBoundaryDetector
 
 
 class SourceSlots:
@@ -55,7 +38,7 @@ class SourceSlots:
 
 
 def _geometry_filter():
-    return OneEuroFilter(min_cutoff=1.15, beta=5.0, d_cutoff=6.0)
+    return OneEuroFilter(min_cutoff=0.08, beta=5.0, d_cutoff=6.0)
 
 
 def _adaptive_beta(value, filt, jitter, fast):
@@ -204,7 +187,7 @@ class VideoTemporalState:
         if previous is None:
             if coast:
                 state.values.pop(key, None)
-                return np.zeros_like(alpha)
+                return alpha * 0.75
             return alpha
         old_alpha, old_gray = previous
         visible = np.clip(1.0 - cv2.absdiff(gray, old_gray).astype(np.float32) / 18., 0., 1.)
@@ -236,20 +219,33 @@ class VideoTemporalState:
 
     def texture(self, tid, key, crop, guide, keep):
         size = (crop.shape[1], crop.shape[0])
-        luminance = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY).astype(np.float32)
-        detail = luminance - cv2.GaussianBlur(luminance, (0, 0), 1.25)
+        crop_f = crop.astype(np.float32)
+        low = cv2.GaussianBlur(crop_f, (0, 0), 1.25)
+        detail = crop_f - low
         gray = _guide(guide, size)
-        previous, state = self._previous(tid, key, (detail, gray))
+        crop_gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+        previous, state = self._previous(tid, key, (detail, gray, crop_gray))
         if previous is None:
             return crop
-        old_detail, old_gray = previous
+        if len(previous) == 2:
+            old_detail, old_gray = previous
+            old_crop_gray = old_gray
+        else:
+            old_detail, old_gray, old_crop_gray = previous
+        if old_detail.ndim == 2 and detail.ndim == 3:
+            old_detail = old_detail[:, :, None]
         change = cv2.dilate(cv2.absdiff(gray, old_gray), np.ones((5, 5), np.uint8))
-        gate = np.clip(1. - change.astype(np.float32) / 14., 0., 1.)
+        # Macro change on low-frequency band avoids triggering on restorer's own pore noise
+        crop_macro = cv2.GaussianBlur(crop_gray, (0, 0), 3.0)
+        old_crop_macro = cv2.GaussianBlur(old_crop_gray, (0, 0), 3.0)
+        crop_change = cv2.dilate(cv2.absdiff(crop_macro, old_crop_macro), np.ones((5, 5), np.uint8))
+        total_change = np.maximum(change, crop_change)
+        gate = np.clip(1. - total_change.astype(np.float32) / 14., 0., 1.)
         if keep is not None:
             gate *= cv2.resize(keep, size, interpolation=cv2.INTER_LINEAR)
-        delta = (old_detail - detail) * gate * (.75 * max(0., 1. - state.motion / .08))
-        state.values[key] = (self.index, (detail + delta, gray))
-        return np.clip(np.rint(crop.astype(np.float32) + delta[:, :, None]), 0, 255).astype(np.uint8)
+        delta = (old_detail - detail) * gate[:, :, None] * (.75 * max(0., 1. - state.motion / .08))
+        state.values[key] = (self.index, (detail + delta, gray, crop_gray))
+        return np.clip(np.rint(crop_f + delta), 0, 255).astype(np.uint8)
 
 
 def _guide(crop, size):

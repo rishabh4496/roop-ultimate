@@ -1920,12 +1920,16 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         shared history from several workers at once, which is the race the old
         `threads = 1` was avoiding by brute force.
         """
+        if getattr(self._tls, 'bypass_temporal', False):
+            return None
         local = getattr(self._tls, name, None)
         if local is not None:
             return local
         return getattr(self, '_' + name, None)
 
     def _video_temporal_state(self):
+        if getattr(self._tls, 'bypass_temporal', False):
+            return None
         if getattr(self._tls, 'video_temporal_active', False):
             return self._tls.video_temporal_state
         return None
@@ -1941,6 +1945,8 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             self._tls.last_found_bboxes = None
         self._tls.video_temporal_active = True
         if state.begin(frame, index, known_cut):
+            from roop.scene_detector import flush_pipeline_temporal_buffers
+            flush_pipeline_temporal_buffers(self)
             tracker, _ = self._dispatch_tracker()
             if tracker is not None:
                 tracker.reset()
@@ -2035,6 +2041,8 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                            set that makes coasting safe assumes consecutive
                            frames.
         """
+        if getattr(self._tls, 'bypass_temporal', False):
+            return None, False
         shared = getattr(self, '_dispatch_face_tracker', None)
         if shared is None:
             return None, False
@@ -3636,6 +3644,21 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         finally:
             self._tls.stage_count_off = False
 
+    def is_single_image(self, frame_idx=None) -> bool:
+        """Return True if current processing target is a single image, bypassing temporal buffers."""
+        if frame_idx is None:
+            return True
+        if not getattr(self, '_video_temporal_enabled', False) and not getattr(self, '_parallel_stab', False):
+            target_path = getattr(roop.globals, 'target_path', None)
+            if target_path:
+                try:
+                    import roop.utilities as util
+                    if util.has_image_extension(target_path):
+                        return True
+                except Exception:
+                    pass
+        return False
+
     @pause_aware
     def process_frame(self, frame:Frame, frame_idx=None, frame_absolute=False, source_video=None):
         """Process one frame inside the shared pause-safe work boundary."""
@@ -3647,6 +3670,26 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         # runs only after the controller has granted the frame's work scope.
         if len(self.input_face_datas) < 1 and not self.options.show_face_masking:
             return frame
+
+        is_single = self.is_single_image(frame_idx)
+        prev_bypass = getattr(self._tls, 'bypass_temporal', False)
+        if is_single:
+            self._tls.bypass_temporal = True
+            try:
+                from roop.scene_detector import flush_pipeline_temporal_buffers
+                flush_pipeline_temporal_buffers(self)
+            except Exception as _flush_err:
+                _swallowed("ProcessMgr:single_image_flush", _flush_err, "flush fallback")
+
+        def _cleanup_single():
+            if is_single:
+                try:
+                    from roop.scene_detector import flush_pipeline_temporal_buffers
+                    flush_pipeline_temporal_buffers(self)
+                except Exception as _flush_err:
+                    _swallowed("ProcessMgr:single_image_flush_cleanup", _flush_err, "flush fallback")
+                self._tls.bypass_temporal = prev_bypass
+
         vfx_session = getattr(self, '_vfx_session', None)
         capture_vfx = vfx_session is not None and not getattr(self._tls, 'vfx_warmup', False)
         if capture_vfx:
@@ -3659,10 +3702,10 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             if 0 <= frame_idx < len(active_mask):
                 if not active_mask[frame_idx]:
                     self._count_stage3('passthrough_frames')
+                    _cleanup_single()
                     return frame
                 # Active range entry: flush temporal buffers if previous frame was inactive
-                if (frame_idx > 0 and not active_mask[frame_idx - 1]
-                        and not getattr(self, '_video_temporal_enabled', False)):
+                if frame_idx > 0 and not active_mask[frame_idx - 1]:
                     try:
                         from roop.scene_detector import flush_pipeline_temporal_buffers
                         flush_pipeline_temporal_buffers(self)
@@ -3679,8 +3722,8 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         # The unordered case is plain round-robin dispatch, which the gate in
         # run_batch_inmem now prevents outright for these engines rather than
         # silently degrading them here.
-        _ordered = (not getattr(self, '_parallel_stab', False)) or bool(
-            getattr(self._tls, 'temporal_block', False))
+        _ordered = False if is_single else ((not getattr(self, '_parallel_stab', False)) or bool(
+            getattr(self._tls, 'temporal_block', False)))
         for _tname in ('interaction_masker', 'temporal_identity', 'temporal_occlusion',
                        'temporal_expression', 'target_appearance',
                        'temporal_compositing', 'temporal_quality'):
@@ -3699,7 +3742,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         if source_video:
             self._trajectory_source_video = source_video
         num_swapped, resimg = self.swap_faces(
-            frame, None, stabilize=True, frame_idx=frame_idx,
+            frame, None, stabilize=(not is_single), frame_idx=frame_idx,
             frame_absolute=frame_absolute)
         temporal = self._video_temporal_state()
         reuse = temporal if temporal is not None else self
@@ -3726,6 +3769,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             temp_frame = self._apply_roto_exclusions(resimg, frame, frame_idx)
             if roop.globals.no_face_action == eNoFaceAction.SKIP_FRAME_IF_DISSIMILAR:
                 if len(self.input_face_datas) > num_swapped:
+                    _cleanup_single()
                     return None
             reuse.num_frames_no_face = 0
             # A last-frame copy is only observable for USE_LAST_SWAPPED. Avoid
@@ -3748,8 +3792,10 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     debug_snapshot.dump_snapshot(frame_idx=frame_idx if frame_idx is not None else 0)
             except Exception as _snap_err:
                 _swallowed("ProcessMgr:debug_snapshot", _snap_err)
+            _cleanup_single()
             return temp_frame
         if roop.globals.no_face_action == eNoFaceAction.USE_LAST_SWAPPED:
+            _cleanup_single()
             if reuse.last_swapped_frame is not None and reuse.num_frames_no_face < self.options.max_num_reuse_frame:
                 reuse.num_frames_no_face += 1
                 ret = reuse.last_swapped_frame.copy()
@@ -3758,6 +3804,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             self._publish_live(frame)
             return frame
         elif roop.globals.no_face_action == eNoFaceAction.USE_ORIGINAL_FRAME:
+            _cleanup_single()
             self._publish_live(frame)
             return frame
         # Both skip policies drop the frame. SKIP_FRAME_IF_DISSIMILAR had no
@@ -3770,6 +3817,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         # num_swapped > 0.)
         if roop.globals.no_face_action in (eNoFaceAction.SKIP_FRAME,
                                            eNoFaceAction.SKIP_FRAME_IF_DISSIMILAR):
+            _cleanup_single()
             return None
         if self._prepass_scanned(frame_idx):
             # The temporal pre-pass already detected this frame - upright, with its
@@ -3785,9 +3833,11 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 print('[Stage3] "Retry rotated" is skipped for frames the temporal pre-pass '
                       'already scanned (it would repeat that detection).', flush=True)
             self._publish_live(frame)
+            _cleanup_single()
             return frame
         ret = self.retry_rotated(frame)
         self._publish_live(ret)
+        _cleanup_single()
         return ret
 
     # ── Stage 11 helpers ──────────────────────────────────────────────────────
@@ -3946,10 +3996,14 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
 
 
     def _cur_kps_stab(self):
+        if getattr(self._tls, 'bypass_temporal', False):
+            return None
         return getattr(self._tls, 'kps', None) if self._parallel_stab else self.kps_stabilizer
 
 
     def _cur_enh_stab(self):
+        if getattr(self._tls, 'bypass_temporal', False):
+            return None
         return getattr(self._tls, 'enh', None) if self._parallel_stab else self.enh_stabilizer
 
     def _restore_ultra_recombine(self, restored, swap, target_face, M,
@@ -3988,6 +4042,8 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             return restored
 
     def _cur_mask_stab(self):
+        if getattr(self._tls, 'bypass_temporal', False):
+            return None
         return getattr(self._tls, 'mask', None) if self._parallel_stab else self.mask_stabilizer
 
     def _cur_stab_t(self):
@@ -4142,6 +4198,8 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         # entirely — so every face-free frame paid an extra detector pass over an
         # arbitrary rectangle, and the rescue could hand back a face found
         # nowhere near where this frame's face was.
+        if getattr(self._tls, 'bypass_temporal', False) or self.is_single_image(frame_idx):
+            stabilize = False
         self._tls.video_temporal_active = False
         self._tls.video_color_context = None
         state = None
@@ -4162,6 +4220,8 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                 # Seed this new shot from its first real frame.  A scene cut is
                 # a true discontinuity, not a missing-frame gap, so carrying an
                 # old face/mask/affine into it is the temporal artifact.
+                from roop.scene_detector import flush_pipeline_temporal_buffers
+                flush_pipeline_temporal_buffers(self)
                 for _stab in (self._cur_kps_stab(), self._cur_enh_stab(), self._cur_mask_stab(),
                               self.kps_stabilizer, self.enh_stabilizer,
                               self.mask_stabilizer):
@@ -7374,7 +7434,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                           if p.type == 'enhance'), None)
         _new_texture = (_video_temporal is not None and _video_tid is not None
                         and rotation_action is None and enhanced_frame is not None
-                        and _restorer in ('gpen_realistic', 'ultramax'))
+                        and _restorer in ('gpen_realistic', 'ultramax', 'codeformer'))
         if _new_texture and _enhanced_by == _restorer:
             with _prof('temporal_texture'):
                 enhanced_frame = _video_temporal.texture(

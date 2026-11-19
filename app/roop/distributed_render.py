@@ -48,7 +48,7 @@ if str(_APP_DIR) not in sys.path:
 
 from roop.ffmpeg_path import ffmpeg_binary, ffprobe_binary
 from roop import project_io
-from roop.segment_output import SEGMENT_WARMUP
+from roop.segment_output import SEGMENT_WARMUP, get_segment_warmup
 
 
 @dataclass(frozen=True)
@@ -151,8 +151,9 @@ def plan_chunks(path: str, target_seconds: float = 10.0,
     chunks = []
     for n, (a, b) in enumerate(zip(edges, edges[1:])):
         # Stream-copy from an earlier random-access frame. The worker seeks
-        # to the last SEGMENT_WARMUP frames of that prefix and discards them.
-        first = keyframes[max(0, bisect_right(keyframes, a - SEGMENT_WARMUP) - 1)]
+        # to the last warmup frames of that prefix and discards them.
+        warmup_needed = get_segment_warmup()
+        first = keyframes[max(0, bisect_right(keyframes, a - warmup_needed) - 1)]
         decode_start = None
         if first < a:
             digest = ordered[first].get('data_hash')

@@ -784,8 +784,7 @@ class TrackingMixin:
             if f_idx in shot_boundaries:
                 byte_tracker.reset()
                 byte_to_track.clear()
-                if not getattr(self, '_video_temporal_enabled', False):
-                    flush_pipeline_temporal_buffers(self)
+                flush_pipeline_temporal_buffers(self)
                 if active:
                     retired.extend(active)
                     active = []
@@ -1289,11 +1288,11 @@ class TrackingMixin:
                 # Discontinuity / gap between active ranges: treat as a shot cut
                 if prev_idx is not None and idx > prev_idx + 1:
                     shot_boundaries.add(idx)
-                    if _ordered_cuts:
-                        _scene_tracker.previous = None
-                    else:
-                        flush_pipeline_temporal_buffers(self)
+                    flush_pipeline_temporal_buffers(self)
+                    if hasattr(_scene_tracker, 'reset'):
                         _scene_tracker.reset()
+                    if hasattr(_scene_tracker, 'previous'):
+                        _scene_tracker.previous = None
                 prev_idx = idx
 
                 # ── Hard-cut detection, BEFORE this frame is dispatched ──────
@@ -1307,10 +1306,10 @@ class TrackingMixin:
                 # or later out of the in-flight queue (it is keyed by frame
                 # index, not by when it runs).
                 if isinstance(frame, np.ndarray):
-                    if (_scene_tracker.observe(frame) if _ordered_cuts else _scene_tracker.observe_frame(frame, idx)):
+                    cut_detected = _scene_tracker.observe(frame) if _ordered_cuts else _scene_tracker.observe_frame(frame, idx)
+                    if cut_detected:
                         shot_boundaries.add(idx)
-                        if not _ordered_cuts:
-                            flush_pipeline_temporal_buffers(self)
+                        flush_pipeline_temporal_buffers(self)
 
                 # Skip frames to speed up detection and save memory
                 if TRACK_STEP > 1 and idx > 0 and idx % TRACK_STEP != 0 and idx not in shot_boundaries:

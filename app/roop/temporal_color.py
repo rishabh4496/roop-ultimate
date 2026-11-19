@@ -157,12 +157,14 @@ class TemporalColorEMA:
         self.restarts += 1
         return entry
 
-    def smooth(self, track_id, frame_index, kind: str, src, tgt, cuts: Optional[set[int]] = None):
+    def smooth(self, track_id, frame_index, kind: str, src, tgt, cuts: Optional[set[int]] = None,
+               motion: float = 0.0):
         """Return the ``(A, b)`` to apply for this frame.
 
         ``kind`` ('lct' / 'rct') and the statistics ``src`` / ``tgt`` come from the ``*_stats`` helpers. With no
         track id, with the engine off or unordered, the answer is just this frame's own transform.
         Keyed strictly by persistent (segment_id, track_id, kind) - never raw box index.
+        Motion-gated EMA adapts faster during motion to prevent color lag.
         """
         affine = lct_affine if kind == "lct" else rct_affine
         if not self.enabled or track_id is None or not self.ordered:
@@ -196,7 +198,10 @@ class TemporalColorEMA:
             if self._is_cut(prev, src, tgt, A_now):
                 self._restart(key, fresh, frame_index)
                 return A_now, b_now
-            a = 1.0 - (1.0 - self.alpha) ** gap              # a skipped index counts as the frames it skipped
+            m = min(1.0, max(0.0, float(motion) / 0.08)) if motion else 0.0
+            eff_alpha = min(0.95, self.alpha + (1.0 - self.alpha) * (0.65 * m))
+            a = 1.0 - (1.0 - eff_alpha) ** gap              # a skipped index counts as the frames it skipped
+            a = min(1.0, max(0.02, float(a)))
             if self.mode == "stats":
                 s_m, s_c = (_ema(p, n, a) for p, n in zip(prev["src"], src))
                 t_m, t_c = (_ema(p, n, a) for p, n in zip(prev["tgt"], tgt))
@@ -211,6 +216,73 @@ class TemporalColorEMA:
             if len(self.states) > self.cache_size:
                 self.states.pop(next(iter(self.states)))
             return A, b
+
+    def smooth_stats(self, track_id, frame_index, kind: str,
+                     source_mean, source_spread, target_mean, target_spread,
+                     motion: float = 0.0, cuts: Optional[set[int]] = None):
+        """Directly smooth LAB color-transfer mean/std parameters across frames using motion-gated EMA.
+
+        Takes (source_mean, source_spread, target_mean, target_spread).
+        Returns (smoothed_source_mean, smoothed_source_spread, smoothed_target_mean, smoothed_target_spread).
+        """
+        stats = (source_mean, source_spread, target_mean, target_spread)
+        if not self.enabled or track_id is None or not self.ordered:
+            return stats
+        if isinstance(track_id, tuple) and len(track_id) == 2:
+            try:
+                key = (int(track_id[0]), int(track_id[1]), str(kind) + "_stats")
+            except (TypeError, ValueError):
+                return stats
+        else:
+            try:
+                import roop.globals
+                seg = int(getattr(getattr(roop.globals, '_segment_spec', None), 'index', 0) or 0)
+                key = (seg, int(track_id), str(kind) + "_stats")
+            except (TypeError, ValueError):
+                return stats
+
+        s_m = np.asarray(source_mean, dtype=np.float32)
+        s_s = np.asarray(source_spread, dtype=np.float32)
+        t_m = np.asarray(target_mean, dtype=np.float32)
+        t_s = np.asarray(target_spread, dtype=np.float32)
+        fresh_stats = (s_m, s_s, t_m, t_s)
+
+        with self._lock:
+            prev = self.states.get(key)
+            if cuts is not None and frame_index is not None and frame_index in cuts:
+                self._restart(key, {"stats": fresh_stats, "frame": frame_index}, frame_index)
+                return stats
+            if prev is None or frame_index is None or prev.get("frame") is None:
+                self._restart(key, {"stats": fresh_stats, "frame": frame_index}, frame_index)
+                return stats
+            gap = frame_index - prev["frame"]
+            if gap < 1 or gap > MAX_GAP:
+                self._restart(key, {"stats": fresh_stats, "frame": frame_index}, frame_index)
+                return stats
+
+            # Plate mean jump check (scene cut or sudden lighting change)
+            old_tm = prev["stats"][2]
+            if float(np.max(np.abs(t_m - old_tm))) > CUT_MEAN:
+                self._restart(key, {"stats": fresh_stats, "frame": frame_index}, frame_index)
+                return stats
+
+            m = min(1.0, max(0.0, float(motion) / 0.08)) if motion else 0.0
+            eff_alpha = min(0.95, self.alpha + (1.0 - self.alpha) * (0.65 * m))
+            a = 1.0 - (1.0 - eff_alpha) ** gap
+            a = min(1.0, max(0.02, float(a)))
+
+            # Motion-gated EMA on mean and spread
+            sm_smooth = _ema(prev["stats"][0], s_m, a)
+            ss_smooth = _ema(prev["stats"][1], s_s, a)
+            tm_smooth = _ema(prev["stats"][2], t_m, a)
+            ts_smooth = _ema(prev["stats"][3], t_s, a)
+            smoothed_stats = (sm_smooth, ss_smooth, tm_smooth, ts_smooth)
+            prev["stats"] = smoothed_stats
+            prev["frame"] = frame_index
+            self.blended += 1
+            if len(self.states) > self.cache_size:
+                self.states.pop(next(iter(self.states)))
+            return smoothed_stats
 
     @staticmethod
     def _is_cut(prev, src, tgt, A_now) -> bool:

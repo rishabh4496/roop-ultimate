@@ -460,18 +460,32 @@ class ColorTransferMixin:
                 out, target, appearance, strength, support=mask)
         return out
 
-    def _video_color_stats(self, kind, source_mean, source_spread, target_mean, target_spread):
+    def _video_color_stats(self, kind, source_mean, source_spread, target_mean, target_spread, motion=0.0):
         stats = source_mean, source_spread, target_mean, target_spread
         tls = getattr(self, '_tls', None)
         context = getattr(tls, 'video_color_context', None)
-        if context is None:
-            return stats
-        state, track_id, slot = context
-        call = tls.video_color_call
-        tls.video_color_call += 1
-        from roop.procmgr_runtime import _prof
-        with _prof('temporal_color'):
-            return state.color(track_id, ('lab', kind, slot, call), stats)
+        if context is not None:
+            state, track_id, slot = context
+            call = tls.video_color_call
+            tls.video_color_call += 1
+            from roop.procmgr_runtime import _prof
+            with _prof('temporal_color'):
+                return state.color(track_id, ('lab', kind, slot, call), stats)
+        # Dedicated fallback / standalone / parallel block engine
+        tc_engine = getattr(self, '_temporal_color_ema', None)
+        if tc_engine is None and tls is not None:
+            tc_engine = getattr(tls, 'temporal_color_ema', None)
+        if tc_engine is not None and getattr(tc_engine, 'enabled', False):
+            track_id = getattr(tls, 'current_track_id', None)
+            frame_index = getattr(tls, 'frame_idx', None)
+            cuts = getattr(self, '_shot_boundaries', None)
+            from roop.procmgr_runtime import _prof
+            with _prof('temporal_color'):
+                return tc_engine.smooth_stats(
+                    track_id, frame_index, kind,
+                    source_mean, source_spread, target_mean, target_spread,
+                    motion=motion, cuts=cuts)
+        return stats
 
     def _color_transfer_rct(self, source, target, mask=None):
         """Legacy LAB mean/std transfer kept as a named internal path."""
@@ -486,8 +500,12 @@ class ColorTransferMixin:
             mask8 = None
         source_mean, source_std = cv2.meanStdDev(source, mask=mask8)
         target_mean, target_std = cv2.meanStdDev(target, mask=mask8)
+        motion = 0.0
+        tls = getattr(self, '_tls', None)
+        if tls is not None:
+            motion = float(getattr(tls, 'current_motion', 0.0) or 0.0)
         source_mean, source_std, target_mean, target_std = self._video_color_stats(
-            'rct', source_mean, source_std, target_mean, target_std)
+            'rct', source_mean, source_std, target_mean, target_std, motion=motion)
         source_mean = source_mean.reshape(1, 1, 3)
         source_std  = np.maximum(source_std.reshape(1, 1, 3), 1.0)  # guard near-zero
         target_mean = target_mean.reshape(1, 1, 3)
@@ -634,7 +652,11 @@ class ColorTransferMixin:
         denominator_t = max(1, t_centered.shape[0] - 1)
         Cs = (s_centered.T @ s_centered) / denominator_s + eps
         Ct = (t_centered.T @ t_centered) / denominator_t + eps
-        s_mean, Cs, t_mean, Ct = self._video_color_stats('lct', s_mean, Cs, t_mean, Ct)
+        motion = 0.0
+        tls = getattr(self, '_tls', None)
+        if tls is not None:
+            motion = float(getattr(tls, 'current_motion', 0.0) or 0.0)
+        s_mean, Cs, t_mean, Ct = self._video_color_stats('lct', s_mean, Cs, t_mean, Ct, motion=motion)
 
         w_s, V_s = np.linalg.eigh(Cs)
         minv_s = (V_s * (1.0 / np.sqrt(np.clip(w_s, 1e-6, None)))) @ V_s.T
