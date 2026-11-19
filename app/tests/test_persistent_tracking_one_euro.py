@@ -321,3 +321,13 @@ def test_scene_cut_hard_reset_clears_all_buffers():
     # Re-observed face starts fresh without memory from previous shot
     out = stabilizer.apply(landmarks=POINTS + 100.0, bbox=[110, 110, 180, 180], t=1.0, track_id=1)
     np.testing.assert_array_almost_equal(out['landmarks'], POINTS + 100.0, decimal=2)
+
+
+def load_tests(loader, tests, pattern):
+    """Expose this module's bare `test_*` functions to `unittest discover`."""
+    try:
+        from tests.unittest_shim import load_tests_for
+    except ImportError:
+        from unittest_shim import load_tests_for
+    return load_tests_for(globals())
+

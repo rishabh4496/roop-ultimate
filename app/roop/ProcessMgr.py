@@ -3571,7 +3571,8 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
                     free_b, total_b = torch.cuda.mem_get_info()
                     used_gb = (total_b - free_b) / (1024**3)
                     self._cached_vram_str = f"{COLOR_PURPLE}{used_gb:.1f}GB{COLOR_RESET}"
-            except Exception:
+            except Exception as _e:
+                _swallowed("roop/ProcessMgr.py:3574", _e, "vram query failed")
                 pass
         mem_str = getattr(self, '_cached_mem_str', f"{COLOR_CYAN}0.00GB{COLOR_RESET}")
         active_workers = getattr(self, '_active_inference_workers', None)
@@ -3734,7 +3735,8 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
             try:
                 from roop import watchdog
                 watchdog.enter_frame(frame_idx, stage="Stage 3 (Swap / Restoration)")
-            except Exception:
+            except Exception as _e:
+                _swallowed("roop/ProcessMgr.py:3574", _e, "vram query failed")
                 pass
         # Fast-path: avoid frame.copy() before face detection & target matching
         self._count_stage3('gpu_frames')

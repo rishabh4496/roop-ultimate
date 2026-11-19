@@ -150,3 +150,13 @@ def test_warmup_frames_are_not_emitted_to_writer():
                 queued_indices.append(payload[0])
 
     assert queued_indices == list(range(0, 5))
+
+
+def load_tests(loader, tests, pattern):
+    """Expose this module's bare `test_*` functions to `unittest discover`."""
+    try:
+        from tests.unittest_shim import load_tests_for
+    except ImportError:
+        from unittest_shim import load_tests_for
+    return load_tests_for(globals())
+
