@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { settleTypedValue } from '../numeric/mathExpr';
 import { clampNum, decimalsFor, snapStep, snapTo } from '../numeric/scrubMath';
 import { useScrub } from '../numeric/useScrub';
+import ExpressionPreview from './ExpressionPreview';
 
 // A number field with the workstation's pro ergonomics:
 //
@@ -120,7 +121,9 @@ export default function NumericInput({
   const shown = live ?? value;
 
   return (
-    <label className={`inline-flex items-center gap-1 ${className}`}>
+    <label className={`expr-pill-host relative inline-flex items-center gap-1 ${className}`}>
+      {/* Stage 15: the live `Formula → Result` pill, while a value is being typed. */}
+      {!idle && <ExpressionPreview text={draft} current={value} min={min} max={max} step={step} />}
       {label !== undefined && label !== null && (
         <span
           {...(disabled ? {} : scrub.bind)}
@@ -138,7 +141,7 @@ export default function NumericInput({
         data-testid={testId}
         aria-label={ariaLabel}
         aria-invalid={error ? true : undefined}
-        title={error || (idle && !disabled ? 'Click to type a value or an expression like 512/2 · drag to scrub' : undefined)}
+        title={error || (idle && !disabled ? 'Click to type a value or an expression like 512/2, *2, +16, -10%, min(v*2, 64) · drag to scrub' : undefined)}
         value={idle ? fmt(shown, step) : draft}
         onFocus={open}
         onChange={(e) => { setDraft(e.target.value); setError(''); }}

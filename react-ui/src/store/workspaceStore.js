@@ -1,4 +1,7 @@
 import { create } from 'zustand';
+import {
+  ASPECTS, assignHotkey, classifyAspect, layoutForSlot, newLayoutId, normalizeLayouts, renameLayout, scaleSizes, setAspect,
+} from '../workspace/layoutModel';
 
 // ── Workstation chrome state ────────────────────────────────────────────────
 //
@@ -85,7 +88,11 @@ const initialSizes = {
   queueWidth: clampPanelSize('queueWidth', saved.panelSizes?.queueWidth ?? DEFAULT_PANEL_SIZES.queueWidth),
 };
 
-const initialCustom = Array.isArray(saved.customLayouts) ? saved.customLayouts : [];
+// Stored layouts from before Stage 15 have no aspect / hotkey / viewport: normalizeLayouts gives them 'any' / null / null.
+const initialCustom = normalizeLayouts(saved.customLayouts, clampPanelSize);
+
+const currentViewport = () => (typeof window !== 'undefined' && window.innerWidth > 0
+  ? { w: Math.round(window.innerWidth), h: Math.round(window.innerHeight) } : null);
 
 export const useWorkspaceStore = create((set, get) => ({
   workspaceMode: WORKSPACE_MODES.includes(saved.workspaceMode) ? saved.workspaceMode : (typeof window !== 'undefined' && window.innerWidth > 2200 ? 'dual' : 'default'),
@@ -148,12 +155,16 @@ export const useWorkspaceStore = create((set, get) => ({
     if (!layout) return;
 
     const nextMode = WORKSPACE_MODES.includes(layout.mode) ? layout.mode : get().workspaceMode;
-    const nextSizes = layout.sizes
+    // A saved layout carries the window it was made in: on another monitor of the same shape its panels keep their
+    // PROPORTIONS (a 3440-wide layout on a 2560-wide screen), not their pixels. Presets have no viewport and apply as written.
+    const here = currentViewport();
+    const source = !preset && layout.viewport && here ? scaleSizes(layout.sizes, layout.viewport, here, clampPanelSize) : layout.sizes;
+    const nextSizes = source
       ? {
-          leftWidth: clampPanelSize('leftWidth', layout.sizes.leftWidth ?? DEFAULT_PANEL_SIZES.leftWidth),
-          rightWidth: clampPanelSize('rightWidth', layout.sizes.rightWidth ?? DEFAULT_PANEL_SIZES.rightWidth),
-          bottomHeight: clampPanelSize('bottomHeight', layout.sizes.bottomHeight ?? DEFAULT_PANEL_SIZES.bottomHeight),
-          queueWidth: clampPanelSize('queueWidth', layout.sizes.queueWidth ?? DEFAULT_PANEL_SIZES.queueWidth),
+          leftWidth: clampPanelSize('leftWidth', source.leftWidth ?? DEFAULT_PANEL_SIZES.leftWidth),
+          rightWidth: clampPanelSize('rightWidth', source.rightWidth ?? DEFAULT_PANEL_SIZES.rightWidth),
+          bottomHeight: clampPanelSize('bottomHeight', source.bottomHeight ?? DEFAULT_PANEL_SIZES.bottomHeight),
+          queueWidth: clampPanelSize('queueWidth', source.queueWidth ?? DEFAULT_PANEL_SIZES.queueWidth),
         }
       : get().panelSizes;
 
@@ -166,24 +177,71 @@ export const useWorkspaceStore = create((set, get) => ({
     persist(get());
   },
 
-  saveCustomLayout: (name) => {
-    const trimmed = String(name || '').trim();
+  // Save the CURRENT proportions as a named layout. `aspect` is the monitor shape it is for (default: the one this window
+  // is); `hotkey` an Alt+<1..5> slot. Saving under a name that exists replaces that layout and keeps its slot.
+  saveCustomLayout: (name, { aspect, hotkey } = {}) => {
+    const trimmed = String(name || '').trim().slice(0, 40);
     if (!trimmed) return null;
-    const id = `custom_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const here = currentViewport();
+    const previous = get().customLayouts.find((l) => l.name.toLowerCase() === trimmed.toLowerCase());
+    const id = previous?.id || newLayoutId();
     const newLayout = {
       id,
       name: trimmed,
       label: trimmed,
       mode: get().workspaceMode,
       sizes: { ...get().panelSizes },
+      aspect: ASPECTS.includes(aspect) ? aspect : (previous?.aspect && previous.aspect !== 'any' ? previous.aspect : (here ? classifyAspect(here.w, here.h) : 'any')),
+      hotkey: previous?.hotkey ?? null,
+      viewport: here,
     };
-    const next = [...get().customLayouts.filter((l) => l.name.toLowerCase() !== trimmed.toLowerCase()), newLayout];
-    set({
-      customLayouts: next,
-      activeLayoutId: id,
-    });
+    let next = [...get().customLayouts.filter((l) => l.id !== id), newLayout];
+    if (hotkey !== undefined) next = assignHotkey(next, id, hotkey);
+    set({ customLayouts: next, activeLayoutId: id });
     persist(get());
-    return newLayout;
+    return next.find((l) => l.id === id);
+  },
+
+  /** Replace a saved layout's proportions with the ones on screen now (keeps its name, slot and aspect). */
+  overwriteCustomLayout: (layoutId) => {
+    const here = currentViewport();
+    const next = get().customLayouts.map((l) => (l.id === layoutId
+      ? { ...l, mode: get().workspaceMode, sizes: { ...get().panelSizes }, viewport: here }
+      : l));
+    set({ customLayouts: next, activeLayoutId: layoutId });
+    persist(get());
+  },
+
+  /** { ok: true } or { ok: false, error } - an empty name or another layout's name is refused. */
+  renameCustomLayout: (layoutId, name) => {
+    const r = renameLayout(get().customLayouts, layoutId, name);
+    if (!r.ok) return r;
+    set({ customLayouts: r.layouts });
+    persist(get());
+    return { ok: true };
+  },
+
+  /** Bind Alt+<slot> (1..5) to a saved layout; null unbinds. The slot moves off whichever layout had it. */
+  bindLayoutHotkey: (layoutId, slot) => {
+    const next = assignHotkey(get().customLayouts, layoutId, slot);
+    if (next === get().customLayouts) return;
+    set({ customLayouts: next });
+    persist(get());
+  },
+
+  setLayoutAspect: (layoutId, aspect) => {
+    const next = setAspect(get().customLayouts, layoutId, aspect);
+    if (next === get().customLayouts) return;
+    set({ customLayouts: next });
+    persist(get());
+  },
+
+  /** Alt+<slot>: switch to the layout bound to it. Returns that layout, or null when the slot is empty. */
+  applyLayoutSlot: (slot) => {
+    const layout = layoutForSlot(get().customLayouts, slot);
+    if (!layout) return null;
+    get().applyLayout(layout.id);
+    return layout;
   },
 
   deleteCustomLayout: (layoutId) => {

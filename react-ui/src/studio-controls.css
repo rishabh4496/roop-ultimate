@@ -171,3 +171,45 @@
 .routing-link { background: none; border: 0; padding: 0; cursor: pointer; font-size: var(--font-studio-control, 12px); font-weight: 700; color: var(--accent-cyan, #00f0ff); text-decoration: underline; text-underline-offset: 2px; }
 .routing-note { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; font-size: var(--font-studio-control, 12px); line-height: 1.4; color: var(--accent-amber, #f59e0b); }
 .routing-note--quiet { color: var(--text-muted, rgba(244, 245, 247, 0.55)); }
+
+/* ── Stage 15: live expression preview pill ─────────────────────────────────────────────────────────────────────────── */
+/* Sits above the field's right edge, outside `.studio-scrub__bar` (which clips its children). Pointer-transparent: it
+   describes the field, it never covers it. */
+.studio-scrub .expr-pill, .expr-pill-host .expr-pill { position: absolute; right: 0; bottom: calc(100% + 4px); z-index: 30; }
+.expr-pill {
+  display: inline-flex; align-items: baseline; gap: 5px; max-width: 18rem; pointer-events: none;
+  padding: 2px 8px; border-radius: 999px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  font-size: var(--font-studio-micro, 11px); font-weight: 600; line-height: 1.5; font-variant-numeric: tabular-nums;
+  color: var(--text-main, #f4f5f7);
+  background: color-mix(in srgb, var(--bg-elevated, #171a23) 88%, var(--accent-cyan, #00f0ff) 12%);
+  border: 1px solid color-mix(in srgb, var(--accent-cyan, #00f0ff) 45%, transparent);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+}
+.expr-pill__formula { color: var(--text-muted, rgba(244, 245, 247, 0.65)); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow: hidden; text-overflow: ellipsis; }
+.expr-pill__arrow { color: var(--accent-cyan, #00f0ff); }
+.expr-pill__result { color: var(--accent-cyan, #00f0ff); font-weight: 700; }
+.expr-pill.is-error {
+  background: color-mix(in srgb, var(--bg-elevated, #171a23) 88%, var(--accent-amber, #f59e0b) 12%);
+  border-color: color-mix(in srgb, var(--accent-amber, #f59e0b) 55%, transparent);
+}
+.expr-pill.is-error .expr-pill__result, .expr-pill.is-error .expr-pill__arrow { color: var(--accent-amber, #f59e0b); }
+
+/* ── Stage 15: floating preview glass ──────────────────────────────────────────────────────────────────────────────── */
+.pip-glass {
+  background: rgba(16, 19, 28, 0.62);
+  backdrop-filter: blur(14px) saturate(150%);
+  -webkit-backdrop-filter: blur(14px) saturate(150%);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.14);
+}
+/* A render saturates the same GPU the compositor runs on (index.css "Render-lite" kills backdrop-filter): the window turns
+   solid instead of losing its legibility over whatever scrolls behind it. */
+html[data-render-lite] .pip-glass { background: rgba(14, 17, 26, 0.95); }
+.pip-bar { background: rgba(8, 10, 16, 0.55); border-bottom: 1px solid rgba(255, 255, 255, 0.08); }
+.pip-transport { display: flex; align-items: center; gap: 4px; padding: 0 6px; height: 26px; background: rgba(8, 10, 16, 0.55); border-top: 1px solid rgba(255, 255, 255, 0.08); }
+.pip-wipe-handle { position: absolute; top: 0; bottom: 0; width: 18px; margin-left: -9px; cursor: ew-resize; touch-action: none; background: transparent; border: 0; padding: 0; }
+.pip-wipe-handle::before { content: ''; position: absolute; top: 0; bottom: 0; left: 8px; width: 2px; background: var(--accent-cyan, #00f0ff); box-shadow: 0 0 8px var(--accent-cyan, #00f0ff); }
+.pip-wipe-handle:focus-visible { outline: 2px solid var(--accent-cyan, #00f0ff); outline-offset: -2px; }
+.pip-badge { position: absolute; top: 4px; left: 4px; padding: 1px 6px; border-radius: 999px; font-size: 9px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; background: rgba(0, 0, 0, 0.6); color: #fff; pointer-events: none; }
+.pip-badge.is-live { color: #6ee7b7; }
+.pip-badge.is-paused { color: #fcd34d; }

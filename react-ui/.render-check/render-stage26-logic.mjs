@@ -130,7 +130,9 @@ rejects('1/0', 'division by zero');
 rejects('(1+2', 'unbalanced');
 rejects('1+2)', 'unbalanced');
 rejects('1+', 'trailing operator');
-rejects('*3', 'leading binary operator');
+rejects('*', 'a lone operator');
+rejects('**3', 'two leading operators');
+rejects('/0', 'relative division by zero');
 rejects('9^9^9^9', 'overflow to Infinity');
 rejects('1e999', 'literal out of range');
 rejects('(((((((((((((((((((((((((((((((((((((((((((((1)))))))))))))))))))))))))))))))))))))))))))))', 'nesting depth');
@@ -273,7 +275,7 @@ console.log('keymap');
 {
   ok('action ids are unique', new Set(ACTIONS.map((a) => a.id)).size === ACTIONS.length);
   // 'facemgr' is the Face Manager's own scope (Stage 9 moved its Delete / Ctrl+A keys into the registry).
-  ok('every action has a label, a known category and a scope', ACTIONS.every((a) => a.label && CATEGORIES.includes(a.category) && ['global', 'faceswap', 'monitor', 'facemgr'].includes(a.scope)));
+  ok('every action has a label, a known category and a scope', ACTIONS.every((a) => a.label && CATEGORIES.includes(a.category) && ['global', 'faceswap', 'monitor', 'facemgr', 'flow', 'sweep'].includes(a.scope)));
   ok('every action has at least one default key', ACTIONS.every((a) => a.keys.length > 0));
   ok('every category has an action', CATEGORIES.every((cat) => ACTIONS.some((a) => a.category === cat)));
   ok('THE SHIPPED KEYMAP HAS NO CLASH', allConflicts({}).length === 0, JSON.stringify(allConflicts({})));
@@ -310,7 +312,7 @@ console.log('keymap');
   // Overrides
   ok('an override replaces the defaults', JSON.stringify(bindingsOf('viewport.splitView', { 'viewport.splitView': ['Y'] })) === '["Y"]');
   ok('an empty override means unbound', bindingsOf('viewport.splitView', { 'viewport.splitView': [] }).length === 0);
-  ok('unbound actions leave the index', !buildIndex({ 'viewport.splitView': [] }).get('S'));
+  ok('unbound actions leave the index', !(buildIndex({ 'viewport.splitView': [] }).get('S') || []).includes('viewport.splitView'));
   ok('conflictsFor: Q is taken by "Add to the batch queue"', conflictsFor('viewport.splitView', 'Q', {}).map((a) => a.id).join() === 'transport.addToQueue');
   ok('conflictsFor: a free key', conflictsFor('viewport.splitView', 'Y', {}).length === 0);
   ok('conflictsFor: the same key on the same action is not a conflict with itself', conflictsFor('viewport.splitView', 'S', {}).length === 0);
@@ -350,8 +352,8 @@ console.log('pip model');
   // visibility: follows you to the tabs you tune from, and reappears on Face Swap when the stage is out of view
   const vis = (o) => pipVisible({ enabled: true, hasFrame: true, tab: 'facemgr', stageVisible: true, ...o });
   ok('on Face Manager / Batch / Settings', ['facemgr', 'batch', 'settings'].every((t) => vis({ tab: t })));
-  ok('PIP_TABS is exactly those three', JSON.stringify([...PIP_TABS]) === '["facemgr","batch","settings"]');
-  ok('not on Home, Processing, Editor, Outputs, History', ['home', 'processing', 'extras', 'gallery', 'history'].every((t) => !vis({ tab: t })));
+  ok('PIP_TABS is the four tabs a user tunes or watches a render from (Stage 15 added Processing)', JSON.stringify([...PIP_TABS]) === '["facemgr","batch","processing","settings"]');
+  ok('not on Home, Editor, Outputs, History', ['home', 'extras', 'gallery', 'history'].every((t) => !vis({ tab: t })));
   ok('on Face Swap it hides while the stage is visible', !vis({ tab: 'faceswap', stageVisible: true }));
   ok('on Face Swap it shows when the stage is scrolled out of view', vis({ tab: 'faceswap', stageVisible: false }));
   ok('never when switched off', !vis({ enabled: false }) && !vis({ enabled: false, tab: 'faceswap', stageVisible: false }));

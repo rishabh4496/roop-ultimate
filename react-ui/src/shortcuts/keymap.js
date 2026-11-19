@@ -115,5 +115,51 @@ export function parseStored(text) {
 
 export const serialize = (overrides) => JSON.stringify({ v: SCHEMA, overrides });
 
+// ── Hotkey profiles: a keymap as a file (Stage 15) ───────────────────────────
+// A profile is the user's overrides plus a name, so a keymap can move between browsers, machines and people. Importing is
+// REPLACE, not merge: the file is a whole keymap, and a half-merged one (some of yours, some of theirs) is the state that
+// produces silent clashes.
+
+export const PROFILE_FORMAT = 'roop-ultimate-keymap';
+export const MAX_PROFILE_BYTES = 256 * 1024;
+
+/** The object that is written to a profile file. `now` is injectable for the tests. */
+export function exportProfile(overrides = {}, name = 'My keymap', now = new Date()) {
+  return {
+    format: PROFILE_FORMAT,
+    v: SCHEMA,
+    name: String(name || 'My keymap').trim().slice(0, 60) || 'My keymap',
+    exportedAt: now.toISOString(),
+    overrides: sanitizeOverrides(overrides),
+  };
+}
+
+/**
+ * Read a profile file's text. Returns { ok: true, name, overrides, ignored, total } or { ok: false, error }.
+ *   ignored  how many entries this build could not use (an action id it does not have, or combos that are all invalid),
+ *            so "imported 12, ignored 3" is something the UI can say instead of dropping them silently.
+ * Nothing here touches storage: the caller applies `overrides`, then reads allConflicts() to report what clashes.
+ */
+export function parseProfile(text) {
+  if (typeof text !== 'string' || !text.trim()) return { ok: false, error: 'The file is empty' };
+  if (text.length > MAX_PROFILE_BYTES) return { ok: false, error: 'That file is too large to be a keymap' };
+  let v;
+  try { v = JSON.parse(text); } catch { return { ok: false, error: 'That is not a JSON file' }; }
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return { ok: false, error: 'That is not a keymap profile' };
+  if (v.format !== PROFILE_FORMAT) return { ok: false, error: 'That JSON is not a Roop Ultimate keymap profile' };
+  if (v.v !== SCHEMA) return { ok: false, error: `Keymap profile version ${String(v.v)} is not supported (this build reads version ${SCHEMA})` };
+  if (!v.overrides || typeof v.overrides !== 'object' || Array.isArray(v.overrides)) return { ok: false, error: 'The profile has no keymap in it' };
+  const entries = Object.entries(v.overrides);
+  const overrides = sanitizeOverrides(v.overrides);
+  // An entry that equals the defaults is correctly dropped by sanitizeOverrides and is NOT "ignored"; only an unknown action
+  // or an entry that lost every combo to validation is.
+  const ignored = entries.filter(([id, list]) => !ACTION_BY_ID[id] || !Array.isArray(list)
+    || (list.length > 0 && !list.some((c) => { const n = normalizeCombo(c); return n && !reservedReason(n); }))).length;
+  return { ok: true, name: String(v.name || 'Imported keymap').slice(0, 60), overrides, ignored, total: entries.length };
+}
+
+/** A file name for an exported profile: `roop-keymap-my-keymap.json`. */
+export const profileFileName = (name) => `roop-keymap-${String(name || 'keymap').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'keymap'}.json`;
+
 /** The key a combo names, ignoring modifiers - what a keyup is matched on (see viewport.peekOriginal). */
 export const keyOf = (combo) => parseCombo(combo)?.key ?? null;

@@ -380,6 +380,17 @@ const pipCentre = (page) => page.getByTestId('pip-canvas').evaluate((c) => {
 });
 
 test.describe('floating preview (PiP)', () => {
+  // The header's tools (the PiP switch among them) live in the collapsed "•••" menu since the Stage 8 header: open it as soon
+  // as it exists so the tests can reach `pip-toggle`.
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript(() => {
+      new MutationObserver(() => {
+        const d = document.querySelector('details.studio-tools');
+        if (d && !d.open) d.open = true;
+      }).observe(document, { childList: true, subtree: true });
+    });
+  });
+
   test('it is off until switched on; on Face Swap it shows only while the stage is scrolled out of view', async ({ page }) => {
     await openFaceSwapWithPictures(page);
     const stage = page.locator('.preview-stage').first();

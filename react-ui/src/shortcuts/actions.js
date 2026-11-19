@@ -38,6 +38,12 @@ export const ACTIONS = [
   { id: 'workspace.cinema', label: 'Cinema mode: collapse the side panels (with the preview focused)', category: 'Workspace', scope: 'global', keys: ['Tab'] },
   { id: 'facemgr.exclude', label: 'Face Manager: exclude the selected faces', category: 'Workspace', scope: 'facemgr', keys: ['Delete', 'Backspace'] },
   { id: 'facemgr.selectAll', label: 'Face Manager: select every face', category: 'Workspace', scope: 'facemgr', keys: ['Mod+A'] },
+  // Saved workspace layouts (header -> Workspace Layouts): Alt+<n> switches to the layout bound to slot n. An empty slot says so.
+  { id: 'workspace.layout1', label: 'Switch to the saved layout in slot 1', category: 'Workspace', scope: 'global', keys: ['Alt+1'] },
+  { id: 'workspace.layout2', label: 'Switch to the saved layout in slot 2', category: 'Workspace', scope: 'global', keys: ['Alt+2'] },
+  { id: 'workspace.layout3', label: 'Switch to the saved layout in slot 3', category: 'Workspace', scope: 'global', keys: ['Alt+3'] },
+  { id: 'workspace.layout4', label: 'Switch to the saved layout in slot 4', category: 'Workspace', scope: 'global', keys: ['Alt+4'] },
+  { id: 'workspace.layout5', label: 'Switch to the saved layout in slot 5', category: 'Workspace', scope: 'global', keys: ['Alt+5'] },
   { id: 'app.zoomIn', label: 'Zoom the interface in', category: 'Workspace', scope: 'global', keys: ['Mod+=', 'Mod++'] },
   { id: 'app.zoomOut', label: 'Zoom the interface out', category: 'Workspace', scope: 'global', keys: ['Mod+-', 'Mod+_'] },
   { id: 'app.zoomReset', label: 'Reset interface zoom', category: 'Workspace', scope: 'global', keys: ['Mod+0'] },
@@ -137,7 +143,12 @@ export const ACTIONS = [
   { id: 'snapshot.slotD', label: 'Snapshot slot D', category: 'Snapshots', scope: 'faceswap', keys: ['4'] },
 ];
 
-export const ACTION_BY_ID = Object.freeze(Object.fromEntries(ACTIONS.map((a) => [a.id, a])));
+// No prototype: `ACTION_BY_ID['constructor']` (an id out of a pasted keymap profile or a tampered localStorage entry) must be
+// "no such action", not Object's own `constructor` function.
+export const ACTION_BY_ID = Object.freeze(Object.assign(Object.create(null), Object.fromEntries(ACTIONS.map((a) => [a.id, a]))));
 
 /** The action ids for the four snapshot slots, in slot order. */
 export const SLOT_ACTION_IDS = ['snapshot.slotA', 'snapshot.slotB', 'snapshot.slotC', 'snapshot.slotD'];
+
+/** The action ids for the five workspace-layout hotkey slots, in slot order (slot n is index n-1). */
+export const LAYOUT_SLOT_ACTION_IDS = ['workspace.layout1', 'workspace.layout2', 'workspace.layout3', 'workspace.layout4', 'workspace.layout5'];

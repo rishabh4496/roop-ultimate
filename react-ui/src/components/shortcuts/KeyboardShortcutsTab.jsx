@@ -1,11 +1,15 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ACTIONS, ACTION_BY_ID, CATEGORIES } from '../../shortcuts/actions';
 import { comboFromEvent, formatCombo } from '../../shortcuts/combo';
-import { allConflicts, bindingsOf, checkBinding, isOverridden } from '../../shortcuts/keymap';
+import {
+  allConflicts, bindingsOf, checkBinding, exportProfile, isOverridden, parseProfile, profileFileName,
+} from '../../shortcuts/keymap';
+import { actionsOnKey, analyzeKeymap, describeConflicts } from '../../shortcuts/ansiLayout';
 import { useShortcutStore } from '../../store/shortcutStore';
 import { Icon } from '../../icons';
 import { Section } from '../ui';
 import KeyChips from './KeyChips';
+import AnsiKeyboard from './AnsiKeyboard';
 
 // Settings -> Keyboard Shortcuts: click an action, press the new combination.
 //
@@ -33,7 +37,55 @@ export default function KeyboardShortcutsTab() {
   const overridesRef = useRef(overrides);
   overridesRef.current = overrides;
 
+  const replaceAll = useShortcutStore((s) => s.replaceAll);
+  const [layerId, setLayerId] = useState('plain');
+  const [selectedKey, setSelectedKey] = useState(null);       // a key clicked on the drawing: the list narrows to its actions
+  const [profileName, setProfileName] = useState('My keymap');
+  const [notice, setNotice] = useState(null);                 // { kind: 'ok' | 'error', text } after an import / export
+  const fileRef = useRef(null);
+
+  const analysis = useMemo(() => analyzeKeymap(overrides), [overrides]);
+  const conflictLines = useMemo(() => describeConflicts(analysis), [analysis]);
+  const onSelectedKey = useMemo(() => (selectedKey ? new Set(actionsOnKey(selectedKey, analysis).map((a) => a.id)) : null), [selectedKey, analysis]);
   const clashing = useMemo(() => new Set(allConflicts(overrides).flatMap((c) => c.actions)), [overrides]);
+
+  // Export: the user's remaps as a file. A Blob URL is local to this page; nothing is uploaded anywhere.
+  const exportKeymap = () => {
+    const profile = exportProfile(overrides, profileName);
+    const url = URL.createObjectURL(new Blob([`${JSON.stringify(profile, null, 2)}\n`], { type: 'application/json' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = profileFileName(profile.name);
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    const n = Object.keys(profile.overrides).length;
+    setNotice({ kind: 'ok', text: `Exported “${profile.name}”: ${n === 0 ? 'every shortcut is on its default' : `${n} changed action${n === 1 ? '' : 's'}`}.` });
+  };
+
+  // Import REPLACES the keymap (a profile is a whole keymap), then says what clashes - the keyboard has already lit it.
+  const importKeymap = async (file) => {
+    if (!file) return;
+    try {
+      const parsed = parseProfile(await file.text());
+      if (!parsed.ok) { setNotice({ kind: 'error', text: parsed.error }); return; }
+      replaceAll(parsed.overrides);
+      setPending(null);
+      setSelectedKey(null);
+      const n = Object.keys(parsed.overrides).length;
+      const clashes = allConflicts(parsed.overrides).length;
+      setProfileName(parsed.name);
+      setNotice({
+        kind: clashes ? 'error' : 'ok',
+        text: `Imported “${parsed.name}”: ${n} changed action${n === 1 ? '' : 's'}${parsed.ignored ? `, ${parsed.ignored} this version does not know ignored` : ''}${clashes ? `. ${clashes} key${clashes === 1 ? '' : 's'} now clash — see below.` : '. No conflicts.'}`,
+      });
+    } catch {
+      setNotice({ kind: 'error', text: 'Could not read that file' });
+    } finally {
+      if (fileRef.current) fileRef.current.value = '';
+    }
+  };
   const changed = useMemo(() => ACTIONS.filter((a) => isOverridden(a.id, overrides)).length, [overrides]);
 
   const apply = (id, mode, combo) => {
@@ -91,6 +143,7 @@ export default function KeyboardShortcutsTab() {
   const sections = CATEGORIES.map((cat) => ({
     cat,
     rows: ACTIONS.filter((a) => a.category === cat).filter((a) => {
+      if (onSelectedKey && !onSelectedKey.has(a.id)) return false;
       if (!q) return true;
       const keys = bindingsOf(a.id, overrides).map((c) => `${c} ${formatCombo(c)}`).join(' ').toLowerCase();
       return `${a.label} ${cat}`.toLowerCase().includes(q) || keys.includes(q);
@@ -123,6 +176,80 @@ export default function KeyboardShortcutsTab() {
         Click <b>Change</b>, then press the new key combination. <b>+</b> adds a second key. Esc cancels.
         Stored in this browser only. Space-drag to pan and Esc to close are fixed.
       </p>
+
+      {/* Stage 15: the keyboard map, live conflicts, and hotkey profiles as files. */}
+      <AnsiKeyboard
+        overrides={overrides}
+        layerId={layerId}
+        onLayerChange={setLayerId}
+        selected={selectedKey}
+        onSelect={setSelectedKey}
+      />
+      {selectedKey && (
+        <div className="flex items-center gap-2 text-mini text-muted" data-testid="selected-key-filter">
+          <span>Showing the actions on <kbd className="rounded bg-white/10 px-1.5 font-mono text-white">{selectedKey}</kbd> (any modifier)</span>
+          <button type="button" onClick={() => setSelectedKey(null)} className="rounded-md border border-white/10 px-2 py-0.5 text-white/70 hover:text-white">Show all</button>
+        </div>
+      )}
+
+      {conflictLines.length > 0 && (
+        <div role="alert" data-testid="keymap-conflicts" className="rounded-xl border border-red-500/40 bg-red-500/10 px-4 py-3 text-xs space-y-1">
+          <div className="font-semibold text-red-200">
+            {conflictLines.length} key{conflictLines.length === 1 ? '' : 's'} would fire two actions at once
+          </div>
+          <ul className="m-0 list-none space-y-0.5 p-0">
+            {conflictLines.map((c) => (
+              <li key={c.combo} data-conflict-combo={c.combo} className="text-white/80">
+                <kbd className="font-mono bg-white/10 px-1.5 rounded">{formatCombo(c.combo)}</kbd> — {c.labels.join(' · ')}
+              </li>
+            ))}
+          </ul>
+          <div className="text-white/50">Change one of them, or Reset it, and the red goes away.</div>
+        </div>
+      )}
+
+      <div className="flex flex-wrap items-center gap-2" data-testid="keymap-profile">
+        <label className="flex items-center gap-1.5 text-mini text-muted">
+          Profile
+          <input
+            type="text"
+            value={profileName}
+            maxLength={60}
+            onChange={(e) => setProfileName(e.target.value)}
+            aria-label="Hotkey profile name"
+            className="w-40 px-2 py-1 rounded-lg glass-input text-compact text-white focus:outline-none"
+          />
+        </label>
+        <button
+          type="button"
+          onClick={exportKeymap}
+          data-testid="keymap-export"
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-mini font-semibold bg-white/[0.04] border border-white/10 text-white/70 hover:text-white hover:border-white/20 apple-transition"
+        >
+          <Icon.download size={12} /> Export profile
+        </button>
+        <button
+          type="button"
+          onClick={() => fileRef.current?.click()}
+          data-testid="keymap-import"
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-mini font-semibold bg-white/[0.04] border border-white/10 text-white/70 hover:text-white hover:border-white/20 apple-transition"
+        >
+          <Icon.upload size={12} /> Import profile
+        </button>
+        <input
+          ref={fileRef}
+          type="file"
+          accept="application/json,.json"
+          className="sr-only"
+          tabIndex={-1}
+          aria-label="Import a hotkey profile file"
+          data-testid="keymap-import-file"
+          onChange={(e) => importKeymap(e.target.files?.[0])}
+        />
+        {notice && (
+          <span role="status" data-testid="keymap-notice" className={`text-mini ${notice.kind === 'error' ? 'text-amber-300' : 'text-emerald-300'}`}>{notice.text}</span>
+        )}
+      </div>
 
       {pending && (
         <div role="alert" data-testid="shortcut-conflict" className="rounded-xl border border-amber-400/40 bg-amber-400/10 px-4 py-3 text-xs flex flex-wrap items-center gap-3">

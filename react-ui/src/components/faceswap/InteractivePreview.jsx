@@ -54,6 +54,7 @@ import { bridgePreviewExportParity } from './runBarSync';
 
 // The floating preview keeps its own copy of each picture the stage receives (store/pipStore.js); a no-op while it is off.
 const offerPipFrame = (img) => usePipStore.getState().offerFrame(img);
+const offerPipBase = (img) => usePipStore.getState().offerBase(img);
 
 // The mask brush's radius, for the [ and ] keys (mask.brushSmaller / mask.brushLarger). The slider's own range is the
 // upper bound in practice; these only keep the keys from taking the brush to zero or to an unusable size.
@@ -1120,7 +1121,7 @@ export default function InteractivePreview({
   // without this it would stay empty until the next frame change.
   const pipEnabled = usePipStore((s) => s.enabled);
   useEffect(() => {
-    if (pipEnabled) offerPipFrame(canvasApiRef.current?.topImage?.());
+    if (pipEnabled) { offerPipFrame(canvasApiRef.current?.topImage?.()); offerPipBase(canvasApiRef.current?.baseImage?.()); }
   }, [pipEnabled]);
 
   // ── Is the stage on screen? ───────────────────────────────────────────────
@@ -2545,6 +2546,7 @@ export default function InteractivePreview({
             faceBbox={activeFaceBbox}
             onDimensions={setImgDim}
             onTopFrame={offerPipFrame}
+            onBaseFrame={offerPipBase}
             className="relative z-[1] w-full h-full object-contain pointer-events-none"
             style={{ imageRendering: zoom >= 3 ? 'pixelated' : 'auto' }}
           />

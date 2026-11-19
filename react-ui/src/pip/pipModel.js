@@ -14,8 +14,8 @@ export const PIP_SNAP = 72;
 /** The header strip's height; the picture area is `h` and the strip sits on top, so the whole window is h + PIP_BAR. */
 export const PIP_BAR = 28;
 
-/** The tabs the window follows you to: the ones a user goes to WHILE TUNING a project, away from the preview. */
-export const PIP_TABS = Object.freeze(['facemgr', 'batch', 'settings']);
+/** The tabs the window follows you to: the ones a user goes to WHILE TUNING a project or WATCHING a render, away from the preview. */
+export const PIP_TABS = Object.freeze(['facemgr', 'batch', 'processing', 'settings']);
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
@@ -154,4 +154,53 @@ export function replayBody(last, { state = null, requestId, version } = {}) {
   }
   if (Number.isFinite(version)) body.selection_version = version;
   return body;
+}
+
+// ── Stage 15: what the window shows, and its transport ─────────────────────
+
+/** The before/after modes the A/B button cycles through, and the wipe's starting position. */
+export const AB_MODES = Object.freeze(['after', 'wipe', 'before']);
+export const WIPE_DEFAULT = 50;
+export const nextAbMode = (mode) => AB_MODES[(AB_MODES.indexOf(mode) + 1) % AB_MODES.length];
+export const clampWipe = (pct) => Math.min(100, Math.max(0, Number.isFinite(pct) ? pct : WIPE_DEFAULT));
+
+/**
+ * What the picture area paints. A render in flight shows its LIVE frames (there is no "before" for a live frame, so A/B is off);
+ * otherwise the stage's last "after" picture, with A/B available only when the stage also gave its "before".
+ *   kind  'live' | 'after' | 'before' | 'wipe' | 'none'
+ *   ab    whether the A/B control means anything right now
+ * A 'before' / 'wipe' request with no base picture degrades to 'after' rather than painting nothing.
+ */
+export function pickPicture({ running, hasLive, hasAfter, hasBase, view }) {
+  if (running && hasLive) return { kind: 'live', ab: false };
+  if (!hasAfter) return { kind: 'none', ab: false };
+  if (!hasBase) return { kind: 'after', ab: false };
+  return { kind: AB_MODES.includes(view) ? view : 'after', ab: true };
+}
+
+/** The frame after `frame` (1-based, like the Face Swap playhead), or null at the end of the clip. */
+export function nextFrame(frame, total, step = 1) {
+  const f = Number(frame);
+  const t = Number(total);
+  if (!Number.isFinite(f) || !Number.isFinite(t) || t < 2) return null;
+  const n = f + step;
+  return n > t ? null : Math.max(1, n);
+}
+
+/**
+ * Which transport the Play/Pause button drives, and what it says:
+ *   live      a render is in flight: Pause freezes THIS window on the frame it is showing (the render keeps going)
+ *   mounted   Face Swap is mounted (its stage is scrolled away): the button is Face Swap's own Play/Pause
+ *   stepper   Face Swap is not mounted: the window steps through the clip itself, one preview request at a time
+ *   none      nothing to play (a still, or no request to replay)
+ */
+export function transportKind({ running, faceswapMounted, canMounted, canStep }) {
+  if (running) return 'live';
+  if (faceswapMounted) return canMounted ? 'mounted' : 'none';
+  return canStep ? 'stepper' : 'none';
+}
+
+/** The body for stepping to `frame`: the last request, with the frame moved on. Never mutates it. */
+export function stepBody(last, frame) {
+  return { ...last, frame };
 }

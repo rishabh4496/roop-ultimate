@@ -173,12 +173,17 @@ class EveryActionIsConsumed(unittest.TestCase):
             sources[path] = _read(path)
         slot_ids = {a['id'] for a in actions if a['id'].startswith('snapshot.slot')}
         slot_loop_users = [p for p, s in sources.items() if 'SLOT_ACTION_IDS' in s and 'eventMatches' in s]
+        layout_slot_ids = {a['id'] for a in actions if a['id'].startswith('workspace.layout')}
+        layout_slot_users = [p for p, s in sources.items() if 'LAYOUT_SLOT_ACTION_IDS' in s and 'eventMatches' in s]
         unread = []
         for a in actions:
             literal = f"'{a['id']}'"
             if any(literal in s and 'eventMatches' in s or (literal in s and 'eventFiresInText' in s) for s in sources.values()):
                 continue
             if a['id'] in slot_ids and len(slot_loop_users) >= 2:    # Face Swap's preview and the Editor tab
+                continue
+            # Stage 15: the five workspace-layout slots (Alt+1..5) are matched in one loop over LAYOUT_SLOT_ACTION_IDS in App.jsx.
+            if a['id'] in layout_slot_ids and layout_slot_users:
                 continue
             unread.append(a['id'])
         self.assertEqual(unread, [], 'these actions are in the table but no handler asks eventMatches() about them: ' + repr(unread))

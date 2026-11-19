@@ -3,6 +3,7 @@ import { settleTypedValue } from '../numeric/mathExpr';
 import { decimalsFor } from '../numeric/scrubMath';
 import { useScrub } from '../numeric/useScrub';
 import { Field, FocusedInput } from './ui';
+import ExpressionPreview from './ExpressionPreview';
 import { fillExtent, scrubberDecimals, STEP_FINE } from './scrubberModel';
 
 // ── The studio scrubber ─────────────────────────────────────────────────────────────────────────────────────────────
@@ -35,8 +36,10 @@ const COMMIT_MS = 90;
 const clampNum = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const snapTo = (v, step) => Number((Math.round(v / step) * step).toFixed(6));
 
-export function NumberEditor({ initial, current, min, max, step, label, onDone }) {
-  const [draft, setDraft] = useState(initial);
+export function NumberEditor({ initial, current, min, max, step, label, onDone, onDraft }) {
+  const [draft, setDraftState] = useState(initial);
+  // The parent draws the live preview pill (this editor sits inside a clipped bar), so it hears every keystroke.
+  const setDraft = (text) => { setDraftState(text); onDraft?.(text); };
   const [error, setError] = useState('');
   const doneRef = useRef(false);
   // `commit` is true for Enter and for leaving the field. Enter on something that does not parse keeps the editor open
@@ -64,7 +67,7 @@ export function NumberEditor({ initial, current, min, max, step, label, onDone }
         spellCheck={false}
         aria-label={`${label} value`}
         aria-invalid={error ? true : undefined}
-        title={error || 'Type a number or an expression: 512/2, 24*1.5, +10%'}
+        title={error || 'Type a number or an expression: 512/2, *2, /1.5, +16, -10%, min(v*2, 64), max(v/2, 8)'}
         value={draft}
         onChange={(e) => { setDraft(e.target.value); setError(''); }}
         onKeyDown={(e) => {
@@ -106,6 +109,7 @@ export default function StudioScrubberInput({
 }) {
   const [local, setLocal] = useState(value ?? 0);
   const [editing, setEditing] = useState(false);
+  const [draftText, setDraftText] = useState('');             // what is typed while editing, for the live preview pill
   const timerRef = useRef(null);
   const nativeRef = useRef(null);
   const pendingRef = useRef(null);
@@ -184,7 +188,7 @@ export default function StudioScrubberInput({
 
   const hint = disabledNote || [
     'Drag to scrub · Shift ×10 · Alt ×0.1',
-    'Double-click to type (512/2, +10%)',
+    'Double-click to type (512/2, *2, +16, -10%, min(), max())',
     canReset ? 'Right-click to reset' : null,
   ].filter(Boolean).join(' · ');
   // The Settings panel marks a changed control with its own MOD pill (it knows the backend defaults); a caller that gives a
@@ -203,6 +207,10 @@ export default function StudioScrubberInput({
       badge={showDot ? <ModifiedDot label={nameText} defaultText={`${(Number(defaultValue) * scale).toFixed(baseDecimals)}${suffix}`} onReset={reset} /> : null}
     >
       <div className={`studio-scrub ${scrub.scrubbing ? 'is-scrubbing' : ''} ${disabled ? 'is-disabled' : ''}`} data-testid={testId || 'scrubber'}>
+        {/* Stage 15: `Formula → Result`, live, before Enter. Outside the bar because the bar clips its children. */}
+        {editing && (
+          <ExpressionPreview text={draftText} current={Number(local ?? 0) * scale} min={min * scale} max={max * scale} step={step * scale} />
+        )}
         <input
           ref={nativeRef}
           type="range"
@@ -240,8 +248,10 @@ export default function StudioScrubberInput({
               max={max * scale}
               step={step * scale}
               label={nameText}
+              onDraft={setDraftText}
               onDone={(typed) => {
                 setEditing(false);
+                setDraftText('');
                 const v = typed === null ? null : Number((typed / scale).toFixed(6));
                 if (v !== null && v !== localRef.current) setValue(v, true);
               }}

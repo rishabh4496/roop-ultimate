@@ -62,6 +62,8 @@ export const useShortcutStore = create((set, get) => {
       commit(next);
     },
     resetAll: () => commit({}),
+    /** Replace the whole keymap (a profile import). Sanitised, so a file cannot store a reserved or malformed combo. */
+    replaceAll: (overrides) => commit(sanitizeOverrides(overrides)),
     setRecording: (recording) => set({ recording: !!recording }),
 
     openOverlay: () => set({ overlayOpen: true }),

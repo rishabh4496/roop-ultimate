@@ -3325,6 +3325,13 @@ export default function FaceSwap({
     return () => setFaceswapMounted(false);
   }, []);
   useEffect(() => { usePipStore.getState().setContext({ frame, total: maxFrames }); }, [frame, maxFrames]);
+  // Stage 15: while this panel is mounted the floating window's Play/Pause is THIS panel's (the stage may be scrolled away
+  // while a clip plays); it is the same toggle the Space key calls. Unmounted, the window steps through the clip itself.
+  useEffect(() => {
+    const { setTransport } = usePipStore.getState();
+    setTransport(maxFrames > 1 && setIsPlaying ? { playing: isPlaying, toggle: () => setIsPlaying((p) => !p) } : null);
+    return () => setTransport(null);
+  }, [isPlaying, maxFrames, setIsPlaying]);
 
   // Keyboard Escape, Shortcuts HUD, & Global Productivity Hotkeys
   /* eslint-disable react-hooks/exhaustive-deps -- intentional: hotkey handlers read latest callbacks; re-subscribing every render would thrash listeners */

@@ -56,6 +56,7 @@ import ShortcutOverlay from './components/shortcuts/ShortcutOverlay';
 import PipMiniViewport from './components/PipMiniViewport';
 import { installPipRefresh, usePipStore } from './store/pipStore';
 import { eventFiresInText, eventMatches, useShortcutStore } from './store/shortcutStore';
+import { LAYOUT_SLOT_ACTION_IDS } from './shortcuts/actions';
 import Processing from './components/Processing';
 import useRenderLite, { cycleRenderLiteMode, RENDER_LITE_LABEL }
   from './components/faceswap/useRenderLite';
@@ -698,6 +699,7 @@ export default function App() {
       setSettingsTab: st.setSettingsTab,
     }))
   );
+  const customLayouts = useWorkspaceStore((s) => s.customLayouts);   // the palette lists the saved ones (Stage 15)
   const [showProfilesModal, setShowProfilesModal] = useState(false);
   const [showSnapshotsModal, setShowSnapshotsModal] = useState(false);
   const [activeQualityProfile, setActiveQualityProfile] = useState('');
@@ -790,6 +792,8 @@ export default function App() {
   // the live source changes behind its back. Both live here because the shell is the one thing mounted on every tab.
   const pipOn = usePipStore((s) => s.enabled);
   useEffect(() => { usePipStore.getState().setTab(tab); }, [tab]);
+  // Stage 15: while a render runs the floating window shows its live frames, not the last still.
+  useEffect(() => { usePipStore.getState().setRunning(!!progress.processing); }, [progress.processing]);
   useEffect(() => installPipRefresh(), []);
 
   // Global keyboard shortcuts. The keys are not written here: each is an action in shortcuts/actions.js (app.palette,
@@ -811,6 +815,15 @@ export default function App() {
         return;
       }
       if (inField) return;
+      // Alt+1..5: the saved workspace layout bound to that slot (header -> Workspace Layouts). An empty slot says so rather
+      // than doing nothing.
+      const layoutSlot = LAYOUT_SLOT_ACTION_IDS.findIndex((id) => eventMatches(e, id)) + 1;
+      if (layoutSlot > 0) {
+        e.preventDefault();
+        const applied = useWorkspaceStore.getState().applyLayoutSlot(layoutSlot);
+        notify(applied ? `Workspace layout: ${applied.name}` : `Nothing is bound to Alt+${layoutSlot} yet - bind a saved layout in the header`, applied ? 'success' : 'info');
+        return;
+      }
       if (eventMatches(e, 'app.toggleRail')) { e.preventDefault(); toggleRail(); }
       else if (eventMatches(e, 'app.zoomIn')) { e.preventDefault(); bumpZoom(0.05); }
       else if (eventMatches(e, 'app.zoomOut')) { e.preventDefault(); bumpZoom(-0.05); }
@@ -822,7 +835,7 @@ export default function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [bumpZoom, toggleRail]);
+  }, [bumpZoom, toggleRail, notify]);
 
   // Ctrl/⌘ + wheel is the other half of the same gesture, and left alone it ran
   // the BROWSER's page zoom instead — stacking on top of the CSS zoom above, so
@@ -993,6 +1006,15 @@ export default function App() {
       id: `layout-${l.id}`, section: 'Layout', icon: Icon.layout, title: `Layout: ${l.label}`, subtitle: l.hint,
       run: () => { setWorkspaceMode(l.mode); setTab('faceswap'); },
     }));
+    // Stage 15: saved workspace layouts are in the palette too, with their Alt+<n> slot, and the key remapper is one entry away.
+    customLayouts.forEach((l) => cmds.push({
+      id: `layout-${l.id}`, section: 'Layout', icon: Icon.layout, title: `Layout: ${l.name}`,
+      subtitle: `${l.aspect === 'any' ? 'Any monitor' : l.aspect}${l.hotkey ? ` · Alt ${l.hotkey}` : ''}`,
+      run: () => useWorkspaceStore.getState().applyLayout(l.id),
+    }));
+    cmds.push({ id: 'act-keymap', section: 'Actions', icon: Icon.shortcuts, title: 'Open the key remapper',
+      subtitle: 'Settings, Keyboard Shortcuts: the keyboard map, conflicts, import and export',
+      run: () => { setSettingsTab('shortcuts'); setTab('settings'); } });
     cmds.push({ id: 'act-mask-overlay', section: 'Canvas', icon: Icon.preview, title: 'Toggle mask overlay in preview', run: () => runFaceswap('maskOverlay') });
     // Execution provider. The setting is read when inference sessions are built, so a
     // switch made here takes effect after a restart; the toast says so rather than
@@ -1062,7 +1084,7 @@ export default function App() {
 
     return cmds;
   }, [applyTheme, applyQualityProfile, runFaceswap, customThemes, presets, visibleTabs, liteMode, setTab,
-    toggleRail, setWorkspaceMode, openDiagnostics, meta, settings?.provider, notify, paletteProjects]);
+    toggleRail, setWorkspaceMode, openDiagnostics, meta, settings?.provider, notify, paletteProjects, customLayouts, setSettingsTab]);
 
   const registerFileListener = useCallback((cb) => {
     fileListenersRef.current.push(cb);

@@ -86,6 +86,8 @@ const PreviewCanvas = forwardRef(function PreviewCanvas({
   // Called with the bitmap each time the TOP ("after") layer receives a picture. The bitmap stays this component's: a
   // listener that wants to keep it must copy it (createImageBitmap) in the same tick. Feeds the floating preview.
   onTopFrame,
+  // The same for the BASE ("before") layer: feeds the floating preview's A/B wipe.
+  onBaseFrame,
 }, ref) {
   const canvasRef = useRef(null);
   const ctxRef = useRef(null);
@@ -112,6 +114,8 @@ const PreviewCanvas = forwardRef(function PreviewCanvas({
   onDimensionsRef.current = onDimensions;
   const onTopFrameRef = useRef(onTopFrame);
   onTopFrameRef.current = onTopFrame;
+  const onBaseFrameRef = useRef(onBaseFrame);
+  onBaseFrameRef.current = onBaseFrame;
 
   // ── Sizing: the canvas gets the FRAME's own dimensions ───────────────────
   //
@@ -356,7 +360,7 @@ const PreviewCanvas = forwardRef(function PreviewCanvas({
       ownedFrames.add(img);
       layer.external = false;
       layer.img = img;
-      if (which === 'top') onTopFrameRef.current?.(img);
+      (which === 'top' ? onTopFrameRef : onBaseFrameRef).current?.(img);
       requestPaint();
     }).catch(() => {
       // AbortError is the normal case (the user moved on). A real decode
@@ -382,7 +386,7 @@ const PreviewCanvas = forwardRef(function PreviewCanvas({
     }
     layer.external = true;
     layer.img = img;
-    if (which === 'top') onTopFrameRef.current?.(img);
+    (which === 'top' ? onTopFrameRef : onBaseFrameRef).current?.(img);
     requestPaint();
   }, [requestPaint]);
 
@@ -446,6 +450,8 @@ const PreviewCanvas = forwardRef(function PreviewCanvas({
     canvas: () => canvasRef.current,
     // The picture the "after" layer is showing right now (still this component's: copy it, do not keep it).
     topImage: () => layersRef.current.top.img,
+    // The "before" picture, likewise.
+    baseImage: () => layersRef.current.base.img,
     // Natural pixel size of the frame on screen, for overlay maths.
     naturalSize() {
       const { base, top } = layersRef.current;
