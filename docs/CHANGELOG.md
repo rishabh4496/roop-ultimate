@@ -1,3 +1,12 @@
+## 2026-11-20 — CUDA-provider CPU fallback in the occluder and XSeg masks
+
+- `face_occluder.onnx` and `xseg*.onnx` carry six `ConvTranspose` nodes with asymmetric `pads=[0,0,1,1]`; the ORT CUDA provider runs them on the single-threaded CPU provider (40 ms per mask call vs 4 ms on TensorRT). `roop/onnx_cuda_safe.py` rewrites them to pad-0 + `Slice` (exact), applied in `strict_session.create_strictly_accelerated_session` only for CUDA-without-TensorRT chains. Kill switch `ROOP_CUDA_SAFE_ONNX=0`. Detail, tables and the fidelity gate: `CUDA_EXECUTION_POLICY.md` (2026-11-20).
+- Measured (RTX 4070, provider cuda, synthetic 30-frame fixture, ABBA): pipeline fps 5.25 -> 6.37 (+21%), mask group p50 44.5 -> 15.3 ms, quality metrics identical to 3 decimals; mask IoU >= 0.9997 on 120 real faces. TensorRT path unchanged (0%).
+- `bench_pipeline.py`: `--provider {cuda,tensorrt}` (default cuda, baseline-compatible), `provider` recorded in the result, additive `pipeline_fps` (frame latency only, excludes the harness's own quality measurement).
+- Known harness artefact, not fixed: the simulated `encode` stage is `time.sleep(0.0005)`, which costs ~6-10 ms on Windows and is counted in frame latency.
+
+**Not verified.** 600-frame real-footage render, RTX 3060 (the card that benefits), full test suite (`test_no_unmanaged_gpu_sessions` fails on `roop/ultramax_compile.py`, untouched by this change).
+
 ## 2026-11-19 — Seam defects: soft obstruction edges, hair outside the face core, occlusion-aware colour, watchdog roles
 
 Source: DIAGNOSTIC_PLAN §2.4/§2.5/§3.2/§6, on top of the Bug #2 Stage 2 matte (`eb5d231`). Each item names the defect it fixes and the test that pins it (`test_face_seam_defects.py`, `test_face_seam_paths.py`).

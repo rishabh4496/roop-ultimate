@@ -1,0 +1,429 @@
+{
+  "timestamp": "2026-11-19T18:46:25.817465+00:00",
+  "config": {
+    "video": "G:\\pinokio\\cache\\TMPDIR\\roop_bench_synth_b94hevyj\\synthetic_multi_angle.mp4",
+    "source": "auto_resolved",
+    "frames": 30,
+    "swap_model": "realswap",
+    "restorer": "None",
+    "mask_engine": "None",
+    "device_id": 0,
+    "threads": 20,
+    "video_temporal": true,
+    "provider": "cuda"
+  },
+  "telemetry": {
+    "total_frames": 30,
+    "wall_time_s": 5.9954,
+    "total_fps": 5.0,
+    "frame_latency_ms": {
+      "p50": 133.4964,
+      "p95": 220.9223,
+      "p99": 222.4593,
+      "mean": 157.6647,
+      "min": 127.4604,
+      "max": 222.9306
+    },
+    "peak_vram_mb": 5970.54,
+    "gpu_util_pct": 41.22,
+    "frame_p50_ms": 133.4964,
+    "frame_p95_ms": 220.9223,
+    "stage_groups": {
+      "video_decode": {
+        "name": "Video Decode",
+        "stages": [
+          "decode",
+          "track_decode"
+        ],
+        "calls": 30,
+        "total_ms": 8.29,
+        "p50_ms": 0.2375,
+        "p95_ms": 0.3688,
+        "p99_ms": 0.8901,
+        "mean_ms": 0.2674,
+        "min_ms": 0.0,
+        "max_ms": 1.099,
+        "effective_fps": 3618.47,
+        "pct_share": 0.18
+      },
+      "detection_landmarks": {
+        "name": "Face Detection & Landmark Extraction",
+        "stages": [
+          "detect",
+          "detection",
+          "track_detect",
+          "alignment"
+        ],
+        "calls": 60,
+        "total_ms": 1464.32,
+        "p50_ms": 24.5147,
+        "p95_ms": 112.2507,
+        "p99_ms": 112.8939,
+        "mean_ms": 47.2361,
+        "min_ms": 0.0,
+        "max_ms": 113.0575,
+        "effective_fps": 20.49,
+        "pct_share": 32.58
+      },
+      "pose_source_selection": {
+        "name": "Pose & Source Embedding Selection",
+        "stages": [
+          "faceset_lookup"
+        ],
+        "calls": 30,
+        "total_ms": 0.07,
+        "p50_ms": 0.0022,
+        "p95_ms": 0.0028,
+        "p99_ms": 0.0029,
+        "mean_ms": 0.0022,
+        "min_ms": 0.0,
+        "max_ms": 0.003,
+        "effective_fps": 445105.08,
+        "pct_share": 0.0
+      },
+      "swapper_inference": {
+        "name": "Swapper Inference",
+        "stages": [
+          "swap"
+        ],
+        "calls": 30,
+        "total_ms": 941.82,
+        "p50_ms": 29.2872,
+        "p95_ms": 39.739,
+        "p99_ms": 52.1354,
+        "mean_ms": 30.3812,
+        "min_ms": 0.0,
+        "max_ms": 55.9984,
+        "effective_fps": 31.85,
+        "pct_share": 20.95
+      },
+      "mask_generation": {
+        "name": "Occluder & Face Mask Generation",
+        "stages": [
+          "mask",
+          "mask_refine",
+          "mask_stabilize",
+          "occlusion_analysis",
+          "interaction_occlusion"
+        ],
+        "calls": 60,
+        "total_ms": 465.79,
+        "p50_ms": 15.4027,
+        "p95_ms": 16.736,
+        "p99_ms": 17.8588,
+        "mean_ms": 15.0254,
+        "min_ms": 0.0,
+        "max_ms": 18.2283,
+        "effective_fps": 64.41,
+        "pct_share": 10.36
+      },
+      "color_transfer_blending": {
+        "name": "Color Transfer & Blending",
+        "stages": [
+          "lighting",
+          "blend",
+          "realism",
+          "identity_detail",
+          "detail_transfer"
+        ],
+        "calls": 120,
+        "total_ms": 1132.65,
+        "p50_ms": 37.3119,
+        "p95_ms": 40.6331,
+        "p99_ms": 40.9237,
+        "mean_ms": 36.5371,
+        "min_ms": 0.0,
+        "max_ms": 41.0212,
+        "effective_fps": 26.49,
+        "pct_share": 25.2
+      },
+      "face_restoration": {
+        "name": "Face Restoration",
+        "stages": [
+          "enhance",
+          "enhance_recombine",
+          "stabilize"
+        ],
+        "calls": 0,
+        "total_ms": 0,
+        "p50_ms": 0.0,
+        "p95_ms": 0.0,
+        "p99_ms": 0.0,
+        "mean_ms": 0.0,
+        "min_ms": 0.0,
+        "max_ms": 0.0,
+        "effective_fps": 0.0,
+        "pct_share": 0.0
+      },
+      "video_encode_mux": {
+        "name": "Video Encode + Audio Mux",
+        "stages": [
+          "encode",
+          "encode_finalize"
+        ],
+        "calls": 30,
+        "total_ms": 223.51,
+        "p50_ms": 7.1221,
+        "p95_ms": 12.1779,
+        "p99_ms": 13.1565,
+        "mean_ms": 7.2101,
+        "min_ms": 0.0,
+        "max_ms": 13.4848,
+        "effective_fps": 134.22,
+        "pct_share": 4.97
+      }
+    },
+    "stages": {
+      "decode": {
+        "calls": 30,
+        "total_ms": 8.29,
+        "mean_ms": 0.2764,
+        "p50_ms": 0.238,
+        "p95_ms": 0.3722,
+        "p99_ms": 0.8971,
+        "min_ms": 0.2101,
+        "max_ms": 1.099,
+        "effective_fps": 3618.47
+      },
+      "arcface_embedding": {
+        "calls": 52,
+        "total_ms": 198.71,
+        "mean_ms": 3.8213,
+        "p50_ms": 3.6699,
+        "p95_ms": 5.1229,
+        "p99_ms": 6.2457,
+        "min_ms": 2.9584,
+        "max_ms": 6.7157,
+        "effective_fps": 261.69
+      },
+      "detect": {
+        "calls": 30,
+        "total_ms": 1417.35,
+        "mean_ms": 47.2451,
+        "p50_ms": 23.046,
+        "p95_ms": 110.7293,
+        "p99_ms": 111.4816,
+        "min_ms": 21.319,
+        "max_ms": 111.6449,
+        "effective_fps": 21.17
+      },
+      "temporal_affine": {
+        "calls": 30,
+        "total_ms": 2.17,
+        "mean_ms": 0.0724,
+        "p50_ms": 0.069,
+        "p95_ms": 0.1013,
+        "p99_ms": 0.1266,
+        "min_ms": 0.0383,
+        "max_ms": 0.1368,
+        "effective_fps": 13812.15
+      },
+      "alignment": {
+        "calls": 30,
+        "total_ms": 46.97,
+        "mean_ms": 1.5655,
+        "p50_ms": 1.4646,
+        "p95_ms": 2.05,
+        "p99_ms": 2.2851,
+        "min_ms": 1.3797,
+        "max_ms": 2.3299,
+        "effective_fps": 638.76
+      },
+      "faceset_lookup": {
+        "calls": 30,
+        "total_ms": 0.07,
+        "mean_ms": 0.0022,
+        "p50_ms": 0.0022,
+        "p95_ms": 0.0028,
+        "p99_ms": 0.0029,
+        "min_ms": 0.0018,
+        "max_ms": 0.003,
+        "effective_fps": 445105.08
+      },
+      "temporal_color": {
+        "calls": 30,
+        "total_ms": 0.97,
+        "mean_ms": 0.0322,
+        "p50_ms": 0.0288,
+        "p95_ms": 0.0446,
+        "p99_ms": 0.0937,
+        "min_ms": 0.0083,
+        "max_ms": 0.1138,
+        "effective_fps": 31049.48
+      },
+      "lighting": {
+        "calls": 30,
+        "total_ms": 46.06,
+        "mean_ms": 1.5352,
+        "p50_ms": 1.4739,
+        "p95_ms": 1.8372,
+        "p99_ms": 1.8537,
+        "min_ms": 1.3672,
+        "max_ms": 1.8582,
+        "effective_fps": 651.38
+      },
+      "swap": {
+        "calls": 30,
+        "total_ms": 941.82,
+        "mean_ms": 31.3939,
+        "p50_ms": 29.4902,
+        "p95_ms": 40.0773,
+        "p99_ms": 52.2642,
+        "min_ms": 27.8368,
+        "max_ms": 55.9984,
+        "effective_fps": 31.85
+      },
+      "mask": {
+        "calls": 30,
+        "total_ms": 210.62,
+        "mean_ms": 7.0208,
+        "p50_ms": 6.7574,
+        "p95_ms": 9.2849,
+        "p99_ms": 9.6954,
+        "min_ms": 6.1264,
+        "max_ms": 9.7419,
+        "effective_fps": 142.43
+      },
+      "realism": {
+        "calls": 60,
+        "total_ms": 50.47,
+        "mean_ms": 0.8411,
+        "p50_ms": 0.7315,
+        "p95_ms": 1.8882,
+        "p99_ms": 2.0951,
+        "min_ms": 0.0069,
+        "max_ms": 2.2752,
+        "effective_fps": 1188.85
+      },
+      "interaction_occlusion": {
+        "calls": 30,
+        "total_ms": 255.16,
+        "mean_ms": 8.5055,
+        "p50_ms": 8.7229,
+        "p95_ms": 9.2991,
+        "p99_ms": 9.4515,
+        "min_ms": 4.7573,
+        "max_ms": 9.4639,
+        "effective_fps": 117.57
+      },
+      "temporal_alpha": {
+        "calls": 30,
+        "total_ms": 56.51,
+        "mean_ms": 1.8837,
+        "p50_ms": 1.8965,
+        "p95_ms": 2.1744,
+        "p99_ms": 2.2623,
+        "min_ms": 0.2564,
+        "max_ms": 2.2941,
+        "effective_fps": 530.87
+      },
+      "blend": {
+        "calls": 30,
+        "total_ms": 1036.13,
+        "mean_ms": 34.5375,
+        "p50_ms": 34.498,
+        "p95_ms": 37.2928,
+        "p99_ms": 37.7581,
+        "min_ms": 30.0371,
+        "max_ms": 37.9348,
+        "effective_fps": 28.95
+      },
+      "encode": {
+        "calls": 30,
+        "total_ms": 223.51,
+        "mean_ms": 7.4504,
+        "p50_ms": 7.1248,
+        "p95_ms": 12.1992,
+        "p99_ms": 13.1674,
+        "min_ms": 2.5537,
+        "max_ms": 13.4848,
+        "effective_fps": 134.22
+      }
+    },
+    "gpu": {
+      "source": "pynvml",
+      "device_name": "NVIDIA GeForce RTX 4070",
+      "total_vram_mb": 12282.0,
+      "peak_vram_mb": 5970.54,
+      "mean_vram_mb": 5960.57,
+      "initial_vram_mb": 5898.23,
+      "final_vram_mb": 5960.66,
+      "peak_gpu_util_pct": 65.0,
+      "mean_gpu_util_pct": 41.22,
+      "p50_gpu_util_pct": 36.0,
+      "p95_gpu_util_pct": 64.0,
+      "samples_count": 195
+    },
+    "pipeline_fps": 6.34
+  },
+  "metrics": {
+    "flicker": {
+      "mean_l1_luminance_delta": 18.3566,
+      "mean_ssim_drop": 0.332,
+      "mean_landmark_jitter_px": 0.9149,
+      "mask_area_relative_change": 0.1115,
+      "mask_area_variance": 0.03874,
+      "valid_transitions": 29,
+      "scene_cuts_excluded": 0,
+      "scene_cut_indices": []
+    },
+    "angle_buckets": {
+      "0-20": {
+        "bucket": "0-20",
+        "total_frames": 14,
+        "detected_frames": 6,
+        "swapped_frames": 6,
+        "detection_recall": 0.4286,
+        "swap_coverage_rate": 1.0,
+        "seam_error_score": 52.9707,
+        "mean_abs_yaw": 3.0
+      },
+      "20-40": {
+        "bucket": "20-40",
+        "total_frames": 8,
+        "detected_frames": 8,
+        "swapped_frames": 8,
+        "detection_recall": 1.0,
+        "swap_coverage_rate": 1.0,
+        "seam_error_score": 51.2269,
+        "mean_abs_yaw": 30.22
+      },
+      "40-60": {
+        "bucket": "40-60",
+        "total_frames": 7,
+        "detected_frames": 7,
+        "swapped_frames": 7,
+        "detection_recall": 1.0,
+        "swap_coverage_rate": 1.0,
+        "seam_error_score": 53.3487,
+        "mean_abs_yaw": 50.5
+      },
+      "60+": {
+        "bucket": "60+",
+        "total_frames": 1,
+        "detected_frames": 1,
+        "swapped_frames": 1,
+        "detection_recall": 1.0,
+        "swap_coverage_rate": 1.0,
+        "seam_error_score": 58.1315,
+        "mean_abs_yaw": 60.38
+      }
+    },
+    "overall_stability": {
+      "detection_recall": 0.7333,
+      "swap_coverage_rate": 1.0,
+      "mean_seam_error_score": 52.7659,
+      "total_frames_analyzed": 30
+    },
+    "applied_flicker": {
+      "mean_l1_luminance_delta": 18.122,
+      "mean_ssim_drop": 0.4028,
+      "mean_landmark_jitter_px": 0.9471,
+      "mask_area_relative_change": 0.0864,
+      "mask_area_variance": 0.050957,
+      "valid_transitions": 29,
+      "scene_cuts_excluded": 0,
+      "scene_cut_indices": []
+    }
+  }
+}

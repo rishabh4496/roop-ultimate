@@ -325,9 +325,17 @@ def create_strictly_accelerated_session(
     # backend_manager.build_session_with_fallback.
     from contextlib import nullcontext
     from roop.trt_build_guard import around_trt_build
-    _guard = around_trt_build("session:" + label) if any(_name(p) == TENSORRT_EP for p in chain) else nullcontext()
+    _has_trt = any(_name(p) == TENSORRT_EP for p in chain)
+    _guard = around_trt_build("session:" + label) if _has_trt else nullcontext()
+    # CUDA-provider-only chain (the RTX 3060 path, or provider=cuda): asymmetric ConvTranspose nodes (face_occluder,
+    # xseg*) fall back to the single-threaded CPU provider, 40 ms per call against 4 ms on TensorRT. Swap in the
+    # exact pad-0 + Slice rewrite. TensorRT chains keep the original file untouched.
+    session_model = model
+    if not _has_trt and isinstance(model, str):
+        from roop.onnx_cuda_safe import cuda_safe_model_path
+        session_model = cuda_safe_model_path(model)
     with _guard:
-        session = ort.InferenceSession(model, sess_options, providers=chain)
+        session = ort.InferenceSession(session_model, sess_options, providers=chain)
 
     # ORT also fails without raising: it drops the GPU provider and returns a
     # working CPU session. Ask the built session. TensorRT -> CUDA is the one

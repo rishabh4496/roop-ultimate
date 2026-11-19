@@ -288,8 +288,13 @@ def run_pipeline_benchmark(
     simulated_yaws: Optional[List[float]] = None,
     threads: int = 20,
     temporal: bool = True,
+    provider: str = "cuda",
 ) -> Dict[str, Any]:
-    """Execute end-to-end benchmark measurement capturing telemetry and metrics."""
+    """Execute end-to-end benchmark measurement capturing telemetry and metrics.
+
+    ``provider`` is the execution provider the pipeline is initialised with. It defaults to ``cuda`` so a run stays
+    comparable with the committed baseline; pass ``tensorrt`` to measure the configuration the RTX 4070 actually runs.
+    """
     # Ensure absolute path resolution before changing directories
     abs_video_path = os.path.abspath(video_path)
     if not os.path.isfile(abs_video_path):
@@ -307,7 +312,7 @@ def run_pipeline_benchmark(
         clean_mask = 'mask_realityux'
 
     g = ab.init_pipeline(
-        provider="cuda",
+        provider=provider,
         swap_model=swap_model,
         enhancer=clean_enhancer,
         mask_engine=clean_mask,
@@ -441,6 +446,11 @@ def run_pipeline_benchmark(
         telemetry.stop()
 
     timing_summary = telemetry.get_summary(total_frames=max(1, processed_frames))
+    # ``total_fps`` divides by the wall time of the WHOLE loop, which also contains the harness's own quality
+    # measurement (a second full detection per frame, SSIM, seam error). ``pipeline_fps`` is the frame-scope latency
+    # alone, i.e. what the render would do without the measurement. Additive: no existing field changes.
+    _lat_mean = (timing_summary.get("frame_latency_ms") or {}).get("mean") or 0.0
+    timing_summary["pipeline_fps"] = round(1000.0 / _lat_mean, 2) if _lat_mean > 0 else 0.0
     raw_metrics = metrics_tracker.compute_summary()
     metrics_summary = raw_metrics.to_dict() if hasattr(raw_metrics, "to_dict") else raw_metrics
     metrics_summary['applied_flicker'] = applied_tracker.compute_flicker_metrics().to_dict()
@@ -457,6 +467,7 @@ def run_pipeline_benchmark(
             "device_id": device_id,
             "threads": threads,
             "video_temporal": temporal,
+            "provider": provider,
         },
         "telemetry": timing_summary,
         "metrics": metrics_summary,
@@ -645,6 +656,9 @@ def main() -> int:
     parser.add_argument("--warmup", type=int, default=2, help="Warmup frames (default: 2)")
     parser.add_argument("--threads", type=int, default=20, help="Pipeline execution threads (default: 20)")
     parser.add_argument("--disable-temporal", action="store_true", help="Run the legacy frame path as a control")
+    parser.add_argument("--provider", type=str, default="cuda", choices=("cuda", "tensorrt"),
+                        help="Execution provider (default: cuda, which keeps runs comparable with the baseline; "
+                             "tensorrt is the RTX 4070 production configuration)")
     parser.add_argument("--inspect-baseline", action="store_true", help="Print the snapshot supplied by --compare")
 
     args = parser.parse_args()
@@ -719,6 +733,7 @@ def main() -> int:
             simulated_yaws=simulated_yaws,
             threads=args.threads,
             temporal=not args.disable_temporal,
+            provider=args.provider,
         )
 
         # Print reports

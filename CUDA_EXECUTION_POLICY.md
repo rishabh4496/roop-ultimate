@@ -186,3 +186,41 @@ context.
 Same render: end-to-end 7.74 fps over 600 frames (wall 77.5 s; the timed render phase 13.58 fps), GPU util mean 48% /
 peak 93%, ~6 frames in flight. The pre-existing frame is unchanged: removing GPU work moves the clock, redistributing
 it does not. RTX 3060: not measured; TensorRT and the second stream are not admitted there (policy table above).
+
+## 2026-11-20 — CUDA-provider CPU fallback: asymmetric ConvTranspose (RTX 4070, `provider=cuda`)
+
+**Defect.** `face_occluder.onnx` and `xseg.onnx` / `xseg_1..3.onnx` are TensorFlow exports with six
+`ConvTranspose` nodes each, `pads=[0,0,1,1]`. The CUDA execution provider cannot run asymmetric
+ConvTranspose padding: ORT logs "Dropping the ConvTranspose node ... asymmetric padding", assigns the node to
+the CPU provider and inserts 12 Memcpy nodes. Sessions run with ONE intra-op thread
+(`utilities.get_onnx_session_options`, deliberate), so those nodes are single threaded.
+
+| Path | `Mask_Occluder.Run` p50 | `Mask_XSeg.Run` p50 |
+|---|---:|---:|
+| TensorRT (RTX 4070 production) | 4.2 ms | 4.5 ms |
+| CUDA provider, original model | 40.5 ms | 40.2 ms |
+| CUDA provider, rewritten model (raw session, 1 thread) | 5.3 ms | 5.8 ms |
+
+A scan of all 52 shipped models (CUDA provider, 1 intra thread, ORT warnings captured) found this defect in exactly
+those five files; no other model has a CPU-fallback node. TensorRT handles the padding natively, so the 4070
+TensorRT configuration never paid it. **TensorRT is not admitted on the RTX 3060 laptop, so that card does.**
+
+**Fix.** `roop/onnx_cuda_safe.py`: `ConvTranspose(pads=[b,e])` -> `ConvTranspose(pads=0)` + `Slice` (crop `b` from the
+start and `e` from the end of each spatial axis). That is the ONNX definition of ConvTranspose padding, so it is
+exact; `test_onnx_cuda_safe.py` asserts bit-equality on the CPU provider for end-, begin- and mixed-pad nodes.
+`strict_session.create_strictly_accelerated_session` applies it only to a chain with a CUDA provider and NO
+TensorRT provider, and only to a model given as a path. The rewritten file is cached under
+`models/.cuda_safe/` (key: size + mtime); a model with nothing to rewrite is never copied and its scan is cached.
+`ROOP_CUDA_SAFE_ONNX=0` restores the original files.
+
+**Fidelity gate (CUDA provider, 120 real faces from `facesets/` and `output/`).** Rewritten vs original model:
+occluder max |diff| 0.0027, mean 3.0e-6, mask IoU at the app's 0.35 threshold min 0.99983; xseg / xseg_3 max |diff|
+0.0025, mean 7.3e-6, IoU at 0.10 min 0.99970. At most 4 of 65,536 pixels cross the threshold. The residual is TF32
+GPU arithmetic replacing CPU arithmetic, not a change of the function.
+
+**End to end** (`bench_pipeline.py --synthetic --frames 30 --threads 20`, provider cuda, counterbalanced
+A B B A, A = `ROOP_CUDA_SAFE_ONNX=0`): wall fps 4.27 / 5.03 / 5.00 / 4.27, pipeline-only fps 5.24 / 6.40 / 6.34 / 5.26,
+frame p50 173 / 133 / 134 / 164 ms, mask-group p50 44.7 / 15.3 / 15.4 / 44.4 ms. Detection recall, swap coverage,
+landmark jitter and luminance L1 are identical to three decimals in all four arms. **+17% wall fps, +21% pipeline
+fps on the CUDA provider; 0% on TensorRT (the path is untouched).** 30 frames of a synthetic fixture on one GPU;
+not the 600-frame real-footage acceptance AGENTS.md requires, and the RTX 3060 was not run.
