@@ -420,7 +420,7 @@ Every intermediate stage re-copies memory with `np.ascontiguousarray()`, `cv2.cv
   - **Invariant 3** (Virtual environment ownership, lines 63–78): `sys.prefix` must resolve to `app/env`.
   - **Invariant 4** (Activate script alignment, lines 79–124): `Scripts/activate.bat` (or `bin/activate`) must record `VIRTUAL_ENV` equal to real `app/env`. Fixed by `tools/repair_venv_paths.py`.
   - **Invariant 5** (Git exclusion, lines 125–149): `app/env`, `app/models`, `app/facesets` (~49 GB) must be ignored in `.gitignore` (tested via `git check-ignore`).
-  - **Invariant 6** (Zero upstream coupling, lines 150–213): Scans tracked files for forbidden needles `('roop-unleashed', 'roop_unleashed', 'C0untFloyd', 's0md3v')`. Allowed only in `NOTICE.md`, `docs/SESSION_LOGS.md`, rule pointers, and `test_standalone_install.py`.
+  - **Invariant 6** (Zero upstream coupling, lines 150–213): Scans tracked files for forbidden legacy upstream needles (defined in `test_standalone_install.py`). Allowed only in `NOTICE.md`, `docs/SESSION_LOGS.md`, rule pointers, and `test_standalone_install.py`.
 - **Package Contracts & Fail-Closed Provisioning:**
   - `app/requirements.txt`: Pins core app dependencies (`numpy==1.26.4`, `insightface==0.7.3`, `diffusers==0.30.2`, `PyNvVideoCodec>=2.2,<3`, `triton-windows>=3.3,<3.4`, etc.).
   - [`app/provision_runtime.py:1–80`](file:///G:/pinokio/api/roop-ultimate/app/provision_runtime.py#L1-L80): Detects system/GPU architecture and provisions matching `onnxruntime` (`onnxruntime-gpu`, `directml`, `rocm`, `silicon`, `cpu`) and `tensorrt-cu12` packages fail-closed.
