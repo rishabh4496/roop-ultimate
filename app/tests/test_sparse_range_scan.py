@@ -10,6 +10,7 @@ import tempfile
 import threading
 import time
 import unittest
+import unittest.mock
 
 import cv2
 import numpy as np
@@ -436,6 +437,7 @@ class RealVideoTest(unittest.TestCase):
             w.write(np.full((90, 160, 3), v, np.uint8))
         w.release()
 
+    @unittest.mock.patch.dict(os.environ, {'ROOP_HW_IO': '0'})
     def test_real_capture_alignment_and_trim(self):
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, 'cut.avi')
@@ -449,6 +451,39 @@ class RealVideoTest(unittest.TestCase):
                                                  detector=FakeProbe(workers=2))
             self.assertEqual(len(mask), 40)
             self.assertEqual(ranges, [(11, 39)])
+
+
+class NvdecSequentialScanTest(RealVideoTest):
+    """The default Stage 1 source: sequential NVDEC decode, a cut test on every frame, a grid inside each shot."""
+
+    def _scan(self, path, **kw):
+        stats = scan_active_ranges(path, detector=FakeProbe(workers=2), **kw)
+        if stats[2].get('decode_backend') != 'nvdec_sequential':
+            self.skipTest('NVDEC unavailable here (the cv2 fallback ran)')
+        return stats
+
+    def test_cut_is_found_on_its_exact_frame_and_trim_is_clip_relative(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, 'cut.avi')
+            self._write(path, [DARK] * 30 + [BRIGHT] * 30)
+            ranges, mask, stats = self._scan(path)
+            self.assertEqual(stats['scene_cuts_canonical'], [30])      # exact, not "somewhere in the 6-frame gap"
+            self.assertEqual(ranges, [(20, 59)])                        # first bright sample 30, minus M=10
+            self.assertEqual(stats['decoded_frames'], 60)
+            ranges, mask, stats = self._scan(path, frame_start=10, frame_end=50)
+            self.assertEqual(len(mask), 40)
+            self.assertEqual(stats['scene_cuts_canonical'], [20])      # 30 - 10
+            self.assertEqual(ranges, [(10, 39)])                        # bright from rel 20, minus M=10
+
+    def test_a_stream_that_ends_before_the_window_fails_safe_to_full(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, 'short.avi')
+            self._write(path, [DARK] * 20 + [BRIGHT] * 20)
+            ranges, mask, stats = self._scan(path, frame_start=0, frame_end=90)
+            self.assertEqual(stats['mode'], 'fail_safe_full')
+            self.assertTrue(mask.all())
+
+    test_real_capture_alignment_and_trim = None            # the cv2 test above is not re-run here
 
 
 class FaceAnalyserProbeTest(unittest.TestCase):

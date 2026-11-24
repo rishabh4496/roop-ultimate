@@ -107,7 +107,7 @@ class SparseScanRuntimeFailure(unittest.TestCase):
     def _scan(self, exc):
         from roop import sparse_range_scan as srs
         hw.telemetry.register_decoder("stage1-keyframes", hw.BACKEND_NVDEC_DLPACK)   # what the reader did at open
-        with mock.patch.object(srs, "_scan_active_ranges_hw", side_effect=exc):
+        with mock.patch.object(hw, "NvZeroCopyReader", side_effect=exc):       # the NVDEC open is the seam
             return _captured(lambda: srs.scan_active_ranges(self.path, frame_count=300))
 
     def test_a_runtime_bug_in_the_hardware_scan_relabels_and_reports(self):

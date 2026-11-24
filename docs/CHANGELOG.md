@@ -5,6 +5,16 @@ full session record is [`SESSION_LOGS.md`](SESSION_LOGS.md); the running enginee
 state lives outside the repository (`RECODE_STATUS.md` in the operator's `roop-keep`
 folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22.
 
+## 2026-11-24
+
+- **Stage 1 pre-scan decodes sequentially and no longer loses faces on clips with long GOPs.** `app/roop/sparse_range_scan.py`; report `docs/audits/STAGE1_SEQUENTIAL_SCAN.md`.
+  - **Defect.** The NVDEC scan sampled keyframes (plus a midpoint over 60 frames) 1-4 s apart under a pad derived from the nominal 0.2 s stride. On `b1.mp4` it left 78 of 1235 face frames (universal) and 67 of 313 target frames outside every range, so they went out unswapped; 9 of its 15 s per 3000 frames were `decoder[i]` re-decoding from the previous IDR. A stop or detector error returned a partial answer, and its mode label was not cacheable, so a resumed job re-scanned.
+  - **Now.** Every frame of the window is decoded in order, cut-tested on the GPU (exact cut frames, nothing bisected) and sampled at the first frame of each shot, every `S` frames inside it, and the last frame. A shot with a positive sample is not sampled again. The detector pool, warm-up and fail-safe rules are shared with the cv2 source; a decode shorter than the window now fails safe to the full range.
+  - **Measured (RTX 4070, dense per-frame truth).** b1: 15.9 -> 8.1 s universal and 15.6 -> 11.1 s targeted, persistent face frames missed 78 -> 0 and 67 -> 0; Monica 13.3 -> 2.6 s and 12.4 -> 3.8 s; Love 2.9 -> 1.2 s and 4.0 -> 3.0 s; 0 missed everywhere. **Cost:** on b1 the mask is wider (84.5% -> 97.3% universal, 64.3% -> 87.2% targeted active) - the old figure was frames it never looked at.
+  - **Measured, not changed.** Rescue turns off (cuts 52-64% of the scan time, loses 10-13 persistent frames), stricter det gates, pad-only ranges, a coarser grid, and a targeted similarity floor of 0.25 (-5 points active, 0 loss on five windows; owner call). Numbers in the report.
+  - **Tests.** 20 new GPU-free tests (`test_sparse_range_scan_sequential.py`), 2 real-file NVDEC tests, 4 migrated; light CI 2746 passed, 7 failed, none in touched files.
+  - **Not verified.** No full 3-stage render (the card was shared with a running app); RTX 3060, VFR sources, DirectML, CPU not run. Stage 2 and Stage 4 were not changed or timed.
+
 ## 2026-10-29
 
 - **Workstation overhaul, Stage 26: scrubby labels, expression maths, a floating preview, and a keyboard remapper that actually remaps.** React UI only; no backend change.

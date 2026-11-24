@@ -152,8 +152,9 @@ class TestGpuFilmstripAndSceneCuts(unittest.TestCase):
         if not os.path.exists(self.test_video):
             self.skipTest(f"Test video missing: {self.test_video}")
 
-        from roop.sparse_range_scan import _scan_active_ranges_hw
-        ranges, mask, tel = _scan_active_ranges_hw(self.test_video, frame_count=30, stride=5)
+        from roop.sparse_range_scan import scan_active_ranges
+        ranges, mask, tel = scan_active_ranges(self.test_video, frame_count=30, stride=5)
+        self.assertEqual(tel.get("decode_backend"), "nvdec_sequential", tel)    # the NVDEC source ran, not cv2
         self.assertIsInstance(ranges, list)
         self.assertGreater(len(ranges), 0)
         self.assertEqual(ranges[0], (0, 29))

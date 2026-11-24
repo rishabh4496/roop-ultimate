@@ -1,30 +1,35 @@
 """Sparse auto-range pre-scan (Stage 1): which frames can a swap possibly touch?
 
-One sequential demuxer thread steps through the clip (or the trimmed
-[frame_start, frame_end) interval) with ``cap.grab()`` and ``cap.retrieve()``s only the
-sampled frames, so no worker ever seeks. A pool of detector workers, one per resident
-FaceAnalysis instance, consumes a bounded queue; the main thread collects results.
+Two sources feed one pipeline of detector workers (one per resident FaceAnalysis instance, a bounded queue, the
+main thread collecting):
+
+- NVDEC (the default, ``ROOP_HW_IO`` != 0): ``run_demux_hw`` decodes EVERY frame of the trimmed window
+  sequentially in VRAM, compares each with the one before it on a 64x36 luma thumbnail (``CUT_DELTA_Y``), and
+  samples the first frame of every shot plus every ``S`` frames inside it and the window's last frame. Cuts are
+  therefore exact frames (no bisection), and a shot that already has a positive sample is not sampled again
+  (``ShotLedger``): its whole span is active anyway.
+  The scan used to decode only keyframes. On clips with 2-6 s GOPs that put samples 1-4 s apart under a pad
+  derived from the nominal 0.2 s stride, and every ``decoder[i]`` re-decoded from the previous IDR: on b1.mp4 it
+  lost 78 of 1235 face frames (67 of 313 target frames), and 9 of its 15 s were decode. See
+  ``docs/audits/STAGE1_SEQUENTIAL_SCAN.md``.
+- cv2 (fallback when NVDEC cannot open the file): one sequential demuxer thread ``grab()``s every frame and
+  ``retrieve()``s only the sampled ones, plus the midpoint of an interval a hard cut fell into.
 
 - Base stride ``S = max(1, min(12, floor(0.20 * fps)))``.
-- Every sample is compared with the previous one on a 64x36 luma thumbnail; a mean
-  absolute difference above ``CUT_DELTA_Y`` means a hard cut fell between them, and the
-  midpoint ``t - floor(S/2)`` is inspected too so a flash shorter than ``S`` is never
-  stepped over. The midpoint frame is retrieved (a colour conversion, not a decode) and
-  held one interval deep, because a sequential decoder cannot go back for it.
 - Positive frames, with relaxed hysteresis floors:
     universal mode  any face with det_score >= max(0.25, det_thresh - 0.15)
     targeted mode   max cosine(face, target) >= max(0.15, tau_swap - 0.12), on w600k
                     embeddings, so B-roll of other people does not open Stage 2
-- Each island of positives is dilated by ``M = ceil(1.25 * S) + 2`` frames on both ends and
-  ranges whose gap is <= ``MERGE_GAP`` frames are coalesced.
+- Each island of positives is dilated by ``M = ceil(1.25 * S) + 2`` frames on both ends, expanded to the shot(s)
+  it touches, and ranges whose gap is <= ``MERGE_GAP`` frames are coalesced.
 
 During rendering and the tracking pre-pass active frames get the full pipeline; inactive
 frames go straight to the encoder queue and skip every GPU network.
 
 A clean scan that finds NOTHING returns ``[]`` and an all-False mask (the video really has
 no frame to swap). A scan that could not look properly (unreadable file, detector or
-decode errors, user stop) fails SAFE to the full range instead - "found nothing" and
-"could not look" are different answers.
+decode errors, a stream that ends before the window does, user stop) fails SAFE to the full range instead -
+"found nothing" and "could not look" are different answers.
 """
 
 from __future__ import annotations
@@ -155,7 +160,8 @@ def frame_is_positive(faces: Sequence[Any], det_floor: float,
 def build_active_ranges(positives: Iterable[int], total_frames: int, stride: int,
                         trim_in: int = 0, trim_out: Optional[int] = None,
                         merge_gap: int = MERGE_GAP,
-                        scene_cuts: Optional[Sequence[int]] = None) -> Tuple[List[Tuple[int, int]], np.ndarray]:
+                        scene_cuts: Optional[Sequence[int]] = None,
+                        expand_to_edges: bool = False) -> Tuple[List[Tuple[int, int]], np.ndarray]:
     """Positive sample indices -> dilated, coalesced inclusive ranges plus a bool mask.
 
     Indices are clip-relative (0 = first frame of the trimmed interval), so the trim bounds
@@ -165,7 +171,10 @@ def build_active_ranges(positives: Iterable[int], total_frames: int, stride: int
     When ``scene_cuts`` are provided, any island containing positive sample(s) is expanded
     to span the full shot(s) from the scene cut boundary where the shot started up to the
     scene cut boundary where the shot ended, preventing face unswaps at the beginning and
-    end of cut scenes.
+    end of cut scenes. ``expand_to_edges`` makes the clip's own first and last frame count as shot
+    boundaries too, so the first and the last shot expand to the clip edge like every other shot
+    (the sequential hardware scan stops sampling a shot once one sample is positive, so it relies
+    on the shot, not the pad, to cover the rest of it).
 
     Two ranges whose gap ``next_start - prev_end`` is <= ``merge_gap`` are merged. No positives
     -> ``[]`` and an all-False mask, never an exception.
@@ -196,15 +205,19 @@ def build_active_ranges(positives: Iterable[int], total_frames: int, stride: int
     merged: List[Tuple[int, int]] = []
     for a, b in islands:
         start, end = max(lo, a - pad), min(hi, b + pad)
-        if cuts_list:
+        if cuts_list or expand_to_edges:
             prior_cuts = [c for c in cuts_list if c <= a]
             if prior_cuts:
                 shot_start = prior_cuts[-1]
                 start = min(start, shot_start)
+            elif expand_to_edges:
+                start = lo
             post_cuts = [c for c in cuts_list if c > b]
             if post_cuts:
                 shot_end = post_cuts[0] - 1
                 end = max(end, shot_end)
+            elif expand_to_edges:
+                end = hi
 
         if merged and start - merged[-1][1] <= merge_gap:
             merged[-1] = (merged[-1][0], max(merged[-1][1], end))
@@ -296,6 +309,127 @@ def run_demux(cap: Any, frame_start: int, total_frames: int, stride: int,
             mid_off = next_sample - gap // 2 if gap >= 2 else None
 
     info['scene_cuts'] = cuts_list
+    return info
+
+
+class ShotLedger:
+    """Which shot each queued sample belongs to, and which shots already have a positive sample.
+
+    A positive sample makes ``build_active_ranges`` expand its island to the whole shot (cut to cut), so once a
+    shot has one, every further sample inside it is redundant work: the demuxer stops cutting new ones and the
+    workers drop the ones already queued. Written by the demuxer (``register``) and the collector
+    (``mark_positive``), read by the workers (``skip``); a sample that races past the check is only wasted work,
+    never a wrong answer."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._shot_of: Dict[int, int] = {}
+        self._positive: set = set()
+        self.skipped = 0
+
+    def register(self, idx: int, shot: int) -> None:
+        with self._lock:
+            self._shot_of[int(idx)] = int(shot)
+
+    def mark_positive(self, idx: int) -> None:
+        with self._lock:
+            shot = self._shot_of.get(int(idx))
+            if shot is not None:
+                self._positive.add(shot)
+
+    def resolved(self, shot: int) -> bool:
+        return int(shot) in self._positive
+
+    def skip(self, idx: int) -> bool:
+        """True (and counted) when sample ``idx`` is in a shot that is already positive."""
+        with self._lock:
+            shot = self._shot_of.get(int(idx))
+            hit = shot is not None and shot in self._positive
+            if hit:
+                self.skipped += 1
+            return hit
+
+
+def gpu_luma_thumbs(tensors: Sequence[Any], torch: Any) -> Any:
+    """(n, 36, 64) float32 luma of n CUDA ``(3, H, W)`` RGB frames: one pooling kernel per frame, no host sync.
+    The same 64x36 area-averaged luma the cv2 path compares (``luma_thumb``), so ``CUT_DELTA_Y`` means the same."""
+    out = []
+    for t in tensors:
+        small = torch.nn.functional.adaptive_avg_pool2d(t.unsqueeze(0).float(), (CUT_THUMB_SIZE[1], CUT_THUMB_SIZE[0]))[0]
+        out.append(0.299 * small[0] + 0.587 * small[1] + 0.114 * small[2])
+    return torch.stack(out)
+
+
+def run_demux_hw(reader: Any, total_frames: int, stride: int,
+                 put: Callable[[Tuple[str, int, Optional[np.ndarray]]], bool],
+                 stopped: Callable[[], bool], ledger: Optional[ShotLedger] = None,
+                 chunk: int = 16) -> Dict[str, Any]:
+    """Sequential NVDEC counterpart of ``run_demux``: decode EVERY frame of the window in VRAM, compare each with
+    the one before it on the GPU, sample on a fine grid.
+
+    Why every frame: the keyframe schedule this replaces decoded only the I-frames (plus a midpoint where the GOP
+    exceeded 60), so on a clip with 2-6 s GOPs the samples were 1-4 s apart while the padding came from the nominal
+    0.2 s stride. On b1.mp4 (191 hard cuts in 3000 frames) it lost 78 of 1235 face frames, and 67 of 313 target
+    frames in targeted mode; every miss is an unswapped frame. It was also not cheap: each ``decoder[i]`` re-decodes
+    from the previous IDR, so 164 cut-localisation probes + 159 samples cost 9 s of a 15 s scan before any
+    detector ran. NVDEC decodes the whole window sequentially in a fraction of that, and a per-frame cut test makes
+    every shot boundary exact, so nothing has to be bisected.
+
+    A sample is cut on the first frame of every shot (the frame the cut test flags, available the moment it is
+    decoded) and then every ``stride`` frames inside it, plus the window's last frame. With a ``ledger``, a shot
+    that already has a positive sample is not sampled any further. ``put(('sample', i, bgr_or_None))`` as in
+    ``run_demux``; returns the same telemetry dict."""
+    import torch
+    info: Dict[str, Any] = dict(decoded=0, samples=0, mids=0, cuts=0, read_failures=0,
+                                stopped=False, start_mismatch=False, scene_cuts=[], decode_backend='nvdec_sequential')
+    cuts: List[int] = info['scene_cuts']
+    stride = max(1, int(stride))
+    last = total_frames - 1
+    prev = None                      # thumbnail of the frame before the next one to decode (device tensor)
+    shot = 0
+    next_due = 0
+    idx = 0
+    while idx < total_frames:
+        if stopped():
+            info['stopped'] = True
+            break
+        frames = reader.read_batch(min(chunk, total_frames - idx))
+        if not frames:
+            break
+        thumbs = gpu_luma_thumbs([f.tensor for f in frames], torch)
+        seq = thumbs if prev is None else torch.cat([prev.unsqueeze(0), thumbs])
+        deltas = (seq[1:] - seq[:-1]).abs().mean(dim=(1, 2)).cpu().tolist() if seq.shape[0] > 1 else []
+        if prev is None:
+            deltas = [0.0] + deltas
+        prev = thumbs[-1].clone()
+        for j, frame in enumerate(frames):
+            i = idx + j
+            if i > 0 and deltas[j] > CUT_DELTA_Y:
+                cuts.append(i)
+                info['cuts'] += 1
+                shot += 1
+                next_due = i
+            if i != next_due and i != last:
+                continue
+            next_due = i + stride
+            if ledger is not None and ledger.resolved(shot):
+                continue                     # this shot is already known positive: nothing more to learn from it
+            try:
+                bgr = frame.bgr()
+            except Exception as exc:
+                _swallowed("sparse_range_scan:hw_bgr", exc, "sample frame skipped")
+                info['read_failures'] += 1
+                bgr = None
+            if ledger is not None:
+                ledger.register(i, shot)
+            info['samples'] += 1
+            if not put(('sample', i, bgr)):
+                info['stopped'] = True
+                break
+        info['decoded'] = idx + len(frames)
+        if info['stopped']:
+            break
+        idx += len(frames)
     return info
 
 
@@ -409,210 +543,6 @@ def _full_range(total: int, mode: str, **extra: Any) -> Tuple[List[Tuple[int, in
 # Orchestration
 # --------------------------------------------------------------------------------------
 
-def _scan_active_ranges_hw(
-    source_video: str,
-    target_faces: Optional[Sequence[Any]] = None,
-    frame_start: int = 0,
-    frame_end: Optional[int] = None,
-    frame_count: Optional[int] = None,
-    fps: float = 25.0,
-    stride: Optional[int] = None,
-    swap_distance_threshold: Optional[float] = None,
-    det_thresh: Optional[float] = None,
-    progress_cb: Optional[Callable[[int, int], None]] = None,
-    should_stop: Optional[Callable[[], bool]] = None,
-    detector: Any = None,
-) -> Tuple[List[Tuple[int, int]], np.ndarray, Dict[str, Any]]:
-    import time
-    import roop.globals
-    from roop.video_io_hw import NvSparseKeyframeReader, HwFrame
-    from roop.scene_detector import HardwareBitstreamCutDetector
-    import PyNvVideoCodec as nvc
-    import torch
-
-    t0 = time.perf_counter()
-    with NvSparseKeyframeReader(
-        source_video,
-        adaptive_midpoints=True,
-        max_gop_gap=60,
-        enable_decode_stats=True,
-        start_frame=frame_start,
-        end_frame=frame_end,
-        in_point=frame_start,
-        out_point=frame_end,
-    ) as reader:
-        # Pre-scan packets to discover keyframes and exact stream length
-        reader.keyframe_table()
-        total_packets = reader._total_packet_count or (frame_count or 0)
-        actual_fps = reader.fps if reader.fps > 0 else (fps or 25.0)
-        if frame_end is None or frame_end <= 0:
-            frame_end = total_packets if total_packets > 0 else (frame_start + max(1, int(frame_count or 1)))
-        total_frames = max(1, frame_end - frame_start)
-
-        S = max(1, int(stride)) if stride is not None else sparse_stride(actual_fps)
-        M = dilation_pad(S)
-
-        if total_frames <= S * 2:
-            return _full_range(total_frames, "full_short_clip")
-
-        if det_thresh is None:
-            det_thresh = float(getattr(roop.globals, 'face_detector_threshold', 0.60))
-        det_floor = det_score_floor(det_thresh)
-        target_matrix = unit_embeddings(target_faces or ())
-
-        sim_floor = None
-        if target_matrix is not None:
-            distance = swap_distance_threshold
-            if distance is None:
-                distance = float(getattr(roop.globals, 'face_distance_threshold', 0.65) or 0.65)
-            sim_floor = similarity_floor(1.0 - float(distance))
-
-        probe = detector if detector is not None else FaceAnalyserProbe(det_floor, target_matrix, sim_floor)
-        worker_count = max(1, int(probe.prepare()))
-
-        cut_detector = HardwareBitstreamCutDetector()
-        positives: List[int] = []
-        samples_done = 0
-        detector_errors = 0
-
-        # Build sample schedule using PyNvVideoCodec demuxer packet filtering:
-        # decode only IDR/I-frames (plus midpoint frames only if GOP > 60 frames) within the active trim range [frame_start, frame_end)
-        table = reader.keyframe_table(start_frame=frame_start, end_frame=frame_end)
-        rel_kfs = [k - frame_start for k, _ in table if frame_start <= k < frame_end]
-        key_abs = {int(k) for k, _ in table}          # true I-frames: their bitstream stats say nothing about cuts
-        gaps = [rel_kfs[i+1] - rel_kfs[i] for i in range(len(rel_kfs)-1)] if len(rel_kfs) > 1 else [total_frames]
-        median_gap = np.median(gaps) if gaps else total_frames
-
-        if median_gap < S:
-            scheduled_samples = list(range(0, total_frames, S))
-            if (total_frames - 1) not in scheduled_samples:
-                scheduled_samples.append(total_frames - 1)
-        else:
-            sample_tbl = reader.sample_table(max_gop_gap=60, start_frame=frame_start, end_frame=frame_end)
-            scheduled_samples = [idx - frame_start for idx, pts, is_key in sample_tbl if frame_start <= idx < frame_end]
-            if not scheduled_samples:
-                scheduled_samples = [0]
-        scheduled_samples = with_edge_samples(scheduled_samples, total_frames)
-
-        dec = nvc.CreateSimpleDecoder(source_video, reader.gpu_id, 0, 0, True, 0, 0, False, 1,
-                                     nvc.OutputColorType.RGBP, False, reader.enable_decode_stats)
-
-        total_samples = len(scheduled_samples)
-        prev_idx = None
-
-        def test_frame(abs_f, rel_f, commit=True):
-            nonlocal samples_done, detector_errors
-            raw = dec[abs_f]
-            t = torch.from_dlpack(raw).clone()
-            stats = raw.ParseDecodeStats() if reader.enable_decode_stats else None
-            # the first sample has nothing before it to differ from: its (non-key) stats are no cut evidence either
-            first = prev_idx is None and commit
-            is_cut = cut_detector.observe(abs_f, tensor=t, stats=stats, keyframe=first or abs_f in key_abs, commit=commit)
-            hw_f = HwFrame(abs_f, None, tensor=t, decode_stats=stats)
-            bgr = hw_f.bgr()
-            try:
-                if probe.positive(bgr):
-                    positives.append(rel_f)
-            except Exception as exc:
-                _swallowed("sparse_range_scan:hw_detect", exc, "face detect failed")
-                detector_errors += 1
-            samples_done += 1
-            if progress_cb is not None:
-                try:
-                    progress_cb(samples_done, total_samples)
-                except Exception as exc:
-                    _swallowed("sparse_range_scan:progress_cb", exc, "progress callback error")
-            return is_cut
-
-        def localize(lo_abs, hi_abs, thumb_lo):
-            """First frame of the new shot between two samples, or None when the luma did not decide the cut."""
-            thumb_hi = cut_detector._last_luma_tensor
-            if thumb_lo is None or thumb_hi is None:
-                return None
-            if cut_detector.luma_distance(thumb_lo, thumb_hi) < cut_detector.luma_cut_delta:
-                return None                      # flagged by a bitstream cue on a non-key frame: nothing to bisect on
-
-            def in_new_shot(f):
-                raw = dec[f]
-                thumb = cut_detector.luma_thumb(torch.from_dlpack(raw).clone())
-                return thumb is not None and cut_detector.luma_distance(thumb_lo, thumb) >= cut_detector.luma_cut_delta
-
-            try:
-                return locate_cut_frame(lo_abs, hi_abs, in_new_shot)[0]
-            except Exception as exc:
-                _swallowed("sparse_range_scan:locate_cut", exc, "cut kept at the sample that revealed it")
-                return None
-
-        localized = 0
-        for s_idx in scheduled_samples:
-            if should_stop and should_stop():
-                break
-            abs_idx = frame_start + s_idx
-            thumb_before = cut_detector._last_luma_tensor        # the previous sample's thumbnail
-            is_cut = test_frame(abs_idx, s_idx)
-            # If a scene cut fell between samples, find its first frame, then inspect the midpoint and boundary
-            # frames (for faces). The inspections are probes: they run BEFORE the frame that flagged the cut, and
-            # must not become the baseline the next sample is compared with.
-            if is_cut and prev_idx is not None and (s_idx - prev_idx) >= 2:
-                if localized < MAX_CUTS_LOCALIZED:
-                    exact = localize(frame_start + prev_idx, abs_idx, thumb_before)
-                    if exact is not None:
-                        cut_detector.relocate_last_cut(exact)
-                        localized += 1
-                mid_rel = prev_idx + (s_idx - prev_idx) // 2
-                mid_abs = frame_start + mid_rel
-                test_frame(mid_abs, mid_rel, commit=False)
-                if (s_idx - prev_idx) > 8:
-                    if s_idx > 0 and (s_idx - 1) not in positives:
-                        test_frame(frame_start + s_idx - 1, s_idx - 1, commit=False)
-                    if prev_idx + 1 < mid_rel and (prev_idx + 1) not in positives:
-                        test_frame(frame_start + prev_idx + 1, prev_idx + 1, commit=False)
-            prev_idx = s_idx
-
-        elapsed = time.perf_counter() - t0
-        effective_stride = S
-        effective_merge_gap = MERGE_GAP
-        hw_cuts = [int(c) - frame_start for c in cut_detector.scene_cuts if frame_start <= int(c) < frame_end]
-
-        common = dict(
-            stride=S, pad=M, workers=worker_count, det_floor=det_floor,
-            sim_floor=sim_floor, targeted=bool(getattr(probe, 'targeted', target_matrix is not None)),
-            samples_total=total_samples, samples_done=samples_done,
-            cuts=len(cut_detector.scene_cuts),
-            scene_cuts=list(cut_detector.scene_cuts),
-            scene_cuts_abs=list(cut_detector.scene_cuts),
-            scene_cuts_canonical=hw_cuts,
-            detector_errors=detector_errors, hits_count=len(positives),
-            elapsed_s=round(elapsed, 3),
-            scan_fps=round(samples_done / elapsed, 1) if elapsed > 0 else None,
-            mode="nv_hardware_keyframes",
-        )
-
-        ranges, mask = build_active_ranges(
-            positives, total_frames, effective_stride,
-            merge_gap=effective_merge_gap,
-            scene_cuts=hw_cuts,
-        )
-        active_count = int(np.sum(mask))
-        percentage = round((active_count / total_frames) * 100.0, 1)
-        # Auto-populate timeline chapter markers at scene cuts
-        try:
-            from roop.face_bank import get_face_bank
-            bank = get_face_bank()
-            if bank is not None:
-                bank.scene_cuts.update(int(c) for c in cut_detector.scene_cuts)
-        except Exception as exc:
-            _swallowed("sparse_range_scan:update_bank_cuts", exc, "scene cuts bank sync fallback")
-
-        stats = dict(common, active_frames=active_count, total_frames=total_frames,
-                     skipped_frames=total_frames - active_count, percentage=percentage,
-                     ranges=ranges,
-                     mode="sparse_auto_range" if ranges else "no_target_found")
-        print(f"[SparseScan] Hardware Keyframe Pre-Scan complete in {elapsed:.2f}s: "
-              f"{len(ranges)} active range(s), {len(cut_detector.scene_cuts)} scene cuts.", flush=True)
-        return ranges, mask, stats
-
-
 def _hardware_scan_fell_back(exc: BaseException) -> None:
     """The Stage 1 pre-scan left NVDEC for cv2: move its decode label off ``NVDEC-DLPack`` and put the reason where
     the per-job report (``video_io.fallbacks``), the HARDWARE section and the HUD badge read it."""
@@ -658,47 +588,44 @@ def scan_active_ranges(
     """
     frame_start = max(0, int(frame_start or 0))
 
+    reader = None                    # the sequential NVDEC source; None = the cv2 capture below
     if capture is None:
         if not source_video or not os.path.isfile(source_video):
             return _full_range(frame_count or 1, "fail_safe_full", error="file_not_found")
-        from roop.video_io_hw import hw_io_wanted, HwUnavailable
+        from roop.video_io_hw import hw_io_wanted, HwUnavailable, NvZeroCopyReader
         if hw_io_wanted():
             try:
-                return _scan_active_ranges_hw(
-                    source_video,
-                    target_faces=target_faces,
-                    frame_start=frame_start,
-                    frame_end=frame_end,
-                    frame_count=frame_count,
-                    fps=fps,
-                    stride=stride,
-                    swap_distance_threshold=swap_distance_threshold,
-                    det_thresh=det_thresh,
-                    progress_cb=progress_cb,
-                    should_stop=should_stop,
-                    detector=detector,
-                )
+                end = int(frame_end) if frame_end is not None and int(frame_end) > 0 else None
+                # The tag stays "stage1-keyframes": the per-job report, the HUD badge and face_bank label the Stage 1
+                # decoder by it, and `_hardware_scan_fell_back` re-labels the same tag when this scan leaves NVDEC.
+                reader = NvZeroCopyReader(source_video, start_frame=frame_start, end_frame=end,
+                                          tag="stage1-keyframes")
             except HwUnavailable as exc:
                 _hardware_scan_fell_back(exc)
-                print(f"[SparseScan] Hardware keyframe pre-scan unavailable ({exc}); using fallback demuxer", flush=True)
+                print(f"[SparseScan] NVDEC pre-scan unavailable ({exc}); using the cv2 demuxer", flush=True)
             except Exception as exc:
-                # A RUNTIME failure (a shape/stride mismatch, a decoder fault) - not a missing package. The reader had
-                # already registered itself as the active decoder, so without the relabel the report would credit
-                # NVDEC for a pre-scan that cv2 finished. ROOP_STRICT_FALLBACK=1 re-raises it.
-                _swallowed("sparse_range_scan:hw_scan", exc, "hardware scan failed; using fallback demuxer")
+                # A RUNTIME failure (a decoder fault, a bad window) - not a missing package. ROOP_STRICT_FALLBACK=1
+                # re-raises it. The relabel keeps the report from crediting NVDEC for a pre-scan cv2 finished.
+                _swallowed("sparse_range_scan:hw_scan", exc, "NVDEC open failed; using the cv2 demuxer")
                 _hardware_scan_fell_back(exc)
-        capture = cv2.VideoCapture(source_video)
+        if reader is None:
+            capture = cv2.VideoCapture(source_video)
     cap = capture
-    if not cap.isOpened():
+    if reader is None and not cap.isOpened():
         cap.release()
         return _full_range(frame_count or 1, "fail_safe_full", error="cannot_open_video")
 
     demux_thread: Optional[threading.Thread] = None
     workers: List[threading.Thread] = []
     stop = threading.Event()
+    ledger: Optional[ShotLedger] = ShotLedger() if reader is not None else None
     try:
-        video_total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
-        actual_fps = float(cap.get(cv2.CAP_PROP_FPS) or fps or 25.0)
+        if reader is not None:
+            video_total_frames = int(reader.num_frames or 0)
+            actual_fps = float(reader.fps or fps or 25.0)
+        else:
+            video_total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+            actual_fps = float(cap.get(cv2.CAP_PROP_FPS) or fps or 25.0)
         if actual_fps <= 0 or not np.isfinite(actual_fps):
             actual_fps = 25.0
 
@@ -730,8 +657,11 @@ def scan_active_ranges(
         # the calling thread. prepare() returns only once the analyser pool is built, which
         # is after the aux canary has judged (and if need be rebuilt) every aux engine.
         worker_count = max(1, int(probe.prepare()))
-        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0) or 640
-        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0) or 360
+        if reader is not None:
+            width, height = int(reader.width or 0) or 640, int(reader.height or 0) or 360
+        else:
+            width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0) or 640
+            height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0) or 360
         warm = np.zeros((height, width, 3), dtype=np.uint8)
         for _ in range(worker_count):       # one pass per instance: each leases a different one
             try:
@@ -754,16 +684,21 @@ def scan_active_ranges(
 
         def _demux() -> None:
             try:
-                info_box.update(run_demux(
-                    cap, frame_start, total_frames, S, _put,
-                    lambda: stop.is_set() or bool(should_stop and should_stop())))
+                stopped = lambda: stop.is_set() or bool(should_stop and should_stop())
+                if reader is not None:
+                    info_box.update(run_demux_hw(reader, total_frames, S, _put, stopped, ledger))
+                else:
+                    info_box.update(run_demux(cap, frame_start, total_frames, S, _put, stopped))
             except Exception as exc:
                 _swallowed("sparse_range_scan:demux", exc, "demuxer error")
                 info_box['error'] = repr(exc)
             finally:
                 for _ in range(worker_count):
                     _put(_SENTINEL)
-                cap.release()
+                if reader is not None:
+                    reader.close()
+                else:
+                    cap.release()
 
         busy_s: List[float] = []          # one entry per worker, appended as it exits (no lock needed)
 
@@ -782,6 +717,9 @@ def scan_active_ranges(
                     kind, idx, frame = item
                     if frame is None:
                         result_q.put((kind, idx, False, True))
+                        continue
+                    if ledger is not None and ledger.skip(idx):
+                        result_q.put((kind, idx, False, False))      # its shot turned positive while it queued
                         continue
                     t_det = time.perf_counter()
                     try:
@@ -816,6 +754,8 @@ def scan_active_ranges(
             detector_errors += int(errored)
             if positive:
                 positives.append(idx)
+                if ledger is not None:
+                    ledger.mark_positive(idx)
             if kind == 'sample':
                 samples_done += 1
                 if progress_cb is not None:
@@ -825,6 +765,11 @@ def scan_active_ranges(
                         _swallowed("sparse_range_scan:progress_cb", exc, "progress callback failed")
         demux_thread.join(timeout=5.0)
         elapsed = time.perf_counter() - t0
+        if progress_cb is not None and samples_done < total_samples:
+            try:                          # shots that resolved early leave samples unscheduled: end the bar at 100%
+                progress_cb(total_samples, total_samples)
+            except Exception as exc:
+                _swallowed("sparse_range_scan:progress_cb", exc, "progress callback failed")
 
         info = dict(info_box)
         canonical_cuts = [int(c) for c in (info.get('scene_cuts') or ()) if 0 <= int(c) < total_frames]
@@ -839,6 +784,9 @@ def scan_active_ranges(
                       decoded_frames=info.get('decoded', 0), read_failures=info.get('read_failures', 0),
                       detector_errors=detector_errors, hits_count=len(positives),
                       start_mismatch=bool(info.get('start_mismatch')),
+                      decode_backend=info.get('decode_backend', 'cv2'),
+                      shots=(len(canonical_cuts) + 1) if reader is not None else None,
+                      skipped_samples=ledger.skipped if ledger is not None else 0,
                       elapsed_s=round(elapsed, 3),
                       scan_fps=round(info.get('decoded', 0) / elapsed, 1) if elapsed > 0 else None,
                       # Detector time summed over the pool / (workers x wall clock): 100% = no worker ever
@@ -857,6 +805,10 @@ def scan_active_ranges(
             reason = "demux error"
         elif info.get('start_mismatch'):
             reason = "initial seek landed on another frame"    # every range would be shifted
+        elif reader is not None and info.get('decoded', 0) < total_frames:
+            # The decoder ended before the window did. Every frame past that point would read as "no face" and go
+            # out unswapped, so a short decode is "could not look" even when an earlier sample was positive.
+            reason = f"decoded {info.get('decoded', 0)} of {total_frames} frames"
         elif not positives:
             if info.get('decoded', 0) == 0:
                 reason = "no frame decoded"
@@ -867,13 +819,22 @@ def scan_active_ranges(
                   flush=True)
             return _full_range(total_frames, "fail_safe_full", reason=reason, **common)
 
-        ranges, mask = build_active_ranges(positives, total_frames, S, scene_cuts=canonical_cuts)
+        ranges, mask = build_active_ranges(positives, total_frames, S, scene_cuts=canonical_cuts,
+                                           expand_to_edges=reader is not None)
         active_count = int(np.sum(mask))
         percentage = round((active_count / total_frames) * 100.0, 1)
         stats = dict(common, active_frames=active_count, total_frames=total_frames,
                      skipped_frames=total_frames - active_count, percentage=percentage,
                      ranges=ranges,
                      mode="sparse_auto_range" if ranges else "no_target_found")
+        if reader is not None:
+            try:                          # chapter markers for the timeline
+                from roop.face_bank import get_face_bank
+                bank = get_face_bank()
+                if bank is not None:
+                    bank.scene_cuts.update(int(c) for c in abs_cuts)
+            except Exception as exc:
+                _swallowed("sparse_range_scan:update_bank_cuts", exc, "scene cuts bank sync fallback")
         if not ranges:
             print("[SparseScan] No target face found in any sampled frame; every frame will "
                   "pass through unchanged.", flush=True)
@@ -890,4 +851,7 @@ def scan_active_ranges(
             t.join(timeout=5.0)
         if demux_thread is not None:
             demux_thread.join(timeout=5.0)
-        cap.release()
+        if reader is not None:
+            reader.close()
+        else:
+            cap.release()
