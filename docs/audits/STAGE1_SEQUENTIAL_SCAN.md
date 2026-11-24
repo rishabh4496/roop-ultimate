@@ -133,3 +133,50 @@ regression --benchmark-frames 600 --benchmark-clip <clip>`, threads 20), sparse 
 * **What would still cut Stage 2:** fewer frames reach it. Pad-only ranges instead of whole-shot expansion cost 2.6 points
   of active frames less on the five windows but lose 8 more persistent face frames (see "Measured and NOT shipped"). That
   is the recall/speed trade, and it is the owner's.
+
+## Stage 3 follows Stage 1 and Stage 2 (2026-11-24): measured, no code change
+
+Question: does Stage 3 swap exactly the frames Stage 1 kept and Stage 2 found a face on, with nothing lost in the
+hand-off and no detector work of its own? Method: `app/tests/probe_stage3_follows_stages.py`, one real 3-stage render
+per 900-frame window with Stage 1 ON (the regression harness leaves it off), the swap pass wrapped to record which
+frames it entered and swapped, scored against the dense truth from `probe_stage1_sequential.py truth`. RTX 4070,
+`config.yaml` as the user runs it. The target is the first face found in the window, the same rule the truth used.
+
+| window (900 frames) | Stage 1 mask | Stage 2 faces / matched | Stage 3 entered / swapped | Stage 3 detector calls | persistent target frames lost: mask / Stage 2 cache / never swapped |
+|---|---|---|---|---|---|
+| Love 600 | 900 | 891 / 500 | 900 / 488 | 0 | 0 / 0 / 0 of 254 |
+| b1 12000 | 279 | 207 / 165 | 279 / 154 | 0 | 0 / 0 / 0 of 104 |
+| Monica 500 | 851 | 795 / 774 | 851 / 769 | 0 | 0 / 32 / 32 of 720 |
+| b1 3000 | 668 | 317 / 94 | 668 / 111 | 0 | 0 / 1 / 1 of 21 |
+
+**What holds.** Stage 3 never enters the GPU path outside the Stage 1 mask (0 frames on all four) and never runs its own
+detector (0 calls): every frame it swaps comes from the Stage 2 cache, and a frame with no cached face returns at once.
+No persistent target frame is lost at Stage 1. Stage 3's time is its swapped faces, about 10 per second on every window
+(Love 488 in 50 s, b1 154 in 15 s and 111 in 11 s); passed-through frames cost almost nothing, so the hand-off wastes
+no time.
+
+**The one real loss: Monica 642-673 (32 frames, one shot).** A deep-profile close-up, head back, cigarette and fingers
+over the mouth. The dense detector finds it (score 1.0) and Stage 2 tracks it (track 35, matched to the source), but
+`_build_temporal_faces` deletes every observation at the `raw_guard` step (`alignment_safety.landmarks5`: "collapsed or
+reversed landmark baselines"). Stage 2's keypoints for this face differ from the dense detector's (eye 0 at (775,287)
+against (770,214), mouth corner 3 at (642,453) against (625,388)), so the five-point alignment is refused and the
+original pixels are kept. This is the deliberate refusal for extreme profile that `e68d9fe` and `4413938` record
+(beyond 74 degrees there is no alignment to fix); it is not a hand-off defect. Why the two detection paths disagree on
+the keypoints of this face was not run to ground.
+
+**Smaller observations (not changed).**
+- Matched-plan frames Stage 3 did not swap: 15 / 11 / 7 / 8 frames in runs of at most 4. None is a persistent target
+  frame. The reasons are the swap audit's refusals (crop shared with the face beside it, source used twice in a frame,
+  low-confidence detection on a locked track).
+- Faces in the Stage 2 cache outside the mask: 9 (b1 12000) and 3 (Monica), all gap-filled or coasted guesses past a
+  range edge; Stage 3 passes them through, and no persistent target frame is among them.
+- Swapped without a matched Stage 2 plan: 3, 0, 2 and 25 frames. The 25 on b1 3000 (22% of that window's 111 swaps) come
+  from the per-frame fallback. Comparing the output with the source, 22 of them changed fewer than 100 pixels, so Stage 3
+  spent swap work there for almost no visible result; the faces are small, dark or distant. Skipping fallback swaps
+  that Stage 2 did not match would save that time, but `roop/stage2_plan.py` records that such a skip changes the swap
+  rate and has to be measured with the regression benchmark first. Not done.
+
+**Not verified.** One render per window, no repeat, so the counts are single observations (the Love window was re-run
+once through the committed probe and reproduced exactly). RTX 3060, VFR sources, DirectML and CPU not run. The truth
+target is a distance of 0.65 on the raw embedding; the tracker's gate is 0.75, so "swapped but not truth target"
+(200 frames on Love, 47 / 76 / 65 on the others) is not by itself a wrong-person count and was not judged.
