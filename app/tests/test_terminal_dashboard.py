@@ -207,17 +207,35 @@ class Stages(_Env):
         st.enter(S3, 100)
         self.assertEqual(self.tick()["stages"]["S1"]["state"], td.DONE)
 
-    def test_s2_merges_the_prescan_and_the_tracking_stage(self):
+    def test_s2_reports_the_active_phase_at_its_own_rate(self):
         self.start()
         st.begin_run(1000)
         st.enter(S1, 100)
+        st.progress(S1, 25, 100)
+        scan = self.tick(2)
+        self.assertEqual(scan["stages"]["S2"]["pct"], 25.0)
+        self.assertIn("S2 Pre-scan", td.render_stage_lines(scan, color=False)[1])
+        self.clock.advance(2)
         st.progress(S1, 100, 100)
         st.leave(S1)
         st.enter(S2, 200)
-        st.progress(S2, 100, 200)
-        s2 = self.tick()["stages"]["S2"]
-        self.assertEqual(s2["pct"], 75.0)                                # (1.0 + 0.5) / 2
-        self.assertEqual(s2["detail"]["phase"], "Tracking")
+        self.tick(0)
+        for done in range(10, 101, 10):
+            st.progress(S2, done, 200)
+            tracking = self.tick(1)
+        s2 = tracking["stages"]["S2"]
+        self.assertEqual((s2["name"], s2["pct"], s2["done"], s2["total"]), ("Tracking", 50.0, 100, 200))
+        self.assertEqual((s2["elapsed_s"], s2["rate"], s2["eta_s"]), (10.0, 10.0, 10))
+        live = td.render_stage_lines(tracking, color=False)[1]
+        self.assertIn("S2 Tracking", live)
+        self.assertIn("10.0 fps", live)
+        self.assertNotIn("smp/s", live)
+        log = td.render_log_lines(tracking, ("S2",))[0]
+        self.assertIn("stage=S2(Tracking)", log)
+        self.assertIn("pct=50.0 done=100/200 unit=frames rate=10.0/s", log)
+        st.leave(S2)
+        finished = self.tick()["stages"]["S2"]
+        self.assertEqual((finished["name"], finished["state"], finished["pct"]), ("Tracking", td.DONE, 100.0))
 
     def test_a_dense_render_skips_s2(self):
         self.start()

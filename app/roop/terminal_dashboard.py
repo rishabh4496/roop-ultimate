@@ -65,7 +65,7 @@ TRACK = "\033[38;5;238m"
 # id, short name, long title, colour. S1 cyan, S2 magenta, S3 emerald (percent in gold), S4 blue.
 STAGES: Tuple[Tuple[str, str, str, str], ...] = (
     ("S1", "Probe", "Audio, demux & GOP/segment probe", "\033[38;5;45m"),
-    ("S2", "Pre-scan", "Pre-scan, scene cuts & face tracking", "\033[38;5;201m"),
+    ("S2", "Analysis", "Pre-scan, scene cuts & face tracking", "\033[38;5;201m"),
     ("S3", "Swap", "Core swap & restoration", "\033[38;5;42m"),
     ("S4", "Finalize", "Custody, lossless concat & remux", "\033[38;5;33m"),
 )
@@ -1141,12 +1141,12 @@ class TerminalProgressManager:
                 s = tel.get(key)
                 if s is None or s["state"] == SKIPPED or (s["state"] == PENDING and s3_started):
                     continue
-                frac = 1.0 if s["state"] in (DONE, RESTORED) else (min(1.0, s["done"] / s["total"]) if s["total"] else 0.0)
-                subs.append((key, label, unit, s, frac))
+                subs.append((key, label, unit, s))
             running = next((x for x in subs if x[3]["state"] == RUNNING), None)
+            failed = next((x for x in subs if x[3]["state"] == FAILED), None)
             if not subs:
                 s2_state = SKIPPED if s3_started else PENDING
-            elif any(x[3]["state"] == FAILED for x in subs):
+            elif failed:
                 s2_state = FAILED
             elif running:
                 s2_state = RUNNING
@@ -1156,29 +1156,26 @@ class TerminalProgressManager:
                 s2_state = PENDING if not any(x[3]["state"] in (DONE, RESTORED) for x in subs) else RUNNING
             if self._job.get("mode") == "image":          # no scan, no tracking, no container to finalize
                 s2_state = SKIPPED
-            if running is not None:
-                key, label, unit, s, _ = running
-                s2_done, s2_total, s2_unit, ema2 = s["done"], s["total"], unit, self._ema_for("S2:" + key)
-                s2_phase = label
-            elif subs and s2_state in (DONE, FAILED, RUNNING):         # between sub-stages / finished: the last one's counts
-                _, label, unit, s, _ = subs[-1]
-                s2_done, s2_total, s2_unit, ema2, s2_phase = s["done"], s["total"], unit, None, None
-            else:
-                s2_done = s2_total = None
-                s2_unit, ema2, s2_phase = "frames", None, None
-            starts = [wall_to_mono(x[3]["since"]) for x in subs if x[3]["since"]]
-            ends = [wall_to_mono(x[3]["ended"]) for x in subs if x[3]["ended"]]
-            prescan = tel.get(S1n, {})
-            prescan_fps = None
-            if prescan.get("since") and prescan.get("done"):
-                span = (prescan.get("ended") or wall) - prescan["since"]
-                prescan_fps = prescan["done"] / span if span > 0 else None
+            phase = failed or running or next((x for x in reversed(subs) if x[3]["state"] in (DONE, RESTORED)), None)
+            label = done = total = since = ended = ema2 = None
+            unit, pct = "frames", None if s2_state == SKIPPED else 0.0
+            if phase is not None and s2_state != SKIPPED:
+                key, label, unit, s = phase
+                done, total = s["done"], s["total"]
+                since, ended = wall_to_mono(s["since"]), wall_to_mono(s["ended"])
+                if s["state"] in (DONE, RESTORED):
+                    pct = 100.0
+                elif total:
+                    pct = min(100.0, 100.0 * done / total)
+                if s["state"] == RUNNING:
+                    ema2 = self._ema_for("S2:" + key)
             stage2 = self._stage_dict(
-                "S2", s2_state, pct=(100.0 * sum(x[4] for x in subs) / len(subs)) if subs and s2_state != SKIPPED else (None if s2_state == SKIPPED else 0.0),
-                done=s2_done, total=s2_total, unit=s2_unit, since=min(starts) if starts else None,
-                ended=max(ends) if (ends and s2_state in (DONE, FAILED)) else None, ema=ema2, now=now, wall=wall, paused=paused,
-                detail={"phase": s2_phase, "prescan_fps": _r(prescan_fps, 1), "scene_cuts": view.get("scene_cuts"),
+                "S2", s2_state, pct=pct, done=done, total=total, unit=unit,
+                since=since, ended=ended, ema=ema2, now=now, wall=wall, paused=paused,
+                detail={"phase": label, "scene_cuts": view.get("scene_cuts"),
                         "face_free_bypass_pct": view.get("skipped_frames_pct")})
+            if label:
+                stage2["name"] = label
             # S3: retired frames (writer-accepted) first, the attached bar's processed count until one is retired
             # An image job (and a frame-folder render) has no registry Stage 3: its 'Processing' bar is the only counter.
             s3 = tel.get(S3n)
@@ -1352,10 +1349,9 @@ def _stage_extra(s: Dict[str, Any], with_rate: bool = True) -> str:
     d = s["detail"]
     bits: List[str] = []
     if s["id"] == "S2":
-        if d.get("phase") and s["state"] == RUNNING:
-            bits.append(str(d["phase"]))
-        if d.get("prescan_fps") is not None:
-            bits.append(f"pre-scan {_num(d['prescan_fps'])} smp/s")
+        if s["rate"] is not None and with_rate:
+            unit = "smp/s" if s["unit"] == "samples" else "fps"
+            bits.append(f"{_num(s['rate'])} {unit}")
         if d.get("scene_cuts") is not None:
             bits.append(f"cuts {d['scene_cuts']}")
         if d.get("face_free_bypass_pct") is not None:

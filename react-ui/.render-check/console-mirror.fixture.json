@@ -38,7 +38,7 @@
    },
    "S2": {
     "id": "S2",
-    "name": "Pre-scan",
+    "name": "Tracking",
     "title": "Pre-scan, scene cuts & face tracking",
     "state": "DONE",
     "pct": 100.0,
@@ -51,8 +51,7 @@
     "eta_s": null,
     "eta_at": null,
     "detail": {
-     "phase": null,
-     "prescan_fps": 30.0,
+     "phase": "Tracking",
      "scene_cuts": 7,
      "face_free_bypass_pct": 25.0
     }
@@ -168,7 +167,7 @@
    },
    "S2": {
     "id": "S2",
-    "name": "Pre-scan",
+    "name": "Tracking",
     "title": "Pre-scan, scene cuts & face tracking",
     "state": "DONE",
     "pct": 100.0,
@@ -181,8 +180,7 @@
     "eta_s": null,
     "eta_at": null,
     "detail": {
-     "phase": null,
-     "prescan_fps": 30.0,
+     "phase": "Tracking",
      "scene_cuts": 7,
      "face_free_bypass_pct": 25.0
     }
@@ -271,7 +269,7 @@
  "console": {
   "stage_lines": [
    "S1 Probe    [####################] 100.0%  4/4 steps  elapsed 00m 00s  done  media probe, audio stream",
-   "S2 Pre-scan [####################] 100.0%  1,350/1,350 frames  elapsed 00m 10s  done  pre-scan 30.0 smp/s \u00b7 cuts 7 \u00b7 face-free 25.0%",
+   "S2 Tracking [####################] 100.0%  1,350/1,350 frames  elapsed 00m 10s  done  cuts 7 \u00b7 face-free 25.0%",
    "S3 Swap     [###.................]  16.7%  300/1,800 frames  elapsed 00m 06s  ETA: 00m 30s -> 23:17:26  50.0 fps \u00b7 basis retired",
    "S4 Finalize pending"
   ],

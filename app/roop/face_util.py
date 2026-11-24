@@ -1356,7 +1356,7 @@ def _rotated_pass(frame, angle, rotate, known, w, h):
     return survivors
 
 
-def _rescue_rotated(frame: Frame, expected_count=None):
+def _rescue_rotated(frame: Frame, expected_count=None, completed_turns=None):
     """Retry detection on rotated frame variants.
 
     All THREE cardinal turns are tried (clockwise, anticlockwise, 180).
@@ -1372,6 +1372,8 @@ def _rescue_rotated(frame: Frame, expected_count=None):
                                ("180", rotate_image_180)):
             try:
                 accumulated.extend(_rotated_pass(frame, angle, rotated, accumulated, w, h))
+                if completed_turns is not None:
+                    completed_turns.add(angle)
                 if expected_count and len(accumulated) >= expected_count:
                     break
             except Exception as _rot_err:
@@ -1902,6 +1904,7 @@ def _detect_faces(frame, expected_count=None, rescue=True):
     faces = _detect_faces_raw(frame) or []
     raw_n = len(faces)
     attempted = False
+    completed_turns = None
     _bp.count('detect.calls' if rescue else 'detect.calls_norescue')
     _bp.count('detect.first_pass_faces', raw_n)
     if not raw_n:
@@ -1949,7 +1952,9 @@ def _detect_faces(frame, expected_count=None, rescue=True):
             _bp.rescue_skipped('padded', engine)
         # 4. Rotated face rescue
         if not faces:
-            faces = _rescue_rotated(frame, expected_count=expected_count) or []
+            completed_turns = set() if expected_count else None
+            faces = _rescue_rotated(frame, expected_count=expected_count,
+                                    completed_turns=completed_turns) or []
             _bp.rescue('rotated', faces)
         # 5. Lighting rescue (dark/backlit footage; CLAHE contrast normalization)
         if not faces:
@@ -1975,6 +1980,13 @@ def _detect_faces(frame, expected_count=None, rescue=True):
             for angle, rot in (("180", rotate_image_180),
                                ("clockwise", rotate_clockwise),
                                ("anticlockwise", rotate_anticlockwise)):
+                # A completed turn already contributed every distinct face it
+                # could find. The same input cannot add a face now that those
+                # results (or CLAHE's results after an empty turn scan) are known.
+                # A turn that raised is still eligible for the retry.
+                if completed_turns is not None and angle in completed_turns:
+                    _bp.count('rescue.partial_turn_already_completed')
+                    continue
                 try:
                     _n_before = len(new_faces)
                     _bp.count('rescue.partial_%s.attempted' % angle)

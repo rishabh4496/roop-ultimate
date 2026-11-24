@@ -52,8 +52,7 @@ const stageNote = (s) => {
   const d = s.detail || {};
   const bits = [];
   if (s.id === 'S2') {
-    if (d.phase && s.state === 'RUNNING') bits.push(d.phase);
-    if (isNum(d.prescan_fps)) bits.push(`pre-scan ${num(d.prescan_fps)} smp/s`);
+    if (isNum(s.rate)) bits.push(`${num(s.rate)} ${s.unit === 'samples' ? 'smp/s' : 'fps'}`);
     if (d.scene_cuts != null) bits.push(`cuts ${d.scene_cuts}`);
     if (isNum(d.face_free_bypass_pct)) bits.push(`face-free ${num(d.face_free_bypass_pct)}%`);
   } else if (s.id === 'S3') {

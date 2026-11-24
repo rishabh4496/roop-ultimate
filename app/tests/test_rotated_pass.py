@@ -234,6 +234,53 @@ def test_rescue_rotated_stops_at_expected_count_like_before(world):
     assert [c['aux'] for c in world.raw_calls] == [False, False]      # 180 never tried
 
 
+@pytest.mark.parametrize('clahe_hit', [False, True])
+def test_full_miss_does_not_detect_the_same_turn_twice(world, monkeypatch, clahe_hit):
+    reference = [mkface(10, 10, 60, 60)] if clahe_hit else []
+    raw = fu._detect_faces_raw
+    calls = []
+
+    def detect(frame, **kwargs):
+        calls.append(int(frame[0, 0, 0]))
+        return [] if frame is FRAME else raw(frame, **kwargs)
+
+    monkeypatch.setattr(fu, '_detect_faces_raw', detect)
+    monkeypatch.setattr(fu.roop.globals, 'detector_engine', 'retinaface_r50')
+    monkeypatch.setattr(fu.roop.globals, 'rescue_small_faces', False)
+    monkeypatch.setattr(fu, '_rescue_clahe', lambda frame: reference)
+    monkeypatch.setattr(fu, '_enrich_detected_faces', lambda frame, faces: faces)
+    assert fu.get_all_faces(FRAME, expected_count=2) == reference
+    assert calls == [0, MARK['clockwise'], MARK['anticlockwise'], MARK['180']]
+    assert fu.last_rescue_outcome() == (True, len(reference))
+
+
+def test_partial_miss_retries_only_the_turn_that_failed(world, monkeypatch):
+    raw = fu._detect_faces_raw
+    calls = []
+    recoverable_turn = MARK['clockwise']
+    world.detections['clockwise'] = [(30, 10, 90, 70)]
+
+    def detect(frame, **kwargs):
+        marker = int(frame[0, 0, 0])
+        calls.append(marker)
+        if frame is FRAME:
+            return []
+        if marker == recoverable_turn and calls.count(marker) == 1:
+            raise RuntimeError('transient detector error')
+        return raw(frame, **kwargs)
+
+    monkeypatch.setattr(fu, '_detect_faces_raw', detect)
+    monkeypatch.setattr(fu.roop.globals, 'detector_engine', 'retinaface_r50')
+    monkeypatch.setattr(fu.roop.globals, 'rescue_small_faces', False)
+    monkeypatch.setattr(fu, '_rescue_clahe', lambda frame: [])
+    monkeypatch.setattr(fu, '_enrich_detected_faces', lambda frame, faces: faces)
+    out = fu.get_all_faces(FRAME, expected_count=2)
+    assert len(out) == 1
+    assert np.array_equal(out[0].bbox, unrot_box('clockwise', (30, 10, 90, 70)))
+    assert calls == [0, recoverable_turn, MARK['anticlockwise'], MARK['180'], recoverable_turn]
+    assert fu.last_rescue_outcome() == (True, 1)
+
+
 # ── SCRFD geometry ───────────────────────────────────────────────────────────
 
 def _scrfd_fa(bboxes, kpss):

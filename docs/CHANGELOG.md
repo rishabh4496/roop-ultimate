@@ -5,6 +5,11 @@ full session record is [`SESSION_LOGS.md`](SESSION_LOGS.md); the running enginee
 state lives outside the repository (`RECODE_STATUS.md` in the operator's `roop-keep`
 folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22.
 
+## 2026-11-25
+
+- The S2 dashboard now shows Pre-scan or Tracking with the active phase's own percentage, elapsed time, rate and ETA. A live run showed 81.1% beside a tracking count that was 62.2% complete. The sparse scan had already finished and passed 67,276 of 69,946 frames to tracking. The job's VRAM plan capped its detector pool at one, and profiling the tracking workers showed repeated detector calls, including the two rotation rescue paths.
+- After a full-frame miss, the partial-miss rescue skips rotations that completed in the earlier pass on the same frame. It still retries turns that raised an exception and searches all applicable rotations when an upright detection leaves a face missing. The regression tests exercise the detector call count, retained faces, and retry behavior. GPU timing and render fidelity remain unverified while the live job owns the GPU.
+
 ## 2026-11-24
 
 - **Stage 1 pre-scan decodes sequentially and no longer loses faces on clips with long GOPs.** `app/roop/sparse_range_scan.py`; report `docs/audits/STAGE1_SEQUENTIAL_SCAN.md`.

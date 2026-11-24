@@ -72,6 +72,16 @@ ok('S3 rate is the console\'s', rows.S3.note.includes(`${s3.rate.toFixed(1)} fps
 ok('S3 says what its frames are (writer-accepted)', rows.S3.note.includes('basis retired'));
 ok('S2 carries scene cuts and the face-free bypass share',
   rows.S2.note.includes('cuts 7') && rows.S2.note.includes('face-free 25.0%') && consoleStage.includes('cuts 7') && consoleStage.includes('face-free 25.0%'), rows.S2.note);
+{
+  const dash = clone(run);
+  Object.assign(dash.stages.S2, { name: 'Tracking', state: 'RUNNING', done: 675, pct: 50, rate: 32 });
+  const tracking = M.stageRows(dash).find((row) => row.id === 'S2');
+  ok('S2 uses tracking progress and fps during tracking', tracking.name === 'Tracking' && tracking.pctText === '50.0%'
+    && tracking.counts === '675/1,350 frames' && tracking.note === '32.0 fps · cuts 7 · face-free 25.0%');
+  Object.assign(dash.stages.S2, { name: 'Pre-scan', unit: 'samples', rate: 96 });
+  const scan = M.stageRows(dash).find((row) => row.id === 'S2');
+  ok('S2 uses samples per second during the pre-scan', scan.name === 'Pre-scan' && scan.note.startsWith('96.0 smp/s'));
+}
 ok('S1 is done with its steps', rows.S1.state === 'DONE' && rows.S1.pctText === '100.0%' && rows.S1.note.includes('media probe'));
 ok('S4 is pending before the finalize', rows.S4.state === 'PENDING' && rows.S4.counts === '' && rows.S4.status === 'pending');
 
@@ -150,7 +160,7 @@ ok('the bottleneck tag is the console\'s', M.bottleneckText(run) === '[BOTTLENEC
     && /data-col="restore" data-bottleneck="true"/.test(h));
   ok('every console number is in the markup', ['16.7%', '300/1,800 frames', 'ETA: 00m 30s', 'Restore 32.0', '[BOTTLENECK: Restore 54%]', '10.0%', '7.25 / 8.50 GB']
     .every((s) => t.includes(s)), t);
-  ok('state is words, not colour alone', ['S1 Probe', 'S2 Pre-scan', 'S3 Swap', 'S4 Finalize', 'done', 'pending'].every((s) => t.includes(s)));
+  ok('state is words, not colour alone', ['S1 Probe', 'S2 Tracking', 'S3 Swap', 'S4 Finalize', 'done', 'pending'].every((s) => t.includes(s)));
   ok('no NaN / undefined / [object] anywhere', !/NaN|undefined|\[object/.test(h));
 }
 ok('idle renders nothing', html(React.createElement(ConsoleMirrorView, { dash: fx.idle })) === ''
