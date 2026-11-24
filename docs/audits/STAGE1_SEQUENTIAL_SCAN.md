@@ -106,3 +106,30 @@ profile: 2746 passed, 7 failed, none in files this change touches (3 `test_lipsy
   runs only on an EMPTY result, about twice a face frame on b1: 15.5 fps dense against 22-24 on face-dense clips) is
   the cost a tighter Stage 1 mask would save; the measurements above say the mask cannot be tightened without losing
   frames, so that lever is closed for now.
+
+## Stage 2 follow-up (2026-11-24): measured, no code change
+
+Asked to speed Stage 2 (the tracking/detection pre-pass) "the same way". Stage 1 had a defect (keyframe sampling); Stage 2
+has none of that kind. RTX 4070, live config, regression harness on a real clip (`run.py --benchmark --benchmark-mode
+regression --benchmark-frames 600 --benchmark-clip <clip>`, threads 20), sparse scan off in that harness.
+
+* **Share of a render.** Stage 2 took 20-21 s of 67 s on Monica (31%) and 18 s of 38 s on b1 (47%). Null control (same
+  config twice): 21 s and 20 s.
+* **Profile** (py-spy, 100 Hz, warm-up plus timed render, Stage 2 samples only = 39.3 thread-seconds): analyser-pool build
+  8.4 s (1.9 s warm per instance, 4.9 s the first time in a process), detector-pool build 1.8 s, real detection 23.8 s =
+  detector (`retinaface_r50`) 8.7 s (37%), landmark nets 6.3 s (27%), recognition 3.8 s (16%); main thread: flow anchor
+  2.4 s. Two workers are about 86% busy: Stage 2 is detector-compute bound.
+* **Already in place, so not a lever:** ROI detection on 86% of frames (Monica: 85 full, 515 ROI of 600), the rescue
+  back-off (`RescueBackoff`, every 8 frames after 2 futile ladders, consulted on every card, not just small ones),
+  `lm68_lazy`. 3d68 runs per face here only because `refine_landmarks` is on (it moves the alignment keypoints:
+  `face_util._refine_kps_from_68`): a quality setting, not waste.
+* **Detector pool width** (`ROOP_DETMASK_POOL`, Monica 600 f): 2 -> Stage 2 20 s, Stage 3 14.2 fps; 3 -> 23 s, 11.1 fps;
+  4 -> 25 s, 6.8 fps. Wider is slower. Kept at 2.
+* **Building the analyser bundle's sessions in parallel** (prefetch one thread per file, stub the ignored `genderage`):
+  4.9 s -> 4.8 s cold, 1.9 s -> 1.7 s warm, same models and providers. ONNX Runtime serialises the creation; **reverted**,
+  not shipped.
+* **Not retried (recorded by earlier sessions in the engineering notes; not re-measured or re-checked against `docs/SESSION_LOGS.md` here):** a detect interval K > 1 (-9.6% swaps), FP16 aux nets (fail
+  their fidelity gate), batched aux calls (slower), lazy embeddings (<= 6%).
+* **What would still cut Stage 2:** fewer frames reach it. Pad-only ranges instead of whole-shot expansion cost 2.6 points
+  of active frames less on the five windows but lose 8 more persistent face frames (see "Measured and NOT shipped"). That
+  is the recall/speed trade, and it is the owner's.
