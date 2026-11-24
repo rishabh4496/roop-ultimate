@@ -18,6 +18,12 @@ The original behavior was useful but not reference-aware: it did not inspect
 the durable queue, project checkpoints, loaded target paths, or partial output
 references before cleanup. Stage 10 added an application API and UI.
 
+2026-11-24: the sidebar Clean script was extended on purpose to delete work products,
+not only caches: `old-renders`, `project-caches`, `old-uploads` and `quality-evidence`
+(see `docs/CHANGELOG.md`). They are age-gated by `ROOP_CLEAN_KEEP_DAYS` (default 3) and
+`old-uploads` skips the reference check below. The text in the next paragraphs describes
+the older `uploads` target, which keeps the reference check.
+
 2026-10-27: the sidebar Clean script now follows the same rules instead of
 bypassing them.
 

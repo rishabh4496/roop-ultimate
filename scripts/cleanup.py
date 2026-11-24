@@ -1,21 +1,29 @@
 """Disk cleanup for the Roop Ultimate launcher (driven by scripts/clean.js).
 
-Only ever touches things the app can rebuild by itself. Everything that would
-cost you work or a re-download is off-limits and is never referenced here:
+Off-limits and never referenced here:
 
-    app/models/       the model library (~23GB) - re-downloading is the only way back
+    app/models/       the model library (~23GB) - only the TensorRT engine cache under
+                      app/models/trt_cache is touched, and only engines that cannot be reused
     app/env/          the virtualenv - use "Save Disk Space" (link.js) instead
-    app/output/       YOUR RENDERED VIDEOS - never touched by this script
     app/facesets/     your saved faceset library
-    app/projects/     project checkpoints, and any upload a project or queue job still reads
+    app/config.yaml   your settings
     react-ui/node_modules, source, .git
+
+Targets in the second group below delete YOUR work products (finished renders, project
+pre-scan caches and resume journals, uploaded targets). They are age-gated: nothing
+younger than ROOP_CLEAN_KEEP_DAYS (default 3, 0 = everything) is removed, because that is
+what a job in progress is still reading or writing. The sidebar does not offer Clean while
+the app is running, and a file Windows has open is reported, never force-deleted.
 
 Run with no arguments for a report; pass one or more target names to delete.
 """
 
 import argparse
+import glob
 import os
+import re
 import shutil
+import subprocess
 import sys
 import time
 
@@ -80,11 +88,14 @@ def _trt_precision():
 
 def _pycache_dirs():
     out = []
-    for base in (APP, os.path.join(ROOT, "react-ui", "src")):
+    # The whole repo, not just app/: face_engine/, roop_3d/, tools/ and tests/ leave bytecode too.
+    for base in (ROOT,):
         for dirpath, dirnames, _f in os.walk(base, onerror=lambda e: None):
             # Don't descend into the venv's site-packages: those .pyc files are
             # regenerated per import and clearing them only slows the next start.
-            dirnames[:] = [d for d in dirnames if d not in ("env", "node_modules", ".git")]
+            # models/, output/ and projects/ hold only data (and are huge to walk).
+            dirnames[:] = [d for d in dirnames
+                           if d not in ("env", "node_modules", ".git", "models", "output", "projects")]
             if "__pycache__" in dirnames:
                 out.append(os.path.join(dirpath, "__pycache__"))
     return out
@@ -243,7 +254,194 @@ def _package_caches():
     return out
 
 
+def _keep_seconds():
+    """Age below which a work product is left alone (ROOP_CLEAN_KEEP_DAYS, default
+    SCRATCH_DAYS, 0 = no protection): it may be what a job in progress is using."""
+    try:
+        days = float(os.environ.get("ROOP_CLEAN_KEEP_DAYS", SCRATCH_DAYS))
+    except ValueError:
+        days = float(SCRATCH_DAYS)
+    return max(0.0, days) * 86400.0
+
+
+def _aged(paths):
+    """The paths whose newest file is older than the keep window."""
+    cutoff = time.time() - _keep_seconds()
+    return [p for p in paths if _newest_mtime(p) < cutoff]
+
+
+def _outermost(paths):
+    """Drop every path that sits inside another listed path, so nothing is counted
+    or deleted twice (the second removal would only report a spurious error)."""
+    keep = []
+    for p in sorted(set(paths), key=lambda x: (len(x), x)):
+        n = os.path.normcase(p)
+        if not any(n == k or n.startswith(k + os.sep) for k in keep):
+            keep.append(n)
+    by_norm = {os.path.normcase(p): p for p in paths}
+    return [by_norm[k] for k in keep]
+
+
+def _git_tracked(path):
+    """True when git tracks anything at `path`. A checkout that commits a folder this
+    script lists as scratch must not lose it; no git, or no repo, means not tracked."""
+    try:
+        r = subprocess.run(["git", "-C", ROOT, "ls-files", "--", path],
+                           capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return bool(r.stdout.strip())
+
+
+def _dev_leftovers():
+    """Scratch that development and test runs leave in the repo: pytest and Playwright
+    output, ad-hoc probe logs and dirs at the repo root, throwaway engine-cache test
+    folders, JS tool caches in app/temp. Nothing the app reads."""
+    tmp = os.path.join(APP, "temp")
+    cands = [os.path.join(ROOT, n) for n in (
+        "scratch", "temp_frames_analysis", "temp_fs_inspect", "original_gfpgan_fp32",
+        "test_gpen256pro_out.png", ".pytest_cache")]
+    for pat in ("scratch_*.log", "test-trt-cache_*"):
+        cands.extend(glob.glob(os.path.join(ROOT, pat)))
+    cands += [os.path.join(ROOT, "roop_3d", ".runtime", "pytest"),
+              os.path.join(ROOT, "react-ui", "e2e", "test-results"),
+              os.path.join(ROOT, "react-ui", "e2e", "playwright-report"),
+              os.path.join(APP, "scratch"), os.path.join(APP, ".pytest_cache"),
+              os.path.join(tmp, "node-compile-cache"),
+              os.path.join(tmp, "playwright-transform-cache")]
+    cands.extend(glob.glob(os.path.join(tmp, "tsx-*")))
+    return [p for p in cands
+            if os.path.lexists(p) and not os.path.islink(p) and not _git_tracked(p)]
+
+
+_DRV_TAG = re.compile(r"_drv([0-9][0-9.]*)_trt")
+
+
+def _gpu_driver():
+    """Installed NVIDIA driver version as it appears in engine names ('621.14'), or
+    None when it cannot be read - in which case no engine is called stale by driver."""
+    try:
+        r = subprocess.run(["nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader"],
+                           capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    lines = (r.stdout or "").strip().splitlines()
+    return lines[0].strip() if r.returncode == 0 and lines else None
+
+
+def _driver_stale(root, current):
+    """Engines whose name embeds a DIFFERENT driver version. TensorRT engine names carry
+    '_drv<version>_trt...', and the app only looks up the tag of the installed driver, so
+    these can never be hit again after a driver update. Names without a tag are kept."""
+    out = []
+    for dirpath, dirnames, filenames in os.walk(root, onerror=lambda e: None):
+        keep = []
+        for d in dirnames:
+            m = _DRV_TAG.search(d)
+            if m and m.group(1) != current:
+                out.append(os.path.join(dirpath, d))
+            else:
+                keep.append(d)
+        dirnames[:] = keep
+        for fn in filenames:
+            m = _DRV_TAG.search(fn)
+            if m and m.group(1) != current:
+                out.append(os.path.join(dirpath, fn))
+    return out
+
+
+def _trt_stale():
+    root = os.path.join(APP, "models", "trt_cache")
+    paths = _trt_dirs(stale_only=True)
+    current = _gpu_driver()
+    if current and os.path.isdir(root):
+        paths += _driver_stale(root, current)
+    return _outermost(paths)
+
+
+def _project_caches():
+    """Per-project Stage 2 pre-scan caches (*.stage2.npz) and resume journals
+    (*.roop.journal). A project re-runs its pre-scan and loses mid-render resume."""
+    d = os.path.join(APP, "projects")
+    try:
+        names = os.listdir(d)
+    except OSError:
+        return []
+    return _aged([os.path.join(d, n) for n in names
+                  if n.endswith(".stage2.npz") or n.endswith(".roop.journal")])
+
+
+_VIDEO_EXT = (".mp4", ".mkv", ".mov", ".webm", ".avi", ".m4v")
+
+
+def _old_renders():
+    """Finished renders in app/output (and each render's .provenance.json)."""
+    d = os.path.join(APP, "output")
+    try:
+        names = os.listdir(d)
+    except OSError:
+        return []
+    out = []
+    for n in names:
+        low = n.lower()
+        full = os.path.join(d, n)
+        if os.path.isfile(full) and any(low.endswith(e) or low.endswith(e + ".provenance.json")
+                                        for e in _VIDEO_EXT):
+            out.append(full)
+    return _aged(out)
+
+
+def _old_uploads():
+    """Every file in app/temp/api_uploads (target videos, uploaded facesets) older than
+    the keep window, whether or not an old project still points at it."""
+    base = os.path.join(APP, "temp", "api_uploads")
+    out = []
+    for dirpath, _d, filenames in os.walk(base, onerror=lambda e: None):
+        out.extend(os.path.join(dirpath, fn) for fn in filenames)
+    return _aged(out)
+
+
+def _quality_evidence():
+    """Renders the swap-quality harness wrote (output/swap_quality_stage*) and the
+    regression benchmark's recorded baselines and golden renders (.roop/regression).
+    The next benchmark run records a fresh baseline."""
+    cands = glob.glob(os.path.join(ROOT, "output", "swap_quality_stage*"))
+    cands.append(os.path.join(ROOT, ".roop", "regression"))
+    return _aged([p for p in cands if os.path.lexists(p) and not os.path.islink(p)])
+
+
 TARGETS = {
+    "dev-leftovers": (
+        "Dev and test leftovers",
+        "pytest / Playwright output, scratch logs and probe folders at the repo root, "
+        "throwaway engine-cache test folders, JS tool caches in app/temp. Anything git "
+        "tracks is kept. The app reads none of it.",
+        _dev_leftovers,
+    ),
+    "project-caches": (
+        "Project pre-scan caches and journals",
+        "app/projects/*.stage2.npz and *.roop.journal older than the keep window. A project "
+        "scans again the next time you open it and cannot resume a half-finished render.",
+        _project_caches,
+    ),
+    "old-uploads": (
+        "Old uploaded targets",
+        "Files in app/temp/api_uploads older than the keep window, whether or not an old "
+        "project still points at them (the project will ask for its media again).",
+        _old_uploads,
+    ),
+    "old-renders": (
+        "Old finished renders",
+        "Videos (and their .provenance.json) in app/output older than the keep window. "
+        "YOUR OUTPUT: not recoverable.",
+        _old_renders,
+    ),
+    "quality-evidence": (
+        "Quality-harness output and benchmark baselines",
+        "output/swap_quality_stage* and .roop/regression older than the keep window. "
+        "The next regression benchmark records a new baseline.",
+        _quality_evidence,
+    ),
     "uploads": (
         "Uploaded media scratch",
         "Copies of the images and videos you dragged in, plus unpacked facesets. "
@@ -272,9 +470,10 @@ TARGETS = {
     ),
     "trt-stale": (
         "Stale TensorRT engine caches",
-        "Engine caches built for a precision mode you are no longer using. The "
-        "caches for the CURRENT setting are kept, so runs stay fast.",
-        lambda: _trt_dirs(stale_only=True),
+        "Engines that can never be used again: built for a precision mode you no longer "
+        "use, or for an older NVIDIA driver (the driver version is in the engine's name). "
+        "Engines for the CURRENT setting and driver are kept, so runs stay fast.",
+        _trt_stale,
     ),
     "trt-all": (
         "ALL TensorRT engine caches",
@@ -343,7 +542,9 @@ def report():
         print(f"      {desc}")
         print()
     print(f"  Safe total (excluding 'ALL TensorRT caches'): {_fmt(total)}")
-    print("\n  Never touched: models, virtualenv, YOUR OUTPUT VIDEOS, saved facesets.\n")
+    print(f"\n  Work products younger than {_keep_seconds() / 86400:g} day(s) are kept "
+          f"(set ROOP_CLEAN_KEEP_DAYS to change; 0 = everything).")
+    print("  Never touched: model weights, virtualenv, saved facesets, config.yaml.\n")
 
 
 def clean(keys):

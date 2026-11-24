@@ -166,7 +166,7 @@ module.exports = {
           href: "install.js",
         }, {
           icon: "fa-solid fa-broom",
-          text: "<div><strong>Clean</strong><div>Free disk space — regenerable caches only, never your output</div></div>",
+          text: "<div><strong>Clean</strong><div>Free disk space — caches, stale engines, dev leftovers, and renders / project caches / uploads older than 3 days</div></div>",
           href: "scripts/clean.js",
         }, {
           icon: "fa-solid fa-bolt",

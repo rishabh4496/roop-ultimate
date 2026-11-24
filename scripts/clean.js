@@ -21,7 +21,7 @@ module.exports = {
       method: "input",
       params: {
         title: "Clean up disk space",
-        description: "Each item's size for THIS install is listed in the terminal above. Your models, virtualenv, saved facesets and — above all — your rendered output videos are never touched.",
+        description: "Each item's size for THIS install is listed in the terminal above. Model weights, the virtualenv, saved facesets and config.yaml are never touched. Renders, project caches and uploads younger than 3 days are kept (set ROOP_CLEAN_KEEP_DAYS to change; 0 = everything).",
         form: [{
           type: "checkbox",
           key: "uploads",
@@ -38,7 +38,7 @@ module.exports = {
           type: "checkbox",
           key: "trt_stale",
           title: "Stale TensorRT engine caches",
-          description: "Engines built for a precision mode you no longer use, plus test leftovers. Everything for your current setting is kept, so runs stay just as fast.",
+          description: "Engines that can never be reused: another precision mode, or built for an older NVIDIA driver (the driver version is in the engine name), plus test leftovers. Engines for your current setting and driver are kept, so runs stay just as fast.",
           default: true
         }, {
           type: "checkbox",
@@ -57,6 +57,36 @@ module.exports = {
           key: "build",
           title: "Front-end build output",
           description: "react-ui/dist and lint caches. Rebuilt automatically on the next launch.",
+          default: true
+        }, {
+          type: "checkbox",
+          key: "dev_leftovers",
+          title: "Dev and test leftovers",
+          description: "pytest / Playwright output, scratch logs and probe folders at the repo root, throwaway engine-cache test folders, JS tool caches. Anything git tracks is kept.",
+          default: true
+        }, {
+          type: "checkbox",
+          key: "project_caches",
+          title: "Project pre-scan caches and journals",
+          description: "app/projects/*.stage2.npz and *.roop.journal older than 3 days. A project scans again when you reopen it and cannot resume a half-finished render.",
+          default: true
+        }, {
+          type: "checkbox",
+          key: "old_uploads",
+          title: "Old uploaded targets",
+          description: "Files in app/temp/api_uploads older than 3 days, even if an old project still points at them (it will ask for its media again).",
+          default: true
+        }, {
+          type: "checkbox",
+          key: "old_renders",
+          title: "Old finished renders (YOUR OUTPUT - not recoverable)",
+          description: "Videos in app/output, with their .provenance.json, older than 3 days. Untick this to keep every render.",
+          default: true
+        }, {
+          type: "checkbox",
+          key: "quality_evidence",
+          title: "Quality-harness output and benchmark baselines",
+          description: "output/swap_quality_stage* and .roop/regression older than 3 days. The next regression benchmark records a new baseline.",
           default: true
         }, {
           type: "checkbox",
@@ -85,7 +115,12 @@ module.exports = {
         build: "{{input.build}}",
         trt_all: "{{input.trt_all}}",
         pinokio_temp: "{{input.pinokio_temp}}",
-        pkg_caches: "{{input.pkg_caches}}"
+        pkg_caches: "{{input.pkg_caches}}",
+        dev_leftovers: "{{input.dev_leftovers}}",
+        project_caches: "{{input.project_caches}}",
+        old_uploads: "{{input.old_uploads}}",
+        old_renders: "{{input.old_renders}}",
+        quality_evidence: "{{input.quality_evidence}}"
       }
     },
     {
@@ -122,6 +157,31 @@ module.exports = {
       when: "{{local.build}}",
       method: "shell.run",
       params: { venv: "env", path: "../app", message: ["python ../scripts/cleanup.py build"] }
+    },
+    {
+      when: "{{local.dev_leftovers}}",
+      method: "shell.run",
+      params: { venv: "env", path: "../app", message: ["python ../scripts/cleanup.py dev-leftovers"] }
+    },
+    {
+      when: "{{local.project_caches}}",
+      method: "shell.run",
+      params: { venv: "env", path: "../app", message: ["python ../scripts/cleanup.py project-caches"] }
+    },
+    {
+      when: "{{local.old_uploads}}",
+      method: "shell.run",
+      params: { venv: "env", path: "../app", message: ["python ../scripts/cleanup.py old-uploads"] }
+    },
+    {
+      when: "{{local.old_renders}}",
+      method: "shell.run",
+      params: { venv: "env", path: "../app", message: ["python ../scripts/cleanup.py old-renders"] }
+    },
+    {
+      when: "{{local.quality_evidence}}",
+      method: "shell.run",
+      params: { venv: "env", path: "../app", message: ["python ../scripts/cleanup.py quality-evidence"] }
     },
     {
       when: "{{local.trt_all}}",

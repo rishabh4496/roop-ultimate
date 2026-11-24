@@ -168,6 +168,162 @@ class UploadsTest(_Launcher):
         self.assertNotIn("routes_queue", sys.modules)
 
 
+class DriverStaleEngineTest(_Launcher):
+    """An engine whose name embeds another driver version can never be looked up again."""
+
+    def setUp(self):
+        super().setUp()
+        with open(os.path.join(self.app, "config.yaml"), "w") as fh:
+            fh.write("trt_precision: mixed\n")
+        self.cache = os.path.join(self.app, "models", "trt_cache")
+        base = "mixed_NVIDIA_GeForce_RTX_4070_sm0809_cuda12.8_%s_trt10.9.0.34_ort1.23.2"
+        self.old_dir = base % "drv617.42"
+        self.new_dir = base % "drv621.14"
+        _touch(os.path.join(self.cache, self.old_dir, "a.engine"))
+        _touch(os.path.join(self.cache, self.new_dir, "a.engine"))
+        _touch(os.path.join(self.cache, "mixed_gpu", "b_drv621.01_trt10.9.engine"))   # tag on the FILE
+        _touch(os.path.join(self.cache, "mixed_gpu", "c_drv621.14_trt10.9.engine"))
+        _touch(os.path.join(self.cache, "TensorrtExecutionProvider_TRTKernel_graph_1.engine"))  # untagged
+        # inside a folder that is stale by PRECISION and by driver: must be listed once
+        _touch(os.path.join(self.cache, "fp16_gpu", "d_drv617.42_trt10.9.engine"))
+        saved = cleanup._gpu_driver
+        self.addCleanup(lambda: setattr(cleanup, "_gpu_driver", saved))
+
+    def stale(self, driver):
+        cleanup._gpu_driver = lambda: driver
+        return {os.path.relpath(p, self.cache) for p in cleanup._trt_stale()}
+
+    def test_other_driver_engines_go_and_current_ones_stay(self):
+        got = self.stale("621.14")
+        self.assertIn(self.old_dir, got)
+        self.assertIn(os.path.join("mixed_gpu", "b_drv621.01_trt10.9.engine"), got)
+        self.assertNotIn(self.new_dir, got)
+        self.assertNotIn(os.path.join("mixed_gpu", "c_drv621.14_trt10.9.engine"), got)
+
+    def test_untagged_engines_are_never_called_stale(self):
+        self.assertNotIn("TensorrtExecutionProvider_TRTKernel_graph_1.engine", self.stale("621.14"))
+
+    def test_unknown_driver_deletes_no_engine_by_driver(self):
+        got = self.stale(None)
+        self.assertEqual(got, {"fp16_gpu"})          # only the precision rule still applies
+
+    def test_nothing_is_listed_twice(self):
+        got = self.stale("621.14")
+        self.assertIn("fp16_gpu", got)
+        self.assertNotIn(os.path.join("fp16_gpu", "d_drv617.42_trt10.9.engine"), got)
+
+
+class WorkProductTest(_Launcher):
+    """Renders, project caches and uploads: deleted only past the keep window."""
+
+    def setUp(self):
+        super().setUp()
+        self.keep = os.environ.pop("ROOP_CLEAN_KEEP_DAYS", None)
+        self.addCleanup(lambda: os.environ.pop("ROOP_CLEAN_KEEP_DAYS", None))
+        self.addCleanup(lambda: self.keep is None or os.environ.__setitem__("ROOP_CLEAN_KEEP_DAYS", self.keep))
+        a = self.app
+        _touch(os.path.join(a, "projects", "old.stage2.npz"), 10)
+        _touch(os.path.join(a, "projects", "old.roop.journal"), 10)
+        _touch(os.path.join(a, "projects", "new.stage2.npz"), 0)
+        _touch(os.path.join(a, "projects", "old.json"), 10)          # the checkpoint itself: never listed
+        _touch(os.path.join(a, "output", "old.mp4"), 10)
+        _touch(os.path.join(a, "output", "old.mp4.provenance.json"), 10)
+        _touch(os.path.join(a, "output", "new.mp4"), 0)
+        _touch(os.path.join(a, "output", "notes.txt"), 10)           # not a video
+        _touch(os.path.join(a, "output", "sub", "deep.mp4"), 10)     # only the top level is a render
+        _touch(os.path.join(a, "temp", "api_uploads", "old.mp4"), 10)
+        _touch(os.path.join(a, "temp", "api_uploads", "new.mp4"), 0)
+        _touch(os.path.join(self.root, "output", "swap_quality_stage1", "x.mp4"), 10)
+        _touch(os.path.join(self.root, ".roop", "regression", "k", "baseline.json"), 10)
+        # a folder counts as young while ANY entry in it is, directory mtime included
+        _age_tree(os.path.join(self.root, "output", "swap_quality_stage1"), 10)
+        _age_tree(os.path.join(self.root, ".roop", "regression"), 10)
+
+    def names(self, finder, base):
+        return {os.path.relpath(p, base) for p in finder()}
+
+    def test_project_caches_only_old_npz_and_journals(self):
+        self.assertEqual(self.names(cleanup._project_caches, os.path.join(self.app, "projects")),
+                         {"old.stage2.npz", "old.roop.journal"})
+
+    def test_renders_old_video_and_provenance_only(self):
+        self.assertEqual(self.names(cleanup._old_renders, os.path.join(self.app, "output")),
+                         {"old.mp4", "old.mp4.provenance.json"})
+
+    def test_uploads_only_old_files(self):
+        self.assertEqual(self.names(cleanup._old_uploads, os.path.join(self.app, "temp", "api_uploads")),
+                         {"old.mp4"})
+
+    def test_quality_evidence_old_only(self):
+        got = self.names(cleanup._quality_evidence, self.root)
+        self.assertEqual(got, {os.path.join("output", "swap_quality_stage1"),
+                               os.path.join(".roop", "regression")})
+
+    def test_keep_days_zero_removes_recent_ones_too(self):
+        os.environ["ROOP_CLEAN_KEEP_DAYS"] = "0"
+        self.assertIn("new.stage2.npz", self.names(cleanup._project_caches, os.path.join(self.app, "projects")))
+        self.assertIn("new.mp4", self.names(cleanup._old_renders, os.path.join(self.app, "output")))
+        self.assertIn("new.mp4", self.names(cleanup._old_uploads, os.path.join(self.app, "temp", "api_uploads")))
+
+    def test_a_bad_keep_value_falls_back_to_the_default(self):
+        os.environ["ROOP_CLEAN_KEEP_DAYS"] = "soon"
+        self.assertEqual(cleanup._keep_seconds(), cleanup.SCRATCH_DAYS * 86400.0)
+        self.assertNotIn("new.mp4", self.names(cleanup._old_renders, os.path.join(self.app, "output")))
+
+
+class DevLeftoverTest(_Launcher):
+    def setUp(self):
+        super().setUp()
+        r, a = self.root, self.app
+        for rel in ("scratch/x.txt", "scratch_probe.log", "test-trt-cache_gpen/e.engine",
+                    "temp_fs_inspect/f", "roop_3d/.runtime/pytest/t/a", "react-ui/e2e/test-results/r.json",
+                    "app/temp/tsx-me/x", "app/temp/node-compile-cache/x", "keep_me/x"):
+            _touch(os.path.join(r, *rel.split("/")))
+        saved = cleanup._git_tracked
+        self.addCleanup(lambda: setattr(cleanup, "_git_tracked", saved))
+        cleanup._git_tracked = lambda p: False
+
+    def listed(self):
+        return {os.path.relpath(p, self.root).replace(os.sep, "/") for p in cleanup._dev_leftovers()}
+
+    def test_lists_the_leftovers_and_nothing_else(self):
+        self.assertEqual(self.listed(), {
+            "scratch", "scratch_probe.log", "test-trt-cache_gpen", "temp_fs_inspect",
+            "roop_3d/.runtime/pytest", "react-ui/e2e/test-results", "app/temp/tsx-me",
+            "app/temp/node-compile-cache"})
+
+    def test_a_folder_git_tracks_is_kept(self):
+        cleanup._git_tracked = lambda p: os.path.basename(p) == "scratch"
+        self.assertNotIn("scratch", self.listed())
+        self.assertIn("temp_fs_inspect", self.listed())
+
+
+class NeverTouchedTest(_Launcher):
+    """Whatever is ticked, with no age protection at all."""
+
+    def test_models_env_facesets_and_config_survive_every_new_target(self):
+        a = self.app
+        keep = [os.path.join(a, "models", "buffalo_l", "w.onnx"), os.path.join(a, "env", "Scripts", "python.exe"),
+                os.path.join(a, "facesets", "me.fsz"), os.path.join(a, "config.yaml"),
+                os.path.join(a, "projects", "p.json"), os.path.join(self.root, "pinokio.js")]
+        for p in keep:
+            _touch(p, 99)
+        _touch(os.path.join(a, "output", "r.mp4"), 99)
+        _touch(os.path.join(a, "projects", "p.stage2.npz"), 99)
+        saved = (cleanup._git_tracked, cleanup._gpu_driver)
+        cleanup._git_tracked, cleanup._gpu_driver = (lambda p: False), (lambda: "621.14")
+        self.addCleanup(lambda: [setattr(cleanup, n, v) for n, v in
+                                 zip(("_git_tracked", "_gpu_driver"), saved)])
+        os.environ["ROOP_CLEAN_KEEP_DAYS"] = "0"
+        self.addCleanup(lambda: os.environ.pop("ROOP_CLEAN_KEEP_DAYS", None))
+        cleanup.clean(["dev-leftovers", "project-caches", "old-uploads", "old-renders",
+                       "quality-evidence", "trt-stale"])
+        for p in keep:
+            self.assertTrue(os.path.exists(p), p)
+        self.assertFalse(os.path.exists(os.path.join(a, "output", "r.mp4")))
+        self.assertFalse(os.path.exists(os.path.join(a, "projects", "p.stage2.npz")))
+
+
 class SizeTest(unittest.TestCase):
     def test_hard_linked_files_free_nothing(self):
         with tempfile.TemporaryDirectory() as d:
