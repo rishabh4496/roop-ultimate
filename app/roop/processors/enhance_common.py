@@ -8,6 +8,7 @@ before being written down here.
 from roop.degrade import fell_back as _fell_back, swallowed as _swallowed
 
 import contextlib
+from functools import lru_cache
 
 import cv2
 import numpy as np
@@ -420,6 +421,16 @@ def _knee_lut(threshold, softness, strength):
     return lut
 
 
+@lru_cache(maxsize=32)
+def _knee_pixel_lut(threshold, softness, strength):
+    """Final uint8 value indexed by signed detail (offset 255) and input pixel."""
+    pixels = np.arange(256, dtype=np.float32)
+    # Include the pixel in the table so float32 rounding before truncation is
+    # identical to the original add, including at integer boundaries.
+    out = pixels + _knee_lut(threshold, softness, strength)[:, None]
+    return np.clip(out, 0.0, 255.0, out=out).astype(np.uint8)
+
+
 def _inject_bilateral_detail(enhanced, ref, sigma_color, threshold, softness,
                              strength):
     """`enhanced + knee(ref - bilateral(ref)) * strength`, through that table.
@@ -434,6 +445,16 @@ def _inject_bilateral_detail(enhanced, ref, sigma_color, threshold, softness,
                                    sigmaSpace=4.0)
     idx = cv2.subtract(ref, base_ref, dtype=cv2.CV_16S)
     idx += 255
+    if enhanced.dtype == ref.dtype == np.uint8 and enhanced.shape == idx.shape:
+        # Flatten the channels into each row so one native gather writes one
+        # byte per original channel. The coordinates are (pixel, detail).
+        rows = idx.shape[0]
+        columns = idx.size // rows
+        if max(rows, columns) < 32767:  # OpenCV's fixed-point remap limit
+            coordinates = cv2.merge((enhanced.reshape(rows, columns).astype(np.int16),
+                                     idx.reshape(rows, columns)))
+            table = _knee_pixel_lut(float(threshold), float(softness), float(strength))
+            return cv2.remap(table, coordinates, None, cv2.INTER_NEAREST).reshape(enhanced.shape)
     out = enhanced.astype(np.float32)
     out += _knee_lut(threshold, softness, strength).take(idx)
     np.clip(out, 0.0, 255.0, out=out)
@@ -517,14 +538,16 @@ def apply_anti_halo_sharpen(img, amount=0.35, sigma=1.0, limit=2.5):
     if amount <= 0 or img is None or getattr(img, 'size', 0) == 0:
         return img
     lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
-    L = lab[:, :, 0].astype(np.float32)
+    luminance = cv2.extractChannel(lab, 0)
+    L = luminance.astype(np.float32, copy=False)
 
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-    L_min = cv2.erode(L, kernel)
-    L_max = cv2.dilate(L, kernel)
-
-    blur = cv2.GaussianBlur(L, (0, 0), sigmaX=sigma)
-    high = L - blur
+    # Min/max can operate on byte luminance and find the same extrema with
+    # less data movement. The Gaussian still uses the original float32 input.
+    L_min = cv2.erode(luminance, kernel).astype(np.float32, copy=False)
+    L_max = cv2.dilate(luminance, kernel).astype(np.float32, copy=False)
+    high = cv2.GaussianBlur(L, (0, 0), sigmaX=sigma)
+    np.subtract(L, high, out=high)
 
     # Soft coring to ignore sensor noise (|high| < 1.0) and soft saturation on
     # large steps.
@@ -548,16 +571,18 @@ def apply_anti_halo_sharpen(img, amount=0.35, sigma=1.0, limit=2.5):
         mag[over] = np.minimum(m, 18.0 + 4.0 * np.tanh((m - 18.0) / 4.0))
     # copysign, not sign(): where the cored magnitude is 0 the sign() form
     # produced sign(0) * 0 = 0 and this produces +-0.0, which adds identically.
-    high_clamped = np.copysign(mag, high)
-
-    sharpened = L + float(amount) * high_clamped
+    np.copysign(mag, high, out=mag)
+    mag *= float(amount)
+    mag += L
     # Anti-halo bounding: clamp to the local neighbourhood range with a tiny
     # tolerance.
-    sharpened = np.clip(sharpened,
-                        np.maximum(0.0, L_min - limit),
-                        np.minimum(255.0, L_max + limit))
-
-    lab[:, :, 0] = np.clip(sharpened, 0, 255).astype(np.uint8)
+    L_min -= limit
+    L_max += limit
+    np.maximum(L_min, 0.0, out=L_min)
+    np.minimum(L_max, 255.0, out=L_max)
+    np.clip(mag, L_min, L_max, out=mag)
+    np.clip(mag, 0.0, 255.0, out=mag)
+    lab[:, :, 0] = mag.astype(np.uint8)
     return cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
 
 

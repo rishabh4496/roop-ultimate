@@ -248,6 +248,18 @@ class TestKneeTable(unittest.TestCase):
         self.assertEqual(out.dtype, np.uint8)
         self.assertEqual(out.shape, ref.shape)
 
+    def test_uint8_detail_lookup_matches_the_float32_finish(self):
+        ref = face_like_crop(128)[:, ::-1]
+        enhanced = cv2.GaussianBlur(ref, (0, 0), sigmaX=1.6)
+        sigma, threshold, softness, strength = 12.0, 8.0, 2.0, 0.18 * 0.92
+        blurred = cv2.bilateralFilter(ref, d=5, sigmaColor=sigma, sigmaSpace=4.0)
+        idx = cv2.subtract(ref, blurred, dtype=cv2.CV_16S) + 255
+        guide = enhanced.astype(np.float32) + _knee_lut(threshold, softness, strength).take(idx)
+        with mock.patch.object(cv2, "remap", wraps=cv2.remap) as remap:
+            out = _inject_bilateral_detail(enhanced, ref, sigma, threshold, softness, strength)
+        np.testing.assert_array_equal(out, np.clip(guide, 0, 255).astype(np.uint8))
+        remap.assert_called_once()
+
 
 # ── the anti-halo contract ───────────────────────────────────────────────────
 class TestAntiHaloBounding(unittest.TestCase):
