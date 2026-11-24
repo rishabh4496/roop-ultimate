@@ -1772,6 +1772,15 @@ class MaskingMixin:
             np.multiply(result, inv_mask, out=result)
             return np.uint8(result)
 
+        if (img_mask.dtype == np.float32 and frame_resized.dtype == target.dtype == np.uint8
+                and target.ndim == 3 and target.shape[2] == 3 and frame_resized.shape == target.shape):
+            weights = cv2.merge((img_mask, img_mask, img_mask))
+            inverse = cv2.merge((inv_mask, inv_mask, inv_mask))
+            result = cv2.multiply(target, inverse, dtype=cv2.CV_32F)
+            overlay = cv2.multiply(frame_resized, weights, dtype=cv2.CV_32F)
+            cv2.add(result, overlay, dst=result)
+            return result.astype(np.uint8)
+
         # One destination buffer and two in-place multiplies instead of three
         # full-crop temporaries from chained broadcasting expressions.
         result = target.astype(np.float32)

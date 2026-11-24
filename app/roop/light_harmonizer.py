@@ -227,44 +227,21 @@ def _extract_skin_mask(crop: np.ndarray) -> np.ndarray:
     return np.clip(soft, 0.0, 1.0).astype(np.float32)
 
 
-def decompose_intrinsic_components(
-    crop: np.ndarray,
-    normals: np.ndarray
-) -> Tuple[np.ndarray, np.ndarray, Dict[str, Any]]:
-    """Decompose an aligned face crop into intrinsic components:
-    - Diffuse Albedo A(x, y)
-    - Diffuse Shading S(x, y)
-    - Specular Environment Lighting Parameters
-
-    Returns:
-    --------
-    albedo : np.ndarray (H, W, 3) float32 in [0, 1]
-    shading : np.ndarray (H, W, 1) float32 in [0, 1]
-    light_params : dict containing:
-        - 'key_dir': (3,) unit vector (Lx, Ly, Lz) pointing toward key light
-        - 'key_intensity': float
-        - 'key_color': (3,) float array normalized key light RGB tint
-        - 'ambient_level': float
-        - 'specular_hardness': float
-        - 'specular_map': (H, W) float32 highlight residual
-    """
-    h, w = crop.shape[:2]
+def _retinex_shading(crop):
+    """Return normalized pixels, Rec. 709 luminance and diffuse shading."""
+    w = crop.shape[1]
     crop_f = crop.astype(np.float32) / 255.0
-    skin_mask = _extract_skin_mask(crop)
-
-    # 1. Luminance channel (Rec. 709)
     lum = (0.0722 * crop_f[:, :, 0] + 0.7152 * crop_f[:, :, 1] + 0.2126 * crop_f[:, :, 2])
     lum_u8 = np.clip(lum * 255.0, 0, 255).astype(np.uint8)
-
-    # 2. Retinex bilateral filter to isolate low-frequency shading
     shading = cv2.bilateralFilter(lum_u8, d=11, sigmaColor=35.0, sigmaSpace=max(5.0, float(w) * 0.08))
     shading_f = (shading.astype(np.float32) / 255.0)[:, :, None]
-    shading_f = np.clip(shading_f, 0.04, 1.0)
+    return crop_f, lum, np.clip(shading_f, 0.04, 1.0)
 
-    # 3. Diffuse albedo extraction
-    albedo = np.clip(crop_f / shading_f, 0.0, 1.0)
 
-    # 4. Fit directional key light vector L_key and ambient bias via linear least squares
+def _fit_scene_light(crop, normals, crop_f, shading_f, *, specular_luminance=None):
+    h, w = crop.shape[:2]
+    skin_mask = _extract_skin_mask(crop)
+    # Fit directional key light vector L_key and ambient bias via linear least squares
     # Shading(x, y) ~ c0 * Nx + c1 * Ny + c2 * Nz + c3
     sample_mask = skin_mask > 0.4
     if int(sample_mask.sum()) < 64:
@@ -300,7 +277,7 @@ def decompose_intrinsic_components(
 
     ambient_level = float(np.clip(amb, 0.08, 0.90))
 
-    # 5. Measure key light chromaticity (warmth/coolness)
+    # Measure key light chromaticity (warmth/coolness)
     # Compare color of brightly lit skin regions vs ambient/shadowed skin regions
     key_shading = np.maximum(0.0, np.sum(normals * key_dir[None, None, :], axis=-1))
     lit_sample = sample_mask & (key_shading > 0.65)
@@ -311,20 +288,29 @@ def decompose_intrinsic_components(
     else:
         key_color = np.array([1.0, 1.0, 1.0], dtype=np.float32)
 
-    # 6. Specular highlight detection
-    # Diffuse model prediction:
-    diffuse_pred = np.clip(ambient_level + key_intensity * key_shading[:, :, None] * key_color[None, None, :], 0.0, 1.0)
-    specular_residual = np.maximum(0.0, lum - (diffuse_pred[:, :, 0] * 0.114 + diffuse_pred[:, :, 1] * 0.587 + diffuse_pred[:, :, 2] * 0.299))
-    specular_map = np.clip(specular_residual * 2.5, 0.0, 1.0) * skin_mask
-
     light_params = {
         'key_dir': key_dir,
         'key_intensity': key_intensity,
         'key_color': key_color,
         'ambient_level': ambient_level,
-        'specular_hardness': 24.0,
-        'specular_map': specular_map,
     }
+    if specular_luminance is not None:
+        diffuse_pred = np.clip(ambient_level + key_intensity * key_shading[:, :, None] * key_color[None, None, :], 0.0, 1.0)
+        diffuse_luminance = diffuse_pred[:, :, 0] * 0.114 + diffuse_pred[:, :, 1] * 0.587 + diffuse_pred[:, :, 2] * 0.299
+        specular_residual = np.maximum(0.0, specular_luminance - diffuse_luminance)
+        light_params['specular_hardness'] = 24.0
+        light_params['specular_map'] = np.clip(specular_residual * 2.5, 0.0, 1.0) * skin_mask
+    return light_params
+
+
+def decompose_intrinsic_components(
+    crop: np.ndarray,
+    normals: np.ndarray
+) -> Tuple[np.ndarray, np.ndarray, Dict[str, Any]]:
+    """Return diffuse albedo, shading, and light parameters with a specular map."""
+    crop_f, lum, shading_f = _retinex_shading(crop)
+    albedo = np.clip(crop_f / shading_f, 0.0, 1.0)
+    light_params = _fit_scene_light(crop, normals, crop_f, shading_f, specular_luminance=lum)
     return albedo, shading_f, light_params
 
 
@@ -536,11 +522,13 @@ def apply_light_harmonization(
 
         # 1. Target intrinsic decomposition
         tgt_normals = estimate_surface_normals(tgt, landmarks=lm68, kps=kps)
-        _, _, tgt_light = decompose_intrinsic_components(tgt, tgt_normals)
+        tgt_float, _, tgt_shading = _retinex_shading(tgt)
+        tgt_light = _fit_scene_light(tgt, tgt_normals, tgt_float, tgt_shading)
 
         # 2. Swapped face intrinsic decomposition
         swp_normals = estimate_surface_normals(swapped_crop, landmarks=lm68, kps=kps)
-        swp_albedo, _, _ = decompose_intrinsic_components(swapped_crop, swp_normals)
+        swp_float, _, swp_shading = _retinex_shading(swapped_crop)
+        swp_albedo = np.clip(swp_float / swp_shading, 0.0, 1.0)
 
         # 3. Target lighting projection
         key_dir = tgt_light['key_dir']

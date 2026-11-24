@@ -3,6 +3,7 @@
 import os
 import sys
 import unittest
+from unittest import mock
 import numpy as np
 import cv2
 
@@ -98,6 +99,16 @@ class TestLightHarmonizer(unittest.TestCase):
         self.assertAlmostEqual(float(np.linalg.norm(key_dir)), 1.0, places=4)
         self.assertGreater(key_dir[2], 0.0)  # Front-facing light
         self.assertGreater(light_params['ambient_level'], 0.0)
+
+    def test_render_fits_only_target_scene_light(self):
+        from roop import light_harmonizer as module
+
+        with mock.patch.object(module, '_fit_scene_light', wraps=module._fit_scene_light) as fit:
+            image = apply_light_harmonization(self.swapped_crop, self.target_crop, key_intensity=1.0)
+        fit.assert_called_once()
+        self.assertIs(fit.call_args.args[0], self.target_crop)
+        self.assertFalse(fit.call_args.kwargs)
+        self.assertFalse(np.array_equal(image, self.swapped_crop))
 
     def test_eye_catchlight_restoration(self):
         """Test isolating and restoring corneal specular catchlights."""

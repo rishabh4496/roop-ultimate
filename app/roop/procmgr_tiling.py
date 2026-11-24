@@ -9,6 +9,11 @@ import threading
 
 import numpy as np
 
+try:
+    import cv2
+except ImportError:
+    cv2 = None
+
 
 _BLOB_LUT = {}
 _BLOB_LUT_LOCK = threading.Lock()
@@ -55,6 +60,17 @@ def blob_lut(model_mean, model_standard_deviation):
     return lut
 
 
+def gather_uint8_blob(crop, tables, swap_rb=False):
+    """Gather channel lookup tables directly into an owned float32 NCHW blob."""
+    channels = cv2.split(crop)
+    if swap_rb:
+        channels = channels[::-1]
+    blob = np.empty((1, 3, *crop.shape[:2]), dtype=np.float32)
+    for index, (channel, table) in enumerate(zip(channels, tables)):
+        cv2.LUT(channel, table, dst=blob[0, index])
+    return blob
+
+
 def to_blob(crop, model_mean, model_standard_deviation):
     """A BGR uint8 HWC crop -> the model's [1,3,H,W] float32 input blob.
 
@@ -77,6 +93,8 @@ def to_blob(crop, model_mean, model_standard_deviation):
              / np.asarray(model_standard_deviation, dtype=np.float64))
         return np.expand_dims(x.transpose(2, 0, 1), axis=0).astype(np.float32)
     lut = blob_lut(model_mean, model_standard_deviation)
+    if cv2 is not None and src.ndim == 3 and src.shape[2] == 3 and src.size:
+        return gather_uint8_blob(src, lut, swap_rb=True)
     chw = src.transpose(2, 0, 1)[::-1]                     # (3,H,W) uint8, RGB
     return np.stack([lut[c][chw[c]] for c in range(3)])[np.newaxis]
 

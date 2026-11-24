@@ -64,6 +64,34 @@ class TestFixedSizeExport(unittest.TestCase):
     def test_the_model_dimension_is_read_from_the_session(self):
         self.assertEqual(_detector([1, 3, 640, 640]).fixed_size, 640)
 
+    def test_retinaface_bgr_layout_and_mean_match_the_original_blob(self):
+        from types import SimpleNamespace
+        import cv2
+        from roop.retinaface import RetinaFace3Output
+
+        class ModelInputCaptured(Exception):
+            pass
+
+        session = MagicMock()
+        session.get_inputs.return_value = [SimpleNamespace(name='input', shape=[1, 3, 640, 640])]
+        session.get_outputs.return_value = []
+        session.run.side_effect = ModelInputCaptured
+        detector = RetinaFace3Output('retinaface_r50.onnx', session=session)
+        rng = np.random.default_rng(17)
+        for h, w in ((350, 670), (670, 350)):
+            frame = rng.integers(0, 256, (h, w, 3), np.uint8)
+            with self.assertRaises(ModelInputCaptured):
+                detector.detect(frame)
+            if w >= h:
+                prepared = cv2.resize(frame, (640, 640))
+            else:
+                prepared = np.zeros((640, 640, 3), dtype=np.uint8)
+                width = int(640 / (h / w))
+                prepared[:, :width] = cv2.resize(frame, (width, 640))
+            expected = cv2.dnn.blobFromImage(prepared, 1.0, (640, 640), (104, 117, 123), swapRB=False)
+            actual = next(iter(session.run.call_args.args[1].values()))
+            np.testing.assert_array_equal(actual, expected)
+
     def test_a_dynamic_export_keeps_honouring_the_caller(self):
         for shape in ([1, 3, 'h', 'w'], [1, 3, None, None]):
             with self.subTest(shape=shape):

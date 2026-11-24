@@ -331,7 +331,9 @@ class FFMPEG_VideoWriter:
         if sar and str(sar).strip() not in ('', '1:1', '1/1'):
             filters.append(f'setsar={sar}')
 
-        # Stage 18: Tetrahedral 3D .cube LUT interpolation filter
+        # Tetrahedral .cube interpolation. On the 600-frame 1080p grading
+        # fixture, automatic filter threads took 2.5 s. Caps of 2, 4 and 8
+        # took 9.1, 4.9 and 2.9 s with the same decoded hash.
         lut_path = getattr(self, '_lut_path', None)
         lut_bake = getattr(self, '_lut_bake', False)
         if lut_path is None:

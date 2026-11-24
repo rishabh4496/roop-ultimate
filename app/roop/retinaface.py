@@ -32,6 +32,7 @@ import roop.globals
 from roop.utilities import resolve_relative_path, conditional_download
 from roop.nms import nms_keep, bind_instance_nms
 from roop.precision_policy import providers_for
+from roop.procmgr_tiling import gather_uint8_blob
 
 def softmax(z):
     assert len(z.shape) == 2
@@ -48,6 +49,8 @@ _R50_MIN_SIZES = ((16, 32), (64, 128), (256, 512))
 _R50_STEPS = (8, 16, 32)
 _R50_VARIANCE = (0.1, 0.2)
 _R50_DEFAULT_INPUT_SIZE = (640, 640)
+_R50_CHANNEL_MEAN = (104.0, 117.0, 123.0)
+_R50_BLOB_LUT = np.arange(256, dtype=np.float32) - np.asarray(_R50_CHANNEL_MEAN, dtype=np.float32)[:, None]
 
 _prior_cache = {}
 _pinned_warned = [False]
@@ -128,7 +131,7 @@ class RetinaFace3Output:
         self.nms_thresh = 0.4
         self.det_thresh = 0.5
         # biubug6 preprocessing: BGR, mean-subtract only, no std scaling.
-        self.input_mean = (104.0, 117.0, 123.0)
+        self.input_mean = _R50_CHANNEL_MEAN
         # (w, h) of a STATIC TensorRT profile (trt_shape_profile.pinned_hw), set by _build_one only
         # when the session really is bound to one. Anything else is outside the engine's profile.
         self.pinned_input_size = None
@@ -206,7 +209,11 @@ class RetinaFace3Output:
             det_img = np.zeros((input_size[1], input_size[0], 3), dtype=np.uint8)
             det_img[:new_height, :new_width, :] = resized_img
 
-        blob = cv2.dnn.blobFromImage(det_img, 1.0, input_size, self.input_mean, swapRB=False)
+        if (det_img.dtype == np.uint8 and det_img.ndim == 3 and det_img.shape[2] == 3
+                and self.input_mean == _R50_CHANNEL_MEAN):
+            blob = gather_uint8_blob(det_img, _R50_BLOB_LUT)
+        else:
+            blob = cv2.dnn.blobFromImage(det_img, 1.0, input_size, self.input_mean, swapRB=False)
         net_outs = self.session.run(self.output_names, {self.input_name : blob})
 
         loc = net_outs[0][0]

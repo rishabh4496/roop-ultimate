@@ -100,6 +100,24 @@ class MaskIsDerivedOncePerFace(unittest.TestCase):
         self.assertIsNotNone(helper)
         self.assertIn('cv2.resize(img_mask', helper.group(0))
 
+    def test_mask_composite_keeps_float32_rounding_then_byte_truncation(self):
+        from types import SimpleNamespace
+        import cv2
+        import numpy as np
+        from roop.procmgr_masking import MaskingMixin
+
+        rng = np.random.default_rng(4)
+        plate = rng.integers(0, 256, (64, 48, 3), np.uint8)
+        target = rng.integers(0, 256, (96, 112, 3), np.uint8)
+        mask = rng.random(plate.shape[:2], dtype=np.float32)
+        dst_size = target.shape[1], target.shape[0]
+        weights = cv2.resize(mask, dst_size)[:, :, None]
+        expected = (target.astype(np.float32) * (1.0 - weights)
+                    + cv2.resize(plate, dst_size).astype(np.float32) * weights).astype(np.uint8)
+        mgr = MaskingMixin()
+        mgr.options = SimpleNamespace(show_face_masking=False)
+        np.testing.assert_array_equal(mgr._composite_mask(mask, plate, target), expected)
+
 
 if __name__ == '__main__':
     unittest.main()
