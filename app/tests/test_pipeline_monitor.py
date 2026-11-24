@@ -134,6 +134,16 @@ class UnitTest(unittest.TestCase):
         self.assertIn('in 3.0/4 (empty', out[0])
         self.assertNotIn('chunks', out[0])
 
+    def test_empty_chunk_queue_does_not_imply_decode_starvation(self):
+        mon, clock, out = make(every=10, state=lambda: {
+            'input': (0, 1), 'output': (0, 1), 'unit': 'chunks'})
+        mon.start()
+        run_frames(mon, clock, 10, 0.1)
+        self.assertIn('in 0.0/1 chunks (empty 100%)', out[0])
+        self.assertNotIn('DECODE-STARVED', out[0])
+        self.assertIsNone(pm.levels_view()['bound'])
+        self.assertIn('input empty 100%', mon.finish())
+
 
 class SafetyTest(unittest.TestCase):
 

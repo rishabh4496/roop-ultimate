@@ -82,8 +82,8 @@ export function ConsoleMirrorView({ dash }) {
                 </span>
               </span>
             ))}
-            <span data-testid="console-bound" title={bound.basis}
-              className={`font-bold ${BOUND_TONE[bound.tone]}`}>{bound.text}</span>
+            {bound.text && <span data-testid="console-bound" title={bound.basis}
+              className={`font-bold ${BOUND_TONE[bound.tone]}`}>{bound.text}</span>}
           </div>
         )}
         <div className="flex flex-wrap items-baseline gap-x-4 gap-y-0.5 text-micro font-mono">

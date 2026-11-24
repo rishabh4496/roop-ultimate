@@ -7,6 +7,7 @@ folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22
 
 ## 2026-11-25
 
+- S3 now uses completed worker frames for live fps and ETA when parallel stabilization writes in chunks. The percentage still follows writer-accepted output. In a live run the old estimate swung from 29 days to 36 minutes across a 480-frame write. The workers continued at around 10 fps. Chunk queue snapshots are reported as depths because a worker finishing a frame can see an empty queue while other chunks are already in flight.
 - The S2 dashboard now shows Pre-scan or Tracking with the active phase's own percentage, elapsed time, rate and ETA. A live run showed 81.1% beside a tracking count that was 62.2% complete. The sparse scan had already finished and passed 67,276 of 69,946 frames to tracking. The job's VRAM plan capped its detector pool at one, and profiling the tracking workers showed repeated detector calls, including the two rotation rescue paths.
 - After a full-frame miss, the partial-miss rescue skips rotations that completed in the earlier pass on the same frame. It still retries turns that raised an exception and searches all applicable rotations when an upright detection leaves a face missing. The regression tests exercise the detector call count, retained faces, and retry behavior. GPU timing and render fidelity remain unverified while the live job owns the GPU.
 

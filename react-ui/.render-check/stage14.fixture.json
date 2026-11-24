@@ -95,7 +95,7 @@
   "time": 1793166862.9346328
  },
  "console": {
-  "chunks": "Decode Queue: 1/2 | Encode Queue: 0/2 chunks  [GPU-BOUND]",
+  "chunks": "Decode Queue: 1/2 | Encode Queue: 0/2 chunks",
   "decode_bound": "Decode Queue: 0/8 | GPU Queue: 1/4 | Encode Queue: 0/8  [DISK/DECODE-BOUND]",
   "encode_bound": "Decode Queue: 8/8 | GPU Queue: 4/4 | Encode Queue: 8/8  [ENCODE-BOUND]",
   "gpu_bound": "Decode Queue: 8/8 | GPU Queue: 4/4 | Encode Queue: 2/8  [GPU-BOUND]"
@@ -104,8 +104,8 @@
  "miss_receipt": "[TRT CACHE MISS: built in 1.1s] gpen_256 FP16",
  "queues": {
   "chunks": {
-   "bound": "GPU-BOUND",
-   "bound_basis": "by elimination (queues healthy)",
+   "bound": null,
+   "bound_basis": "chunk depths sampled at frame completion",
    "decode": {
     "cap": 2,
     "depth": 1

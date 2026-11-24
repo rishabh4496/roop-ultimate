@@ -941,8 +941,7 @@ class ProcessMgr(BatchProcessingMixin, StabilizationSchedulingMixin, MaskingMixi
         # The middle stage has no queue of its own: it is the workers. "GPU 3/4" = 3 of 4 workers are inside a
         # frame (detect, swap, restore, composite) at this instant - the same count a queue's fill would give.
         # The parallel-stabilization path never enters `_runtime_worker_enter`, so its count would read a
-        # structural 0 ("workers idle") on the path that is MOST GPU-bound: there the middle stage is left
-        # to the monitor's by-elimination verdict instead of a made-up number.
+        # structural 0 ("workers idle"). The monitor shows the chunk queue depths without inferring a wait.
         busy = getattr(self, '_gpu_busy', None)
         if busy is not None and 'unit' not in state:
             state['gpu'] = (len(busy), max(1, int(getattr(self, 'num_threads', 0) or 0)))

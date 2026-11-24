@@ -1726,7 +1726,8 @@ class ChunkedProgress(tqdm):
     # Dividing totals is immune to arrival shape, which is what makes the window
     # correct for a pooled producer and for a chunk finishing all at once alike.
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, writes_in_chunks=False, **kwargs):
+        self.writes_in_chunks = writes_in_chunks
         style = _progress_style()
         self._chunked = style == "chunk" or (style == "auto" and not _stream_is_terminal())
         # While a job is live the terminal dashboard (roop/terminal_dashboard.py) paints the pipeline's own bars, so this

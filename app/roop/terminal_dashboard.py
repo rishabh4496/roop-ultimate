@@ -735,7 +735,7 @@ class TerminalProgressManager:
         self._last_states: Dict[str, str] = {}
         self._last_log = 0.0
         self._marks: Dict[str, float] = {}
-        self._last_bar: Optional[Tuple[int, Optional[int]]] = None     # (n, total) of the last 'Processing' bar that closed
+        self._last_bar: Optional[Tuple[int, Optional[int], bool]] = None  # count, total, chunk writes
         self._lat_cache: Tuple[Dict[str, Optional[float]], Optional[Dict[str, Any]], int] = (
             {**{c[0]: None for c in LATENCY_COLUMNS}, "other": None}, None, 0)
         self._detail_telemetry = False
@@ -1074,7 +1074,8 @@ class TerminalProgressManager:
             if bar in self._bars:
                 self._bars.remove(bar)
                 if str(getattr(bar, "desc", "")).startswith("Processing"):
-                    self._last_bar = (int(getattr(bar, "n", 0) or 0), getattr(bar, "total", None))
+                    self._last_bar = (int(getattr(bar, "n", 0) or 0), getattr(bar, "total", None),
+                                      getattr(bar, "writes_in_chunks", False) is True)
 
     # -- the snapshot --
     def snapshot(self) -> Dict[str, Any]:
@@ -1095,12 +1096,13 @@ class TerminalProgressManager:
 
     def _stage_dict(self, sid: str, state: str, *, pct: Optional[float], done: Optional[float], total: Optional[float],
                     unit: str, since: Optional[float], ended: Optional[float], ema: Optional[AdaptiveEma],
-                    now: float, wall: float, paused: bool, detail: Dict[str, Any]) -> Dict[str, Any]:
+                    now: float, wall: float, paused: bool, detail: Dict[str, Any],
+                    rate_done: Optional[int] = None) -> Dict[str, Any]:
         elapsed = None if since is None else max(0.0, (ended if ended is not None else now) - since)
         eta_s = rate = None
         if ema is not None and state == RUNNING:
             if done is not None and not paused:
-                ema.update(now, float(done))
+                ema.update(now, float(done if rate_done is None else rate_done))
             rate = ema.rate
             if total and done is not None:
                 eta_s = ema.eta(float(total) - float(done))
@@ -1189,14 +1191,22 @@ class TerminalProgressManager:
                 s3_state = DONE if ok or not final else FAILED
             else:
                 s3_state = PENDING
-            bar_total = getattr(bar, "total", None) if bar is not None else (self._last_bar[1] if self._last_bar else None)
+            if bar is not None:
+                bar_n = int(getattr(bar, "n", 0) or 0)
+                bar_total = getattr(bar, "total", None)
+                chunk_writes = getattr(bar, "writes_in_chunks", False) is True
+            else:
+                bar_n, bar_total, chunk_writes = self._last_bar or (0, None, False)
             total3 = (s3["total"] if s3 and s3["total"] else None) or view.get("total_frames") or bar_total
-            if retired > 0:
+            # Workers complete frames throughout a stabilization chunk. The writer
+            # receives it after it settles, so its count measures output progress
+            # while the workers' count supplies the live pace.
+            writer_count = retired > 0 or chunk_writes
+            if writer_count:
                 done3, basis = retired, "retired"
             else:
-                bar_n = int(getattr(bar, "n", 0)) if bar is not None else (self._last_bar[0] if self._last_bar else 0)
                 done3, basis = (bar_n or (s3["done"] if s3 else 0)), "processed"
-            if s3 is not None and s3_state in (DONE, RESTORED) and total3 and retired <= 0:
+            if s3 is not None and s3_state in (DONE, RESTORED) and total3 and not writer_count:
                 done3 = max(done3, total3)                # a restored/finished stage that never retired a frame here
             # `leave()` forces the registry's own counter to its total, so a stage that ended SHORT would read 100% beside
             # "300/600". The terminal shows what the writer accepted: a frame short of the expectation is printed as such.
@@ -1205,7 +1215,7 @@ class TerminalProgressManager:
                 pct3 = 0.0
             elif s3 is not None and s3_state == RESTORED:
                 pct3 = 100.0
-            elif s3 is not None and s3_state == DONE and retired <= 0:
+            elif s3 is not None and s3_state == DONE and not writer_count:
                 pct3 = 100.0                                    # a path that never reports writes: nothing to contradict it
             else:
                 pct3 = 100.0 * done3 / total3 if total3 else 0.0
@@ -1215,8 +1225,10 @@ class TerminalProgressManager:
             ended3 = wall_to_mono(s3["ended"]) if s3 and s3["ended"] else (now if s3 is None and s3_state in (DONE, FAILED) else None)
             span3 = None if since3 is None else (ended3 if ended3 is not None else now) - since3
             stage3 = self._stage_dict("S3", s3_state, pct=pct3, done=done3, total=total3, unit="frames", since=since3, ended=ended3,
-                                      ema=self._ema_for("S3"), now=now, wall=wall, paused=paused,
-                                      detail={"fps_basis": basis, "short_by": short_by,
+                                      ema=self._ema_for("S3:processed" if chunk_writes else "S3"),
+                                      now=now, wall=wall, paused=paused, rate_done=bar_n if chunk_writes else None,
+                                      detail={"fps_basis": basis, "rate_basis": "processed" if chunk_writes else basis,
+                                              "short_by": short_by,
                                               "fps_avg": _r(done3 / span3, 1) if span3 and span3 > 0 and done3 else None})
             # S4: named steps
             n4 = len(self._s4["steps"])
@@ -1357,8 +1369,12 @@ def _stage_extra(s: Dict[str, Any], with_rate: bool = True) -> str:
         if d.get("face_free_bypass_pct") is not None:
             bits.append(f"face-free {_num(d['face_free_bypass_pct'])}%")
     elif s["id"] == "S3":
-        if s["rate"] is not None and with_rate:
-            bits.append(f"{_num(s['rate'])} fps")
+        if s["rate"] is not None:
+            processed_rate = d.get("rate_basis") == "processed" and d.get("fps_basis") == "retired"
+            if with_rate:
+                bits.append(f"{_num(s['rate'])} fps" + (" processed" if processed_rate else ""))
+            elif processed_rate:
+                bits.append("rate basis processed")
         if d.get("fps_avg") is not None and s["state"] != RUNNING:
             bits.append(f"avg {_num(d['fps_avg'])} fps")
         if d.get("short_by"):
@@ -1417,6 +1433,8 @@ def render_queue_line(queues: Optional[Dict[str, Any]], *, color: bool) -> str:
     unit = f" {queues['unit']}" if queues.get("unit") else ""
     body = " | ".join(f"{label}: {value}" for label, value in cells) + unit
     bound = queues.get("bound")
+    if queues.get("unit") == "chunks" and not bound:
+        return body
     if not bound:
         tag = f"{DIM if color else ''}[bound: measuring]{RESET if color else ''}"
     else:

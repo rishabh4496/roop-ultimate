@@ -282,6 +282,31 @@ class Stages(_Env):
         self.assertAlmostEqual(s3["eta_s"], (600 - 100) / 25.0, delta=60)
         self.assertAlmostEqual(s3["eta_at"], self.clock.t + s3["eta_s"], delta=2)
 
+    def test_chunked_swap_keeps_counting_output_and_times_worker_progress(self):
+        from roop.procmgr_runtime import ChunkedProgress
+
+        self.start()
+        st.begin_run(2000)
+        st.enter(S3, 2000)
+        with mock.patch.object(td, "claims_bar", return_value=True), \
+                mock.patch.object(td, "attach_bar", self.mgr.attach_bar), \
+                mock.patch.object(td, "detach_bar", self.mgr.detach_bar):
+            with ChunkedProgress(total=2000, desc="Processing", writes_in_chunks=True) as bar:
+                self.tick(0)
+                for _ in range(48):
+                    bar.update(10)
+                    snap = self.tick(1)
+                s3 = snap["stages"]["S3"]
+                self.assertEqual((s3["done"], s3["pct"], s3["rate"]), (0, 0.0, 10.0))
+                st.retire(480)
+                for _ in range(40):
+                    bar.update(10)
+                    snap = self.tick(1)
+                s3 = snap["stages"]["S3"]
+                self.assertEqual((s3["done"], s3["pct"], s3["rate"], s3["eta_s"]), (480, 24.0, 10.0, 152))
+                self.assertIn("10.0 fps processed", td.render_stage_lines(snap, color=False)[2])
+                self.assertIn("480/2,000 frames", td.render_stage_lines(snap, color=False)[2])
+
     def test_a_paused_job_freezes_the_estimate(self):
         self.start()
         st.begin_run(600)
@@ -809,7 +834,7 @@ class BarOwnership(_Env):
             self.assertIn(bar, self.mgr._bars)
             bar.close()
         self.assertNotIn(bar, self.mgr._bars)
-        self.assertEqual(self.mgr._last_bar, (0, 10))
+        self.assertEqual(self.mgr._last_bar, (0, 10, False))
 
     def test_a_bar_the_dashboard_does_not_claim_still_renders(self):
         self.start()

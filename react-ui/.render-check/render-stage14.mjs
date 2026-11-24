@@ -50,10 +50,13 @@ for (const [key, label] of [['gpu_bound', 'GPU-bound'], ['decode_bound', 'decode
   const cells = M.queueCells(dash);
   const body = cells.map((c) => `${c.label}: ${c.value}`).join(' | ');
   const bound = M.queueBound(dash).text;
-  ok(`${label}: the React cells read as the console line`, consoleLine.startsWith(body) && consoleLine.endsWith(bound),
+  const expected = `${body}${q.unit ? ` ${q.unit}` : ''}${bound ? `  ${bound}` : ''}`;
+  ok(`${label}: the React cells read as the console line`, consoleLine === expected,
     `${consoleLine}  vs  ${body} ${bound}`);
-  const screen = text(html(React.createElement(ConsoleMirrorView, { dash })));
-  ok(`${label}: and appear on the screen`, cells.every((c) => screen.includes(`${c.label} ${c.value}`)) && screen.includes(bound), screen.slice(0, 400));
+  const markup = html(React.createElement(ConsoleMirrorView, { dash }));
+  const screen = text(markup);
+  const boundMatches = bound ? screen.includes(bound) : !markup.includes('data-testid="console-bound"');
+  ok(`${label}: and appear on the screen`, cells.every((c) => screen.includes(`${c.label} ${c.value}`)) && boundMatches, screen.slice(0, 400));
 }
 
 {

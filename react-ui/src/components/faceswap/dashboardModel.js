@@ -56,7 +56,8 @@ const stageNote = (s) => {
     if (d.scene_cuts != null) bits.push(`cuts ${d.scene_cuts}`);
     if (isNum(d.face_free_bypass_pct)) bits.push(`face-free ${num(d.face_free_bypass_pct)}%`);
   } else if (s.id === 'S3') {
-    if (isNum(s.rate)) bits.push(`${num(s.rate)} fps`);
+    const processedRate = d.rate_basis === 'processed' && d.fps_basis === 'retired';
+    if (isNum(s.rate)) bits.push(`${num(s.rate)} fps${processedRate ? ' processed' : ''}`);
     if (isNum(d.fps_avg) && s.state !== 'RUNNING') bits.push(`avg ${num(d.fps_avg)} fps`);
     if (d.short_by) bits.push(`SHORT by ${count(d.short_by)} frames`);
     if (d.fps_basis) bits.push(`basis ${d.fps_basis}`);
@@ -128,6 +129,7 @@ export function queueCells(dash) {
 /** `[GPU-BOUND]` etc. and its tone; `[bound: measuring]` until the monitor has a window of frames. */
 export function queueBound(dash) {
   const q = dash && dash.telemetry && dash.telemetry.queues;
+  if (q?.unit === 'chunks' && !q.bound) return { text: '', tone: 'muted', basis: q.bound_basis || '' };
   if (!q || !q.bound) return { text: '[bound: measuring]', tone: 'muted', basis: '' };
   // GPU-bound is the shape this pipeline should have; a starved decoder or a backed-up encoder is the fault.
   return { text: `[${q.bound}]`, tone: q.bound === 'GPU-BOUND' ? 'ok' : 'warn', basis: q.bound_basis || '' };

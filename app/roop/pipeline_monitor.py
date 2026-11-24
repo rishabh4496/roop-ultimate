@@ -23,6 +23,10 @@ oscillates says nothing; the verdict is the share of samples in the window where
 the input side was empty (workers had nothing to do: decode-starved) or the
 output side was full (the writer was not draining: encoder-bound).
 
+Stabilization workers finish many frames from each admitted chunk. Their
+samples show queue depth while those chunks are in flight, so the chunk path
+reports queue levels and leaves the wait verdict unset.
+
 An input queue that is FULL is not a problem -- a GPU-bound pipeline should have a
 reader that is ahead of it -- so only emptiness of the input and fullness of the
 output are treated as faults.
@@ -60,8 +64,8 @@ def classify_bound(starved: float, backed_up: float, busy_share: Optional[float]
     """Which of the three stages limits the render, from shares of samples in a window (0..1).
 
     DECODE: workers found the input queue empty. ENCODE: the output queue sat (nearly) full. Otherwise
-    the limit is the middle: GPU-BOUND when the workers are busy (`busy_share`), or - for a path that
-    cannot count its workers (`busy_share` None: the stabilization chunks) - by elimination, because
+    the limit is the middle: GPU-BOUND when the workers are busy (`busy_share`), or - for a frame path
+    that cannot count its workers (`busy_share` None) - by elimination, because
     both queues are healthy. An input queue that is FULL is not a fault (see the module docstring)."""
     if starved >= STARVE_SHARE and starved >= backed_up:
         return BOUND_DECODE
@@ -179,13 +183,16 @@ class PipelineMonitor:
     def _publish(self, d_in, c_in, d_out, c_out, gpu):
         """Write this instant's levels, and the window's verdict once it has enough samples to mean something."""
         global _levels
-        bound = self._window_bound() if self._w_samples >= MIN_BOUND_SAMPLES else (
-            _levels.get('bound') if _levels else None)
+        if self._unit == 'chunks':
+            bound, basis = None, 'chunk depths sampled at frame completion'
+        else:
+            bound = self._window_bound() if self._w_samples >= MIN_BOUND_SAMPLES else (
+                _levels.get('bound') if _levels else None)
+            basis = 'workers busy' if gpu else 'by elimination (queues healthy)'
         view = {'decode': {'depth': int(d_in), 'cap': int(c_in)},
                 'gpu': {'busy': int(gpu[0]), 'cap': int(gpu[1])} if gpu else None,
                 'encode': {'depth': int(d_out), 'cap': int(c_out)},
-                'unit': self._unit, 'bound': bound,
-                'bound_basis': 'workers busy' if gpu else 'by elimination (queues healthy)',
+                'unit': self._unit, 'bound': bound, 'bound_basis': basis,
                 'frames': self.frames, 'updated_at': time.time()}
         with _levels_lock:
             _levels = view
@@ -214,6 +221,8 @@ class PipelineMonitor:
     def _verdict(self):
         if self._w_samples == 0 or not self._sampling:
             return 'queues n/a'
+        if self._unit == 'chunks':
+            return 'chunk queue samples'
         starved = self._w_in_empty / self._w_samples
         backed_up = self._w_out_full / self._w_samples
         if starved >= STARVE_SHARE and starved >= backed_up:
@@ -237,7 +246,7 @@ class PipelineMonitor:
         line = '[Pipeline] frames %d | %.2f fps (avg %.2f) | %s | %s' % (
             self.frames, self._w_frames / win, self.frames / total, queues,
             self._verdict())
-        if self._w_samples and self._sampling and self._w_gpu_n:
+        if self._w_samples and self._sampling and self._w_gpu_n and self._unit != 'chunks':
             # The three-stage reading, window means: where the render is waiting.
             line += ' | Decode Queue: %.0f/%d | GPU Queue: %.0f/%d | Encode Queue: %.0f/%d | %s' % (
                 self._w_in_depth / n, self._in_cap, self._w_gpu_busy / self._w_gpu_n, self._gpu_cap,
@@ -272,7 +281,10 @@ class PipelineMonitor:
             starved = self._tot_starved + self._w_in_empty
             backed_up = self._tot_backed_up + self._w_out_full
             elapsed = max(1e-9, now - self._t0)
-            if samples and self._sampling:
+            if samples and self._sampling and self._unit == 'chunks':
+                tail = 'input empty %.0f%% | output full %.0f%% of chunk-queue samples' % (
+                    100.0 * starved / samples, 100.0 * backed_up / samples)
+            elif samples and self._sampling:
                 tail = 'decode-starved %.0f%% | encoder-bound %.0f%% of samples' % (
                     100.0 * starved / samples, 100.0 * backed_up / samples)
             else:

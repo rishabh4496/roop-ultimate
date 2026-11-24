@@ -70,6 +70,14 @@ ok('S3 rate is the console\'s', rows.S3.note.includes(`${s3.rate.toFixed(1)} fps
   ok('S3 ETA finish is the snapshot\'s eta_at in local time', clock === M.fmtClock(s3.eta_at, run.updated_at).replace(/ \(\+\d+d\)$/, ''), clock);
 }
 ok('S3 says what its frames are (writer-accepted)', rows.S3.note.includes('basis retired'));
+{
+  const dash = clone(run);
+  dash.stages.S3.detail.rate_basis = 'processed';
+  dash.telemetry.queues = { unit: 'chunks', decode: { depth: 0, cap: 1 }, encode: { depth: 0, cap: 1 }, bound: null };
+  const swap = M.stageRows(dash).find((row) => row.id === 'S3');
+  ok('S3 labels worker fps alongside writer progress', swap.note === '50.0 fps processed · basis retired');
+  ok('empty chunk queues have no wait verdict', M.queueCells(dash).length === 2 && M.queueBound(dash).text === '');
+}
 ok('S2 carries scene cuts and the face-free bypass share',
   rows.S2.note.includes('cuts 7') && rows.S2.note.includes('face-free 25.0%') && consoleStage.includes('cuts 7') && consoleStage.includes('face-free 25.0%'), rows.S2.note);
 {

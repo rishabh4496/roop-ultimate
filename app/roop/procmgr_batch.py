@@ -1154,7 +1154,9 @@ class BatchProcessingMixin:
                                           ("mask", _want_mask_stab)) if w]
                 print(f"[Stabilize] parallel stabilization ON (threads={stab_threads}, warm-up overlap) — "
                       f"{' + '.join(_active)} smoothing run{'s' if len(_active) == 1 else ''} multi-threaded.")
-                with ChunkedProgress(total=self.total_frames, desc='Processing', unit='frames', dynamic_ncols=True, bar_format=progress_bar_format) as progress:
+                with ChunkedProgress(total=self.total_frames, desc='Processing', unit='frames', dynamic_ncols=True,
+                                     bar_format=progress_bar_format,
+                                     writes_in_chunks=bool(self.output_to_file or self.output_to_cam)) as progress:
                     self._run_stab_parallel(source_video, awebp_frames, frame_start, frame_end,
                                             frame_count, stab_threads, lambda: self.update_progress(progress))
             else:
