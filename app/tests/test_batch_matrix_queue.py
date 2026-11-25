@@ -762,6 +762,19 @@ class BatchMatrixStagingJSThroughTheQueue(_EndToEndBase):
         self._assert_run(self.ran[1], target=2, gallery_indices=[0], facesets=[self.alice],
                          person_ranks=[0], source_index=0)
 
+    def test_per_file_matrix_defaults_run_every_target_when_only_one_has_captures(self):
+        self._configure(1, [], {})
+        self._configure(2, [], {})
+        api._activate_target_media(index=0, refresh=False)
+        self._push("matrix_with_uncaptured_targets")
+        self.assertEqual(self._states(), [("COMPLETED", "")] * 3)
+        self.assertEqual([target["has_target_faces"] for target in api.get_state()["targets"]],
+                         [True, False, False])
+        self.assertEqual([(run["target_index"], run["request"]["swap_mode"], run["facesets"])
+                          for run in self.ran],
+                         [(0, "selected", [self.alice]), (1, "first", [self.alice]),
+                          (2, "first", [self.alice])])
+
     def test_grouped_from_the_real_builder(self):
         self._push("grouped")
         self.assertEqual(self._states(), [("COMPLETED", "")] * 4)

@@ -38,13 +38,22 @@ export function newStagedJobId() {
 export function defaultMatrixRow(target, settings = {}) {
   return {
     mappings: [{ personRank: 0, sourceIdx: 0 }],
-    swapMode: DEFAULT_SWAP_MODE,
+    swapMode: '',
     enabled: true,
     enhancer: settings.selected_enhancer || DEFAULT_ENHANCER,
     faceDistance: parseFloat(settings.max_face_distance || DEFAULT_FACE_DISTANCE),
     frameStart: target.start_frame || 1,
     frameEnd: target.end_frame || target.frames || 1,
   };
+}
+
+export function batchSwapMode(target, mappings, swapMode) {
+  if (swapMode) return swapMode;
+  // A default, single rank-0 assignment can run before a person is captured.
+  // Honor explicit person selections and let the queue validate those ranks.
+  if (target?.has_target_faces === false && mappings?.length === 1
+      && Number(mappings[0].personRank) === 0) return 'First found';
+  return DEFAULT_SWAP_MODE;
 }
 
 // One (target, mapping) pair -> the /api/swap body the queue will replay.
@@ -162,7 +171,7 @@ const stagedJob = ({ target, targetIndex, built, sourceFacesInfo, label,
 
 // ── Strategy 1: one mapping applied to every selected target ─────────────
 export function stageOneToMany({
-  targets = [], selectedTargets = [], mappings = [], swapMode = DEFAULT_SWAP_MODE,
+  targets = [], selectedTargets = [], mappings = [], swapMode,
   enhancer, faceDistance, sourceCount = 0, sourceFacesInfo = [], createJobPayload,
 } = {}) {
   if (selectedTargets.length === 0) return { jobs: [], error: ERR_NO_SELECTED_TARGETS };
@@ -170,7 +179,7 @@ export function stageOneToMany({
   const jobs = selectedTargets.map((tIdx) => {
     const target = targets[tIdx];
     const targetName = target?.name || `Target ${tIdx + 1}`;
-    const built = createJobPayload(mappings, swapMode, { enhancer, faceDistance });
+    const built = createJobPayload(mappings, batchSwapMode(target, mappings, swapMode), { enhancer, faceDistance });
     return stagedJob({
       target, targetIndex: tIdx, built, sourceFacesInfo, fallbackName: targetName,
       label: `1:M | ${targetName} (${mappingLabel(built.mappings)})`,
@@ -190,7 +199,7 @@ export function stageGrouped({
     grp.targetIndices.forEach((tIdx) => {
       const target = targets[tIdx];
       if (!target) return;
-      const built = createJobPayload(grp.mappings, grp.swapMode, {
+      const built = createJobPayload(grp.mappings, batchSwapMode(target, grp.mappings, grp.swapMode), {
         enhancer: grp.enhancer,
         faceDistance: grp.faceDistance,
       });
@@ -214,7 +223,7 @@ export function stageMatrix({
   targets.forEach((target, tIdx) => {
     const cfg = matrixConfig[tIdx];
     if (!cfg || !cfg.enabled) return;
-    const built = createJobPayload(cfg.mappings || [], cfg.swapMode, {
+    const built = createJobPayload(cfg.mappings || [], batchSwapMode(target, cfg.mappings, cfg.swapMode), {
       enhancer: cfg.enhancer,
       faceDistance: cfg.faceDistance,
     });
@@ -264,7 +273,8 @@ export function stageCartesian({
   const jobs = [];
   targets.forEach((target, tIdx) => {
     for (let sIdx = 0; sIdx < sourceCount; sIdx++) {
-      const built = createJobPayload([{ personRank: 0, sourceIdx: sIdx }], DEFAULT_SWAP_MODE);
+      const mappings = [{ personRank: 0, sourceIdx: sIdx }];
+      const built = createJobPayload(mappings, batchSwapMode(target, mappings));
       const sName = sourceFacesInfo[sIdx]?.name || `Faceset #${sIdx + 1}`;
       jobs.push({
         ...stagedJob({ target, targetIndex: tIdx, built, sourceFacesInfo,
@@ -283,7 +293,8 @@ export function stageSequential({
   const jobs = targets.map((target, tIdx) => {
     const sIdx = tIdx % sourceCount;
     const sName = sourceFacesInfo[sIdx]?.name || `Faceset #${sIdx + 1}`;
-    const built = createJobPayload([{ personRank: 0, sourceIdx: sIdx }], DEFAULT_SWAP_MODE);
+    const mappings = [{ personRank: 0, sourceIdx: sIdx }];
+    const built = createJobPayload(mappings, batchSwapMode(target, mappings));
     return {
       ...stagedJob({ target, targetIndex: tIdx, built, sourceFacesInfo,
         label: `Sequential | ${target.name} ➔ ${sName}` }),
@@ -312,7 +323,8 @@ export function stageSegments({
     const fs = i * step + 1;
     const fe = Math.min((i + 1) * step, totalFrames);
     if (fs > totalFrames) break;
-    const built = createJobPayload([{ personRank: 0, sourceIdx: 0 }], DEFAULT_SWAP_MODE);
+    const mappings = [{ personRank: 0, sourceIdx: 0 }];
+    const built = createJobPayload(mappings, batchSwapMode(target, mappings));
     jobs.push({
       ...stagedJob({ target, targetIndex, built, sourceFacesInfo,
         frameStart: fs, frameEnd: fe, totalFrames: fe - fs + 1,

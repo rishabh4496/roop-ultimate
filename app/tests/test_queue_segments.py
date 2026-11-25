@@ -185,6 +185,38 @@ class ClearOutput(unittest.TestCase):
         self.assertEqual(os.listdir(self.dir), ["keep.mp4"])
 
 
+class VideosThroughTheRunner(QueueTestBase):
+    def test_each_queued_video_survives_output_cleanup_and_template_collisions(self):
+        import api
+        from unittest.mock import patch
+        from roop.core import final_video_destination
+
+        for index, name in enumerate(("a.mp4", "b.mp4", "c.mp4"), start=1):
+            self.entries.append(_Entry(name, total=index + 5))
+        q.queue_add_batch({"jobs": [{"target_name": entry.filename} for entry in self.entries]})
+
+        def render(payload):
+            entry = self.entries[payload["target_index"]]
+            api._clear_output_folder()
+            destination = final_video_destination(entry.filename, entry.filename)
+            _make_clip(destination, entry.total_frames)
+            self._fake_run(payload)
+
+        with tempfile.TemporaryDirectory() as out, patch.object(g, "CFG", _Cfg()), \
+                patch.object(g, "output_path", out), patch.object(q, "_run_swap", render), \
+                patch.object(q, "_snapshot_outputs", api._snapshot_output_mtimes), \
+                patch.object(q, "_outputs_since", api._outputs_since):
+            g.CFG.output_template = "batch"
+            self._drain()
+            jobs = q._snapshot()["jobs"]
+            self.assertEqual([(job["state"], job["error"]) for job in jobs],
+                             [("COMPLETED", "")] * 3)
+            self.assertEqual([payload["target_index"] for payload in self.ran], [0, 1, 2])
+            paths = [job["outputs"][0] for job in jobs]
+            self.assertEqual(len(set(paths)), 3)
+            self.assertEqual([_frames(path) for path in paths], [6, 7, 8])
+
+
 class SplitThroughTheRunner(QueueTestBase):
     def setUp(self):
         super().setUp()

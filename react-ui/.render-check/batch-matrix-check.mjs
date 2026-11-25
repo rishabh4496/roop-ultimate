@@ -243,6 +243,35 @@ group('Per-file matrix');
   emit('matrix', jobs, jobs.map(triple));
 }
 
+{
+  const targets = TARGETS.map((target, index) => ({ ...target, has_target_faces: index === 0 }));
+  const matrixConfig = Object.fromEntries(targets.map((target, index) => [index, defaultMatrixRow(target, SETTINGS)]));
+  const { jobs } = stageMatrix({ ...common(), targets, matrixConfig });
+  check('automatic rows use First found only if that target has no captured face', () => {
+    assert.deepEqual(jobs.map((job) => job.payload.detection), ['Selected face', 'First found', 'First found']);
+    assert.equal(jobs[1].payload.selection_state.selection_mode, 'none');
+  });
+  check('an explicit person selection survives staging for an uncaptured target', () => {
+    const { jobs: explicit } = stageMatrix({ ...common(), targets, matrixConfig: {
+      1: { ...matrixConfig[1], swapMode: 'Selected face', mappings: [{ personRank: 1, sourceIdx: BOB }] },
+    } });
+    assert.equal(explicit[0].payload.detection, 'Selected face');
+    assert.equal(explicit[0].payload.selection_state.person_id, 1);
+  });
+  check('other batch strategies use the same per-target default', () => {
+    const input = { ...common(), targets };
+    const mappings = [{ personRank: 0, sourceIdx: ALICE }];
+    const oneToMany = stageOneToMany({ ...input, mappings, selectedTargets: [0, 1, 2] });
+    const grouped = stageGrouped({ ...input, groups: [{ label: 'Group', mappings, targetIndices: [0, 1, 2] }] });
+    for (const { jobs: built } of [oneToMany, grouped, stageSequential(input)]) {
+      assert.deepEqual(built.map((job) => job.payload.detection), ['Selected face', 'First found', 'First found']);
+    }
+    assert.equal(stageCartesian(input).jobs[2].payload.detection, 'First found');
+    assert.equal(stageSegments({ ...input, targetIndex: 1 }).jobs[0].payload.detection, 'First found');
+  });
+  emit('matrix_with_uncaptured_targets', jobs, jobs.map(triple));
+}
+
 group('Per-file matrix: auto-match by filename token');
 {
   const named = [

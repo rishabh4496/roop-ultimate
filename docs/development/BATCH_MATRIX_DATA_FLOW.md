@@ -199,8 +199,9 @@ entry goes through `_normalize_job` (326), the list is appended under the lock,
 ```
 
 The queue is then driven by `POST /api/queue/start` (the UI's "enqueue and
-start" calls it right after). Nothing about a job changes between here and
-dispatch except through `POST /api/queue/update`.
+start" calls it after the server accepts the staged jobs). A refused enqueue
+leaves the staged rows available for correction. After enqueueing, use
+`POST /api/queue/update` to change a job before dispatch.
 
 ## 5. Dispatch: `_run_one` (routes_queue.py:558), once per job, in order
 
@@ -231,6 +232,8 @@ dispatch except through `POST /api/queue/update`.
    not `None`, it runs once more with `enhancer = "None"`.
 6. Outcome → `COMPLETED` / `FAILED` (`_progress.error`) / `CANCELLED` /
    `INTERRUPTED` (deliberate stop); `job.outputs = _outputs_since(before)`.
+   Queued renders keep the output directory. If a video destination already
+   exists, the new video gets a numbered filename.
 
 ## 6. Render: `_run_swap` → the pipeline (api.py:4603)
 
@@ -288,7 +291,7 @@ outcome depends on the swap mode the job was staged with, not on the strategy.
 | **Person rank mapped to skip** (`-1`), mode `Selected face` (single person) | `face_mapping[r] = -1` | accepted | passes | `source_index = -1` → every face of that person hits `refused: no source faceset for that person`; frame written unswapped; job `COMPLETED` |
 | **Person rank mapped to skip**, mode `Selected people` with ≥2 people | `face_mapping[r] = -1` | accepted | passes | `mapped_facesets` puts an empty `FaceSet()` at rank `r`; routing counts the face as `swapped (identity match)` but `process_face` returns it untouched (F3). Job `COMPLETED`, output shows that person un-swapped |
 | **Person rank mapped to skip**, mode `All faces` / `First found` / gender | `face_mapping[r] = -1` | accepted | passes | `resolve_selected_source_index` → `-1` when the highlighted gallery source is mapped to nobody → `refused: no valid selected source`; nothing swapped |
-| **Target has no captured people** and mode is `Selected face` / `Selected people` (the strategies' default) | `selection_state.person_id = 0` (a rank) | accepted | `FAILED "selection invalidated: target person 0 was removed"` — rank 0 cannot be resolved to a person id on that media | never runs |
+| **Target has no captured people** and mode is `Selected face` / `Selected people` | `selection_state.person_id = 0` (a rank) | accepted | `FAILED "selection invalidated: target person 0 was removed"` — rank 0 cannot be resolved to a person id on that media | never runs |
 | **Primary faceset (row 0) removed from the gallery after queueing** | `source_id` / `selected_source_id` = the old id | accepted | `FAILED "selection invalidated: source <id> was removed"` (`source_identity_id` check) | never runs |
 | **A non-primary faceset (row ≥1) removed after queueing** | `source_mapping_ids[r]` = the old id | accepted | passes (only the primary is validated, F2) | `resolve_source_mapping_ids` → `-1` for that rank → behaves as "mapped to skip" above, silently |
 | **Faceset removed and re-added** (same file) | same `id` (absolute path) | — | re-resolves to the new gallery position by id | normal |
@@ -317,8 +320,12 @@ retried from the queue panel (`POST /api/queue/retry`).
   validated against the job's target") and
   `test_batch_matrix_queue.py::test_matrix_rank1_with_a_smaller_active_bank_reaches_the_second_person`.
 
-Not fixed here:
+* **Default mode for uncaptured targets.** A single rank-0 automatic mapping
+  uses `First found` on a target with no captured faces. The staged jobs show
+  the effective mode. Explicit person selections and imported timeline cuts
+  still require captured people.
 
+Not fixed here:
 
 * **F1 — `target_media_id` is dropped.** `/api/state.targets[i].media_id`
   exists and `_run_one` prefers it, but `enqueueStagedJobs` forwards only
@@ -347,7 +354,3 @@ Not fixed here:
   staged job with a 400 the UI shows as "Failed to enqueue jobs". The
   client normalizes the mapping to `-1` deliberately (never to source 0),
   but does not refuse to stage it.
-* **Default mode needs captured people.** Every strategy defaults to
-  `'Selected face'`, which requires the target to have a captured person; a
-  fresh multi-file batch with no captures fails every job at dispatch with
-  "target person 0 was removed". `All faces` / `First found` do not.

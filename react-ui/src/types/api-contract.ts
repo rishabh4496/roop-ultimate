@@ -415,6 +415,7 @@ export interface TargetMediaItem {
   name: string;
   filename: string;
   preview_available: boolean;
+  has_target_faces?: boolean;
   startframe: number;
   endframe: number;
   start_frame: number;

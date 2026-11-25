@@ -722,7 +722,18 @@ def replace_template(file_path: str, index: int = 0) -> str:
         template, {"index": str(index), "file": fn, "timestamp": datetime.now().strftime('%Y%m%d%H%M%S')}
     )
 
-    return os.path.join(roop.globals.output_path, f"{replaced_filename}{ext}")
+    stem = os.path.join(roop.globals.output_path, replaced_filename)
+    destination = f"{stem}{ext}"
+    if getattr(roop.globals, "_dashboard_job", None) is None:
+        return destination
+
+    # Each queue job starts at file index zero. Give new outputs a distinct
+    # name when the template resolves to a previous job's file.
+    suffix = 2
+    while os.path.lexists(destination):
+        destination = f"{stem}_{suffix}{ext}"
+        suffix += 1
+    return destination
 
 
 def create_temp(target_path: str) -> None:

@@ -824,10 +824,9 @@ def _project_face_bank(target_path):
 def _clear_output_folder(has_checkpoint=False):
     """Apply "Clear output folder before each run". Returns True when it cleared.
 
-    Never for a project that owns committed segments (its partial output is the only safe
-    resume prefix) and never for one slice of a split render: the earlier slices in the
-    folder are finished deliverables, and with `clear_output` on (the default) each slice used
-    to wipe the previous ones so only the last survived."""
+    Queued renders share an output directory across jobs and restarts. Preserve
+    earlier deliverables and any committed segments needed to resume a project.
+    """
     if not roop_globals.CFG.clear_output:
         return False
     spec = getattr(roop_globals, "_segment_spec", None)
@@ -835,7 +834,7 @@ def _clear_output_folder(has_checkpoint=False):
         print(f"[Segments] keeping the output folder: segment {spec.index}/{spec.count} of a "
               f"split render (clear_output is skipped)", flush=True)
         return False
-    if has_checkpoint:
+    if has_checkpoint or getattr(roop_globals, "_dashboard_job", None) is not None:
         return False
     out = roop_globals.output_path
     keep = _segment_output.SEGMENTS_DIRNAME
@@ -2485,6 +2484,9 @@ def _refresh_target_frames(idx):
 def _target_entry_dict(entry):
     media_id = _ensure_target_media_id(entry)
     total = getattr(entry, "total_frames", 0) or entry.endframe or 1
+    with _target_context_lock:
+        has_target_faces = bool(roop_globals.TARGET_FACES if media_id == state.active_target_media_id
+                                else _target_contexts.load(media_id).target_faces)
     return {
         # `media_id` is the identity used by target contexts, queues, and the
         # React key.  The numeric index remains a transport/UI position only.
@@ -2495,6 +2497,7 @@ def _target_entry_dict(entry):
         # this cheap availability bit so clients do not deliberately request
         # a thumbnail that the preview endpoint must correctly return as 404.
         "preview_available": os.path.isfile(entry.filename),
+        "has_target_faces": has_target_faces,
         "startframe": entry.startframe,
         "endframe": entry.endframe,
         "start_frame": entry.startframe,

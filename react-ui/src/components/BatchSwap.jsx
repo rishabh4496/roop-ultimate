@@ -12,6 +12,7 @@ import {
   autoMatchMatrixConfig,
   buildBatchJobPayload,
   defaultMatrixRow,
+  batchSwapMode,
   queueRequestFromStagedJobs,
   stageCartesian,
   stageGrouped,
@@ -98,7 +99,7 @@ export default function BatchSwap({ settings = {}, notify, onUpdateSetting }) {
 
   // ── Strategy 1: One-to-Many state ──
   const [mode1Mappings, setMode1Mappings] = useState([{ personRank: 0, sourceIdx: 0 }]);
-  const [mode1SwapMode, setMode1SwapMode] = useState('Selected face');
+  const [mode1SwapMode, setMode1SwapMode] = useState('');
   const [mode1SelectedTargets, setMode1SelectedTargets] = useState([]); // indices
   const [mode1Enhancer, setMode1Enhancer] = useState('Restoreformer++');
   const [mode1FaceDistance, setMode1FaceDistance] = useState(0.75);
@@ -110,7 +111,7 @@ export default function BatchSwap({ settings = {}, notify, onUpdateSetting }) {
       label: 'Batch Group A',
       targetIndices: [],
       mappings: [{ personRank: 0, sourceIdx: 0 }],
-      swapMode: 'Selected face',
+      swapMode: '',
       enhancer: 'Restoreformer++',
       faceDistance: 0.75,
     },
@@ -209,7 +210,7 @@ export default function BatchSwap({ settings = {}, notify, onUpdateSetting }) {
       const data = JSON.parse(raw);
       if (data.batchMode) setBatchMode(data.batchMode);
       if (Array.isArray(data.mode1Mappings)) setMode1Mappings(data.mode1Mappings);
-      if (data.mode1SwapMode) setMode1SwapMode(data.mode1SwapMode);
+      if (typeof data.mode1SwapMode === 'string') setMode1SwapMode(data.mode1SwapMode);
       if (data.mode1Enhancer) setMode1Enhancer(data.mode1Enhancer);
       if (data.mode1FaceDistance != null) setMode1FaceDistance(data.mode1FaceDistance);
       if (Array.isArray(data.groups)) setGroups(data.groups);
@@ -361,7 +362,7 @@ export default function BatchSwap({ settings = {}, notify, onUpdateSetting }) {
         }
         if (p.batchMode) setBatchMode(p.batchMode);
         if (Array.isArray(p.mode1Mappings)) setMode1Mappings(p.mode1Mappings);
-        if (p.mode1SwapMode) setMode1SwapMode(p.mode1SwapMode);
+        if (typeof p.mode1SwapMode === 'string') setMode1SwapMode(p.mode1SwapMode);
         if (Array.isArray(p.mode1SelectedTargets)) setMode1SelectedTargets(p.mode1SelectedTargets);
         if (p.mode1Enhancer) setMode1Enhancer(p.mode1Enhancer);
         if (p.mode1FaceDistance != null) setMode1FaceDistance(p.mode1FaceDistance);
@@ -459,7 +460,7 @@ export default function BatchSwap({ settings = {}, notify, onUpdateSetting }) {
         label: `Batch Group ${String.fromCharCode(64 + nextId)}`,
         targetIndices: [],
         mappings: [{ personRank: 0, sourceIdx: 0 }],
-        swapMode: 'Selected face',
+        swapMode: '',
         enhancer: 'Restoreformer++',
         faceDistance: 0.75,
       },
@@ -697,12 +698,11 @@ export default function BatchSwap({ settings = {}, notify, onUpdateSetting }) {
       const jobsToAdd = queueRequestFromStagedJobs(stagedJobs);
 
       // Uses atomic /api/queue/add_batch via useQueue hook
-      await queue.addMany(jobsToAdd);
+      if (!await queue.addMany(jobsToAdd)) return;
       notify?.(`Enqueued ${jobsToAdd.length} job(s) to server queue`);
       setStagedJobs([]);
 
-      if (autoStart) {
-        await queue.start();
+      if (autoStart && await queue.start()) {
         notify?.('Started batch processing queue!');
       }
     } catch (e) {
@@ -1269,6 +1269,7 @@ export default function BatchSwap({ settings = {}, notify, onUpdateSetting }) {
                   onChange={(e) => setMode1SwapMode(e.target.value)}
                   className="w-full bg-black/50 border border-white/10 rounded-xl px-3 py-2 text-xs text-white"
                 >
+                  <option value="">Automatic (First found for uncaptured clips)</option>
                   <option value="Selected face">Selected face (By Person Rank)</option>
                   <option value="Selected people">Selected people (Mapped persons)</option>
                   <option value="All input faces">All input faces (Gallery Order)</option>
@@ -1645,15 +1646,7 @@ export default function BatchSwap({ settings = {}, notify, onUpdateSetting }) {
           ) : (
             <div className="space-y-3 max-h-[550px] overflow-y-auto pr-1">
               {filteredMatrixTargets.map(({ target, originalIndex: tIdx }) => {
-                const cfg = matrixConfig[tIdx] || {
-                  mappings: [{ personRank: 0, sourceIdx: 0 }],
-                  swapMode: 'Selected face',
-                  enabled: true,
-                  enhancer: 'Restoreformer++',
-                  faceDistance: 0.75,
-                  frameStart: target.start_frame || 1,
-                  frameEnd: target.end_frame || target.frames || 1,
-                };
+                const cfg = matrixConfig[tIdx] || defaultMatrixRow(target, settings);
 
                 return (
                   <div
@@ -1742,6 +1735,25 @@ export default function BatchSwap({ settings = {}, notify, onUpdateSetting }) {
                         </button>
                       </div>
                     </div>
+
+                    <label className="flex items-center gap-2 text-micro text-muted">
+                      Swap mode
+                      <select
+                        aria-label={`${target.name}: swap mode`}
+                        value={cfg.swapMode || ''}
+                        disabled={!cfg.enabled}
+                        onChange={(e) => setMatrixConfig((prev) => ({
+                          ...prev, [tIdx]: { ...cfg, swapMode: e.target.value },
+                        }))}
+                        className="bg-black/60 border border-white/10 rounded px-1.5 py-0.5 text-white"
+                      >
+                        <option value="">Automatic ({batchSwapMode(target, cfg.mappings)})</option>
+                        <option value="Selected face">Selected face</option>
+                        <option value="Selected people">Selected people</option>
+                        <option value="First found">First found</option>
+                        <option value="All faces">All faces</option>
+                      </select>
+                    </label>
 
                     {/* Mappings Grid */}
                     <div className="space-y-2">
@@ -2030,7 +2042,7 @@ export default function BatchSwap({ settings = {}, notify, onUpdateSetting }) {
                       {job.target_name}
                     </span>
                     <span className="text-micro text-white/50 block truncate">
-                      Source: {job.source_name}
+                      Source: {job.source_name}{job.payload?.detection ? ` · ${job.payload.detection}` : ''}
                     </span>
                     <div className="flex flex-wrap gap-1 mt-1">
                       {job.mappings?.map((m, i) => (
