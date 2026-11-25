@@ -50,6 +50,7 @@ export default function CurveEditor({
   const [sel, setSel] = useState(null);                       // the selected key's frame
   const [ghost, setGhost] = useState(null);                   // { frame, toFrame, toValue } while a key is dragged
   const graphRef = useRef(null);
+  const valueFieldRef = useRef(null);
   const dragRef = useRef(null);
   const selKey = list.find((k) => k.frame === sel) || null;
   const selIsLast = selKey && list[list.length - 1] === selKey;
@@ -143,6 +144,8 @@ export default function CurveEditor({
 
   const down = (k) => (e) => {
     e.stopPropagation();
+    // Settle the value while its field still belongs to the previous key.
+    valueFieldRef.current?.querySelector('input:focus')?.blur();
     e.currentTarget.setPointerCapture?.(e.pointerId);
     dragRef.current = { frame: k.frame, moved: false, x: e.clientX, y: e.clientY };
     setSel(k.frame);
@@ -261,19 +264,22 @@ export default function CurveEditor({
         {selKey && !selIsLast && <span className="text-note text-[var(--text-muted)]">{INTERP_LABELS[selKey.interp]}</span>}
         <span className="flex-1" />
         {selKey && (
-          <NumericInput
-            label="Value"
-            testId="curve-value"
-            ariaLabel={`${param.label} value at the selected key`}
-            value={selKey.value}
-            min={param.min}
-            max={param.max}
-            step={param.quantum}
-            unit={param.unit}
-            onCommit={(n) => api.setValue(paramId, selKey.frame, n)}
-            className="gap-1.5 text-note text-[var(--text-muted)]"
-            inputClassName="w-[8ch] rounded-md border border-[var(--border-color)] bg-[var(--input-bg)] py-0.5 text-center font-mono text-mini tabular-nums text-[var(--text-main)] outline-none focus:border-[var(--accent)]"
-          />
+          <div ref={valueFieldRef} className="contents">
+            <NumericInput
+              key={`${paramId}:${selKey.frame}`}
+              label="Value"
+              testId="curve-value"
+              ariaLabel={`${param.label} value at the selected key`}
+              value={selKey.value}
+              min={param.min}
+              max={param.max}
+              step={param.quantum}
+              unit={param.unit}
+              onCommit={(n) => api.setValue(paramId, selKey.frame, n)}
+              className="gap-1.5 text-note text-[var(--text-muted)]"
+              inputClassName="w-[8ch] rounded-md border border-[var(--border-color)] bg-[var(--input-bg)] py-0.5 text-center font-mono text-mini tabular-nums text-[var(--text-main)] outline-none focus:border-[var(--accent)]"
+            />
+          </div>
         )}
       </div>
 

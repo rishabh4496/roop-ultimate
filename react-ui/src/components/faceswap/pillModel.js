@@ -138,7 +138,6 @@ export const MODULAR_FLOW_NODES = Object.freeze([
     label: 'Detect & Align',
     shortLabel: 'Detect',
     latencyKey: 'warp',
-    fallbackMs: 3.4,
   },
   {
     id: 'hyperswap',
@@ -147,7 +146,6 @@ export const MODULAR_FLOW_NODES = Object.freeze([
     label: 'HyperSwap',
     shortLabel: 'Swap',
     latencyKey: 'model',
-    fallbackMs: 11.2,
   },
   {
     id: 'gaze_mouth',
@@ -156,7 +154,6 @@ export const MODULAR_FLOW_NODES = Object.freeze([
     label: 'Gaze & Mouth',
     shortLabel: 'Gaze/Mouth',
     latencyKey: 'lipsync',
-    fallbackMs: 4.2,
   },
   {
     id: 'xseg_roto',
@@ -165,7 +162,6 @@ export const MODULAR_FLOW_NODES = Object.freeze([
     label: 'XSeg3 + Roto',
     shortLabel: 'Mask',
     latencyKey: 'mask',
-    fallbackMs: 6.8,
   },
   {
     id: 'restore_ultra',
@@ -174,7 +170,6 @@ export const MODULAR_FLOW_NODES = Object.freeze([
     label: 'Restore Ultra',
     shortLabel: 'Restore',
     latencyKey: 'restore',
-    fallbackMs: 14.5,
   },
   {
     id: 'relight_lut',
@@ -183,7 +178,6 @@ export const MODULAR_FLOW_NODES = Object.freeze([
     label: 'Relight & LUT',
     shortLabel: 'Relight',
     latencyKey: 'blend',
-    fallbackMs: 4.1,
   },
 ]);
 

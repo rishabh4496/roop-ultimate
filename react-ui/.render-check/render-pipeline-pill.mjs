@@ -22,7 +22,7 @@ const report = JSON.parse(readFileSync(join(here, 'pipeline-report.fixture.json'
 const React = (await import('react')).default;
 const { renderToStaticMarkup } = await import('react-dom/server');
 const P = await import('../src/components/faceswap/pillModel.js');
-const { PipelinePillView } = await import('../src/components/faceswap/PipelinePill.jsx');
+const { PipelinePillView, ModularPipelineFlowStrip } = await import('../src/components/faceswap/PipelinePill.jsx');
 const store = await import('../src/store/telemetryStore.js');
 
 let failures = 0;
@@ -38,6 +38,10 @@ const S1 = 'STAGE_1_SPARSE_PRESCAN';
 const S2 = 'STAGE_2_ACTIVE_PREPASS';
 const S3 = 'STAGE_3_MAIN_SWAP';
 const stage = (state, extra = {}) => ({ state, stage_progress_pct: state === 'DONE' ? 100 : 0, skipped_frames_pct: 46.7, ...extra });
+{
+  const idleFlow = html(React.createElement(ModularPipelineFlowStrip));
+  ok('pipeline nodes without telemetry show an unavailable timing', (text(idleFlow).match(/– ms/g) || []).length === 6);
+}
 const pipe = (a, b, c, summary = {}) => ({ stage: null, stages: { [S1]: a, [S2]: b, [S3]: c }, summary });
 const states = (m) => m.steps.map((s) => s.state).join(',');
 

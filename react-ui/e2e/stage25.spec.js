@@ -194,8 +194,11 @@ test.describe('curve editor (300-frame clip)', () => {
   test('a render of the range is queued as stepped pieces that follow the curve', async ({ page }) => {
     await openCurves(page);
     await keyAt(page, 1, 0);
-    await keyAt(page, 101, 1);
+    await keyAt(page, 101);
+    await page.getByTestId('curve-value').fill('1');
     await page.getByTestId('curve-key-1').click();
+    await expect(page.getByTestId('curve-key-1')).toHaveAccessibleName(/value 0\.00/);
+    await expect(page.getByTestId('curve-key-101')).toHaveAccessibleName(/value 1\.00/);
     await page.getByTestId('curve-interp-linear').click();
     await expect(page.getByTestId('curve-plan'), 'the editor says how a render will cut the range').toContainText(/pieces/);
 
@@ -223,6 +226,24 @@ test.describe('curve editor (300-frame clip)', () => {
     expect(new Set(jobs.map((j) => j.segment?.group)).size).toBe(1);
   });
 
+  test('a rejected range enqueue does not announce success or start the old queue', async ({ page }) => {
+    await openCurves(page);
+    await keyAt(page, 1, 0);
+    await keyAt(page, 101, 1);
+    let startCalls = 0;
+    await page.route('**/api/queue/start', (route) => {
+      startCalls += 1;
+      return route.fulfill({ status: 400, json: { message: 'Unexpected queue start' } });
+    });
+    await page.route('**/api/queue/add_batch', (route) => route.fulfill({
+      status: 400, json: { message: 'Enqueue refused for this test' },
+    }));
+    await page.getByTestId('render-range').click();
+    await expect(page.getByRole('button', { name: /Dismiss notification: Enqueue refused for this test/ })).toBeVisible();
+    await expect(page.getByRole('button', { name: /Dismiss notification: Queued .* scene overrides/ })).toHaveCount(0);
+    expect(startCalls).toBe(0);
+  });
+
   test('the graph is on the timeline’s own x-axis: zooming the timeline moves the keys with it', async ({ page }) => {
     const tl = await openCurves(page);
     await keyAt(page, 100, 0.5);
@@ -236,9 +257,9 @@ test.describe('curve editor (300-frame clip)', () => {
     const v0 = { s: Number(await tl.getAttribute('data-view-start')), e: Number(await tl.getAttribute('data-view-end')) };
     expect(Math.abs(before - (100 - v0.s) / (v0.e - v0.s))).toBeLessThan(0.01);
 
-    const lane = page.getByTestId('timeline-stack');
-    const box = await lane.boundingBox();
-    await page.mouse.move(box.x + box.width * 0.33, box.y + 40);
+    const graph = page.getByTestId('curve-hit');
+    await graph.evaluate((el) => el.scrollIntoView({ block: 'center' }));
+    await graph.hover();
     await page.keyboard.down('Control');
     for (let i = 0; i < 4; i++) await page.mouse.wheel(0, -240);
     await page.keyboard.up('Control');
@@ -265,6 +286,13 @@ test.describe('curve editor (300-frame clip)', () => {
   });
 
   test('a Relight curve says so when Light Harmonizer is off, and an Identity Morph curve needs a blender', async ({ page }) => {
+    await page.route('**/api/state', async (route) => {
+      const response = await route.fetch();
+      const state = await response.json();
+      state.source_faces = state.source_faces.slice(0, 1);
+      state.source_faces_info = state.source_faces_info.slice(0, 1);
+      await route.fulfill({ response, json: state });
+    });
     await openCurves(page);
     await page.getByTestId('curve-param-relight').click();
     await keyAt(page, 30);

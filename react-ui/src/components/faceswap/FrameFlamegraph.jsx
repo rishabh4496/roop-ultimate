@@ -286,7 +286,7 @@ export default function FrameFlamegraph({
               <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: s.color }} />
               <span>{s.label}:</span>
               <span className="text-white font-bold">{s.current}ms</span>
-              <span className="text-white/40">({s.sharePct}%)</span>
+              <span className="text-white/60">({s.sharePct}%)</span>
             </div>
           ))}
         </div>

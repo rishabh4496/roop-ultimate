@@ -167,7 +167,6 @@ export default function InteractivePreview({
   const lensAfterImgRef = useRef(null);
   const lensPendingRef = useRef(null);
   const lensRafRef = useRef(null);
-  const lensBoxRef = useRef('');
 
   // Feature: Sub-Pixel Mask Brush & Dual Concentric Cursor
   const [maskBrushActive, setMaskBrushActive] = useState(false);
@@ -693,8 +692,8 @@ export default function InteractivePreview({
         // While the Pen is active only a middle-button or Space drag may pan; a plain left drag is
         // the tool's, and must not also move the compare divider underneath it.
         if (rotoActive && !(event.button === 1 || event.buttons === 4 || isSpaceDownRef.current)) return;
-        if (maskBrushActive && down) {
-          drawMaskStroke(event, false);
+        if (maskBrushActive) {
+          if (down && strokeRef.current) drawMaskStroke(event, false);
           return;
         }
         // Pan condition: Spacebar + Left Drag OR Middle-Mouse Drag OR Left Drag when Zoomed
@@ -782,22 +781,16 @@ export default function InteractivePreview({
 
               const LENS_R = 90;
               glass.style.transform = `translate3d(${p.x - LENS_R}px, ${p.y - LENS_R}px, 0)`;
-              const box = `${p.imgW}x${p.imgH}`;
-              if (box !== lensBoxRef.current) {
-                lensBoxRef.current = box;
-                if (bImg) {
-                  bImg.style.width = `${p.imgW * loupePower}px`;
-                  bImg.style.height = `${p.imgH * loupePower}px`;
-                }
-                if (aImg) {
-                  aImg.style.width = `${p.imgW * loupePower}px`;
-                  aImg.style.height = `${p.imgH * loupePower}px`;
-                }
-              }
+              const width = `${p.imgW * loupePower}px`;
+              const height = `${p.imgH * loupePower}px`;
               const tx = -((p.x - p.imgX) * loupePower - LENS_R);
               const ty = -((p.y - p.imgY) * loupePower - LENS_R);
-              if (bImg) bImg.style.transform = `translate3d(${tx}px, ${ty}px, 0)`;
-              if (aImg) aImg.style.transform = `translate3d(${tx}px, ${ty}px, 0)`;
+              for (const img of [bImg, aImg]) {
+                if (!img) continue;
+                if (img.style.width !== width) img.style.width = width;
+                if (img.style.height !== height) img.style.height = height;
+                img.style.transform = `translate3d(${tx}px, ${ty}px, 0)`;
+              }
             });
           }
         }
@@ -1114,6 +1107,7 @@ export default function InteractivePreview({
           </span>
           {roleLabel && (
             <span
+              data-face-role-label={i}
               className={`absolute -top-6 left-14 ${roleClass} text-white text-micro font-bold px-1.5 py-0.5 rounded whitespace-nowrap pointer-events-none`}
             >
               {roleLabel}
@@ -1124,7 +1118,7 @@ export default function InteractivePreview({
               type="button"
               data-testid="pin-identity"
               aria-pressed={!!pinned}
-              className={`absolute left-1 bottom-1 ${pinned ? 'bg-sky-500 text-black' : 'bg-black/80 text-white hover:bg-sky-600'} backdrop-blur text-nano font-bold px-1.5 py-0.5 rounded whitespace-nowrap pointer-events-auto cursor-pointer`}
+              className={`absolute left-1 ${togglable ? 'bottom-7' : 'bottom-1'} ${pinned ? 'bg-sky-500 text-black' : 'bg-black/80 text-white hover:bg-sky-600'} backdrop-blur text-nano font-bold px-1.5 py-0.5 rounded whitespace-nowrap pointer-events-auto cursor-pointer`}
               title={pinned
                 ? 'Remove the pin: the renderer goes back to deciding who this is automatically'
                 : `Tell the renderer this person is ${trackLabel(personIds[i] ?? i)} on this frame. The tracker's track through this box is then locked to this person's source and is never re-assigned.`}
@@ -1137,7 +1131,9 @@ export default function InteractivePreview({
           {togglable && (
             <button
               type="button"
-              className="absolute left-1 -bottom-6 bg-black/80 backdrop-blur text-white text-nano font-bold px-1.5 py-0.5 rounded whitespace-nowrap pointer-events-auto cursor-pointer hover:bg-[var(--accent)]"
+              data-face-exclude={i}
+              aria-pressed={!!info.excluded}
+              className="absolute left-1 bottom-1 bg-black/80 backdrop-blur text-white text-nano font-bold px-1.5 py-0.5 rounded whitespace-nowrap pointer-events-auto cursor-pointer hover:bg-[var(--accent)]"
               onPointerDown={(e) => e.stopPropagation()}
               onClick={(e) => { e.stopPropagation(); onToggleExclude(i); }}
             >
@@ -1226,7 +1222,7 @@ export default function InteractivePreview({
       <button
         type="button"
         onClick={handlePresetFit}
-        className="px-1.5 py-0.5 rounded text-nano font-mono font-bold bg-white/10 hover:bg-white/20 text-white/80 hover:text-white transition-colors"
+        className="px-1.5 py-0.5 rounded text-xs font-mono font-bold bg-white/10 hover:bg-white/20 text-white/80 hover:text-white transition-colors"
         title="Fit whole frame to view (F)"
       >
         Fit (F)
@@ -1235,7 +1231,7 @@ export default function InteractivePreview({
       <button
         type="button"
         onClick={handlePresetFill}
-        className="px-1.5 py-0.5 rounded text-nano font-mono font-bold bg-white/10 hover:bg-white/20 text-white/80 hover:text-white transition-colors"
+        className="px-1.5 py-0.5 rounded text-xs font-mono font-bold bg-white/10 hover:bg-white/20 text-white/80 hover:text-white transition-colors"
         title="Fill stage box"
       >
         Fill
@@ -1244,7 +1240,7 @@ export default function InteractivePreview({
       <button
         type="button"
         onClick={handlePreset1to1}
-        className="px-1.5 py-0.5 rounded text-nano font-mono font-bold bg-white/10 hover:bg-white/20 text-white/80 hover:text-white transition-colors"
+        className="px-1.5 py-0.5 rounded text-xs font-mono font-bold bg-white/10 hover:bg-white/20 text-white/80 hover:text-white transition-colors"
         title="1:1 Native pixel resolution (Shift+1)"
         aria-label="1:1 Native pixel resolution (Shift+1)"
       >
@@ -1254,7 +1250,7 @@ export default function InteractivePreview({
       <button
         type="button"
         onClick={handlePreset200}
-        className="px-1.5 py-0.5 rounded text-nano font-mono font-bold bg-white/10 hover:bg-white/20 text-white/80 hover:text-white transition-colors"
+        className="px-1.5 py-0.5 rounded text-xs font-mono font-bold bg-white/10 hover:bg-white/20 text-white/80 hover:text-white transition-colors"
         title="200% Zoom (Shift+2)"
         aria-label="200% Zoom (Shift+2)"
       >
@@ -1264,7 +1260,7 @@ export default function InteractivePreview({
       <button
         type="button"
         onClick={handlePreset400}
-        className="px-1.5 py-0.5 rounded text-nano font-mono font-bold bg-white/10 hover:bg-white/20 text-white/80 hover:text-white transition-colors"
+        className="px-1.5 py-0.5 rounded text-xs font-mono font-bold bg-white/10 hover:bg-white/20 text-white/80 hover:text-white transition-colors"
         title="400% Zoom (Shift+4)"
         aria-label="400% Zoom (Shift+4)"
       >
@@ -1277,15 +1273,15 @@ export default function InteractivePreview({
       <button
         type="button"
         onClick={() => setLockTargetFace((v) => !v)}
-        className={`px-2 py-0.5 rounded text-nano font-bold flex items-center gap-1 transition-all ${
+        className={`px-2 py-0.5 rounded text-xs font-bold flex items-center gap-1 transition-all ${
           lockTargetFace
             ? 'bg-emerald-500 text-black font-extrabold shadow-[0_0_8px_rgba(16,185,129,0.5)]'
             : 'bg-white/10 hover:bg-white/20 text-white/80 hover:text-white'
         }`}
         title="Lock to Target Face Auto-Follow camera (T)"
-        aria-label="Lock to Target Face Auto-Follow camera (T)"
+        aria-pressed={lockTargetFace}
       >
-        <span>🎯 Lock Face (L)</span>
+        <span>🎯 Lock Face (T)</span>
       </button>
     </div>
   );
@@ -1402,6 +1398,7 @@ export default function InteractivePreview({
               type="button"
               onClick={() => setMagnifierActive((m) => !m)}
               title="Toggle 3.5×–8× Floating Magnifier Loupe (G)"
+              aria-pressed={magnifierActive}
               className={`px-2 h-7 rounded-l-lg text-micro font-bold flex items-center gap-1 transition-colors ${
                 magnifierActive
                   ? 'text-cyan-300 bg-cyan-500/20 border border-cyan-400/40 shadow-[0_0_10px_rgba(6,182,212,0.3)]'
@@ -1891,6 +1888,7 @@ export default function InteractivePreview({
                 <button
                   key={pct}
                   type="button"
+                  aria-label={`Move the compare split to ${pct}%`}
                   onClick={() => {
                     sliderPosRef.current = pct;
                     setSliderPosition(pct);
@@ -2052,6 +2050,7 @@ export default function InteractivePreview({
             <>
               <canvas
                 ref={maskCanvasRef}
+                data-testid="mask-brush-canvas"
                 width={imgDim.w}
                 height={imgDim.h}
                 className={`absolute inset-0 w-full h-full object-contain z-[35] ${
@@ -2133,6 +2132,7 @@ export default function InteractivePreview({
       {magnifierActive && (
         <div
           ref={lensGlassRef}
+          data-testid="magnifier-loupe"
           className="absolute rounded-full border-2 border-cyan-400 shadow-[0_0_35px_rgba(6,182,212,0.7)] overflow-hidden pointer-events-none z-50 bg-black"
           style={{ width: 180, height: 180, left: 0, top: 0, display: 'none', willChange: 'transform' }}
         >

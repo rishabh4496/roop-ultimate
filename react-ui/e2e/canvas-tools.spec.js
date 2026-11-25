@@ -22,7 +22,7 @@ async function openStage(page) {
   return stage;
 }
 
-const brushCanvas = (stage) => stage.locator('canvas.cursor-crosshair');
+const brushCanvas = (stage) => stage.getByTestId('mask-brush-canvas');
 
 /** Where an object-contain picture of w x h sits in the canvas's box (independent of the app code). */
 const contained = (box, w, h) => {
@@ -36,16 +36,24 @@ const alphaAt = (canvas, x, y) => canvas.evaluate((c, [px, py]) => {
   return d[3];
 }, [x, y]);
 
-async function paint(page, stage, mode, fx, fy, sizePx = 30, at = null) {
+async function paint(page, stage, mode, fx, fy, sizePx = 30, zoomed = false) {
   await stage.getByRole('button', { name: 'Mask Brush' }).click();
+  if (zoomed) await stage.evaluate((element) => element.scrollIntoView({ block: 'center' }));
   const canvas = brushCanvas(stage);
   await expect(canvas).toBeVisible();
   const dims = await canvas.evaluate((c) => ({ w: c.width, h: c.height }));
   const box = await canvas.boundingBox();
   const pic = contained(box, dims.w, dims.h);
-  // `at`: an absolute client point (when the picture is zoomed past the stage, a fraction of it may be off screen).
-  const px = at ? at.x : pic.left + pic.width * fx;
-  const py = at ? at.y : pic.top + pic.height * fy;
+  // A zoomed canvas extends beyond its clipping stage. Pick a fractional
+  // position inside the stage where its floating controls do not cover it.
+  const clearPoint = zoomed ? await canvas.evaluate((element) => {
+    const stageBox = element.closest('.preview-stage').getBoundingClientRect();
+    const positions = [[0.42, 0.42], [0.3, 0.45], [0.6, 0.4], [0.58, 0.5], [0.32, 0.58]];
+    return positions.map(([x, y]) => ({ x: stageBox.left + stageBox.width * x + 0.31, y: stageBox.top + stageBox.height * y + 0.21 }))
+      .find(({ x, y }) => document.elementFromPoint(x, y) === element) || null;
+  }) : { x: pic.left + pic.width * fx, y: pic.top + pic.height * fy };
+  expect(clearPoint, 'a visible point on the brush canvas').not.toBeNull();
+  const { x: px, y: py } = clearPoint;
   if (mode === 'erase') await stage.getByRole('button', { name: /erase/i }).first().click();
   await page.mouse.move(px, py);
   await page.mouse.down();
@@ -74,17 +82,21 @@ test('mask brush: still lands under the pointer after the stage is zoomed 2.5x',
   await page.waitForTimeout(600);
   const zoomed = await stage.locator('canvas').first().boundingBox();
   expect(zoomed.width, 'the stage is zoomed ~2.5x').toBeGreaterThan(unzoomed.width * 2);
-  const s = await paint(page, stage, 'paint', 0, 0, 30, at);
+  const s = await paint(page, stage, 'paint', 0, 0, 30, true);
   expect(await alphaAt(s.canvas, s.cx, s.cy), 'painted under the pointer when zoomed').toBeGreaterThan(0);
   expect(await alphaAt(s.canvas, s.cx + s.rCanvas * 1.4, s.cy), 'a zoomed 30 px brush is still 30 SCREEN px').toBe(0);
 });
 
 test('mask brush: erase removes what paint put down', async ({ page }) => {
   const stage = await openStage(page);
-  const s = await paint(page, stage, 'paint', 0.5, 0.5);
+  const s = await paint(page, stage, 'paint', 0.3125, 0.4375);
   expect(await alphaAt(s.canvas, s.cx, s.cy)).toBeGreaterThan(0);
-  await stage.getByRole('button', { name: /erase/i }).first().click();
-  await page.mouse.move(s.px, s.py);
+  const before = await s.canvas.evaluate((canvas) => canvas.toDataURL());
+  await stage.getByRole('button', { name: 'Erase', exact: true }).click();
+  expect(await s.canvas.evaluate((canvas) => canvas.toDataURL()), 'tool buttons do not paint').toBe(before);
+  await stage.scrollIntoViewIfNeeded();
+  const current = contained(await s.canvas.boundingBox(), s.dims.w, s.dims.h);
+  await page.mouse.move(current.left + current.width * 0.3125, current.top + current.height * 0.4375);
   await page.mouse.down();
   await page.mouse.up();
   expect(await alphaAt(s.canvas, s.cx, s.cy), 'erased').toBe(0);
@@ -159,7 +171,7 @@ test('compare: the wipe shows the swap on one side of the divider and the raw fr
 // ── The 3.5x Lens ───────────────────────────────────────────────────────────
 test('lens: shows the picture at 3.5x, centred on the pixel under the pointer (100% and 2.5x stage zoom)', async ({ page }) => {
   const stage = await openStage(page);
-  const lensBtn = stage.getByRole('button', { name: 'Lens', exact: true });
+  const lensBtn = stage.getByRole('button', { name: /^Loupe/ });
   await lensBtn.click();
 
   const check = async (label) => {
@@ -169,10 +181,11 @@ test('lens: shows the picture at 3.5x, centred on the pixel under the pointer (1
     const at = { x: Math.min(pic.x + pic.width * 0.42, sb.x + sb.width * 0.7) + 0.31, y: Math.max(pic.y + pic.height * 0.55, sb.y + sb.height * 0.45) + 0.17 };
     await page.mouse.move(at.x - 20, at.y - 20);
     await page.mouse.move(at.x, at.y, { steps: 3 });
-    const img = stage.getByAltText('Magnifier lens view');
+    const glass = stage.getByTestId('magnifier-loupe');
+    const img = glass.getByAltText('Swapped loupe detail');
     await expect(img, `${label}: the lens is up`).toBeVisible();
     const ib = await img.boundingBox();
-    const lens = await img.locator('xpath=..').boundingBox();
+    const lens = await glass.boundingBox();
     expect(ib.width / pic.width, `${label}: lens image width / picture width`).toBeGreaterThan(3.45);
     expect(ib.width / pic.width, `${label}: lens image width / picture width`).toBeLessThan(3.55);
     expect(ib.height / pic.height, `${label}: and the same for height`).toBeGreaterThan(3.45);
@@ -190,4 +203,17 @@ test('lens: shows the picture at 3.5x, centred on the pixel under the pointer (1
   await page.mouse.dblclick(sb.x + sb.width * 0.62, sb.y + sb.height * 0.58);   // 2.5x stage zoom
   await page.waitForTimeout(600);
   await check('2.5x');
+});
+
+test('loupe magnification resizes the image on the same frame', async ({ page }) => {
+  const stage = await openStage(page);
+  await stage.getByRole('button', { name: /^Loupe/ }).click();
+  const img = stage.getByAltText('Swapped loupe detail');
+  await stage.hover({ position: { x: 50, y: 80 } });
+  await expect(img).toBeVisible();
+  const original = await img.evaluate((image) => parseFloat(image.style.width));
+  expect(original).toBeGreaterThan(0);
+  await stage.getByRole('button', { name: '3.5×', exact: true }).click();
+  await stage.hover({ position: { x: 51, y: 80 } });
+  await expect.poll(() => img.evaluate((image) => parseFloat(image.style.width))).toBeCloseTo(original * 5 / 3.5, 2);
 });

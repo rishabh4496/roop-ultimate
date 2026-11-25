@@ -62,3 +62,13 @@ test('the zoom button\'s accessible name contains its visible "100%"', async ({ 
   await expect(zoom).toHaveText('100%');
   await expect(zoom).toHaveAccessibleName(/reset zoom/i);
 });
+
+test('keyboard bypass toggles its own pipeline control without soloing the node', async ({ page }) => {
+  await openTab(page, 'faceswap');
+  const node = page.getByTestId('flow-node-hyperswap');
+  await node.getByTestId('flow-bypass-hyperswap').press('Enter');
+  await expect(node).toHaveAttribute('data-bypassed', 'true');
+  await expect(node).toHaveAttribute('data-solo', 'false');
+  await node.getByTestId('flow-solo-hyperswap').press('Space');
+  await expect(node).toHaveAttribute('data-solo', 'true');
+});

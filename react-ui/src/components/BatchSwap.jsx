@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { API } from '../api';
 import { useApi } from '../useApi';
 import { Card, Section, Button, InfoBadge, MotionIcon } from './ui';
@@ -26,10 +26,31 @@ import {
 
 // Helper to convert index to target preview URL
 const targetPreviewUrl = (idx, target) => (
-  target?.preview_available === false
+  !target || target.preview_available === false
     ? null
     : `${API}/api/target/preview?index=${idx}&frame=1`
 );
+
+const mediaKey = (target) => target.media_id || target.name;
+const facesetKey = (source) => source.id || source.name;
+
+function indicesAfterRefresh(previous, current, key) {
+  const nextIndices = new Map(current.map((item, index) => [key(item), index]));
+  return previous.map((item) => nextIndices.get(key(item)));
+}
+
+function previewForStagedTarget(job, targets) {
+  const index = job.target_media_id
+    ? targets.findIndex((target) => target.media_id === job.target_media_id)
+    : job.target_index;
+  return targetPreviewUrl(index, targets[index]);
+}
+
+function previewForStagedFaceset(job, facesets, thumbnails) {
+  const sourceId = job.source_id || job.payload?.selected_source_id;
+  const index = sourceId ? facesets.findIndex((source) => source.id === sourceId) : job.source_index;
+  return thumbnails[index];
+}
 
 const ENHANCER_OPTIONS = [
   'Restoreformer++',
@@ -45,8 +66,11 @@ export default function BatchSwap({ settings = {}, notify, onUpdateSetting }) {
   const { getJSON, postFiles, postJSON } = useApi();
   // ── Server State ────────────────────────────────────────────────────────
   const [targets, setTargets] = useState([]);
+  const targetSnapshot = useRef([]);
+  const refreshSequence = useRef(0);
   const [sourceFaces, setSourceFaces] = useState([]);
   const [sourceFacesInfo, setSourceFacesInfo] = useState([]);
+  const sourceSnapshot = useRef([]);
   const [targetFaces, setTargetFaces] = useState([]);
   const [targetGroups, setTargetGroups] = useState([]);
   const [targetNames, setTargetNames] = useState([]);
@@ -130,12 +154,24 @@ export default function BatchSwap({ settings = {}, notify, onUpdateSetting }) {
 
   // ── Rehydrate State from Backend ────────────────────────────────────────
   const refreshBackendState = useCallback(async () => {
+    const sequence = ++refreshSequence.current;
     try {
       setLoadingState(true);
       const st = await getJSON('/api/state');
+      if (sequence !== refreshSequence.current) return;
       const sFaces = st.source_faces || [];
       const sInfo = st.source_faces_info || [];
       const tg = st.targets || [];
+      const previous = targetSnapshot.current;
+      const moved = indicesAfterRefresh(previous, tg, mediaKey);
+      const sourceMoved = indicesAfterRefresh(sourceSnapshot.current, sInfo, facesetKey);
+      const remap = (indices = []) => indices.map((index) => moved[index]).filter((index) => index !== undefined);
+      const remapSources = (mappings) => sourceMoved.length ? mappings?.map((mapping) => {
+        const sourceIdx = sourceMoved[mapping.sourceIdx] ?? -1;
+        return sourceIdx === mapping.sourceIdx ? mapping : { ...mapping, sourceIdx };
+      }) : mappings;
+      targetSnapshot.current = tg;
+      sourceSnapshot.current = sInfo;
       setSourceFaces(sFaces);
       setSourceFacesInfo(sInfo);
       setTargetFaces(st.target_faces || []);
@@ -143,41 +179,42 @@ export default function BatchSwap({ settings = {}, notify, onUpdateSetting }) {
       setTargetNames(st.target_names || []);
       setTargets(tg);
 
-      // Initialize default selected targets for Mode 1 if empty
-      setMode1SelectedTargets((prev) => (prev.length === 0 ? tg.map((_, i) => i) : prev));
-
-      // Initialize Matrix Config for all target files
+      setMode1SelectedTargets((prev) => previous.length ? remap(prev) : tg.map((_, index) => index));
+      setMode1Mappings(remapSources);
+      setGroups((prev) => prev.map((group) => ({
+        ...group,
+        targetIndices: previous.length ? remap(group.targetIndices) : group.targetIndices,
+        mappings: remapSources(group.mappings),
+      })));
+      setSplitTargetIdx((prev) => moved[prev] ?? 0);
+      // Keep each edited row with its media when the backend list changes.
       setMatrixConfig((prev) => {
-        const updated = { ...prev };
+        const updated = {};
+        if (previous.length) {
+          moved.forEach((index, oldIndex) => {
+            const row = prev[oldIndex];
+            if (index !== undefined && row) updated[index] = { ...row, mappings: remapSources(row.mappings) };
+          });
+        }
         tg.forEach((t, idx) => {
           if (!updated[idx]) {
-            updated[idx] = defaultMatrixRow(t, settings);
+            updated[idx] = (!previous.length && prev[idx]) || defaultMatrixRow(t, settings);
           }
         });
         return updated;
       });
     } catch (e) {
-      notify?.('Failed to load server state: ' + e.message, 'error');
+      if (sequence === refreshSequence.current && e.name !== 'AbortError') {
+        notify?.('Failed to load server state: ' + e.message, 'error');
+      }
     } finally {
-      setLoadingState(false);
+      if (sequence === refreshSequence.current) setLoadingState(false);
     }
   }, [notify, settings, getJSON]);
 
   useEffect(() => {
     refreshBackendState();
   }, [refreshBackendState]);
-
-  // Prune Stale Selected Target / Source Indices on list change
-  useEffect(() => {
-    if (targets.length === 0) return;
-    setMode1SelectedTargets((prev) => prev.filter((i) => i < targets.length));
-    setGroups((prev) =>
-      prev.map((g) => ({
-        ...g,
-        targetIndices: g.targetIndices.filter((i) => i < targets.length),
-      }))
-    );
-  }, [targets.length]);
 
   // ── Quick-Slot Preset Management ─────────────────────────────────────
   const saveQuickSlot = (slotNum) => {
@@ -399,6 +436,11 @@ export default function BatchSwap({ settings = {}, notify, onUpdateSetting }) {
   const stageWith = (result, done) => {
     if (result.error) {
       notify?.(result.error, 'error');
+      return;
+    }
+    const missingFaceset = ({ sourceIdx }) => !(Number(sourceIdx) >= 0 && Number(sourceIdx) < sourceFaces.length);
+    if (result.jobs.some((job) => job.source_index < 0 || job.mappings?.some(missingFaceset))) {
+      notify?.('Assign a loaded faceset to each mapping before staging jobs', 'error');
       return;
     }
     setStagedJobs((prev) => [...prev, ...result.jobs]);
@@ -784,7 +826,7 @@ export default function BatchSwap({ settings = {}, notify, onUpdateSetting }) {
               <div className="space-y-1.5 text-white/80">
                 <div className="flex items-center gap-2 text-emerald-400">
                   <span>✓</span>
-                  <span>All target media basenames resolved cleanly against workspace.</span>
+                  <span>Targets are queued with their media IDs when available.</span>
                 </div>
                 <div className="flex items-center gap-2 text-emerald-400">
                   <span>✓</span>
@@ -1064,7 +1106,7 @@ export default function BatchSwap({ settings = {}, notify, onUpdateSetting }) {
             <div className="flex flex-wrap gap-2 max-h-36 overflow-y-auto pr-1">
               {targets.map((target, idx) => (
                 <div
-                  key={idx}
+                  key={mediaKey(target)}
                   className="relative group/tgt flex items-center gap-2 p-1.5 pr-7 rounded-xl bg-white/5 border border-white/5 text-white/80 text-micro"
                 >
                   {targetPreviewUrl(idx, target) && (
@@ -1249,6 +1291,7 @@ export default function BatchSwap({ settings = {}, notify, onUpdateSetting }) {
                           onChange={(e) => updateMode1Mapping(mapIdx, { sourceIdx: parseInt(e.target.value, 10) })}
                           className="w-full bg-black/60 border border-white/10 rounded-lg px-2 py-1 text-micro text-white"
                         >
+                          <option value={-1} disabled>Choose a faceset</option>
                           {sourceFaces.map((_, idx) => (
                             <option key={idx} value={idx}>
                               {sourceFacesInfo[idx]?.name || `Faceset #${idx + 1}`}
@@ -1494,6 +1537,7 @@ export default function BatchSwap({ settings = {}, notify, onUpdateSetting }) {
                           onChange={(e) => updateGroupMapping(grp.id, mapIdx, { sourceIdx: parseInt(e.target.value, 10) })}
                           className="w-full bg-black/60 border border-white/10 rounded-lg px-2 py-1 text-micro text-white"
                         >
+                          <option value={-1} disabled>Choose a faceset</option>
                           {sourceFaces.map((_, idx) => (
                             <option key={idx} value={idx}>
                               {sourceFacesInfo[idx]?.name || `Faceset #${idx + 1}`}
@@ -1650,7 +1694,7 @@ export default function BatchSwap({ settings = {}, notify, onUpdateSetting }) {
 
                 return (
                   <div
-                    key={tIdx}
+                    key={mediaKey(target)}
                     className={`flex flex-col gap-3 p-3.5 rounded-xl border transition-all ${
                       cfg.enabled
                         ? 'bg-black/40 border-white/10 text-white'
@@ -1797,6 +1841,7 @@ export default function BatchSwap({ settings = {}, notify, onUpdateSetting }) {
                               onChange={(e) => updateMatrixMapping(tIdx, mapIdx, { sourceIdx: parseInt(e.target.value, 10) })}
                               className="w-full bg-black/60 border border-white/10 rounded-lg px-2 py-1 text-micro text-white"
                             >
+                              <option value={-1} disabled>Choose a faceset</option>
                               {sourceFaces.map((_, sIdx) => (
                                 <option key={sIdx} value={sIdx}>
                                   {sourceFacesInfo[sIdx]?.name || `Faceset #${sIdx + 1}`}
@@ -2003,9 +2048,9 @@ export default function BatchSwap({ settings = {}, notify, onUpdateSetting }) {
                 >
                   {/* Left: Target Media Preview */}
                   <div className="relative shrink-0">
-                    {targetPreviewUrl(job.target_index, targets[job.target_index]) && (
+                    {previewForStagedTarget(job, targets) && (
                       <img
-                        src={targetPreviewUrl(job.target_index, targets[job.target_index])}
+                        src={previewForStagedTarget(job, targets)}
                         alt={job.target_name}
                         className="w-14 h-14 rounded-xl object-cover bg-black/50 border border-white/10"
                         onError={(e) => {
@@ -2027,7 +2072,7 @@ export default function BatchSwap({ settings = {}, notify, onUpdateSetting }) {
                   {/* Right: Source Faceset Preview */}
                   <div className="shrink-0">
                     <img
-                      src={sourceFaces[job.source_index]}
+                      src={previewForStagedFaceset(job, sourceFacesInfo, sourceFaces)}
                       alt={job.source_name}
                       className="w-14 h-14 rounded-xl object-cover bg-black/50 border border-white/10"
                       onError={(e) => {

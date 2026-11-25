@@ -67,6 +67,10 @@ async function openTwoPeople(page) {
 }
 
 const box = (page, i) => page.locator(`[data-face-index="${i}"]`);
+async function clickExclude(button) {
+  await button.evaluate((element) => element.scrollIntoView({ block: 'center' }));
+  await button.click();
+}
 const mappingOf = (write) => write.target_person_source_mapping ?? write.face_mapping;
 const lastMapping = (writes) => {
   for (let i = writes.length - 1; i >= 0; i--) {
@@ -105,7 +109,7 @@ test('exclude a bystander: an explicit never-swap entry is written, and Include 
   const exclude = page.locator('[data-face-exclude="1"]');
   await expect(exclude).toHaveText('Exclude (never swap)');
   const before = writes.length;
-  await exclude.click();
+  await clickExclude(exclude);
 
   await expect(page.locator('[data-face-role-label="1"]')).toHaveText('Excluded · never swapped');
   await expect(exclude).toHaveText('Include again');
@@ -119,7 +123,7 @@ test('exclude a bystander: an explicit never-swap entry is written, and Include 
   expect(excluded[P0] ?? 'absent').not.toBeNull();               // the pinned person is untouched
 
   const mid = writes.length;
-  await exclude.click();                                          // include again
+  await clickExclude(exclude);                                   // include again
   await expect(page.locator('[data-face-role-label="1"]')).toHaveText('Bystander · not swapped');
   await expect(exclude).toHaveText('Exclude (never swap)');
   await expect.poll(() => writes.length, { timeout: 5_000 }).toBeGreaterThan(mid);
@@ -130,7 +134,7 @@ test('exclude a bystander: an explicit never-swap entry is written, and Include 
 test('clicking Exclude does not also pin the box (the badge stops the click)', async ({ page }) => {
   await openTwoPeople(page);
   await box(page, 0).click();
-  await page.locator('[data-face-exclude="1"]').click();
+  await clickExclude(page.locator('[data-face-exclude="1"]'));
   await expect(box(page, 0)).toHaveAttribute('data-face-role', 'target');
   await expect(box(page, 1)).not.toHaveAttribute('data-face-role', 'target');
 });

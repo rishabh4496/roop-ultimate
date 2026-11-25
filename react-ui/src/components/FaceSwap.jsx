@@ -1109,12 +1109,12 @@ export default function FaceSwap({
     }
     if (segments.segments.length === 0) return;
     const name = targets[selTarget]?.name || '';
-    await queue.addMany(segments.segments.map((s, i) => currentJob({
+    const queued = await queue.addMany(segments.segments.map((s, i) => currentJob({
       label: `${name} — segment ${i + 1}`,
       frame_start: s.start,
       frame_end: s.end,
     })));
-    notify(`Queued ${segments.segments.length} segment${segments.segments.length === 1 ? '' : 's'} of "${name}"`);
+    if (queued) notify(`Queued ${segments.segments.length} segment${segments.segments.length === 1 ? '' : 's'} of "${name}"`);
   };
 
   // Finished segment jobs for THIS target, in timeline order — the join has to
@@ -2096,7 +2096,7 @@ export default function FaceSwap({
       const newTargets = newTargetsList.slice(beforeCount);
       const newVideos = newTargets.filter(t => t.frames > 1);
       if (newVideos.length > 1) {
-        await queue.addMany(newVideos.map((t, idx) => {
+        const queued = await queue.addMany(newVideos.map((t, idx) => {
           const srcIdx = sourceFaces.length > 1 ? (idx % sourceFaces.length) : selSource;
           const targetMediaId = t.media_id || t.id || null;
           const targetMediaIndex = newTargetsList.findIndex((candidate) =>
@@ -2119,7 +2119,7 @@ export default function FaceSwap({
             },
           };
         }));
-        notify(`Automatically queued ${newVideos.length} uploaded videos`, 'success');
+        if (queued) notify(`Automatically queued ${newVideos.length} uploaded videos`, 'success');
       }
   };
 
@@ -3417,15 +3417,16 @@ export default function FaceSwap({
     const base = buildSwapPayload();
     const name = targets[selTarget]?.name || '';
     const group = `ovr-${Date.now().toString(36)}`;
-    await queue.addMany(pieces.map((pc, i) => currentJob({
+    const queued = await queue.addMany(pieces.map((pc, i) => currentJob({
       label: `${name} - ${pc.override ? pc.override.label : 'clip settings'}${pc.curves ? ' + curves' : ''} (${pc.start}-${pc.end})`,
       frame_start: pc.start,
       frame_end: pc.end,
       payload: pieceBase(base, pc),
       ...(pieces.length > 1 ? { segment: { group, index: i + 1, count: pieces.length } } : {}),
     })));
+    if (!queued) return false;
     notify(`Queued ${pieces.length} piece${pieces.length === 1 ? '' : 's'} of "${name}" with scene overrides`);
-    if (run && !queue.running) await queue.start();
+    if (run && !queue.running) return Boolean(await queue.start());
     return true;
   };
 
@@ -4441,21 +4442,22 @@ export default function FaceSwap({
 
         {/* COLUMN 3: Active Canvas, Timeline & Outputs */}
         <div className="flex-1 min-w-0 space-y-6">
+          {/* Keep diagnostics in the page flow so they cannot cover the timeline. */}
+          <PreFlightLinter
+            target={targets[selTarget]}
+            targetFacesInfo={targetFacesInfo}
+            settings={settings}
+            onAutoFix={handlePreFlightAutoFix}
+            batchCount={1}
+            className="w-full"
+          />
           {/* run bar */}
-          <div className="sticky top-20 z-30 pb-3 bg-[#0c0e14]/90 backdrop-blur-md">
+          <div className="sticky top-20 z-30 !mt-3 pb-3 bg-[#0c0e14]/90 backdrop-blur-md">
             {/* The run bar keeps its shape whether or not something is
                 rendering. A run has its own tab now, so this one no longer
                 turns into a progress panel — it just says a job is in flight,
                 and offers the way over to it. */}
             <div className="w-full space-y-3">
-              <PreFlightLinter
-                target={targets[selTarget]}
-                targetFacesInfo={targetFacesInfo}
-                settings={settings}
-                onAutoFix={handlePreFlightAutoFix}
-                batchCount={1}
-                className="w-full"
-              />
               <div className="rounded-2xl glass-panel p-3.5 sm:p-4 flex flex-col md:flex-row items-center justify-between gap-3 sm:gap-4 shadow-xl border border-white/5 w-full">
                 <div className="flex items-center gap-3 w-full md:w-auto">
                   {progress.processing ? (
@@ -4534,7 +4536,7 @@ export default function FaceSwap({
                   <div className="pt-1">
                     <div className="flex items-center justify-between mb-1 text-micro text-white/50 px-1">
                       <span className="font-semibold uppercase tracking-wider text-mini text-white/70">Modular Pipeline Flow</span>
-                      <span className="text-micro">Alt+Click node to solo intermediate buffer &bull; ⏻ bypass</span>
+                      <span className="text-xs">Click a node to solo its preview &bull; ⏻ bypass</span>
                     </div>
                     <ModularPipelineFlowStrip
                       soloStage={soloStage}

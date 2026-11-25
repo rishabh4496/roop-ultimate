@@ -38,7 +38,7 @@ strategy → stagedJobs[]              _validate_job_payload           │   req
 createJobPayload()                   app/queue.json                  ├ _outputs_since               └ ProcessMgr
       │                                │                            ├ _record_run_history               ├ selected_routing.
 enqueueStagedJobs()                  _loop → _run_one (per job)      │   (run_history.json)              │   compute_selected_assignment
-      │                                ├ target by NAME              └ project checkpoint                └ process_face
+      │                                ├ target by ID                └ project checkpoint                └ process_face
       ▼                                ├ _selection_invalidation
                                        ├ source by id/name
                                        ├ _apply_segment
@@ -68,8 +68,8 @@ strategies inherit from this single read:
   server can check that — at dispatch (§5). Until `4a38666`+1 the builder
   range-checked ranks against the active bank; see §8, "Ranks vs. the active
   bank" (fixed).
-* `targets[i].media_id` is available here but is **not** forwarded into the
-  job (see §4, finding F1).
+* `targets[i].media_id` travels with each job. Target settings and faceset
+  assignments follow their IDs when the lists change during a refresh.
 
 ## 2. Strategy → staged jobs
 
@@ -156,7 +156,8 @@ Sent through `useQueue().addMany` (`react-ui/src/components/faceswap/useQueue.js
 ```jsonc
 POST /api/queue/add_batch
 { "jobs": [
-    { "target_name":  "clip_a.mp4",            // ← the target, BY BASENAME (no media_id, no index)
+    { "target_name":  "clip_a.mp4",
+      "target_media_id": "media-a",
       "source_index": 2,                       // primarySourceIdx (gallery position at staging time)
       "source_name":  "alice.fsz",             // ← primary faceset name (dispatch re-resolves by this)
       "source_id":    "G:\\...\\alice.fsz",    // ← primary faceset stable id (dispatch prefers this)
@@ -180,12 +181,12 @@ entry goes through `_normalize_job` (326), the list is appended under the lock,
   "job_states": ["QUEUED","PREPARING","PROCESSING","PAUSE_REQUESTED","PAUSED","COMPLETED","FAILED","CANCELLED","INTERRUPTED","RECOVERABLE"],
   "running": false, "paused": false, "current": null,
   "jobs": [ { "id": "3f9c1a2b7d4e", "position": 1, "state": "QUEUED", "status": "pending",
-              "target_name": "clip_a.mp4", "target_media_id": "",          // ← empty for BatchSwap jobs (F1)
+              "target_name": "clip_a.mp4", "target_media_id": "media-a",
               "source_index": 2, "source_name": "alice.fsz", "source_id": "G:\\...\\alice.fsz",
               "payload": { … },
               "processing_selection": {                                      // ← FROZEN at queue time (_job_selection, 303)
                   "schema": 1, "request_id": "…", "selection_version": null, "mapping_version": null,
-                  "target_media_id": null,
+                  "target_media_id": "media-a",
                   "target_person_id": "0", "target_person_ids": ["0"],       // still RANKS here
                   "target_reference_face_id": null,
                   "source_identity_id": "G:\\...\\alice.fsz",                // from payload.selected_source_id
@@ -205,12 +206,10 @@ leaves the staged rows available for correction. After enqueueing, use
 
 ## 5. Dispatch: `_run_one` (routes_queue.py:558), once per job, in order
 
-1. **Target resolution.** `target_media_id` is empty for every Batch Matrix
-   job, so the *legacy* branch runs: `os.path.basename(target_name)` is matched
-   against the basenames of `list_files_process`. Zero matches →
-   `FAILED "target "<name>" is no longer loaded"`; two or more (the same
-   filename loaded twice) → `FAILED "legacy target … is ambiguous; requeue it"`.
-   One match → `_activate_target(index=idx)` loads that media's person bank.
+1. **Target resolution.** The queue resolves `target_media_id` against the
+   loaded media. Older jobs without an ID use the basename, which must match
+   exactly one entry. `_activate_target(index=idx)` loads the resolved target's
+   person bank.
 2. **Selection invalidation** (`api.py:_selection_invalidation_for_active_context`,
    1121). The frozen `processing_selection` is checked against what is loaded
    NOW for *that* target: ranks in `target_person_id(s)` are converted to that
@@ -327,11 +326,6 @@ retried from the queue panel (`POST /api/queue/retry`).
 
 Not fixed here:
 
-* **F1 — `target_media_id` is dropped.** `/api/state.targets[i].media_id`
-  exists and `_run_one` prefers it, but `enqueueStagedJobs` forwards only
-  `target_name`, so every Batch Matrix job takes the legacy basename path and
-  two targets with the same filename cannot be batched at all. The fix is one
-  field in the job (`target_media_id: targets[j.target_index].media_id`).
 * **F2 — only the primary faceset is validated at dispatch.** BatchSwap sends
   `face_mapping` + `source_mapping_ids` (rank-indexed) rather than
   `target_person_source_mapping` (person-id-keyed), so `processing_selection.

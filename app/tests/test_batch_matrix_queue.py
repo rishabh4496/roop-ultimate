@@ -709,10 +709,10 @@ class BatchMatrixStagingJS(unittest.TestCase):
                 self.assertEqual(errors, ["source_index must be a non-negative integer"])
             else:
                 self.assertEqual(errors, [None] * len(errors), name)
-        # No job carries the media id (F1) or a stable person mapping (F2).
+        target_ids = {target["media_id"] for target in emitted["fixture"]["targets"]}
         for scenario in scenarios.values():
             for j in scenario["jobs"]:
-                self.assertNotIn("target_media_id", j)
+                self.assertIn(j["target_media_id"], target_ids)
                 self.assertNotIn("target_person_source_mapping", j["payload"])
 
 
@@ -720,6 +720,12 @@ class BatchMatrixStagingJS(unittest.TestCase):
 class BatchMatrixStagingJSThroughTheQueue(_EndToEndBase):
     """The real builders' output, dispatched by the real queue against real
     target contexts named like the JS fixture."""
+
+    def _add(self, name):
+        super()._add(name)
+        entry = api.list_files_process[-1]
+        entry.media_id = f"media-{name[0]}"
+        return entry.media_id
 
     def setUp(self):
         super().setUp()
@@ -761,6 +767,13 @@ class BatchMatrixStagingJSThroughTheQueue(_EndToEndBase):
         self.assertEqual(self.ran[0]["entry_range"], (4, 50))        # UI frames 5-50 = entry [4, 50)
         self._assert_run(self.ran[1], target=2, gallery_indices=[0], facesets=[self.alice],
                          person_ranks=[0], source_index=0)
+
+    def test_matrix_targets_with_the_same_filename_run_against_their_own_media(self):
+        api.list_files_process[0].filename = "folder-a/same-name.mp4"
+        api.list_files_process[1].filename = "folder-b/same-name.mp4"
+        self._push("matrix_duplicate_names")
+        self.assertEqual(self._states(), [("COMPLETED", "")] * 2)
+        self.assertEqual([run["media_id"] for run in self.ran], [self.a, self.b])
 
     def test_per_file_matrix_defaults_run_every_target_when_only_one_has_captures(self):
         self._configure(1, [], {})

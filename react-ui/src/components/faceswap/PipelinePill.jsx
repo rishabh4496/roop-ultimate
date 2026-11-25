@@ -99,12 +99,12 @@ export function ModularPipelineFlowStrip({
     const dashLat = s.dashboard?.telemetry?.latency_ms;
     const s3Ops = s.pipeline?.stages?.STAGE_3_MAIN_SWAP?.ops;
     return {
-      warp: dashLat?.detect ?? s3Ops?.warp?.ms ?? 3.4,
-      model: dashLat?.swap ?? s3Ops?.model?.ms ?? 11.2,
-      lipsync: s.run?.lipsync_ms ?? dashLat?.lipsync ?? 4.2,
-      mask: dashLat?.mask ?? 6.8,
-      restore: dashLat?.restore ?? s3Ops?.restore?.ms ?? 14.5,
-      blend: dashLat?.blend ?? s3Ops?.blend?.ms ?? 4.1,
+      warp: dashLat?.detect ?? s3Ops?.warp?.ms,
+      model: dashLat?.swap ?? s3Ops?.model?.ms,
+      lipsync: s.run?.lipsync_ms ?? dashLat?.lipsync,
+      mask: dashLat?.mask,
+      restore: dashLat?.restore ?? s3Ops?.restore?.ms,
+      blend: dashLat?.blend ?? s3Ops?.blend?.ms,
     };
   }));
 
@@ -120,28 +120,14 @@ export function ModularPipelineFlowStrip({
         {MODULAR_FLOW_NODES.map((node, i) => {
           const isSolo = soloStage === node.id;
           const isBypassed = Boolean(bypassedStages[node.id]);
-          const ms = latencyMap[node.latencyKey] ?? node.fallbackMs;
+          const ms = latencyMap[node.latencyKey];
 
           return (
             <React.Fragment key={node.id}>
               <div
-                role="button"
-                tabIndex={0}
                 data-testid={`flow-node-${node.id}`}
                 data-solo={isSolo ? 'true' : 'false'}
                 data-bypassed={isBypassed ? 'true' : 'false'}
-                onClick={(e) => {
-                  if (e.altKey && onSoloStage) {
-                    e.preventDefault();
-                    onSoloStage(isSolo ? null : node.id);
-                  }
-                }}
-                onKeyDown={(e) => {
-                  if ((e.key === 'Enter' || e.key === ' ') && onSoloStage) {
-                    e.preventDefault();
-                    onSoloStage(isSolo ? null : node.id);
-                  }
-                }}
                 className={`group relative flex items-center gap-1.5 px-2 py-1 rounded-lg border transition-all ${
                   isSolo
                     ? 'border-amber-400 bg-amber-400/20 text-white shadow-[0_0_12px_rgba(251,191,36,0.35)] ring-1 ring-amber-400/50'
@@ -149,7 +135,6 @@ export function ModularPipelineFlowStrip({
                       ? 'border-white/5 bg-white/[0.02] text-white/35 grayscale'
                       : 'border-white/10 bg-white/[0.05] text-white/85 hover:border-white/20 hover:bg-white/[0.08]'
                 }`}
-                title={`[${node.n}. ${node.label}] · Alt+Click to solo buffer · Click power to toggle bypass`}
               >
                 <button
                   type="button"
@@ -164,39 +149,37 @@ export function ModularPipelineFlowStrip({
                       : 'bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30'
                   }`}
                   aria-label={isBypassed ? `Enable ${node.label}` : `Bypass ${node.label}`}
+                  aria-pressed={isBypassed}
                   title={isBypassed ? `Enable ${node.label}` : `Bypass ${node.label}`}
                 >
                   {isBypassed ? '⊘' : '⏻'}
                 </button>
 
-                <span className="font-mono text-micro text-white/50">{node.n}.</span>
-                <span className={`font-medium ${isBypassed ? 'line-through' : ''}`}>
-                  {node.label}
-                </span>
-
-                <span
-                  data-testid={`flow-latency-${node.id}`}
-                  className={`px-1.5 py-0.5 rounded text-micro font-mono tabular-nums border ${latencyTone(ms)}`}
-                  title={`Kernel latency from /ws/telemetry: ${formatLatency(ms)}`}
-                >
-                  {formatLatency(ms)}
-                </span>
-
                 <button
                   type="button"
                   data-testid={`flow-solo-${node.id}`}
+                  aria-label={`Solo ${node.label}`}
+                  aria-pressed={isSolo}
                   onClick={(e) => {
                     e.stopPropagation();
                     onSoloStage?.(isSolo ? null : node.id);
                   }}
-                  className={`px-1.5 py-0.5 rounded text-micro font-bold uppercase transition-all ${
-                    isSolo
-                      ? 'bg-amber-400 text-black shadow-sm font-black'
-                      : 'bg-white/10 text-white/60 hover:bg-amber-400/20 hover:text-amber-200'
-                  }`}
-                  title={isSolo ? 'Solo Active: click or Alt+Click to exit' : 'Solo intermediate buffer (Alt+Click)'}
+                  className="flex items-center gap-1.5 rounded focus-visible:outline focus-visible:outline-[var(--accent)]"
+                  title={isSolo ? 'Exit solo preview' : 'Solo intermediate buffer'}
                 >
-                  {isSolo ? 'SOLO' : 'S'}
+                  <span className="font-mono text-micro text-white/50">{node.n}.</span>
+                  <span className={`font-medium ${isBypassed ? 'line-through' : ''}`}>{node.label}</span>
+                  <span
+                    data-testid={`flow-latency-${node.id}`}
+                    className={`px-1.5 py-0.5 rounded text-micro font-mono tabular-nums border ${latencyTone(ms)}`}
+                    title={Number.isFinite(ms) && ms >= 0 ? 'Backend latency telemetry' : 'No latency sample'}
+                  >
+                    {formatLatency(ms)}
+                  </span>
+                  <span className={`px-1.5 py-0.5 rounded text-micro font-bold uppercase transition-all ${isSolo
+                    ? 'bg-amber-400 text-black shadow-sm' : 'bg-white/10 text-white/60 hover:bg-amber-400/20 hover:text-amber-200'}`}>
+                    {isSolo ? 'SOLO' : 'S'}
+                  </span>
                 </button>
               </div>
 

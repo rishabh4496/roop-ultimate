@@ -157,6 +157,7 @@ const stagedJob = ({ target, targetIndex, built, sourceFacesInfo, label,
   frameStart, frameEnd, totalFrames, fallbackName }) => ({
   id: newStagedJobId(),
   target_name: target?.name || fallbackName,
+  target_media_id: target?.media_id,
   target_index: targetIndex,
   source_index: built.primarySourceIdx,
   source_name: sourceFacesInfo[built.primarySourceIdx]?.name
@@ -483,12 +484,13 @@ export function stageTimelineCuts({
 
 // ── The request ──────────────────────────────────────────────────────────
 // Staged jobs -> the `jobs` list of POST /api/queue/add_batch. Identical for
-// every strategy: the target travels by NAME, the primary faceset by id (with
+// every strategy: the target travels by stable id, the primary faceset by id (with
 // name and gallery position as the dispatch-time fallbacks), and the per-person
 // assignment inside `payload.face_mapping` / `payload.source_mapping_ids`.
 export function queueRequestFromStagedJobs(stagedJobs = []) {
   return stagedJobs.map((j) => ({
     target_name: j.target_name,
+    ...(j.target_media_id ? { target_media_id: j.target_media_id } : {}),
     source_index: j.source_index,
     source_name: j.source_name,
     source_id: j.source_id || j.payload?.selected_source_id || null,

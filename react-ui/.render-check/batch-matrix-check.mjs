@@ -111,7 +111,7 @@ group('Recipe matrix: sequential match');
       ['clip_b.mp4', BOB, SOURCES[BOB].id],
       ['clip_c.mp4', ALICE, SOURCES[ALICE].id],
     ]);
-    assert.ok(wire.every((w) => !('target_media_id' in w)), 'F1: media id is not forwarded (documented)');
+    assert.deepEqual(wire.map((job) => job.target_media_id), TARGETS.map((target) => target.media_id));
   });
   check('payload objects are distinct per job (no shared mutable state)', () => {
     jobs[0].payload.face_mapping.push(99);
@@ -241,6 +241,12 @@ group('Per-file matrix');
     emit('stale_primary', stale, stale.map(triple));
   });
   emit('matrix', jobs, jobs.map(triple));
+}
+
+{
+  const targets = TARGETS.slice(0, 2).map((target) => ({ ...target, name: 'same-name.mp4' }));
+  const matrixConfig = Object.fromEntries(targets.map((target, index) => [index, defaultMatrixRow(target, SETTINGS)]));
+  emit('matrix_duplicate_names', stageMatrix({ ...common(), targets, matrixConfig }).jobs, []);
 }
 
 {

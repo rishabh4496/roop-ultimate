@@ -131,9 +131,7 @@ const sourceInfo = [
   { index: 2, id: '/mock/facesets/source_gamma.png', name: 'source_gamma.png', path: 'source_gamma.png', width: 512, height: 512, count: 1, poses: ['Frontal'], angles: { pitch: 1.1, yaw: -8.4, roll: -0.2 }, quality: 0.97, landmarks: 106 },
 ];
 
-// `media_id` is the stable id the real queue prefers for target resolution;
-// the Batch Matrix does not forward it (F1 in BATCH_MATRIX_DATA_FLOW.md), so
-// its jobs resolve by basename here exactly as they do on the real backend.
+// Match the stable `media_id` the real queue uses for target resolution.
 const targetEntries = [
   {
     id: 0,
