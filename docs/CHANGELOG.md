@@ -5,6 +5,10 @@ full session record is [`SESSION_LOGS.md`](SESSION_LOGS.md); the running enginee
 state lives outside the repository (`RECODE_STATUS.md` in the operator's `roop-keep`
 folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22.
 
+## 2026-11-26
+
+- `/api/state` answers while a render runs. A render holds the target-context lock for the whole job. `/api/state` waited for it twice: once to re-activate the target that was already active, and once in the per-target capture bit added on 2026-11-25. On the live backend the request did not return within 40 seconds during a render, so Batch Matrix and Face Swap reported "Failed to load server state" until the job ended. The capture bit now reads the stored context without cloning it, and an already-active target is returned without taking the lock.
+
 ## 2026-11-25
 
 - React audit fixes. Batch Matrix keeps settings and previews with their media and faceset IDs after a removal, and sends those media IDs to the queue so clips with the same filename resolve independently. Face Swap confirms queue submissions after acceptance. Pipeline bypass and solo respond to their own keyboard controls, and timings stay blank until measured. Preview controls have clearer labels and readable text. The mask brush ignores drags started on a control, and the loupe resizes when its magnification changes. Preflight diagnostics scroll out of the way of timeline controls. Editing a curve value and clicking another keyframe saves the value to the key that was edited.

@@ -788,6 +788,35 @@ class BatchMatrixStagingJSThroughTheQueue(_EndToEndBase):
                          [(0, "selected", [self.alice]), (1, "first", [self.alice]),
                           (2, "first", [self.alice])])
 
+    def test_state_answers_while_a_render_holds_the_target_context(self):
+        """`_run_swap` holds `_target_context_lock` for the whole render. The
+        Matrix and Face Swap read /api/state during that render, so the
+        capture bit must not wait for the lock (it blocked for the full job)."""
+        self._configure(1, [], {})
+        api._activate_target_media(index=0, refresh=False)
+        held, release = threading.Event(), threading.Event()
+
+        def render():
+            with api._target_context_lock:
+                held.set()
+                release.wait(10)
+
+        worker = threading.Thread(target=render, daemon=True)
+        worker.start()
+        self.assertTrue(held.wait(5))
+        result = {}
+        reader = threading.Thread(target=lambda: result.update(api.get_state()), daemon=True)
+        reader.start()
+        reader.join(2)
+        try:
+            self.assertFalse(reader.is_alive(), "/api/state waited for the render's lock")
+            self.assertEqual([target["has_target_faces"] for target in result["targets"]],
+                             [True, False, True])
+        finally:
+            release.set()
+            worker.join(5)
+            reader.join(5)
+
     def test_grouped_from_the_real_builder(self):
         self._push("grouped")
         self.assertEqual(self._states(), [("COMPLETED", "")] * 4)

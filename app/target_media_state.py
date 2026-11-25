@@ -106,6 +106,14 @@ class TargetMediaContextStore:
     def load(self, media_id: str) -> TargetMediaContext:
         return self._contexts.get(str(media_id), TargetMediaContext()).clone()
 
+    def has_target_faces(self, media_id: str) -> bool:
+        """Whether the stored context has captured faces, without cloning it.
+
+        `save` replaces a context whole and never mutates a stored one, so this
+        single dict read is consistent without the caller's context lock."""
+        context = self._contexts.get(str(media_id))
+        return bool(context is not None and context.target_faces)
+
     def has(self, media_id: str) -> bool:
         return str(media_id) in self._contexts
 

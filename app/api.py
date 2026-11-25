@@ -598,6 +598,13 @@ def _ensure_active_target_context():
             state.active_target_media_id = None
             state.selected_target_face_index = 0
         return None, None
+    # Already active: nothing to switch, so do not wait for the lock. A render
+    # holds it for the whole job, and /api/state used to block until it ended.
+    index = state.selected_target_index
+    if isinstance(index, int) and 0 <= index < len(list_files_process):
+        media_id = getattr(list_files_process[index], "media_id", None)
+        if media_id and media_id == getattr(state, "active_target_media_id", None):
+            return index, media_id
     return _activate_target_media(index=state.selected_target_index, refresh=False)
 
 
@@ -2484,9 +2491,11 @@ def _refresh_target_frames(idx):
 def _target_entry_dict(entry):
     media_id = _ensure_target_media_id(entry)
     total = getattr(entry, "total_frames", 0) or entry.endframe or 1
-    with _target_context_lock:
-        has_target_faces = bool(roop_globals.TARGET_FACES if media_id == state.active_target_media_id
-                                else _target_contexts.load(media_id).target_faces)
+    # No _target_context_lock here: _run_swap holds it for the whole render,
+    # and waiting on it blocked /api/state until the job finished. A render
+    # cannot switch the active target, so these two reads stay consistent.
+    has_target_faces = (bool(roop_globals.TARGET_FACES) if media_id == state.active_target_media_id
+                        else _target_contexts.has_target_faces(media_id))
     return {
         # `media_id` is the identity used by target contexts, queues, and the
         # React key.  The numeric index remains a transport/UI position only.
