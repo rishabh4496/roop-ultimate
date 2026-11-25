@@ -50,7 +50,7 @@ import fixtures  # noqa: E402
 import api_state as state  # noqa: E402
 import roop.globals as roop_globals  # noqa: E402
 import routes_queue as q  # noqa: E402
-from tests.test_queue import QueueTestBase, _Entry as _QueueEntry  # noqa: E402
+from tests.test_queue import QueueTestBase, _Entry as _QueueEntry, stop_queue_runner  # noqa: E402
 
 try:
     import api  # noqa: E402
@@ -392,7 +392,7 @@ class _EndToEndBase(Stage14Base):
         self.before_job = {}            # target_index -> callable run before that job's swap
 
     def tearDown(self):
-        q._queue["running"] = False
+        stop_queue_runner()
         q._queue["jobs"] = []
         q.QUEUE_FILE = self._old_file
         for key, value in self._old_hooks.items():

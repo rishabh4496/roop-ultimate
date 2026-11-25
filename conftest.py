@@ -137,3 +137,41 @@ def pytest_collection_modifyitems(config, items):
     for item in items:
         if item.get_closest_marker("gpu"):
             item.add_marker(pytest.mark.skip(reason="gpu-marked test in the light profile"))
+
+
+# -- The app's own queue.json is never a test fixture ---------------------------
+# routes_queue persists to app/queue.json on every mutation, and the live backend
+# restores that file on its next start. A full run once left three COMPLETED
+# "clip.mp4" jobs there: a queue runner thread outlived its test and saved after
+# tearDown had put the real path back. Point the module at a session temp file
+# before and after every test, so any test that captures QUEUE_FILE in setUp
+# captures (and later restores) the temp path, never the real one.
+_SESSION_QUEUE_FILE = None
+
+
+def _redirect_queue_file():
+    global _SESSION_QUEUE_FILE
+    module = sys.modules.get("routes_queue")
+    if module is None:
+        return
+    real = os.path.join(os.path.dirname(os.path.abspath(module.__file__)), "queue.json")
+    norm = lambda path: os.path.normcase(os.path.abspath(path))
+    if norm(module.QUEUE_FILE) != norm(real):
+        return
+    if _SESSION_QUEUE_FILE is None:
+        import tempfile
+        _SESSION_QUEUE_FILE = os.path.join(tempfile.mkdtemp(prefix="roop_test_queue_"), "queue.json")
+    module.QUEUE_FILE = _SESSION_QUEUE_FILE
+
+
+def pytest_collection_finish(session):
+    _redirect_queue_file()
+
+
+def pytest_runtest_setup(item):
+    _redirect_queue_file()
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_runtest_teardown(item, nextitem):
+    _redirect_queue_file()

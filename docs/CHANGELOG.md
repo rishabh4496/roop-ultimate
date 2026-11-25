@@ -7,6 +7,8 @@ folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22
 
 ## 2026-11-26
 
+- The test suite no longer writes the app's own `app/queue.json`. A full run left three COMPLETED `clip.mp4` jobs there, and the live backend restored them at its next start. The queue tests restored the real path in `tearDown` without stopping the runner thread, so a runner that outlived its test saved into the real file. A new test reproduced it, leaving an `a.mp4` job in the file. `tearDown` now stops and joins the runner before restoring the path, and `conftest.py` points `routes_queue.QUEUE_FILE` at a session temporary file before and after every test. `QueueTestBase` also clears leftover cancel requests, which had made `test_cancelling_the_running_job_does_not_cancel_the_next_one` fail whenever it ran after the other queue tests.
+
 - `/api/state` answers while a render runs. A render holds the target-context lock for the whole job. `/api/state` waited for it twice: once to re-activate the target that was already active, and once in the per-target capture bit added on 2026-11-25. On the live backend the request did not return within 40 seconds during a render, so Batch Matrix and Face Swap reported "Failed to load server state" until the job ended. The capture bit now reads the stored context without cloning it, and an already-active target is returned without taking the lock.
 
 ## 2026-11-25

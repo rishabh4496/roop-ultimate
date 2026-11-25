@@ -39,6 +39,21 @@ class _Entry:
         self.fps = 30
 
 
+def stop_queue_runner(timeout=10.0):
+    """Stop the runner thread and wait for it before a test restores QUEUE_FILE.
+
+    Clearing `running` only stops the loop at its next pass. A runner that
+    outlives its test (a _drain timeout, or a test that never drains) still
+    saves its in-flight job, and with the path already restored that save
+    landed in the app's own queue.json."""
+    with q._lock:
+        q._queue["running"] = False
+        q._generation += 1
+    runner = q._runner
+    if runner is not None and runner is not threading.current_thread():
+        runner.join(timeout)
+
+
 class QueueTestBase(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.mkdtemp(prefix="queue_test_")
@@ -46,6 +61,9 @@ class QueueTestBase(unittest.TestCase):
         q.QUEUE_FILE = os.path.join(self._tmp, "queue.json")
         q._queue["jobs"] = []
         q._queue.update({"running": False, "paused": False, "current": None})
+        # A cancel requested for a job that never reached the runner stays in
+        # this module-level set and leaked into the next test's snapshot.
+        q._cancel_requested.clear()
         q.pause_controller.cancel()
         q.pause_controller.start()
 
@@ -71,7 +89,7 @@ class QueueTestBase(unittest.TestCase):
         q._selection_invalidation = None
 
     def tearDown(self):
-        q._queue["running"] = False
+        stop_queue_runner()
         q.QUEUE_FILE = self._old_file
 
     def _fake_run(self, payload):
@@ -130,6 +148,43 @@ class Persistence(QueueTestBase):
         self._add("a.mp4")              # must not raise
         self.assertEqual(len(q._snapshot()["jobs"]), 1)
 
+
+class TheRealQueueFileIsNeverWritten(QueueTestBase):
+    """A full suite run once left three COMPLETED "clip.mp4" jobs in the app's
+    own queue.json, and the live backend restored them on its next start."""
+
+    REAL = os.path.join(APP, "queue.json")
+
+    def _is_real(self, path):
+        norm = lambda p: os.path.normcase(os.path.realpath(p))
+        return norm(path) == norm(self.REAL)
+
+    def test_the_suite_points_the_queue_at_a_temporary_file(self):
+        # The path tearDown restores is whatever the module held before setUp.
+        # conftest.py must have moved it off the app's own file.
+        self.assertFalse(self._is_real(self._old_file), self._old_file)
+
+    def test_teardown_waits_for_a_runner_that_outlives_the_test(self):
+        """_drain can time out (or a test can start the runner and never drain
+        it). The runner then saves after tearDown has restored the old path."""
+        release = threading.Event()
+
+        def slow(payload):
+            release.wait(5)
+            self.progress["progress"] = 1.0
+            self.progress["processing"] = False
+
+        q._run_swap = slow
+        self._add("a.mp4")
+        import roop.globals as g
+        g.processing = True
+        q.queue_start()
+        runner = q._runner
+        self.assertTrue(runner.is_alive())
+        threading.Timer(0.2, release.set).start()
+        self.tearDown()
+        self.assertFalse(runner.is_alive(), "tearDown returned while the runner could still save")
+        self.setUp()                    # unittest calls tearDown again after this test
 
 class Editing(QueueTestBase):
     def test_reorder_from_a_stale_client_cannot_drop_a_job(self):

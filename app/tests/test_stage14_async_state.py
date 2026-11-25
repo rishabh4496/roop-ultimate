@@ -504,7 +504,8 @@ class QueueSelection(Stage14Base):
         q._selection_invalidation = api._selection_invalidation_for_active_context
 
     def tearDown(self):
-        q._queue["running"] = False
+        from tests.test_queue import stop_queue_runner
+        stop_queue_runner()
         q._queue["jobs"] = []
         q.QUEUE_FILE = self._old_file
         for key, value in self._old_hooks.items():
