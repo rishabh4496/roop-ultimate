@@ -1027,12 +1027,45 @@ export default function FaceSwap({
     sourceIndex = selSource,
     targetMediaId = activeTargetMediaId,
     targetMediaIndex = selTarget,
+    automatic = false,
   } = {}) => {
     const sp = withSliderBypass(params);
     const selectedSource = Number.isInteger(sourceIndex) ? sourceIndex : selSource;
+    const sourceName = sourceNameAt(selectedSource);
+    const sourceId = sourceIdAt(selectedSource);
+    const mode = sp.face_detection_mode;
+    const detection = automatic && (!mode || mode === 'Selected face' || mode === 'Selected people')
+      ? 'First found' : mode;
+    // Person IDs, reference faces and edits belong to the clip in the editor.
+    // Automatic jobs use the assigned faceset and detect faces in their own clip.
+    const selectionState = { selection_mode: 'none', target_media_index: targetMediaIndex };
+    const targetFields = automatic ? {
+      face_mapping: [selectedSource],
+      source_mapping_names: [sourceName],
+      source_mapping_ids: [sourceId],
+      selection_state: selectionState,
+      processing_selection: buildCanonicalSelection({
+        targetMediaId, faceSelection: detection, selectionState, selectionVersion,
+        selectedSource, sourceIdentityIds: sourceFaces.map((_, index) => sourceIdAt(index)),
+      }),
+    } : {
+      face_mapping: getFaceMappingArray(sp, selectedSource),
+      target_person_source_mapping: getStableTargetSourceMapping(sp, selectedSource),
+      target_person_ids: targetPersonIds,
+      source_mapping_names: getSourceMappingNames(sp, selectedSource),
+      source_mapping_ids: getSourceMappingIds(sp, selectedSource),
+      selection_state: getTargetSelectionState(sp, selectedSource, targetMediaIndex),
+      processing_selection: buildProcessingSelection(sp, { selectedSource, targetMediaId, targetMediaIndex }),
+      imagemask: maskJson,
+      identity_blend: identityBlend,
+      roto_polygons: rotoPayload,
+      identity_pins: pinsPayload,
+    };
     return {
       ...sp,
-      enhancer: sp.selected_enhancer, adaptive_enhancer_profile: sp.adaptive_enhancer_profile || 'BALANCED', detection: sp.face_detection_mode,
+      ...targetFields,
+      face_detection_mode: detection,
+      enhancer: sp.selected_enhancer, adaptive_enhancer_profile: sp.adaptive_enhancer_profile || 'BALANCED', detection,
       output_method: sp.output_method,
       upscale: sp.subsample_upscale, mask_engine: sp.mask_engine,
       mask_engine_2: sp.mask_engine_2, clip_text: sp.mask_clip_text,
@@ -1040,25 +1073,10 @@ export default function FaceSwap({
       autorotate: sp.autorotate_faces,
       face_distance: num(sp.max_face_distance, 0.75), blend_ratio: num(sp.blend_ratio, 0.8),
       num_swap_steps: num(sp.num_swap_steps, 1),
-      face_mapping: getFaceMappingArray(sp, selectedSource),
-      target_person_source_mapping: getStableTargetSourceMapping(sp, selectedSource),
-      target_person_ids: targetPersonIds,
-      source_mapping_names: getSourceMappingNames(sp, selectedSource),
-      source_mapping_ids: getSourceMappingIds(sp, selectedSource),
-      selected_source_name: sourceNameAt(selectedSource),
-      selected_source_id: sourceIdAt(selectedSource),
+      selected_source_name: sourceName,
+      selected_source_id: sourceId,
       target_media_id: targetMediaId,
-      selection_state: getTargetSelectionState(sp, selectedSource, targetMediaIndex),
-      processing_selection: buildProcessingSelection(sp, {
-        selectedSource,
-        targetMediaId,
-        targetMediaIndex,
-      }),
       selection_version: selectionVersion,
-      imagemask: maskJson,
-      identity_blend: identityBlend,
-      roto_polygons: rotoPayload,
-      identity_pins: pinsPayload,
     };
   };
 
@@ -1090,6 +1108,30 @@ export default function FaceSwap({
     if (await queue.add(job)) notify(`Added "${job.target_name}" to the batch queue`);
   };
 
+  const queueVideos = async (videos, allTargets) => {
+    if (!sourceFaces.length || !videos.length) return;
+    const jobs = videos.map((target, index) => {
+      const sourceIndex = index % sourceFaces.length;
+      const targetMediaId = target.media_id || target.id;
+      const payload = buildSwapPayload(p, {
+        automatic: true, sourceIndex, targetMediaId, targetMediaIndex: allTargets.indexOf(target),
+      });
+      return {
+        target_name: target.name,
+        target_media_id: targetMediaId,
+        source_index: sourceIndex,
+        source_name: payload.selected_source_name,
+        source_id: payload.selected_source_id,
+        payload,
+      };
+    });
+    if (await queue.addMany(jobs)) notify(`Queued ${jobs.length} videos`, 'success');
+  };
+
+  const loadedVideos = targets.filter((target) => target.frames > 1 || target.fps > 0);
+  const pendingMediaIds = new Set([...queue.pending, ...queue.active].map((job) => job.target_media_id));
+  const videosToQueue = loadedVideos.filter((target) => !pendingMediaIds.has(target.media_id || target.id));
+
   // Put a queued job's settings back into the editor so it can be adjusted and
   // re-queued (or the queued one updated in place).
   const loadJobSettings = (job) => {
@@ -1103,8 +1145,6 @@ export default function FaceSwap({
       : targets.findIndex((t) => t.name === job.target_name);
     if (idx >= 0) selectTarget(idx);
   };
-
-  const startQueue = () => queue.start();
 
   // ── Segments ─────────────────────────────────────────────────────────────
   // One run renders one range, because the trim lives on the target entry
@@ -2084,12 +2124,12 @@ export default function FaceSwap({
   // Everything that happens once the backend has accepted new targets, however
   // they arrived — uploaded, or referenced by path. Shared so the two routes
   // cannot drift on the auto-queue rule or the preview refresh.
-  const applyTargetAdd = async (res, beforeCount) => {
+  const applyTargetAdd = async (res) => {
       const newTargetsList = res.targets || [];
       setTargets(newTargetsList);
       const selectedIndex = res.selected_target_index || 0;
-      const mediaId = res.target_media_id || targetIdAt(selectedIndex)
-        || newTargetsList[selectedIndex]?.media_id || newTargetsList[selectedIndex]?.id;
+      const mediaId = res.target_media_id || newTargetsList[selectedIndex]?.media_id
+        || newTargetsList[selectedIndex]?.id;
       setSelTarget(selectedIndex);
       const mf = newTargetsList[selectedIndex]?.frames || 1;
       setMaxFrames(mf); setFrame(1);
@@ -2099,37 +2139,13 @@ export default function FaceSwap({
       // media with the old selection (and be discarded as stale on return).
       // The [selTarget, frame] effect issues the request from the re-rendered
       // context instead.
-      notify(`Added ${newTargetsList.length - beforeCount} target(s)`);
+      // Both add endpoints select the first entry they appended.
+      const newTargets = newTargetsList.slice(selectedIndex);
+      notify(`Added ${newTargets.length} target(s)`);
 
       // Automatically add videos to batch queue if more than 1 video is uploaded
-      const newTargets = newTargetsList.slice(beforeCount);
-      const newVideos = newTargets.filter(t => t.frames > 1);
-      if (newVideos.length > 1) {
-        const queued = await queue.addMany(newVideos.map((t, idx) => {
-          const srcIdx = sourceFaces.length > 1 ? (idx % sourceFaces.length) : selSource;
-          const targetMediaId = t.media_id || t.id || null;
-          const targetMediaIndex = newTargetsList.findIndex((candidate) =>
-            (candidate.media_id || candidate.id) === targetMediaId);
-          const targetPayload = buildSwapPayload(p, {
-            sourceIndex: srcIdx,
-            targetMediaId,
-            targetMediaIndex: targetMediaIndex >= 0 ? targetMediaIndex : beforeCount + idx,
-          });
-          return {
-            target_name: t.name || '',
-            target_media_id: targetMediaId,
-            source_index: srcIdx,
-            source_name: sourceFacesInfo[srcIdx]?.name
-              || (sourceFaces[srcIdx] ? `Face ${srcIdx + 1}` : 'Selected face'),
-            source_id: sourceIdAt(srcIdx),
-            payload: {
-              ...targetPayload,
-              source_index: srcIdx,
-            },
-          };
-        }));
-        if (queued) notify(`Automatically queued ${newVideos.length} uploaded videos`, 'success');
-      }
+      const newVideos = newTargets.filter((target) => target.frames > 1 || target.fps > 0);
+      if (newVideos.length > 1) await queueVideos(newVideos, newTargetsList);
   };
 
   const onAddTarget = async (files) => {
@@ -2139,10 +2155,9 @@ export default function FaceSwap({
     setUploadingTgt(true);
     setTgtProgress(null);
     try {
-      const beforeCount = targets.length;
       await applyTargetAdd(await postFiles('/api/target/add', files, undefined, { timeout: 0,
         onProgress: setTgtProgress, signal: ctrl.signal,
-      }), beforeCount);
+      }));
     } catch (err) { reportUploadError(err); }
     finally { setUploadingTgt(false); setTgtProgress(null); tgtAbortRef.current = null; }
   };
@@ -2163,12 +2178,11 @@ export default function FaceSwap({
     if (!paths || !paths.length) return;
     setUploadingTgt(true);
     try {
-      const beforeCount = targets.length;
       const res = await postJSON('/api/target/add_path', { paths }, { timeout: 0 });
       // Report rejects individually: with several paths pasted at once, a
       // silent drop looks like the app ignored the whole thing.
       (res.rejected || []).forEach((r) => notify(`Skipped ${r.path} — ${r.why}`, 'error'));
-      if ((res.added || []).length) await applyTargetAdd(res, beforeCount);
+      if ((res.added || []).length) await applyTargetAdd(res);
     } catch (err) { notify(err.message, 'error'); }
     finally { setUploadingTgt(false); }
   };
@@ -2510,6 +2524,11 @@ export default function FaceSwap({
     } catch (e) { runCtxRef.current = null; notify(e.message, 'error'); }
   };
 
+  const run = () => {
+    if (queue.running || queue.busy || uploadingTgt) return;
+    return queue.pending.length ? queue.start() : start();
+  };
+
   // Stop stays here because the floating dock offers it from this tab. Pause and
   // Resume moved to the Processing tab with the run bar that carried them.
   const stop = onStopRun || (async () => { await postJSON('/api/stop', {}); notify('Stopping…', 'info'); });
@@ -2530,6 +2549,7 @@ export default function FaceSwap({
     : targets.length === 0 ? 'Add a target video or image to start.'
     : sourceFaces.length === 0 ? 'Add a source face to start.'
     : '';
+  const runBlockedReason = queue.pending.length ? '' : startBlockedReason;
 
   // Hide the previous "Latest output" while a job is running so a new upload +
   // run never shows a stale result. The poll keeps reporting the old _last_output
@@ -3137,12 +3157,7 @@ export default function FaceSwap({
       // Swapping execution
       if (eventMatches(e, 'transport.run')) {
         e.preventDefault();
-        if (queue.running) return;
-        if (queue.pending.length > 0) {
-          startQueue();
-        } else {
-          start();
-        }
+        run();
         return;
       }
     };
@@ -3174,8 +3189,7 @@ export default function FaceSwap({
     setSplitView,
     setFrameMarkerVal,
     addToQueue,
-    start,
-    startQueue
+    run,
   ]);
   /* eslint-enable react-hooks/exhaustive-deps */
 
@@ -3183,7 +3197,7 @@ export default function FaceSwap({
   // A ref keeps the handler map fresh without re-subscribing every render.
   const cmdRef = useRef({});
   cmdRef.current = {
-    start: () => { if (queue.running) return; if (queue.pending.length > 0) startQueue(); else start(); },
+    start: run,
     stop,
     queue: addToQueue,
     compare: () => setCompare((v) => { const n = !v; if (n) { setComparingEnhancers(false); setComparingMasks(false); setComparingSwappers(false); setComparingUpscalers(false); } return n; }),
@@ -4475,7 +4489,9 @@ export default function FaceSwap({
                   {progress.processing ? (
                     <Button variant="stop" size="lg" onClick={confirmStop} aria-describedby="run-status" className="w-full md:w-auto justify-center">■ Cancel render</Button>
                   ) : (
-                    <Button variant="primary" size="lg" onClick={start} disabled={!!startBlockedReason} aria-describedby="run-status" className="w-full md:w-auto justify-center">▶ Start Swapping</Button>
+                    <Button variant="primary" size="lg" onClick={run} disabled={queue.running || queue.busy || uploadingTgt || !!runBlockedReason} aria-describedby="run-status" className="w-full md:w-auto justify-center">
+                      {queue.pending.length ? `▶ Start Batch (${queue.pending.length})` : '▶ Start Swapping'}
+                    </Button>
                   )}
                   {maxFrames > 1 && (
                     <Button variant="secondary" size="lg" onClick={renderPreviewClip} disabled={!!startBlockedReason || isGeneratingPreviewClip || progress.processing} aria-describedby="run-status" className="!text-orange-400 border border-orange-500/20 hover:bg-orange-500/10 w-full md:w-auto justify-center">
@@ -4507,8 +4523,10 @@ export default function FaceSwap({
                       </>
                     ) : (
                       <>
-                        <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${startBlockedReason ? 'bg-amber-400' : 'bg-emerald-500 animate-pulse shadow-[0_0_8px_#10b981]'}`} />
-                        <span className={startBlockedReason ? 'text-amber-300' : undefined}>{startBlockedReason || 'Ready to swap'}</span>
+                        <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${runBlockedReason ? 'bg-amber-400' : 'bg-emerald-500 animate-pulse shadow-[0_0_8px_#10b981]'}`} />
+                        <span className={runBlockedReason ? 'text-amber-300' : undefined}>
+                          {queue.running ? 'Batch running' : queue.pending.length ? 'Ready to run the queue' : runBlockedReason || 'Ready to swap'}
+                        </span>
                       </>
                     )}
                   </div>
@@ -5008,6 +5026,9 @@ export default function FaceSwap({
             <QueuePanel
               q={queue}
               onAddCurrent={addToQueue}
+              onAddVideos={loadedVideos.length > 1 && videosToQueue.length > 0 && sourceFaces.length > 0
+                ? () => queueVideos(videosToQueue, targets) : undefined}
+              videoCount={videosToQueue.length}
               onLoadJobSettings={loadJobSettings}
               canAdd={targets.length > 0 && sourceFaces.length > 0}
               notify={notify}

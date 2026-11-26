@@ -411,13 +411,11 @@ await check('preview, swap and queue payloads all carry processing_selection', (
 });
 await check('automatic target queue rebuilds canonical source selection per target', () => {
   const swapBody = faceSwap.slice(faceSwap.indexOf('const buildSwapPayload = ('), faceSwap.indexOf('const currentJob = ('));
-  const addBody = faceSwap.slice(faceSwap.indexOf('const applyTargetAdd = async'), faceSwap.indexOf('const onAddTarget = async'));
+  const addBody = faceSwap.slice(faceSwap.indexOf('const queueVideos = async'), faceSwap.indexOf('const loadedVideos ='));
   assert.ok(swapBody.includes('sourceIndex = selSource'));
-  assert.ok(swapBody.includes('processing_selection: buildProcessingSelection(sp, {'));
-  assert.ok(addBody.includes('const targetPayload = buildSwapPayload(p, {'));
-  assert.ok(addBody.includes('sourceIndex: srcIdx'));
-  assert.ok(addBody.includes('targetMediaId'));
-  assert.ok(addBody.includes('payload: {\n              ...targetPayload'));
+  assert.ok(swapBody.includes('processing_selection: buildCanonicalSelection({'));
+  assert.ok(addBody.includes('const payload = buildSwapPayload(p, {'));
+  assert.ok(addBody.includes('automatic: true, sourceIndex, targetMediaId'));
 });
 await check('the preview signature strips per-request bookkeeping', () => {
   const sig = faceSwap.slice(faceSwap.indexOf('const previewSignature = ('), faceSwap.indexOf('const previewKey ='));

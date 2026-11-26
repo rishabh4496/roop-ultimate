@@ -27,6 +27,8 @@ function fmtDuration(job) {
 export default function QueuePanel({
   q,                    // the useQueue() handle
   onAddCurrent,
+  onAddVideos,
+  videoCount = 0,
   onLoadJobSettings,    // put a job's settings back into the live params
   canAdd = true,
   notify,
@@ -105,6 +107,12 @@ export default function QueuePanel({
           <Button size="sm" variant="secondary" onClick={onAddCurrent} disabled={!canAdd}>
             Add current to queue
           </Button>
+          {onAddVideos && (
+            <Button size="sm" variant="secondary" onClick={onAddVideos} disabled={q.busy}
+              title="Use automatic face detection and the loaded facesets for these videos">
+              Queue {videoCount} {videoCount === 1 ? 'video' : 'videos'}
+            </Button>
+          )}
           {jobs.length > 0 && (
             <>
               {running ? (
