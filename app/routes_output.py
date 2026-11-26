@@ -33,6 +33,18 @@ _last_output = {"path": "", "kind": ""}
 # the client only ever gets the /api/output/source URL, never this path.
 _output_source = {"path": ""}
 
+# Bookkeeping the render path writes into the output folder, which is not a render. The resume
+# journal (roop/journal.py: journal.json, written via journal.json.tmp) was listed as an output on
+# Home and in Outputs, with a Delete button that would have thrown away the resume point.
+_INTERNAL_OUTPUT_FILES = frozenset({"journal.json", "journal.json.tmp"})
+_INTERNAL_OUTPUT_SUFFIXES = (".tmp", ".part")
+
+
+def _is_internal_output(name: str) -> bool:
+    low = name.lower()
+    return low in _INTERNAL_OUTPUT_FILES or low.endswith(_INTERNAL_OUTPUT_SUFFIXES)
+
+
 @router.get("/api/output")
 def list_output():
     out = getattr(roop_globals, "output_path", None)
@@ -40,7 +52,7 @@ def list_output():
     if out and os.path.isdir(out):
         for f in sorted(os.listdir(out), reverse=True):
             full = os.path.join(out, f)
-            if os.path.isfile(full) and not f.startswith("."):
+            if os.path.isfile(full) and not f.startswith(".") and not _is_internal_output(f):
                 kind = "video" if util.is_video(full) else ("image" if util.is_image(full) else "file")
                 items.append({"name": f, "kind": kind, "url": f"/outputs/{f}",
                               "path": f"/outputs/{f}", "absolute_path": full,

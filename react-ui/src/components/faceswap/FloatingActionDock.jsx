@@ -1,6 +1,27 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from '../../motion';
 import { Icon } from '../../icons';
+import { useTelemetryStore } from '../../store/telemetryStore';
+
+// The badge states what /api/system/telemetry reports, not what the app hopes for. It used to
+// read "GPU Turbo" with a "TensorRT FP16 + NVDEC + NVENC + Batch Swap" title on every machine,
+// including CPU / DirectML ones and while the real precision was `mixed`.
+function useAccelerationBadge() {
+  const turbo = useTelemetryStore((s) => s.system?.turbo_active);
+  const provider = useTelemetryStore((s) => s.system?.provider);
+  const precision = useTelemetryStore((s) => s.system?.trt_precision);
+  const nvdec = useTelemetryStore((s) => s.system?.nvdec_active);
+  const nvenc = useTelemetryStore((s) => s.system?.nvenc_active);
+  const batch = useTelemetryStore((s) => s.system?.batch_swap_active);
+  if (!provider) return null;
+  const parts = [
+    provider === 'tensorrt' ? `TensorRT${precision ? ` ${precision}` : ''}` : provider,
+    nvdec && 'NVDEC',
+    nvenc && 'NVENC',
+    batch && 'batched swap',
+  ].filter(Boolean);
+  return { turbo: !!turbo, label: turbo ? 'GPU Turbo' : provider, title: `Active: ${parts.join(' + ')}` };
+}
 
 /**
  * FloatingActionDock — the always-visible action bar at bottom centre: preview,
@@ -33,6 +54,22 @@ export default function FloatingActionDock({
   setDrawers,
 }) {
   const [showModeMenu, setShowModeMenu] = useState(false);
+  const modeMenuRef = useRef(null);
+  const accel = useAccelerationBadge();
+
+  // The layout menu closes on Escape and on a click anywhere else, like every other popover;
+  // it used to stay open until its own trigger was pressed again.
+  useEffect(() => {
+    if (!showModeMenu) return undefined;
+    const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); setShowModeMenu(false); } };
+    const onDown = (e) => { if (!modeMenuRef.current?.contains(e.target)) setShowModeMenu(false); };
+    window.addEventListener('keydown', onKey, true);
+    window.addEventListener('pointerdown', onDown, true);
+    return () => {
+      window.removeEventListener('keydown', onKey, true);
+      window.removeEventListener('pointerdown', onDown, true);
+    };
+  }, [showModeMenu]);
 
   // Descriptions state what each mode ACTUALLY does — the table these map onto
   // lives in FaceSwap.jsx (WORKSPACE_LAYOUT). Keep the two in step.
@@ -49,7 +86,10 @@ export default function FloatingActionDock({
   const currentMode = MODES.find((m) => m.id === workspaceMode) || MODES[0];
 
   return (
-    <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 pointer-events-auto transition-all duration-300">
+    // `w-max`: a fixed box at `left: 50%` shrink-wraps to HALF the viewport, so at 1280px the
+    // labels broke onto two lines ("GPU / Turbo", "Pop- / out") and the dock doubled in height
+    // over the content. `whitespace-nowrap` holds each label on one line; the cap keeps it on screen.
+    <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 w-max max-w-[calc(100vw-2rem)] whitespace-nowrap pointer-events-auto transition-all duration-300">
       <div className="relative flex items-center gap-2.5 rounded-full border border-white/15 bg-black/85 px-4 py-2.5 shadow-2xl backdrop-blur-xl ring-1 ring-white/10">
         
         {/* There is no Start / Cancel here. The run bar at the top of the
@@ -74,19 +114,25 @@ export default function FloatingActionDock({
           <span>{previewing ? 'Rendering...' : 'Preview'}</span>
         </button>
 
-        {/* GPU Turbo Status Badge */}
-        <div
-          className="hidden md:flex items-center gap-1.5 rounded-full px-2.5 py-1 text-nano font-bold bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 select-none cursor-default"
-          title="Full GPU Potential: TensorRT FP16 + NVDEC + NVENC + Batch Swap"
-        >
-          <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
-          <span>GPU Turbo</span>
-        </div>
+        {/* Acceleration badge: the provider the backend reports, green only when it says turbo is active. */}
+        {accel && (
+          <div
+            className={`hidden md:flex items-center gap-1.5 rounded-full px-2.5 py-1 text-nano font-bold border select-none cursor-default ${
+              accel.turbo
+                ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300'
+                : 'bg-white/5 border-white/15 text-white/70'}`}
+            title={accel.title}
+            data-testid="dock-acceleration"
+          >
+            <span className={`h-1.5 w-1.5 rounded-full ${accel.turbo ? 'bg-emerald-400 animate-pulse' : 'bg-white/40'}`} />
+            <span>{accel.label}</span>
+          </div>
+        )}
 
         <div className="h-4 w-px bg-white/15" />
 
         {/* Workspace Layout Switcher Menu */}
-        <div className="relative">
+        <div className="relative" ref={modeMenuRef}>
           <button
             onClick={() => setShowModeMenu(!showModeMenu)}
             className="flex items-center gap-1.5 rounded-full bg-white/5 border border-white/10 px-3 py-1.5 text-xs font-medium text-white/80 transition-all hover:bg-white/10 hover:text-white"
@@ -182,8 +228,8 @@ export default function FloatingActionDock({
             className={`rounded-lg p-1.5 text-xs transition-all ${
               drawers.left ? 'ink-accent bg-white/10' : 'text-muted hover:text-white/70'
             }`}
-            title="Toggle Left Faces Sidebar"
-            aria-label="Toggle the faces sidebar"
+            title="Toggle the settings inspector (left)"
+            aria-label="Toggle the settings inspector"
             aria-pressed={drawers.left}
           >
             <Icon.panelLeft size={14} />
@@ -194,8 +240,8 @@ export default function FloatingActionDock({
             className={`rounded-lg p-1.5 text-xs transition-all ${
               drawers.right ? 'ink-accent bg-white/10' : 'text-muted hover:text-white/70'
             }`}
-            title="Toggle Right Settings Inspector"
-            aria-label="Toggle the settings inspector"
+            title="Toggle the media and faces column (right)"
+            aria-label="Toggle the media and faces column"
             aria-pressed={drawers.right}
           >
             <Icon.panelRight size={14} />

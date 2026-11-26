@@ -8,6 +8,7 @@ import QueuePanel from './faceswap/QueuePanel';
 import PreFlightLinter from './faceswap/PreFlightLinter';
 import SegmentMatrix from './segments/SegmentMatrix';
 import FacesetLibrary from './faceswap/FacesetLibrary';
+import useDialogFocus from './useDialogFocus';
 import {
   autoMatchMatrixConfig,
   buildBatchJobPayload,
@@ -119,6 +120,7 @@ export default function BatchSwap({ settings = {}, notify, onUpdateSetting }) {
   // Quick Slots & Health Inspector Modal State
   const [activeQuickSlot, setActiveQuickSlot] = useState(null);
   const [showHealthModal, setShowHealthModal] = useState(false);
+  const healthDialogRef = useDialogFocus(showHealthModal, () => setShowHealthModal(false));
   const [autoFallbackEnabled, setAutoFallbackEnabled] = useState(true);
 
   // ── Strategy 1: One-to-Many state ──
@@ -780,9 +782,10 @@ export default function BatchSwap({ settings = {}, notify, onUpdateSetting }) {
       {/* ── Pre-flight Batch Health Inspector Modal ── */}
       {showHealthModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-[#121216] border border-white/10 rounded-2xl max-w-xl w-full p-6 space-y-4 shadow-2xl animate-scale-in text-white">
+          <div ref={healthDialogRef} role="dialog" aria-modal="true" aria-labelledby="batch-health-title" tabIndex={-1}
+            className="bg-[#121216] border border-white/10 rounded-2xl max-w-xl w-full p-6 space-y-4 shadow-2xl animate-scale-in text-white">
             <div className="flex items-center justify-between border-b border-white/10 pb-3">
-              <h3 className="text-lg font-bold flex items-center gap-2.5 text-yellow-400">
+              <h3 id="batch-health-title" className="text-lg font-bold flex items-center gap-2.5 text-yellow-400">
                 <MotionIcon icon={Icon.wand} size="md" variant="amber" animate="pulse" />
                 Pre-flight Batch Health Breakdown
               </h3>

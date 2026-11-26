@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
+import useDialogFocus from './useDialogFocus';
 
 // Lightweight subsequence fuzzy match with a simple relevance score.
 function score(query, text) {
@@ -18,6 +19,8 @@ export default function CommandPalette({ open, onClose, commands }) {
   const [sel, setSel] = useState(0);
   const inputRef = useRef(null);
   const listRef = useRef(null);
+  // Escape, a Tab cycle that stays in the palette, and focus back to where Ctrl+K was pressed.
+  const dialogRef = useDialogFocus(open, onClose);
 
   useEffect(() => {
     if (open) { setQuery(''); setSel(0); setTimeout(() => inputRef.current?.focus(), 20); }
@@ -60,35 +63,49 @@ export default function CommandPalette({ open, onClose, commands }) {
   });
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-start justify-center pt-[12vh] px-4 bg-black/50 backdrop-blur-sm animate-slide-up" onMouseDown={onClose}>
+    <div className="fixed inset-0 z-[60] flex items-start justify-center pt-[12vh] px-4 bg-black/50 backdrop-blur-sm animate-slide-up"
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Command palette"
         className="w-full max-w-xl rounded-2xl glass-panel border border-white/10 shadow-2xl overflow-hidden"
-        onMouseDown={(e) => e.stopPropagation()}
-        onKeyDown={onKeyDown}
       >
         <div className="flex items-center gap-3 px-4 py-3 border-b border-white/10">
-          <span className="text-muted text-lg">⌘</span>
+          <span className="text-muted text-lg" aria-hidden="true">⌘</span>
           <input
             ref={inputRef}
             value={query}
             onChange={(e) => { setQuery(e.target.value); setSel(0); }}
+            onKeyDown={onKeyDown}
+            aria-label="Search commands"
+            role="combobox"
+            aria-expanded="true"
+            aria-controls="command-palette-list"
+            aria-autocomplete="list"
+            aria-activedescendant={filtered[sel] ? `command-palette-opt-${sel}` : undefined}
             placeholder="Search actions, themes, settings…"
             className="flex-1 bg-transparent text-white text-sm placeholder-white/30 focus:outline-none"
           />
           <kbd className="text-nano font-mono text-muted bg-white/5 px-1.5 py-0.5 rounded border border-white/10">ESC</kbd>
         </div>
-        <div ref={listRef} className="max-h-[52vh] overflow-y-auto py-2">
+        <div ref={listRef} id="command-palette-list" role="listbox" aria-label="Commands" tabIndex={-1} className="max-h-[52vh] overflow-y-auto py-2">
           {filtered.length === 0 ? (
             <div className="px-4 py-8 text-center text-sm text-muted">No matching commands</div>
           ) : (
             groups.map((g) => (
-              <div key={g.section} className="mb-1">
-                <div className="px-4 py-1 text-nano font-semibold uppercase tracking-[0.14em] text-muted">{g.section}</div>
+              <div key={g.section} role="group" aria-label={g.section} className="mb-1">
+                <div aria-hidden="true" className="px-4 py-1 text-nano font-semibold uppercase tracking-[0.14em] text-muted">{g.section}</div>
                 {g.items.map(({ c, i }) => (
                   <button
                     key={c.id}
                     data-idx={i}
+                    id={`command-palette-opt-${i}`}
                     type="button"
+                    role="option"
+                    aria-selected={i === sel}
+                    tabIndex={-1}
                     onMouseEnter={() => setSel(i)}
                     onClick={() => run(c)}
                     className={`w-full flex items-center gap-3 px-4 py-2 text-left transition-colors ${i === sel ? 'bg-[var(--accent)]/15' : 'hover:bg-white/5'}`}

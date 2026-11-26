@@ -61,7 +61,9 @@ export function installHistoryDom(win = window, doc = document) {
     if (doc.querySelector('[role="dialog"]')) return;
     e.preventDefault();
     const s = useHistoryStore.getState();
-    if (s.inTransaction()) return;                  // mid-drag: the gesture is not an entry yet
+    // Mid-drag (the pointer is still down): the gesture is not an entry yet. A gesture that has
+    // ENDED and is only settling is closed now, so the key undoes it instead of being swallowed.
+    if (s.inTransaction() && (ours || !s.settleTransaction())) return;
     if (action === 'undo') s.undo(); else s.redo();
   };
 

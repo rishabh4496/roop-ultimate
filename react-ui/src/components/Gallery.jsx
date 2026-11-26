@@ -327,9 +327,12 @@ export default function Gallery({ notify, setSettings, setTab }) {
           </div>
 
           <div className="flex gap-1.5 bg-black/20 p-1 rounded-xl border border-white/5">
-            {['all', 'video', 'image'].map((t) => (
+            {/* Labels are spelled out: `{t}s` rendered "ALLS". */}
+            {[['all', 'All'], ['video', 'Videos'], ['image', 'Images']].map(([t, label]) => (
               <button
                 key={t}
+                type="button"
+                aria-pressed={filterType === t}
                 onClick={() => setFilterType(t)}
                 className={`px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-all ${
                   filterType === t
@@ -337,7 +340,7 @@ export default function Gallery({ notify, setSettings, setTab }) {
                     : 'text-white/60 hover:text-white'
                 }`}
               >
-                {t}s
+                {label}
               </button>
             ))}
           </div>

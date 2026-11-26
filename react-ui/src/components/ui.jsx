@@ -101,9 +101,12 @@ export const MotionIcon = ({
   const varStyle = MOTION_ICON_VARIANTS[variant] || MOTION_ICON_VARIANTS.accent;
 
   return (
+    // No `whileTap`, and aria-hidden: the icon always sits beside its own text and is decorative. Framer gives any
+    // element with tap handlers `tabindex="0"` (the same trap the toggle switch below documents), so every Section
+    // header, stat tile and modal title icon was a nameless tab stop.
     <motion.span
+      aria-hidden="true"
       whileHover={{ scale: 1.08, rotate: 3 }}
-      whileTap={{ scale: 0.92 }}
       transition={spring.snappy}
       className={`inline-grid place-items-center border backdrop-blur-md transition-all shrink-0 ${sz.container} ${varStyle} ${className}`}
     >

@@ -3,6 +3,7 @@ import { motion, AnimatePresence, spring } from '../motion';
 import { Card, Button, MotionIcon } from './ui';
 import { Icon } from '../icons';
 import { confirmDialog } from './confirm';
+import useDialogFocus from './useDialogFocus';
 
 export const BUILTIN_PROFILES = [
   {
@@ -153,6 +154,7 @@ export default function QualityProfilesModal({
   notify,
 }) {
   const [customProfiles, setCustomProfiles] = useState([]);
+  const dialogRef = useDialogFocus(!!open, onClose);
   const [newProfileName, setNewProfileName] = useState('');
   const [newProfileDesc, setNewProfileDesc] = useState('');
   const [showAddForm, setShowAddForm] = useState(false);
@@ -262,6 +264,11 @@ export default function QualityProfilesModal({
     <AnimatePresence>
       <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md overflow-y-auto">
         <motion.div
+          ref={dialogRef}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="quality-profiles-title"
+          tabIndex={-1}
           initial={{ opacity: 0, scale: 0.95, y: 10 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.95, y: 10 }}
@@ -273,7 +280,7 @@ export default function QualityProfilesModal({
             <div className="flex items-center gap-3">
               <MotionIcon icon={Icon.brand} size="lg" variant="accent" animate="pulse" />
               <div>
-                <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                <h2 id="quality-profiles-title" className="text-lg font-bold text-white flex items-center gap-2">
                   Quality Profiles & Processing Estimator
                   <span className="text-nano px-2 py-0.5 rounded-full bg-[var(--accent)]/20 text-accent font-mono font-bold">
                     PRESETS & CUSTOM PROFILES

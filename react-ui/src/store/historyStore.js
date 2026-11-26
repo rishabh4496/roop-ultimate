@@ -163,6 +163,21 @@ export const useHistoryStore = create((set, get) => {
       }, TX_SETTLE_MS);
     },
 
+    /**
+     * The gesture has ended (pointerup seen) but its settle timer has not fired: close it now and
+     * commit its entry. True when there was such a gesture. Undo / redo call this first, because a
+     * Ctrl+Z pressed inside the 60 ms settle window used to be swallowed: the key handler saw an
+     * open transaction, prevented the default and did nothing.
+     */
+    settleTransaction() {
+      if (!txTimer) return false;
+      clearTimeout(txTimer);
+      txTimer = null;
+      txDepth = 0;
+      flush();
+      return true;
+    },
+
     /** Name the entry the current gesture will produce, when the describers cannot ("Added Roto Polygon"). */
     labelNext(text) { txHint = text; },
 

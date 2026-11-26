@@ -53,8 +53,10 @@ APP = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(os.path.dirname(APP), 'react-ui', 'src')
 ACTIONS_JS = os.path.join(SRC, 'shortcuts', 'actions.js')
 
-# Only mounted behind a modal that the other handlers already yield to.
-EXEMPT_FILES = {'confirm.jsx'}
+# Only mounted behind a modal that the other handlers already yield to. useDialogFocus.js is the same thing shared by
+# the other modals: its window handler is live only while a dialog is open, and its literal key is Tab, the focus trap
+# that keeps the keyboard inside the dialog - focus navigation, not a command the remapper could move.
+EXEMPT_FILES = {'confirm.jsx', 'useDialogFocus.js'}
 
 # Keys that are not commands. Escape dismisses whatever is in front (a solo stage, a pasted-files notice, a modal): several
 # layers reacting to it is the design, and the remapper refuses to bind it. Space appears in a guard that stops Play/Pause

@@ -1424,6 +1424,13 @@ async function startServer() {
       ram_available: Number((ramTotal * 0.5).toFixed(2)),
       process_rss: 2.31,
       threads: isDesktop ? 42 : 27,
+      // What the backend's /api/system/telemetry reports about acceleration; the Face Swap dock badge reads these.
+      provider: 'tensorrt',
+      trt_precision: 'mixed',
+      turbo_active: true,
+      nvdec_active: true,
+      nvenc_active: true,
+      batch_swap_active: true,
     });
   });
 

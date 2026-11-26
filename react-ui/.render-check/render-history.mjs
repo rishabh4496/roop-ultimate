@@ -278,6 +278,40 @@ console.log('── slots ──');
   settings.unregister(); roto.unregister(); extras.unregister();
 }
 
+console.log('── Ctrl+Z right after a drag (inside the settle window) ──');
+{
+  resetHistoryForTests();
+  const s = owner('settings', { blend: 0.5, name: 'x' }, C.SETTINGS_CHANNEL);
+  s.report();
+  // A fake window/document, so the real key handler from historyDom.js runs.
+  const handlers = {};
+  const win = { addEventListener: (t, fn) => { handlers[t] = fn; }, removeEventListener: () => {} };
+  const doc = { activeElement: null, querySelector: () => null };
+  const uninstall = D.installHistoryDom(win, doc);
+  const ctrlZ = () => {
+    let prevented = false;
+    handlers.keydown({ key: 'z', code: 'KeyZ', ctrlKey: true, metaKey: false, shiftKey: false, altKey: false,
+      target: null, preventDefault: () => { prevented = true; } });
+    return prevented;
+  };
+  const sliderEl = { closest: () => ({}) };      // anything matching the transaction selector
+
+  handlers.pointerdown({ target: sliderEl });
+  for (let i = 1; i <= 10; i += 1) s.set({ blend: 0.5 + i * 0.03, name: 'x' });
+  ok('mid-drag: Ctrl+Z is held back', ctrlZ() && H().entries.length === 1 && s.value.blend !== 0.5);
+  handlers.pointerup({});
+  // No sleep: the 60 ms settle timer is still pending, which is exactly when a fast user presses Ctrl+Z.
+  ok('settle window is open', H().inTransaction());
+  ctrlZ();
+  await sleep(20);
+  ok('Ctrl+Z inside the settle window undoes the drag', s.value.blend === 0.5, `blend=${s.value.blend}`);
+  ok('the drag became one entry and undo moved off it', H().entries.length === 2 && H().index === 0,
+    `entries=${H().entries.length} index=${H().index}`);
+  ok('nothing left open', !H().inTransaction());
+  uninstall();
+  s.unregister();
+}
+
 console.log('── labels ──');
 ok('catalog / diff labels are used', C.settingLabel('blend_ratio') === 'Blend' && C.settingLabel('server_port') === 'Server port');
 ok('unknown keys are humanised', C.settingLabel('some_new_key') === 'Some new key');

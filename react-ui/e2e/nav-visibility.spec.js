@@ -186,7 +186,8 @@ test('Ctrl+K opens the palette from inside a text field and runs a layout comman
   await expect(palette, 'Ctrl+K works while a field has focus').toBeVisible();
 
   await palette.fill('max canvas');
-  await expect(page.getByRole('button', { name: /Layout: Max Canvas/ })).toBeVisible();
+  // Palette rows are listbox options (the search box is a combobox over them), not buttons.
+  await expect(page.getByRole('option', { name: /Layout: Max Canvas/ })).toBeVisible();
   await page.keyboard.press('Enter');
   await expect(palette).toHaveCount(0);
   await expect(page).toHaveURL(/#\/faceswap$/);
@@ -194,7 +195,7 @@ test('Ctrl+K opens the palette from inside a text field and runs a layout comman
 
   await page.keyboard.press('Control+k');
   await palette.fill('provider');
-  await expect(page.getByRole('button', { name: /Execution provider: tensorrt/ })).toBeVisible();
+  await expect(page.getByRole('option', { name: /Execution provider: tensorrt/ })).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(palette).toHaveCount(0);
 });

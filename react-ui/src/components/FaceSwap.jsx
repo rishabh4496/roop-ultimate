@@ -81,6 +81,15 @@ import HeadPoseHud from './faceswap/HeadPoseHud';
 import useThrottledFrameRequest from './faceswap/useThrottledFrameRequest';
 import { eventMatches, useShortcutStore } from '../store/shortcutStore';
 import { usePipStore } from '../store/pipStore';
+import { DEFAULT_PANEL_SIZES } from '../store/workspaceStore';
+
+// A dragged panel width reaches the column as a CSS variable that only the side-by-side
+// breakpoint reads (`lg:w-[var(--inspector-w,...)]`), never as an inline `width`. An inline
+// width beat the responsive `w-full`, so below 1024px the stacked inspector stayed 350px wide
+// with the preview pushed under ~100 controls, and it also cancelled the 3xl/4xl widening.
+// The default size sets no variable, so the per-breakpoint defaults still apply.
+const panelWidthVar = (name, width, fallback) =>
+  (width && width !== fallback ? { [name]: `${width}px` } : undefined);
 import FrameUnavailable from './faceswap/FrameUnavailable';
 import {
   dataUrlToOwnedBlobUrl, releaseOwner, revokeUrl, blobUrlToDataUrl,
@@ -3271,7 +3280,10 @@ export default function FaceSwap({
   // The Curve Editor's view of all this. Identity Morph Weight is the one curve that is not a settings key: it is
   // compiled into the Identity Keyframe Track (the first two sources of the blender, 0 -> 1), which the backend
   // already renders per frame, with the curve's own easing.
-  const morphSources = identityBlend.components || [];
+  // Only components whose source is still loaded. A blender recipe keeps a component after its source is removed
+  // from the gallery, and counting it offered to write a morph "to Not in gallery" with a single real source.
+  const morphSources = (identityBlend.components || [])
+    .filter((comp) => sourceFacesInfo.some((info) => info?.id === comp.source_id));
   const morphKeys = curves.tracks.identity_morph || [];
   const curveEditor = {
     open: curveOpen,
@@ -3521,8 +3533,8 @@ export default function FaceSwap({
           itself. */}
       <div
         data-testid="inspector"
-        className={`w-full lg:w-[350px] 3xl:w-[400px] 4xl:w-[460px] shrink-0 space-y-3 select-none ${!showLeftPanel ? 'hidden' : ''}`}
-        style={showLeftPanel && panelSizes?.leftWidth ? { width: `${panelSizes.leftWidth}px`, minWidth: `${panelSizes.leftWidth}px` } : undefined}
+        className={`w-full lg:w-[var(--inspector-w,350px)] 3xl:w-[var(--inspector-w,400px)] 4xl:w-[var(--inspector-w,460px)] shrink-0 space-y-3 select-none ${!showLeftPanel ? 'hidden' : ''}`}
+        style={showLeftPanel ? panelWidthVar('--inspector-w', panelSizes?.leftWidth, DEFAULT_PANEL_SIZES.leftWidth) : undefined}
       >
         <RecipePresetBar
           recipes={QUICK_RECIPES}
@@ -4208,8 +4220,8 @@ export default function FaceSwap({
         {/* COLUMN 2: Media Asset Manager — right rail. Stays put during a run,
             as with column 1: the sources and targets a running job baked in are
             already its own, so editing these is setting up the NEXT job. */}
-        <div className={`w-full xl:w-[330px] 3xl:w-[380px] 4xl:w-[440px] shrink-0 space-y-3.5 select-none ${!showRightPanel ? 'hidden' : ''}`}
-          style={showRightPanel && panelSizes?.rightWidth ? { width: `${panelSizes.rightWidth}px`, minWidth: `${panelSizes.rightWidth}px` } : undefined}>
+        <div className={`w-full xl:w-[var(--media-rail-w,330px)] 3xl:w-[var(--media-rail-w,380px)] 4xl:w-[var(--media-rail-w,440px)] shrink-0 space-y-3.5 select-none ${!showRightPanel ? 'hidden' : ''}`}
+          style={showRightPanel ? panelWidthVar('--media-rail-w', panelSizes?.rightWidth, DEFAULT_PANEL_SIZES.rightWidth) : undefined}>
           <Section title="Target media" icon={Icon.faceswap}>
             <PersonGroups
               targetFaces={targetFaces}

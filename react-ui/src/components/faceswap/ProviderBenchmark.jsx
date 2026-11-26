@@ -66,8 +66,11 @@ export default function ProviderBenchmark({ processing = false, className = '' }
   const lastLog = state && Array.isArray(state.logs) && state.logs.length ? state.logs[state.logs.length - 1] : '';
 
   return (
-    <details className={`rounded-2xl border border-white/10 bg-white/[0.02] ${className}`} data-testid="provider-benchmark">
-      <summary className="cursor-pointer list-none flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-2">
+    // `group` + the rotating caret: with `list-none` hiding the native marker the summary read as a
+    // static heading, and nothing said the benchmark was folded inside it.
+    <details className={`group rounded-2xl border border-white/10 bg-white/[0.02] ${className}`} data-testid="provider-benchmark">
+      <summary className="cursor-pointer list-none flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-2 hover:bg-white/[0.03] rounded-2xl">
+        <span aria-hidden="true" className="text-micro text-muted transition-transform group-open:rotate-90">▶</span>
         <span className="text-nano font-bold uppercase tracking-[0.16em] text-white/60">Pipeline providers</span>
         <span className="text-micro text-muted">CPU vs TensorRT vs OpenVINO, per stage</span>
       </summary>

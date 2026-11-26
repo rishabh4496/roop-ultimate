@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { motion } from '../../motion';
+import useDialogFocus from '../useDialogFocus';
 
 /**
  * PresetStudioModal
@@ -16,6 +17,7 @@ export default function PresetStudioModal({
   notify,
 }) {
   const [selectedRecipe, setSelectedRecipe] = useState(null);
+  const dialogRef = useDialogFocus(!!isOpen, onClose);
 
   // Every key here must be a REAL setting key and every value a value the
   // backend accepts, because Apply writes them straight into the live params.
@@ -141,6 +143,11 @@ export default function PresetStudioModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
       <motion.div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="preset-studio-title"
+        tabIndex={-1}
         initial={{ opacity: 0, scale: 0.95, y: 15 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.95, y: 15 }}
@@ -150,7 +157,7 @@ export default function PresetStudioModal({
         <div className="flex items-center justify-between px-6 py-4 border-b border-white/10 bg-neutral-950/60">
           <div className="flex items-center gap-3">
             <div>
-              <h2 className="text-lg font-bold text-white">Preset Studio & Recipe Manager</h2>
+              <h2 id="preset-studio-title" className="text-lg font-bold text-white">Preset Studio & Recipe Manager</h2>
               <p className="text-xs text-neutral-400">Curated 1-click quality recipes & configuration diff inspector</p>
             </div>
           </div>

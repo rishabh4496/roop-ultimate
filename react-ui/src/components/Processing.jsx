@@ -143,6 +143,10 @@ export default function Processing({ progress, settings, notify, setTab,
   // how far it got decide the wording.
   const failed = !processing && !!progress.error;
   const completed = !processing && !progress.error && prog >= 0.99;
+  // Nothing has run since the backend started: no start time, no duration, no output. This
+  // used to read "Run stopped" with a stop icon, as if a job had been cancelled.
+  const neverRan = !processing && !failed && !completed && !progress.started_at
+    && !backendDurationMs && !elapsedRef.current && !progress.output?.path;
 
   return (
     <div className="w-full space-y-4">
@@ -181,12 +185,14 @@ export default function Processing({ progress, settings, notify, setTab,
               <span className={`grid place-items-center h-11 w-11 rounded-xl border shrink-0 ${
                 failed ? 'bg-red-500/10 border-red-500/25 text-red-400'
                 : completed ? 'bg-emerald-500/10 border-emerald-500/25 text-emerald-400'
+                : neverRan ? 'bg-white/5 border-white/10 text-muted'
                 : 'bg-amber-500/10 border-amber-500/25 text-amber-400'}`}>
-                {failed ? <Icon.error size={20} /> : completed ? <Icon.success size={20} /> : <Icon.stop size={18} />}
+                {failed ? <Icon.error size={20} /> : completed ? <Icon.success size={20} />
+                  : neverRan ? <Icon.preview size={18} /> : <Icon.stop size={18} />}
               </span>
               <div className="min-w-0">
                 <div className="text-sm font-bold text-white">
-                  {failed ? 'Run failed' : completed ? 'Run complete' : 'Run stopped'}
+                  {failed ? 'Run failed' : completed ? 'Run complete' : neverRan ? 'No run yet' : 'Run stopped'}
                 </div>
                 <div className="text-xs text-muted truncate max-w-[52ch]">
                   {progress.error
