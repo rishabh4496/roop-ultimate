@@ -16,7 +16,7 @@ import { useEffect, useRef } from 'react';
 // components/LiveTelemetry.jsx, which re-render themselves — or write a DOM
 // node directly — at no more than UI_HZ.
 //
-// The store is written by transport code (App.onTelemetry, App.mergeProgress,
+// The store is written by transport code (App.onTelemetry, App.readProgress,
 // the system-telemetry poller) with setState. Nothing reads it during render
 // except through the throttled hooks below.
 
@@ -26,6 +26,7 @@ export const UI_HZ = 10;
 const EMPTY_RUN = {
   progress: 0,
   desc: '',
+  phase_desc: '',
   status_line: '',
   fps: 0,
   fps_now: null,
@@ -68,7 +69,9 @@ const EMPTY_RUN = {
 };
 
 /** The fields a telemetry frame carries that change every tick. */
-export const FAST_FIELDS = Object.keys(EMPTY_RUN);
+export const FAST_FIELDS = Object.keys(EMPTY_RUN).filter((key) => key !== 'phase_desc');
+
+const controlStatus = /^(?:paus(?:ed|e requested)|resuming|stopping)\b/i;
 
 // The 3-stage pipeline view and the finished per-job report (roop/stage_telemetry.py): `stages` is the
 // live state of Stage 1-3, `summary` the report the backend builds when the render ends ({} until then).
@@ -118,15 +121,17 @@ export function setEnhancerCompilation(compilation) {
 export function setRunTelemetry(patch) {
   if (!patch) return;
   const cur = useTelemetryStore.getState().run;
-  let changed = false;
-  const next = { ...cur };
+  const starting = patch.started_at > 0 && patch.started_at !== cur.started_at;
+  const next = { ...(starting ? EMPTY_RUN : cur) };
+  const holdPhase = controlStatus.test(patch.desc || '');
   for (const k of FAST_FIELDS) {
-    if (Object.prototype.hasOwnProperty.call(patch, k) && patch[k] !== cur[k]) {
-      next[k] = patch[k];
-      changed = true;
-    }
+    if (holdPhase && (k === 'current_frame' || k === 'total_frames')) continue;
+    if (Object.prototype.hasOwnProperty.call(patch, k)) next[k] = patch[k];
   }
-  if (changed) useTelemetryStore.setState({ run: next });
+  if (typeof patch.desc === 'string' && !holdPhase) next.phase_desc = patch.desc;
+  if (Object.keys(next).some((key) => next[key] !== cur[key])) {
+    useTelemetryStore.setState(starting ? { run: next, dashboard: EMPTY_DASHBOARD } : { run: next });
+  }
 }
 
 /** Take the `stage` / `stages` / `summary` of a telemetry frame; a no-op when none of them changed. */
@@ -223,6 +228,63 @@ export const framesOf = (run) => {
   if (!Number.isFinite(d) || !Number.isFinite(t) || t <= 0) return null;
   return { done: d, total: t };
 };
+
+/** A measured fraction of the active phase, or null while the work has no total. */
+export function selectRenderProgress({ run, dashboard }) {
+  const desc = run.phase_desc || run.desc || '';
+  const analysis = dashboard?.stages?.S2;
+  const phase = analysis?.detail?.phase;
+  let label = 'Preparing';
+  let counts = null;
+  let unit = 'frames';
+  let fps = null;
+  let eta = null;
+
+  if (engineTextOf(run)) {
+    label = 'Preparing engine';
+  } else if (/\b(combin\w*|finaliz\w*|mux\w*|encod\w*|audio)\b/i.test(desc)) {
+    label = 'Finalizing';
+  } else if (/upscal/i.test(desc)) {
+    label = 'Upscale';
+  } else if (/interpolat|rife/i.test(desc)) {
+    label = 'Interpolate';
+  } else if (/^Processing frame\b|\bswapping\b/i.test(desc)) {
+    label = 'Swap';
+  } else if (analysis?.state === 'RUNNING' && (phase === 'Pre-scan' || phase === 'Tracking')) {
+    label = phase;
+    unit = analysis.unit || unit;
+    counts = { done: analysis.done, total: analysis.total };
+    eta = analysis.eta_s;
+    fps = unit === 'frames' ? analysis.rate : null;
+  } else if (/pre[- ]?scan|analy|track|extract|detect/i.test(desc)) {
+    label = 'Analyze';
+  }
+
+  // File counts such as "upscaling 1/3" and fallback counters from a previous
+  // phase cannot measure progress against this phase's frames.
+  const frameCount = /\bframes?\s+(\d[\d,]*)\s*\/\s*(\d[\d,]*)/i.exec(desc);
+  if (frameCount && ['Swap', 'Upscale', 'Interpolate', 'Analyze'].includes(label)) {
+    const read = (n) => Number(n.replaceAll(',', ''));
+    const total = read(frameCount[2]);
+    const done = label === 'Swap' && run.total_frames === total && Number.isFinite(run.current_frame)
+      ? run.current_frame : read(frameCount[1]);
+    counts = { done, total };
+    eta = run.eta_s;
+    fps = run.fps_now;
+  }
+  const total = counts && Number.isFinite(counts.done) && Number.isFinite(counts.total) && counts.total > 0
+    ? counts.total : null;
+  const done = total === null ? null : Math.min(total, Math.max(0, counts.done));
+  return {
+    label, done, total, unit,
+    fraction: total === null ? null : done / total,
+    fpsNow: Number.isFinite(fps) && fps > 0 ? fps : null,
+    etaMs: total !== null && done < total && Number.isFinite(eta) && eta > 0 ? eta * 1000 : 0,
+  };
+}
+
+export const renderCompleted = (status) => !status.processing && !status.error
+  && Number(status.progress) === 1 && status.desc !== 'Stopped';
 
 /**
  * Milliseconds left: the terminal's own eta_s where a bar is counting, else

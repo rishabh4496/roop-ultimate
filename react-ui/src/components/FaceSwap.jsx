@@ -81,7 +81,7 @@ import HeadPoseHud from './faceswap/HeadPoseHud';
 import useThrottledFrameRequest from './faceswap/useThrottledFrameRequest';
 import { eventMatches, useShortcutStore } from '../store/shortcutStore';
 import { usePipStore } from '../store/pipStore';
-import { DEFAULT_PANEL_SIZES } from '../store/workspaceStore';
+import { DEFAULT_PANEL_SIZES, PANEL_LIMITS } from '../store/workspaceStore';
 
 // A dragged panel width reaches the column as a CSS variable that only the side-by-side
 // breakpoint reads (`lg:w-[var(--inspector-w,...)]`), never as an inline `width`. An inline
@@ -90,6 +90,7 @@ import { DEFAULT_PANEL_SIZES } from '../store/workspaceStore';
 // The default size sets no variable, so the per-breakpoint defaults still apply.
 const panelWidthVar = (name, width, fallback) =>
   (width && width !== fallback ? { [name]: `${width}px` } : undefined);
+const PREVIEW_HEIGHTS = { fit: 0, compact: 280, large: 640 };
 import FrameUnavailable from './faceswap/FrameUnavailable';
 import {
   dataUrlToOwnedBlobUrl, releaseOwner, revokeUrl, blobUrlToDataUrl,
@@ -110,7 +111,7 @@ import PanelResizeDivider from './faceswap/PanelResizeDivider';
 import { TRACKER_DEFAULT_VALUES, TRACKER_BYPASS_VALUES } from './faceswap/trackerConfig';
 import { TiltCard } from '../motion';
 import { LiveText } from './LiveTelemetry';
-import { selectProg, etaMsOf, useTelemetryStore } from '../store/telemetryStore';
+import { selectRenderProgress, useTelemetryStore } from '../store/telemetryStore';
 import { outputMediaUrl, outputSource } from './outputUrl';
 import { useFrameSocketHold } from '../transport/useFrameSocket';
 import { logFailure, reportFailure } from '../failureLog';
@@ -280,6 +281,9 @@ export default function FaceSwap({
     drawers, setDrawers,
     showLeftPanel, showRightPanel, showTimelineDeck,
   } = useWorkspaceLayout();
+  const previewBox = useRef(null);
+  const previewHeight = panelSizes.previewHeight;
+  const previewSize = Object.keys(PREVIEW_HEIGHTS).find((key) => PREVIEW_HEIGHTS[key] === previewHeight) || 'custom';
 
   // The floating dock covers the bottom of the viewport on this tab. Tabbing to a
   // control, or scrollIntoView, scrolls it only to the viewport edge -- i.e. under
@@ -3526,6 +3530,8 @@ export default function FaceSwap({
     : (calibEst?.source === 'global' ? 'text-amber-400 border-amber-500/30 bg-amber-500/10'
       : 'text-muted border-white/10 bg-white/5');
 
+  const showModelComparison = previewSrc && (comparingEnhancers || comparingMasks || comparingSwappers || comparingUpscalers);
+
   return (
     // pb-28: the floating dock is fixed over the bottom ~80px of the viewport. Without
     // this room the last row of every column could be scrolled no higher than the
@@ -4515,8 +4521,8 @@ export default function FaceSwap({
                           <LiveText
                             className="tabular-nums"
                             select={(s) => {
-                              const eta = etaMsOf(s.run, startTime ? Date.now() - startTime : 0);
-                              return `Rendering ${Math.round(selectProg(s) * 100)}%${eta > 0 ? ` · ${fmtTime(eta)} left` : ''}`;
+                              const { label, fraction, etaMs } = selectRenderProgress(s);
+                              return `${label}${fraction == null ? '' : ` ${Math.round(fraction * 100)}%`}${etaMs > 0 ? ` · ${fmtTime(etaMs)} left in phase` : ''}`;
                             }}
                           />
                         )}
@@ -4539,7 +4545,16 @@ export default function FaceSwap({
           {/* The preview holds a live image and its scrub/compare controls;
               nothing here should move under the cursor. This used to spell that
               out as three separate opt-outs, which is now just an elevation. */}
-          <Section title="Preview" elevation="flat">
+          <Section title="Preview" elevation="flat" action={!showModelComparison && (
+            <select aria-label="Preview size" value={previewSize}
+                    onChange={(event) => setPanelSize('previewHeight', PREVIEW_HEIGHTS[event.target.value])}
+                    className="min-h-8 max-w-full rounded-lg border border-[var(--border-color)] bg-[var(--card-bg)] px-2.5 text-xs text-[var(--text-main)]">
+              <option value="fit">Fit</option>
+              <option value="compact">Compact</option>
+              <option value="large">Large</option>
+              {previewSize === 'custom' && <option value="custom" disabled>{previewHeight} px</option>}
+            </select>
+          )}>
             <div className="space-y-4">
                 {/* Media Session Tab Bar for multi-file workspace */}
                 <MediaTabSessionBar
@@ -4599,6 +4614,7 @@ export default function FaceSwap({
                   )}
                 </div>
 
+                <div id="face-swap-preview" ref={previewBox}>
                 {previewSrc ? (
                   comparingEnhancers ? (
                     <ComparisonGridPanel
@@ -4665,6 +4681,7 @@ export default function FaceSwap({
                       that fetched the frame: during playback the buffered
                       player owns it and supplies a url instead. */}
                   <InteractivePreview
+                    previewHeight={previewHeight}
                     soloStage={soloStage}
                     onSoloStage={handleSoloStage}
                     beforeSrc={rawUrl}
@@ -4721,7 +4738,8 @@ export default function FaceSwap({
                 </div>
               )
             ) : (
-              <div className="relative aspect-video rounded-2xl overflow-hidden bg-gradient-to-br from-white/[0.03] to-black/20 border border-white/10 flex items-center justify-center select-none">
+              <div style={previewHeight ? { height: previewHeight } : undefined}
+                   className="relative aspect-video rounded-2xl overflow-hidden bg-gradient-to-br from-white/[0.03] to-black/20 border border-white/10 flex items-center justify-center select-none">
                 <div className="absolute inset-0 pointer-events-none opacity-70" style={{ background: 'radial-gradient(circle at 50% 42%, var(--accent-glow), transparent 62%)' }} />
                 {frameUnavailable && (
                   <FrameUnavailable onRetry={retryRawFrame} className="absolute inset-x-0 bottom-4 z-10" />
@@ -4767,6 +4785,23 @@ export default function FaceSwap({
                 })()}
               </div>
             )}
+                </div>
+                {!showModelComparison && (
+                  <PanelResizeDivider
+                    direction="horizontal"
+                    side="top"
+                    currentSize={previewHeight || PREVIEW_HEIGHTS.compact}
+                    getSize={() => previewBox.current?.offsetHeight}
+                    {...PANEL_LIMITS.previewHeight}
+                    onResize={(value) => setPanelSize('previewHeight', value)}
+                    onReset={() => setPanelSize('previewHeight', PREVIEW_HEIGHTS.fit)}
+                    label="Resize preview"
+                    controls="face-swap-preview"
+                    valueText={previewHeight ? `${previewHeight} pixels` : 'Fit to media'}
+                    title="Drag or use ↑ and ↓ to resize. Double-click or press Enter to fit."
+                    className="!h-6 !mt-0 rounded-lg"
+                  />
+                )}
           </div>
             
             {/* Clip timeline. It used to go away for the duration of a run;

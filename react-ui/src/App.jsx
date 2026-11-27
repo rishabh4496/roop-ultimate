@@ -24,8 +24,8 @@ import { useHistoryChannel, SETTINGS_CHANNEL } from './history/historyChannels';
 import { installHistoryDom } from './history/historyDom';
 import './store';
 import { useWorkspaceStore, LAYOUT_PRESETS } from './store/workspaceStore';
-import { setRunTelemetry, setPipelineTelemetry, setDashboardTelemetry, selectProg, etaMsOf, clearEngineTelemetry } from './store/telemetryStore';
-import { LiveText, LiveBar } from './components/LiveTelemetry';
+import { setRunTelemetry, setPipelineTelemetry, setDashboardTelemetry, selectRenderProgress, renderCompleted, clearEngineTelemetry } from './store/telemetryStore';
+import { LiveText, LiveValue } from './components/LiveTelemetry';
 import { themeByName, allThemes, applyThemeToDom } from './themes';
 import { SETTINGS_CATALOG, focusSetting } from './components/settingsCatalog';
 import { motion, AnimatePresence, MotionConfig, spring, viewTransition } from './motion';
@@ -257,13 +257,28 @@ export default function App() {
   // a visible flicker on every figure derived from them, and a gap in the
   // throughput series each time.
   //
-  // Merging keeps whichever source last had something to say about a field.
-  // The poll remains authoritative for everything it actually sends.
-  const mergeProgress = useCallback((pr) => {
+  // Merge slow context even when the socket has already refreshed the live fields.
+  const telemetryRevision = useRef(0);
+  const readProgress = useCallback(async (timeout) => {
+    const revision = telemetryRevision.current;
+    const pr = await getJSON('/api/progress', { timeout });
+    if (revision !== telemetryRevision.current) {
+      // The socket reported something newer while this request was in flight.
+      // The console still needs the fields that only the poll carries.
+      setProgress((prev) => prev.started_at === pr.started_at
+        ? { ...prev, log: pr.log, parts: pr.parts, runtime: pr.runtime, output: pr.output, duration_s: pr.duration_s }
+        : prev);
+      return null;
+    }
     // The fast fields also go to the telemetry store, which is what the live
     // readouts subscribe to (see store/telemetryStore.js). With the socket down
     // this poll is their only source.
-    setRunTelemetry(pr.processing ? pr : {
+    const counts = pr.runtime?.frame_progress;
+    const hasCounts = Number.isFinite(counts?.done) && Number.isFinite(counts?.total) && counts.total > 0;
+    setRunTelemetry(pr.processing ? {
+      ...pr, current_frame: pr.current_frame ?? (hasCounts ? counts.done : 0),
+      total_frames: pr.total_frames ?? (hasCounts ? counts.total : 0),
+    } : {
       ...pr, current_frame: 0, total_frames: 0, fps: 0, fps_now: null, frame_ms: null,
     });
     setProgress((prev) => {
@@ -278,6 +293,7 @@ export default function App() {
       }
       return next;
     });
+    return pr;
   }, []);
   const [controlBusy, setControlBusy] = useState('');
   const controlBusyRef = useRef('');
@@ -360,10 +376,9 @@ export default function App() {
     pollIntervalRef.current = intervalMs;
     pollRef.current = setInterval(async () => {
       try {
-        const pr = await getJSON('/api/progress', { timeout: 8000 });
+        const pr = await readProgress(8000);
         reportNet(true);
-        mergeProgress(pr);
-        if (!pr.processing) {
+        if (pr && !pr.processing) {
           clearInterval(pollRef.current);
           pollRef.current = null;
         }
@@ -373,7 +388,7 @@ export default function App() {
         reportNet(false);
       }
     }, intervalMs);
-  }, [reportNet, mergeProgress]);
+  }, [reportNet, readProgress]);
 
   // ── Catch up the moment this view is looked at again ─────────────────────
   // Switching to the Terminal (or another Pinokio tab) either reloads this
@@ -391,10 +406,9 @@ export default function App() {
     const catchUp = async () => {
       if (document.visibilityState === 'hidden') return;
       try {
-        const pr = await getJSON('/api/progress', { timeout: 8000 });
+        const pr = await readProgress(8000);
         reportNet(true);
-        mergeProgress(pr);
-        if (pr.processing && !pollRef.current) startPolling();
+        if (pr?.processing && !pollRef.current) startPolling();
       } catch {
         reportNet(false);
       }
@@ -407,7 +421,7 @@ export default function App() {
       window.removeEventListener('focus', catchUp);
       window.removeEventListener('pageshow', catchUp);
     };
-  }, [startPolling, reportNet, mergeProgress]);
+  }, [startPolling, reportNet, readProgress]);
 
   // Heartbeat while offline — reconnects and refreshes core state on recovery.
   useEffect(() => {
@@ -417,8 +431,7 @@ export default function App() {
     }
     beatRef.current = setInterval(async () => {
       try {
-        const pr = await getJSON('/api/progress', { timeout: 5000 });
-        mergeProgress(pr);
+        await readProgress(5000);
         reportNet(true);
       } catch (e) {
         // Still down. The offline banner already says so; keep a trace without a toast.
@@ -426,7 +439,7 @@ export default function App() {
       }
     }, 3000);
     return () => { if (beatRef.current) { clearInterval(beatRef.current); beatRef.current = null; } };
-  }, [offline, reportNet, mergeProgress]);
+  }, [offline, reportNet, readProgress]);
 
   // ── Live telemetry ───────────────────────────────────────────────────────
   // The backend pushes run state over a WebSocket. Measured, the poll ships
@@ -457,6 +470,7 @@ export default function App() {
   const onTelemetry = useCallback((frame) => {
     if (!frame || (frame.event !== 'progress' && frame.event !== 'hello'
         && frame.event !== 'heartbeat')) return;
+    telemetryRevision.current++;
     reportNet(true);
     setRunTelemetry(frame);
     setPipelineTelemetry(frame);
@@ -611,15 +625,16 @@ export default function App() {
   }, [progress.processing, progress.started_at, startTime, setTab]);
 
   const prevProcessingCelebrationRef = useRef(false);
+  const completed = renderCompleted(progress);
   useEffect(() => {
     const was = prevProcessingCelebrationRef.current;
     prevProcessingCelebrationRef.current = progress.processing;
-    if (was && !progress.processing && !progress.error && (progress.progress || 0) >= 0.99) {
+    if (was && completed) {
       setConfetti(false);
       requestAnimationFrame(() => setConfetti(true));
       setTimeout(() => setConfetti(false), 2600);
     }
-  }, [progress.processing, progress.error, progress.progress]);
+  }, [progress.processing, completed]);
 
   const [isDraggingOver, setIsDraggingOver] = useState(false);
   useEffect(() => { isDraggingOverRef.current = isDraggingOver; }, [isDraggingOver]);
@@ -1077,9 +1092,8 @@ export default function App() {
       reportNet(true);
       bootAttemptRef.current = 0;
       try {
-        const pr = await getJSON('/api/progress', { timeout: 8000 });
-        mergeProgress(pr);
-        if (pr.processing) startPolling();
+        const pr = await readProgress(8000);
+        if (pr?.processing) startPolling();
       } catch (e) {
         // Progress is non-critical for boot, so no toast; but do not lose the reason.
         reportFailure('Loading run progress', e, { toast: false });
@@ -1104,7 +1118,7 @@ export default function App() {
     } finally {
       setRetrying(false);
     }
-  }, [reportNet, startPolling, mergeProgress]);
+  }, [reportNet, startPolling, readProgress]);
 
   useEffect(() => {
     loadCore();
@@ -1198,22 +1212,18 @@ export default function App() {
         className={`hover:underline ${stopping ? 'text-red-400/90' : progress.paused || progress.pause_requested ? 'text-amber-400/90' : 'text-accent'}`}
       >
         {stopping ? 'Stopping' : progress.paused ? 'Paused' : progress.pause_requested ? 'Pause requested' : (
-          <LiveText select={(s) => `Processing ${Math.round(selectProg(s) * 100)}%`} />
+          <LiveText select={(s) => {
+            const { label, fraction } = selectRenderProgress(s);
+            return fraction == null ? label : `${label} ${Math.round(fraction * 100)}%`;
+          }} />
         )}
       </button>
-      {/* Same "time left" the Processing tab and the terminal show:
-          eta_s is the render's own progress bar, and the extrapolation
-          is only the fallback for the windows where nothing is counting
-          frames. Extrapolating throughout reads model loads and the
-          pre-pass as swap time and comes out roughly twice too high —
-          which is exactly what this chip used to say while the tab beside
-          it said something else. */}
       {!(progress.paused || progress.pause_requested || stopping) && (
         <LiveText
           className="text-muted normal-case font-mono font-medium ml-1 empty:hidden"
           select={(s) => {
-            const eta = etaMsOf(s.run, startTime ? Date.now() - startTime : 0);
-            return eta > 0 ? `ETA: ${fmtTime(eta)}` : '';
+            const { etaMs: eta } = selectRenderProgress(s);
+            return eta > 0 ? `Phase ETA ${fmtTime(eta)}` : '';
           }}
         />
       )}
@@ -1509,17 +1519,26 @@ export default function App() {
           times a second is a screen reader that cannot say anything else. */}
       <LiveText
         className="sr-only" role="status" aria-live="polite" hz={0.2}
-        select={(s) => (progress.processing
-          ? `${progress.paused ? 'Paused' : 'Processing'} ${Math.round(selectProg(s) * 100)} percent` : '')}
+        select={(s) => {
+          if (!progress.processing) return '';
+          const { label, fraction } = selectRenderProgress(s);
+          return `${stopping ? 'Stopping, ' : progress.paused ? 'Paused, ' : ''}${label}${fraction == null ? '' : ` ${Math.round(fraction * 100)} percent`}`;
+        }}
       />
 
       <Confetti active={confetti} />
 
       {progress.processing && (
-        <LiveBar
-          className="fixed top-0 left-0 h-[3px] bg-[var(--accent)] z-[60] transition-all duration-300 shadow-[0_0_8px_var(--accent-glow)]"
-          select={selectProg}
-        />
+        <LiveValue select={(s) => selectRenderProgress(s).fraction}>
+          {(fraction) => (
+            <div aria-hidden="true" className="fixed inset-x-0 top-0 h-[3px] z-[60] overflow-hidden pointer-events-none">
+              <div className={`h-full bg-[var(--accent)] ${fraction == null
+                ? (progress.paused || progress.pause_requested || stopping ? '' : 'preview-indeterminate')
+                : 'motion-safe:transition-[width] duration-300'}`}
+                style={{ width: fraction == null ? '25%' : `${fraction * 100}%` }} />
+            </div>
+          )}
+        </LiveValue>
       )}
 
       <QualityProfilesModal

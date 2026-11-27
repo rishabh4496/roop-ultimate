@@ -1,7 +1,7 @@
 import OutputVideoPlayer from './OutputVideoPlayer';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { postJSON, API } from '../api';
-import { AnimatedNumber, Button, Section } from './ui';
+import { Button, Section } from './ui';
 import { Icon } from '../icons';
 import { motion, spring } from '../motion';
 import { confirmDialog } from './confirm';
@@ -19,7 +19,7 @@ import LiveProcessingPeek from './faceswap/LiveProcessingPeek';
 import FrameFlamegraph from './faceswap/FrameFlamegraph';
 import useTelemetry from './faceswap/useTelemetry';
 import { useThrottledSelector, shallowEqual } from '../store/liveSubscribe';
-import { UI_HZ, framesOf, etaMsOf, engineTextOf } from '../store/telemetryStore';
+import { UI_HZ, framesOf, engineTextOf, selectRenderProgress, renderCompleted } from '../store/telemetryStore';
 import { outputMediaUrl, outputSource } from './outputUrl';
 import useRenderLite from './faceswap/useRenderLite';
 import { lastPreview } from './faceswap/lastPreview';
@@ -87,14 +87,6 @@ export default function Processing({ progress, settings, notify, setTab,
        p.stabilize_face, p.stabilize_enhancer, p.stabilize_mask,
        p.max_threads, p.output_video_codec]);
 
-  // The fast readouts (ring, percentage, frame counter, elapsed, ETA, the
-  // pipeline rail, the peek, diagnostics) live in the *Live components at the
-  // bottom of this file, which subscribe to the telemetry store themselves.
-  // What this component still needs is the FINISHED view's summary, which
-  // reads `progress` as it stood at the end: App folds the fast fields into
-  // `progress` on every structural edge and on each poll.
-  const rawProg = Number(progress.progress);
-  const prog = Number.isFinite(rawProg) ? Math.min(1, Math.max(0, rawProg)) : 0;
   // The live pieces record the run's age here as it ticks, so "Took 41m" is
   // still answerable after the clock has stopped. The backend's own duration
   // wins when the poll has delivered it.
@@ -142,7 +134,7 @@ export default function Processing({ progress, settings, notify, setTab,
   // hand and one that crashed at 90% both just stop — so the error field and
   // how far it got decide the wording.
   const failed = !processing && !!progress.error;
-  const completed = !processing && !progress.error && prog >= 0.99;
+  const completed = renderCompleted(progress);
   // Nothing has run since the backend started: no start time, no duration, no output. This
   // used to read "Run stopped" with a stop icon, as if a job had been cancelled.
   const neverRan = !processing && !failed && !completed && !progress.started_at
@@ -196,7 +188,7 @@ export default function Processing({ progress, settings, notify, setTab,
                 </div>
                 <div className="text-xs text-muted truncate max-w-[52ch]">
                   {progress.error
-                    || (elapsedMs > 0 ? `Took ${fmtTime(elapsedMs)}${prog > 0 ? ` · reached ${Math.round(prog * 100)}%` : ''}` : (progress.desc || 'Idle'))}
+                    || (elapsedMs > 0 ? `Took ${fmtTime(elapsedMs)}` : (progress.desc || 'Idle'))}
                 </div>
               </div>
             </div>
@@ -234,15 +226,6 @@ export default function Processing({ progress, settings, notify, setTab,
       {processing ? (
         <div className="relative min-h-[620px] rounded-2xl overflow-y-auto overflow-x-hidden custom-scrollbar processing-stage flex flex-col items-center select-none px-4 sm:px-6 py-4">
           <div className="relative w-full max-w-[1900px] min-h-0 flex flex-col gap-3.5">
-
-            <RunHeadlineLive
-              p={p}
-              startedAtS={progress.started_at}
-              paused={!!progress.paused}
-              pauseRequested={pauseRequested}
-              stopping={stopping}
-              elapsedRef={elapsedRef}
-            />
 
             {/* Processing action control dock */}
             <ProcessingDock
@@ -345,12 +328,11 @@ export default function Processing({ progress, settings, notify, setTab,
 // and the clock ticks only in here.
 
 const RUN_FIELDS = (s) => ({
-  progress: s.run.progress,
+  ...selectRenderProgress(s),
   desc: s.run.desc,
   statusLine: s.run.status_line,
   current_frame: s.run.current_frame,
   total_frames: s.run.total_frames,
-  eta_s: s.run.eta_s,
   fps: s.run.fps,
   fps_basis: s.run.fps_basis,
   liveSeq: s.run.live_seq,
@@ -372,20 +354,9 @@ function useLiveRun({ startedAtS, paused, pauseRequested, stopping, elapsedRef }
     return () => clearInterval(timer);
   }, []);
 
-  // Clamped, because it is drawn straight into a `width:` and a stroke offset.
-  // `_progress["progress"]` is written from several places in the backend — the
-  // swap loop, the post-swap upscale pass and the interpolation pass each reset
-  // it to 0.0 and count up again — and `post_swap.py` caps its own writes at
-  // 0.999 while `api.py` sets a flat 1.0 at the end. Unclamped, a value even
-  // slightly outside [0,1] produced a negative `strokeDashoffset`, which
-  // Chromium renders as a FULL ring: a run at 4% drew a complete circle.
-  const rawProg = Number(run.progress);
-  const prog = Number.isFinite(rawProg) ? Math.min(1, Math.max(0, rawProg)) : 0;
-
-  // Frame counters from the telemetry frame (numbers, 4 Hz) or the status line.
-  // The headline percentage is a fraction of the WHOLE job including the encode
-  // tail; "51,203 / 88,483" is the thing people actually read progress from.
-  const frames = framesOf(run);
+  const frames = run.unit === 'frames' && run.total !== null
+    ? { done: run.done, total: run.total }
+    : framesOf(run);
 
   // Elapsed from the backend's own clock, so a run that was already going when
   // this view mounted keeps its real age. The last value is kept in the
@@ -396,12 +367,7 @@ function useLiveRun({ startedAtS, paused, pauseRequested, stopping, elapsedRef }
     if (elapsedMs > 0 && elapsedRef) elapsedRef.current = elapsedMs;
   }, [elapsedMs, elapsedRef]);
 
-  // "Time left" is the terminal's own eta_s wherever one is counting frames, so
-  // the two agree by construction; the extrapolation is only the fallback for
-  // start-up and the encode tail. A PAUSED run has no ETA: eta_s is
-  // frames-remaining over a rate that is now zero, and "Finishes 04:12" over a
-  // stopped render is a wall-clock time that is already wrong when drawn.
-  const etaMs = !paused && !pauseRequested && !stopping ? etaMsOf(run, elapsedMs) : 0;
+  const etaMs = !paused && !pauseRequested && !stopping ? run.etaMs : 0;
   // Why the ETA is not being shown, so the placeholder is never just a shrug.
   const etaNote = stopping ? 'stopping'
     : (paused || pauseRequested) ? 'paused'
@@ -409,7 +375,8 @@ function useLiveRun({ startedAtS, paused, pauseRequested, stopping, elapsedRef }
     : 'estimating…';
 
   return {
-    prog, frames, elapsedMs, etaMs, etaNote, now,
+    phase: run.label, fraction: run.fraction, done: run.done, total: run.total, unit: run.unit,
+    frames, elapsedMs, etaMs, etaNote, fpsNow: run.fpsNow,
     desc: run.desc, statusLine: run.statusLine, fps: run.fps, fpsBasis: run.fps_basis, liveSeq: run.liveSeq,
     // "Compiling TensorRT Engine... <model> · <precision>" while the backend is building or verifying
     // one; '' otherwise. Shown IN PLACE of the status text at the two headline sites, never merged
@@ -423,18 +390,21 @@ const circumference = radius * 2 * Math.PI;
 
 function RunBarLive({ startedAtS, paused, pauseRequested, stopping, error, controlBusy,
                       pause, resume, stop, elapsedRef }) {
-  const { prog, frames, elapsedMs, etaMs, etaNote, desc, engineText } = useLiveRun({
+  const { phase, fraction, done, total, unit, fpsNow, elapsedMs, etaMs, etaNote, desc, engineText } = useLiveRun({
     startedAtS, paused, pauseRequested, stopping, elapsedRef,
   });
-  const strokeDashoffset = circumference - prog * circumference;
+  const percent = fraction == null ? null : Math.round(fraction * 100);
+  const strokeDashoffset = circumference * (1 - (fraction ?? 0));
+  const state = stopping ? 'Stopping' : paused ? 'Paused' : pauseRequested ? 'Pause requested' : '';
+  const counts = total == null ? '' : `${done} of ${total} ${unit}`;
   return (
-    <div className="relative overflow-hidden rounded-2xl glass-panel px-5 py-3.5 flex flex-col md:flex-row items-center justify-between gap-4 shadow-xl border border-white/5 w-full">
+    <div className="relative overflow-hidden rounded-2xl glass-panel px-4 sm:px-5 py-3.5 flex flex-wrap items-center justify-between gap-4 shadow-xl border border-white/5 w-full">
       {/* Left: circular progress ring & status */}
       <div className="flex items-center gap-3.5 min-w-0">
         <div className={`relative flex items-center justify-center h-14 w-14 select-none shrink-0 rounded-full transition-shadow duration-1000 ${!paused && !stopping ? 'shadow-[0_0_14px_var(--accent-glow)]' : ''}`}>
-          <svg className="transform -rotate-90 w-[52px] h-[52px]" viewBox="0 0 48 48">
+          <svg aria-hidden="true" className="transform -rotate-90 w-[52px] h-[52px]" viewBox="0 0 48 48">
             <circle stroke="rgba(255, 255, 255, 0.08)" fill="transparent" strokeWidth={3.5} r={radius} cx={24} cy={24} />
-            <circle
+            {fraction > 0 && <circle
               className="transition-all duration-500 ease-out"
               stroke="var(--accent)"
               fill="transparent"
@@ -445,22 +415,30 @@ function RunBarLive({ startedAtS, paused, pauseRequested, stopping, error, contr
               cx={24}
               cy={24}
               strokeLinecap="round"
-            />
+            />}
           </svg>
-          <AnimatedNumber value={prog * 100} decimals={0} suffix="%" className="absolute text-compact font-extrabold text-white tabular-nums" />
+          <span aria-hidden="true" className="absolute text-compact font-extrabold text-white tabular-nums">
+            {percent == null ? '…' : `${percent}%`}
+          </span>
         </div>
 
         <div className="space-y-0.5 min-w-0">
           <div className="flex items-center gap-1.5">
             <span className={`h-2 w-2 rounded-full ${stopping ? 'bg-red-400' : paused || pauseRequested ? 'bg-amber-400' : 'bg-[var(--accent)] animate-ping'}`} />
             <span className={`text-mini font-semibold uppercase tracking-[0.14em] ${stopping ? 'text-red-400' : paused || pauseRequested ? 'text-amber-400' : 'text-accent'}`}>
-              {stopping ? 'Stopping' : paused ? 'Paused' : pauseRequested ? 'Pause Requested' : 'Processing'}
+              {state ? `${state} · ${phase}` : phase}
             </span>
           </div>
           <div className="text-sm font-bold text-white truncate max-w-[340px]"
                data-engine={engineText ? 'busy' : undefined}>
-            {engineText || desc || 'Swapping faces…'}
+            {engineText || desc || 'Getting ready…'}
           </div>
+          {total != null && (
+            <div className="flex flex-wrap gap-x-3 text-xs text-muted tabular-nums">
+              <span>{done.toLocaleString()} / {total.toLocaleString()} {unit}</span>
+              {fpsNow != null && !state && <span>{fpsNow.toFixed(1)} fps</span>}
+            </div>
+          )}
           {error && <div className="text-xs text-red-400 font-semibold">{error}</div>}
         </div>
       </div>
@@ -473,7 +451,7 @@ function RunBarLive({ startedAtS, paused, pauseRequested, stopping, error, contr
         </div>
         <div className="h-6 w-px bg-white/10" />
         <div className="flex flex-col">
-          <span className="text-micro uppercase tracking-wider text-muted font-bold">ETA</span>
+          <span className="text-micro uppercase tracking-wider text-muted font-bold">Phase ETA</span>
           {/* `--:--` read as a clock that had stopped. It is not a time at
               all — it is the absence of one — so it says which. */}
           <span className={`font-bold tabular-nums whitespace-nowrap ${etaMs > 0 ? 'text-emerald-400' : 'text-muted'}`}>
@@ -513,190 +491,32 @@ function RunBarLive({ startedAtS, paused, pauseRequested, stopping, error, contr
         </motion.button>
       </div>
 
-      {/* Smooth animated progress line along the bottom edge.
-
-          This is the tab's primary progress indicator and was invisible to
-          assistive tech: a pair of bare divs with a width. `role` + the
-          aria-value* trio is what makes a screen reader able to report the
-          run at all, and it is the ONE bar here that measures the whole
-          job, so it is the one that carries it. */}
+      {/* Unknown totals use an indeterminate bar and omit aria-valuenow. */}
       <div
         className="absolute inset-x-0 bottom-0 h-1 bg-white/[0.04]"
         role="progressbar"
         aria-valuemin={0}
         aria-valuemax={100}
-        aria-valuenow={Math.round(prog * 100)}
-        aria-valuetext={`${Math.round(prog * 100)} percent${
-          frames ? `, frame ${frames.done} of ${frames.total}` : ''}${
-          etaMs > 0 ? `, ${fmtTime(etaMs)} remaining` : ''}`}
+        aria-valuenow={percent ?? undefined}
+        aria-valuetext={[state, phase, percent == null ? '' : `${percent} percent`, counts,
+          etaMs > 0 ? `${fmtTime(etaMs)} remaining in phase` : ''].filter(Boolean).join(', ')}
         aria-label="Render progress"
       >
         <div
-          className={`h-full bg-gradient-to-r from-[var(--accent)] to-[var(--accent-hover)] transition-[width] duration-500 ease-out ${paused ? '' : 'progress-bar-animated'}`}
-          style={{ width: `${Math.max(2, prog * 100)}%`, boxShadow: '0 0 10px var(--accent-glow)' }}
+          className={`h-full bg-[var(--accent)] ${fraction == null
+            ? (state ? '' : 'preview-indeterminate')
+            : 'motion-safe:transition-[width] duration-500 ease-out'}`}
+          style={{ width: fraction == null ? '25%' : `${fraction * 100}%`, boxShadow: '0 0 10px var(--accent-glow)' }}
         />
       </div>
     </div>
   );
 }
 
-function RunHeadlineLive({ p, startedAtS, paused, pauseRequested, stopping, elapsedRef }) {
-  const { prog, frames, etaMs, etaNote, now, elapsedMs, desc, engineText } = useLiveRun({
-    startedAtS, paused, pauseRequested, stopping, elapsedRef,
-  });
-  return (
-    <>
-      {/* ── Headline ────────────────────────────────────────────────
-          One line that answers "where is it, and when is it done". */}
-      <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-2">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <span className={`text-mini font-semibold uppercase tracking-[0.18em] ${paused ? 'text-amber-400' : 'text-accent'}`}>
-              {paused ? 'Paused' : 'Processing'}
-            </span>
-            {!paused && <span className="h-px w-8 bg-[var(--accent)]/40" />}
-          </div>
-          <div className="mt-1 flex items-baseline gap-2.5">
-            <AnimatedNumber value={prog * 100} decimals={1} suffix="%"
-                            className="font-mono text-display leading-none font-bold tabular-nums text-white" />
-            {/* The frame counter, beside the percentage rather than only
-                down in the diagnostics strip. The percentage covers the
-                whole job including the encode tail, so it moves at a
-                different rate from the frames and people read progress
-                from the frames. */}
-            {frames && (
-              <span className="font-mono text-title font-bold tabular-nums text-muted whitespace-nowrap">
-                {frames.done.toLocaleString()}
-                <span className="text-white/25"> / {frames.total.toLocaleString()}</span>
-              </span>
-            )}
-            <span className="text-sm font-medium text-white/55 truncate max-w-[46ch]"
-                  data-engine={engineText ? 'busy' : undefined}>
-              {engineText || desc || 'Swapping faces…'}
-            </span>
-          </div>
-        </div>
-        <div className="flex items-stretch gap-5 font-mono">
-          <div className="text-right">
-            <div className="text-nano font-semibold uppercase tracking-[0.16em] text-muted">Elapsed</div>
-            <div className="text-title font-bold tabular-nums text-white/85">{fmtTime(elapsedMs)}</div>
-          </div>
-          <div className="w-px bg-white/10" />
-          <div className="text-right">
-            <div className="text-nano font-semibold uppercase tracking-[0.16em] text-muted">Time left</div>
-            <div className={`text-title font-bold tabular-nums ${etaMs > 0 ? 'text-emerald-400' : 'text-muted'}`}>
-              {etaMs > 0 ? fmtTime(etaMs) : (etaNote || '—')}
-            </div>
-          </div>
-          <div className="w-px bg-white/10" />
-          <div className="text-right">
-            <div className="text-nano font-semibold uppercase tracking-[0.16em] text-muted">Finishes</div>
-            <div className="text-title font-bold tabular-nums text-white/85">
-              {etaMs > 0 ? new Date(now + etaMs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* ── Pipeline rail ───────────────────────────────────────────
-          Continuous track split into named segments with glowing step markers.
-
-          THE BAR INSIDE THE ACTIVE SEGMENT IS STAGE-LOCAL, not the whole
-          run's percentage. It used to be `prog * 100`, which is a fraction
-          of the ENTIRE job: at 60% overall the Swap segment showed 60%
-          full, and then the moment the run moved on to Combine — a stage
-          that is seconds long — that segment ALSO started at ~99% and
-          crawled, because it was still being handed the job-wide number.
-          Each segment claimed to be a progress bar for its own stage and
-          was in fact four copies of the same one. The frame counter is the
-          honest source for the stage that has one; a stage without one
-          (encode, mux) gets an indeterminate sweep, which says "working,
-          length unknown" instead of inventing a number. */}
-      {(() => {
-        const d = (desc || '').toLowerCase();
-        const hasInterp = !!p.interp_after_swap && p.interp_after_swap !== 'off';
-        const stages = [
-          { key: 'analyze', label: 'Analyze' },
-          { key: 'swap', label: 'Swap' },
-          ...(p.upscale_after_swap ? [{ key: 'upscale', label: 'Upscale' }] : []),
-          ...(hasInterp ? [{ key: 'interp', label: 'Interpolate' }] : []),
-          { key: 'combine', label: 'Combine' },
-        ];
-        let activeKey = 'swap';
-        if (/combin|finaliz|encod|audio|mux/.test(d)) activeKey = 'combine';
-        else if (/interpolat|rife|minterpolat/.test(d)) activeKey = 'interp';
-        else if (/upscal/.test(d)) activeKey = 'upscale';
-        else if (/processing frame|swapp/.test(d)) activeKey = 'swap';
-        else if (/analy|track|extract|detect|start/.test(d)) activeKey = 'analyze';
-        let activeIdx = stages.findIndex((s) => s.key === activeKey);
-        if (activeIdx < 0) activeIdx = 1;
-        // The counter in the status line restarts per stage ("Upscaling
-        // frame 1 / N"), so it IS the stage-local fraction wherever one is
-        // printed at all.
-        const stageFrac = activeKey === 'combine' ? null : (frames && frames.total > 0
-          ? Math.min(1, Math.max(0, frames.done / frames.total))
-          : null);
-        return (
-          <div className="w-full p-2.5 sm:p-3 rounded-2xl bg-white/[0.02] border border-white/10 backdrop-blur-sm shadow-inner">
-            <div className="flex items-stretch gap-2">
-              {stages.map((s, i) => {
-                const state = i < activeIdx ? 'done' : i === activeIdx ? 'active' : 'pending';
-                return (
-                  <div key={s.key} className="flex-1 min-w-0">
-                    <div className={`h-2 rounded-full overflow-hidden transition-all duration-300 ${
-                      state === 'pending'
-                        ? 'bg-white/[0.06]'
-                        : state === 'done'
-                          ? 'bg-emerald-500/20'
-                          : 'bg-white/[0.08]'
-                    }`}>
-                      {state === 'done' && <div className="h-full w-full rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.5)]" />}
-                      {state === 'active' && (stageFrac != null ? (
-                        <div
-                          className={`h-full rounded-full bg-gradient-to-r from-[var(--accent)] to-[var(--accent-hover)] transition-[width] duration-500 ease-out ${paused ? '' : 'progress-bar-animated'}`}
-                          style={{ width: `${Math.max(6, stageFrac * 100)}%`, boxShadow: '0 0 10px var(--accent-glow)' }}
-                        />
-                      ) : (
-                        /* No counter for this stage: sweep rather than lie. */
-                        <div className="relative h-full w-full overflow-hidden">
-                          <div
-                            className={`absolute inset-y-0 w-1/3 rounded-full bg-gradient-to-r from-transparent via-[var(--accent)] to-transparent ${paused ? '' : 'preview-indeterminate'}`}
-                            style={{ boxShadow: '0 0 10px var(--accent-glow)' }}
-                          />
-                        </div>
-                      ))}
-                    </div>
-                    <div className={`mt-2 flex items-center gap-1.5 text-micro font-semibold uppercase tracking-[0.14em] truncate transition-colors ${
-                      state === 'done'
-                        ? 'text-emerald-400'
-                        : state === 'active'
-                          ? 'text-white drop-shadow-[0_0_8px_var(--accent-glow)]'
-                          : 'text-muted'
-                    }`}>
-                      {state === 'done' ? (
-                        <span className="text-emerald-400 font-bold" aria-hidden="true">✓</span>
-                      ) : state === 'active' ? (
-                        <span className="h-1.5 w-1.5 rounded-full bg-[var(--accent)] shadow-[0_0_6px_var(--accent-glow)] animate-pulse" />
-                      ) : (
-                        <span className="h-1 w-1 rounded-full bg-white/20" />
-                      )}
-                      <span className="truncate">{s.label}</span>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        );
-      })()}
-    </>
-  );
-}
-
 function RunPanelsLive({ settings, runtime, telemetry, runConfigSummary, startedAtS,
                          paused, pauseRequested, stopping, elapsedRef }) {
   const processing = true;
-  const { prog, frames, elapsedMs, etaMs, desc, statusLine, fps, fpsBasis, liveSeq } = useLiveRun({
+  const { fraction, frames, elapsedMs, etaMs, desc, statusLine, fps, fpsBasis, liveSeq } = useLiveRun({
     startedAtS, paused, pauseRequested, stopping, elapsedRef,
   });
   return (
@@ -741,7 +561,7 @@ function RunPanelsLive({ settings, runtime, telemetry, runConfigSummary, started
           config={runConfigSummary}
           elapsedMs={elapsedMs}
           etaMs={etaMs}
-          prog={prog}
+          prog={fraction ?? 0}
           // The counters straight off the 4 Hz telemetry frame. The
           // panel used to re-parse them out of the status STRING,
           // which only changes as fast as the string is rewritten.

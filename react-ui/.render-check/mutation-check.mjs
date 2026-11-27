@@ -22,22 +22,21 @@ const src = join(here, '..', 'src');
 const MUTATIONS = [
   {
     name: 'progress clamp removed (the full-ring bug)',
-    file: join(src, 'components', 'Processing.jsx'),
-    // The LIVE clamp (useLiveRun) — the one the ring and bars are drawn from.
-    from: 'const rawProg = Number(run.progress);\n  const prog = Number.isFinite(rawProg) ? Math.min(1, Math.max(0, rawProg)) : 0;',
-    to: 'const prog = Number(run.progress) || 0;',
+    file: join(src, 'store', 'telemetryStore.js'),
+    from: 'const done = total === null ? null : Math.min(total, Math.max(0, counts.done));',
+    to: 'const done = total === null ? null : counts.done;',
   },
   {
     name: 'ETA no longer suppressed while paused',
     file: join(src, 'components', 'Processing.jsx'),
-    from: 'const etaMs = !paused && !pauseRequested && !stopping ? etaMsOf(run, elapsedMs) : 0;',
-    to: 'const etaMs = etaMsOf(run, elapsedMs);',
+    from: 'const etaMs = !paused && !pauseRequested && !stopping ? run.etaMs : 0;',
+    to: 'const etaMs = run.etaMs;',
   },
   {
-    name: 'pipeline rail back to whole-run progress',
-    file: join(src, 'components', 'Processing.jsx'),
-    from: 'style={{ width: `${Math.max(6, stageFrac * 100)}%`, boxShadow: \'0 0 10px var(--accent-glow)\' }}',
-    to: 'style={{ width: `${Math.max(6, prog * 100)}%`, boxShadow: \'0 0 10px var(--accent-glow)\' }}',
+    name: 'render bar back to the backend percentage',
+    file: join(src, 'store', 'telemetryStore.js'),
+    from: 'fraction: total === null ? null : done / total,',
+    to: 'fraction: total === null ? null : run.progress,',
   },
   {
     name: 'ARIA removed from the progress bar',

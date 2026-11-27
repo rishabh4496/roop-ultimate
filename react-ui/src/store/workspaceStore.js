@@ -5,7 +5,7 @@ import { create } from 'zustand';
 // Persistent workstation preferences remembered across tabs and reloads:
 //   workspaceMode   which panels the Face Swap workspace shows (default, cinema, dual, timeline)
 //   railCollapsed   the left navigation rail: icon + label, or icon only
-//   panelSizes      resizable dimensions for Left Inspector, Right Media Rail, Bottom Timeline
+//   panelSizes      resizable dimensions for the rails, preview and timeline
 //   customLayouts   user-saved named workspace layouts with custom proportions
 //   activeLayoutId  id of the active preset or custom layout
 //
@@ -29,18 +29,21 @@ export const DEFAULT_PANEL_SIZES = {
   leftWidth: 350,
   rightWidth: 330,
   bottomHeight: 280,
+  previewHeight: 0, // fit the media automatically
 };
 
 export const PANEL_LIMITS = {
   leftWidth: { min: 240, max: 620 },
   rightWidth: { min: 240, max: 580 },
   bottomHeight: { min: 140, max: 600 },
+  previewHeight: { min: 240, max: 840 },
 };
 
 export const clampPanelSize = (panel, val) => {
   const limits = PANEL_LIMITS[panel];
   if (!limits) return val;
   const num = Number(val);
+  if (panel === 'previewHeight' && (!Number.isFinite(num) || num === 0)) return 0;
   if (!Number.isFinite(num)) return limits.min;
   return Math.max(limits.min, Math.min(limits.max, Math.round(num)));
 };
@@ -98,6 +101,7 @@ const initialSizes = {
   leftWidth: clampPanelSize('leftWidth', saved.panelSizes?.leftWidth ?? DEFAULT_PANEL_SIZES.leftWidth),
   rightWidth: clampPanelSize('rightWidth', saved.panelSizes?.rightWidth ?? DEFAULT_PANEL_SIZES.rightWidth),
   bottomHeight: clampPanelSize('bottomHeight', saved.panelSizes?.bottomHeight ?? DEFAULT_PANEL_SIZES.bottomHeight),
+  previewHeight: clampPanelSize('previewHeight', saved.panelSizes?.previewHeight ?? DEFAULT_PANEL_SIZES.previewHeight),
 };
 
 const initialCustom = Array.isArray(saved.customLayouts) ? saved.customLayouts : [];
@@ -151,6 +155,7 @@ export const useWorkspaceStore = create((set, get) => ({
           leftWidth: clampPanelSize('leftWidth', layout.sizes.leftWidth ?? DEFAULT_PANEL_SIZES.leftWidth),
           rightWidth: clampPanelSize('rightWidth', layout.sizes.rightWidth ?? DEFAULT_PANEL_SIZES.rightWidth),
           bottomHeight: clampPanelSize('bottomHeight', layout.sizes.bottomHeight ?? DEFAULT_PANEL_SIZES.bottomHeight),
+          previewHeight: clampPanelSize('previewHeight', layout.sizes.previewHeight ?? DEFAULT_PANEL_SIZES.previewHeight),
         }
       : get().panelSizes;
 

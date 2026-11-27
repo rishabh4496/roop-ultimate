@@ -7,7 +7,7 @@ import { CHIP_KEYS, LABELS, fmtVal, fmtDur } from './settingsDiff';
 import { TERMINAL_STATES, jobState } from './faceswap/useQueue';
 import { Icon } from '../icons';
 import { LiveText, LiveValue } from './LiveTelemetry';
-import { selectProg } from '../store/telemetryStore';
+import { selectRenderProgress } from '../store/telemetryStore';
 import QuickLaunch from './home/QuickLaunch';
 import ResumableCheckpoints from './home/ResumableCheckpoints';
 
@@ -138,8 +138,8 @@ export default function Home({ progress, setTab, setSettings, notify }) {
             <div className="flex items-center gap-2 shrink-0">
               <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-[var(--accent)]/10 border border-[var(--accent)]/25">
                 <span className="text-display font-bold text-accent tabular-nums leading-none">
-                  <LiveValue select={(s) => Math.round(selectProg(s) * 100)}>
-                    {(pct) => <AnimatedNumber value={pct} suffix="%" />}
+                  <LiveValue select={(s) => selectRenderProgress(s).fraction}>
+                    {(fraction) => fraction == null ? '—' : <AnimatedNumber value={fraction * 100} suffix="%" />}
                   </LiveValue>
                 </span>
               </div>

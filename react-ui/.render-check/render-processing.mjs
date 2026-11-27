@@ -140,7 +140,7 @@ console.log('\n── mid-render ───────────────�
     ok('progressbar role is present', html.includes('role="progressbar"'));
     ok('aria-valuenow is the real percentage', html.includes('aria-valuenow="59"'),
        (html.match(/aria-valuenow="[^"]*"/) || ['<none>'])[0]);
-    ok('aria-valuetext names the frame', /aria-valuetext="[^"]*frame 52450 of 88483/.test(html));
+    ok('aria-valuetext names the phase and frames', /aria-valuetext="[^"]*Swap[^"]*52450 of 88483 frames/.test(html));
     ok('frame counter is in the headline', html.includes('52,450') && html.includes('88,483'));
     ok('models panel rendered', html.includes('Models in use'));
     ok('swapper read from runtime, not settings', html.includes('hyperswap'));
@@ -159,24 +159,15 @@ console.log('\n── mid-render ───────────────�
     ok('stroke-dashoffset is never negative',
        offsets.every((o) => o >= 0), `offsets=${JSON.stringify(offsets)}`);
 
-    // On THIS fixture the job fraction and the stage fraction happen to be the
-    // same number (the swap stage is the whole job), so it cannot tell a
-    // stage-local rail from a whole-run one. The discriminating case is its own
-    // block below; this only pins the value.
     const frameFrac = (52450 / 88483) * 100;
-    ok('rail width matches the frame counter',
+    ok('bar width matches the frame counter',
        widths.some((w) => Math.abs(w - frameFrac) < 0.5),
        `widths=${JSON.stringify(widths)} expected≈${frameFrac.toFixed(2)}`);
   }
 }
 
-console.log('\n── rail is stage-local, not whole-run ─────────────────────');
+console.log('\n── progress measures the active phase ─────────────────────');
 {
-  // The discriminating case: the JOB is nearly done (97%) while the CURRENT
-  // stage has only just started (10% of its own frames). A rail drawing the
-  // job fraction shows ~97%; a stage-local one shows ~10%. Before the fix the
-  // upscale segment opened at whatever the job was at and crawled, which is
-  // precisely this divergence.
   const diverged = {
     ...MID,
     progress: 0.97,
@@ -185,34 +176,28 @@ console.log('\n── rail is stage-local, not whole-run ───────�
     current_frame: 500,
     total_frames: 5000,
   };
-  const { html } = render('stage-local rail', tab(diverged));
+  const { html } = render('upscale progress', tab(diverged));
   if (html) {
     const widths = [...html.matchAll(/width:\s*([-\d.]+)%/g)].map((m) => parseFloat(m[1]));
-    // The full-width run bar at the bottom legitimately shows 97; the rail
-    // segment must not.
-    const railish = widths.filter((w) => w > 2 && w < 100 && Math.abs(w - 97) > 0.001);
-    ok('rail shows the STAGE fraction (~10%), not the job fraction (97%)',
-       railish.some((w) => Math.abs(w - 10) < 0.6),
+    ok('run bar shows the upscale fraction (10%)',
+       widths.includes(10) && html.includes('aria-valuenow="10"'),
        `widths=${JSON.stringify(widths)}`);
-    ok('no rail segment is drawn at the job fraction',
-       !railish.some((w) => Math.abs(w - 97) < 0.6),
-       `widths=${JSON.stringify(widths)}`);
-    ok('the run bar itself still reports the job fraction',
-       widths.some((w) => Math.abs(w - 97) < 0.6),
+    ok('no bar uses the backend’s previous percentage (97%)',
+       !widths.includes(97),
        `widths=${JSON.stringify(widths)}`);
   }
 }
 
 console.log('\n── out-of-range progress (the full-ring bug) ──────────────');
-for (const bad of [1.4, -0.2, Number.NaN, null, undefined, '0.5']) {
-  const { html } = render(`progress=${String(bad)}`, tab({ ...MID, progress: bad }));
+for (const bad of [99999, -3, Number.NaN, null, undefined, '0.5']) {
+  const { html } = render(`current_frame=${String(bad)}`, tab({ ...MID, current_frame: bad }));
   if (!html) continue;
   const offsets = [...html.matchAll(/stroke-dashoffset:\s*([-\d.]+)/g)].map((m) => parseFloat(m[1]));
   const widths = [...html.matchAll(/width:\s*([-\d.]+)%/g)].map((m) => parseFloat(m[1]));
-  ok(`progress=${String(bad)} clamps the ring`,
+  ok(`current_frame=${String(bad)} clamps the ring`,
      offsets.every((o) => o >= 0 && Number.isFinite(o)),
      `offsets=${JSON.stringify(offsets)}`);
-  ok(`progress=${String(bad)} clamps every bar`,
+  ok(`current_frame=${String(bad)} clamps every bar`,
      widths.every((w) => w >= 0 && w <= 100 && Number.isFinite(w)),
      `widths=${JSON.stringify(widths)}`);
 }
@@ -226,7 +211,7 @@ console.log('\n── paused ─────────────────
     // countdown, and must say why rather than showing a dead clock.
     ok('ETA is suppressed, not shown as a stale countdown', html.includes('paused'));
     ok('no --:-- dead clock', !html.includes('--:--'));
-    ok('Finishes falls back to a dash', html.includes('—'));
+    ok('progress accessibility describes the pause without an ETA', /aria-valuetext="Paused, Swap[^"]*52450 of 88483 frames"/.test(html));
   }
 }
 
@@ -252,7 +237,8 @@ console.log('\n── encode tail: no counter in the status line ─────
   const { html } = render('encode tail', tab(encode));
   if (html) {
     ok('still renders', html.length > 1000);
-    ok('frame counter survives a counterless status line', html.includes('88,483'));
+    ok('finalization is indeterminate despite the previous counters', !html.includes('aria-valuenow='));
+    ok('progress labels the finalization phase', /aria-valuetext="Finalizing"/.test(html));
     ok('does not claim to be stalled', !html.includes('Stalled'));
   }
 }
@@ -417,13 +403,9 @@ console.log('\n── engine compile / canary state (pushed on /ws/telemetry) �
   };
   const { html: busy } = render('engine: compiling', tab(compiling));
   if (busy) {
-    // TWO sites show the status text (the sticky run bar and the headline). A substring check passes
-    // with either one wrong, so count: reverting one site to `desc` alone was not caught by `includes`.
-    const said = busy.split('Compiling TensorRT Engine... gpen_256_pro · FP16').length - 1;
-    ok('the run bar AND the headline say "Compiling TensorRT Engine..." instead of a frozen "Starting…"',
-       said === 2, `occurrences=${said}`);
-    ok('and both are marked so a test (or a screen reader rule) can find them',
-       busy.split('data-engine="busy"').length - 1 === 2);
+    ok('the sticky run bar reports the compiling model and precision',
+       busy.includes('Compiling TensorRT Engine... gpen_256_pro · FP16'));
+    ok('compiling is indeterminate', /aria-valuetext="Preparing engine"/.test(busy));
     ok('no NaN leaked while no frame counter exists', !busy.includes('NaN'));
   }
   const { html: idle } = render('engine: idle', tab(STARTING));

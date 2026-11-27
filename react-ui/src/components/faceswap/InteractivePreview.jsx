@@ -102,6 +102,7 @@ export default function InteractivePreview({
   liveLabel = '',
   soloStage = null,
   onSoloStage = null,
+  previewHeight = 0,
 }) {
   // ── State & Refs ──────────────────────────────────────────────────────────
   const onSlotHotkeyRef = useRef(onSlotHotkey);
@@ -1205,7 +1206,13 @@ export default function InteractivePreview({
     maxHeight: '100%',
     maxWidth: '100%',
     display: 'flex',
+    ...(previewHeight && displayRatio && !isFullscreen ? {
+      width: `min(100%, ${(previewHeight - 2) * displayRatio}px)`,
+    } : {}),
   };
+  const resizedStage = previewHeight && !isFullscreen
+    ? { height: previewHeight, minHeight: 0, maxHeight: 'none' }
+    : {};
 
   // ── Bottom-Left Viewport HUD Floating Pill ────────────────────────────────
   const viewportPill = () => (
@@ -1669,7 +1676,7 @@ export default function InteractivePreview({
           isFullscreen ? 'h-screen w-screen max-h-none' : ''
         } aspect-video`}
         onDoubleClick={handleDoubleClick}
-        style={{ touchAction: 'none' }}
+        style={{ touchAction: 'none', ...resizedStage }}
       >
         {stageInfo()}
         {faceMenuNode}
@@ -1746,9 +1753,10 @@ export default function InteractivePreview({
         touchAction: 'none',
         ...(displayRatio && !isFullscreen ? {
           aspectRatio: `${displayRatio}`,
-          maxWidth: displayRatio < 1.0 ? `min(100%, calc(65vh * ${displayRatio}))` : '100%',
+          maxWidth: !previewHeight && displayRatio < 1.0 ? `min(100%, calc(65vh * ${displayRatio}))` : '100%',
           margin: '0 auto',
-        } : {})
+        } : {}),
+        ...resizedStage,
       }}
     >
       {/* Render Progress Strip */}
