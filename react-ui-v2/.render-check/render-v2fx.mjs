@@ -31,9 +31,9 @@ globalThis.localStorage = {
 window.localStorage = globalThis.localStorage;
 window.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
 
-const { engineLine, foldEngineLog, matchesFilter, FILTERS } = await import('../src/v2fx/termModel.js');
-const feed = await import('../src/v2fx/termFeed.js');
-const { TRANSITION_VARIANTS, variantsFor } = await import('../src/v2fx/transitions.js');
+const { engineLine, foldEngineLog, matchesFilter, FILTERS } = await import('../src/fx/termModel.js');
+const feed = await import('../src/fx/termFeed.js');
+const { TRANSITION_VARIANTS, variantsFor } = await import('../src/fx/transitions.js');
 
 console.log('── engine feed ─────────────────────────────────────────────');
 {
@@ -112,7 +112,7 @@ console.log('── transitions end at the identity ─────────�
 console.log('── FX preferences ──────────────────────────────────────────');
 {
   mem.set('roop_v2_fx', '{not json');
-  const { useFxStore, DEFAULT_FX } = await import('../src/v2fx/fxStore.js');
+  const { useFxStore, DEFAULT_FX } = await import('../src/fx/fxStore.js');
   const s = useFxStore.getState();
   ok('a corrupt stored value falls back to the defaults', s.transition === DEFAULT_FX.transition && s.ambient === true);
   s.setFx({ transition: 'portal', crt: true });

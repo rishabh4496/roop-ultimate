@@ -7,6 +7,29 @@ folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22
 
 ## 2026-11-28
 
+- **React UI 2.0 rebuilt as a new client: its own screens and no 1.0 visuals.** This supersedes the copy-plus-visual-layer 2.0 below (`bdff209`). `scripts/sync_react_ui_v2.py` and `react-ui-v2/V1_BASE.json` are gone with it. Full record: [`UI_V2_VISUAL_AUDIT.md`](UI_V2_VISUAL_AUDIT.md).
+  - **Screens.**
+    - Studio: a new viewport (Swap/Original/Compare wipe, face reticles you click to pick people, zoom and pan, raw frames while scrubbing), a new timeline (filmstrip, playhead, in/out handles saved with `set_frame`, scene cuts, presence lanes, transport and keys), cast, media bin, people mapping, pipeline, look and a render deck.
+    - Batch (queue run/pause/resume/stop, per-job actions, drag reorder, queue every target).
+    - Library (load, rename, delete, import, save from the cast).
+    - Models (every `/api/meta` family, provider, TensorRT precision, on-disk integrity).
+    - Outputs.
+    - Settings (all 85 UI settings, from `app/settings.schema.json`).
+    - Pause and Stop sit in the top bar on every screen during a render.
+    - Not rebuilt: Editor, History, Morph Lab and Face Swap's deep tools. A dock button opens them in 1.0.
+  - **Engine contract.** 2.0 imports React UI 1.0's logic modules through the Vite alias `@engine`, rather than copying them or re-deriving the contract the first 2.0 got wrong: the API client, telemetry and queue hooks, and the `faceMapping`/`processingSelection` builders. React and Zustand are deduped. `test_default_client_capability.py` walks 2.0's import graph from `main.jsx`. It requires the job-intake routes plus preview, timeline, swap, pause, resume, stop, queue, faceset library and model integrity to be reachable. It also forbids importing any 1.0 `.jsx`, `.tsx` or `.css` file.
+  - **Design.** Written in-house in the style of react-bits and Magic UI (border beam, shimmer, spotlight, number ticker, split text, meteors, marquee, magnifying dock, animated pipeline beams), with no code from either. The ui-ux-pro-max checklist was applied: SVG icons, a pointer cursor on clickables, focus rings, reduced motion, and state never shown by colour alone.
+  - **Verified.**
+    - `render-studio.mjs` (the payload builders against 1.0's selection contract, plus the readiness refusal) and `render-v2fx.mjs` pass.
+    - Headless Chromium on the mock backend: 24 of 27 checks pass across the whole flow (source add, target select, face pick, Compare, scrub, in point, Start/Pause/Resume/Stop, batch add/run/stop, Models, Settings, terminal). The 3 failures are mock gaps: its library returns `{libraries}`, its integrity list is empty, and it lists output files it does not serve.
+    - The screenshots caught invisible gradient headings, an overlapping phone layout and `[x, y, w, h]` mock face boxes. All three are fixed.
+    - The guard, serving and backend UI tests: 28 passed. Launcher, install, storage and update tests: 397 passed.
+  - **Not verified.**
+    - Not run against the real engine (the backend must restart to load `/v2/`, and a render was in progress), so the library and integrity screens have not seen real data.
+    - The horizon's GPU cost is unmeasured.
+    - Not run on the RTX 3060.
+    - The full GPU suite was not run.
+
 - **React UI 2.0: 1.0's client with a new visual layer, served at `/v2/`.** React UI 1.0 (`react-ui/`) is unchanged and is still what `start.js` launches. Full record: [`UI_V2_VISUAL_AUDIT.md`](UI_V2_VISUAL_AUDIT.md).
   - **What it is.** `react-ui-v2/` is 1.0 copied file for file. Twelve "owned" files are edited to mount `src/v2fx/`:
     - a WebGL ray-traced planet horizon (atmosphere, stars, parallax, grain);

@@ -1,33 +1,15 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-import './index.css'
-// React UI 2.0's visual layer: bundled fonts (no network, same rule as 1.0's vendored Jakarta Sans),
-// then the stylesheet that repoints 1.0's tokens. Order matters: v2.css must come after index.css.
+// Bundled fonts: the app runs against 127.0.0.1 and must render the same offline.
 import '@fontsource-variable/geist'
 import '@fontsource-variable/jetbrains-mono'
-import './v2fx/v2.css'
+import './styles/app.css'
 import App from './App.jsx'
 
-// Paint the Void theme from the first frame. Until /api/settings answers, no theme is applied and
-// 1.0's :root palette would flash; App's applyThemeToDom replaces this class with the saved one.
-document.documentElement.classList.add('theme-void')
-document.documentElement.setAttribute('data-theme-mode', 'dark')
-import TermsGate from './components/TermsGate.jsx'
-import ErrorBoundary from './components/ErrorBoundary.jsx'
+document.documentElement.dataset.palette = 'magenta'
 
-// The top-level boundary catches uncaught render/lifecycle errors in the entire
-// React tree and shows a human-readable fallback instead of a blank page. Without
-// it, a single bad `const` ordering or missing import leaves the user staring at
-// black glass with no hint of what went wrong. It is the SAME component App uses
-// around each tab panel (variant="panel"); the app variant is self-contained
-// (inline styles) so it still draws when the CSS or theme is what broke.
 createRoot(document.getElementById('root')).render(
   <StrictMode>
-    <ErrorBoundary variant="app">
-      {/* NOTICE.md's intended-use terms, once per install, before anything else. */}
-      <TermsGate>
-        <App />
-      </TermsGate>
-    </ErrorBoundary>
+    <App />
   </StrictMode>,
 )

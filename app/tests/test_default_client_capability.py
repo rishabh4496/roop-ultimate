@@ -45,6 +45,60 @@ REQUIRED_ROUTES = {
 }
 
 
+# React UI 2.0's must-haves beyond job intake (2026-11-28 brief): each is a
+# screen or control the user asked for by name.
+V2_MUST_HAVE = {
+    "/api/preview": "show the swap preview",
+    "/api/target/preview": "draw timeline frames",
+    "/api/target/timeline_tracks": "draw the timeline's presence lanes",
+    "/api/swap": "start a render",
+    "/api/pause": "pause a render",
+    "/api/resume": "resume a render",
+    "/api/stop": "stop a render",
+    "/api/queue/add": "queue a batch job",
+    "/api/queue/start": "run the batch queue",
+    "/api/faceset/library": "open the faceset library",
+    "/api/faceset/library/load": "load a faceset into the cast",
+    "/api/models/integrity": "show the models on disk",
+}
+
+_IMPORT_RE = re.compile(r"""(?:import|export)\s[^'"]*?from\s*['"]([^'"]+)['"]|import\s*\(\s*['"]([^'"]+)['"]\s*\)|import\s+['"]([^'"]+)['"]""")
+
+
+def _resolve_v2_import(spec, here):
+    """A react-ui-v2 import specifier as a file, following its vite aliases."""
+    if spec.startswith("@engine/"):
+        base = os.path.join(_ROOT, "react-ui", "src", spec[len("@engine/"):])
+    elif spec.startswith("."):
+        base = os.path.normpath(os.path.join(os.path.dirname(here), spec))
+    else:
+        return None  # a package, or @schema (data)
+    for cand in (base, base + ".js", base + ".jsx", base + ".ts", base + ".tsx",
+                 os.path.join(base, "index.js")):
+        if os.path.isfile(cand):
+            return cand
+    return None
+
+
+def _v2_reachable_files():
+    """Every source file reachable from react-ui-v2/src/main.jsx."""
+    start = os.path.join(_ROOT, "react-ui-v2", "src", "main.jsx")
+    seen, todo = set(), [start]
+    while todo:
+        path = todo.pop()
+        if path in seen or not path.endswith((".js", ".jsx", ".ts", ".tsx")):
+            seen.add(path)
+            continue
+        seen.add(path)
+        with open(path, encoding="utf-8") as handle:
+            for match in _IMPORT_RE.finditer(handle.read()):
+                spec = next(g for g in match.groups() if g)
+                target = _resolve_v2_import(spec, path)
+                if target and target not in seen:
+                    todo.append(target)
+    return sorted(seen)
+
+
 def _read(name):
     with open(os.path.join(_ROOT, name), encoding="utf-8") as handle:
         return handle.read()
@@ -98,13 +152,15 @@ class DefaultClientCapabilityTests(unittest.TestCase):
         self.assertTrue(os.path.isdir(
             os.path.join(_ROOT, _client_dir_of_default(), "src")))
 
-    # ── React UI 2.0, second edition (2026-11-28) ─────────────────────────────
-    # The first React UI 2.0 was a rewrite and was removed (docs/development/
-    # UI_V1_V2_MIGRATION_AUDIT.md); this file used to fail if any of it came
-    # back. It came back as something different, recorded in
-    # docs/UI_V2_VISUAL_AUDIT.md: 1.0's client COPIED, plus a visual layer
-    # (react-ui-v2/src/v2fx/), served at /v2/ beside 1.0. These replace the
-    # "it is gone" assertion with the three things that make the new one safe.
+    # ── React UI 2.0 (2026-11-28) ──────────────────────────────────────────
+    # The first React UI 2.0 was removed (docs/development/UI_V1_V2_MIGRATION_AUDIT.md):
+    # it re-derived the engine contract, passed every acceptance row, and could
+    # not create a job - its "parity" was adapter code no screen imported. The
+    # current one (docs/UI_V2_VISUAL_AUDIT.md) has its own screens and NO 1.0
+    # visuals, and talks to the engine only through 1.0's LOGIC modules
+    # (imported via the `@engine` alias, not copied). These hold it to that, and
+    # read routes only from modules REACHABLE from its entry point, so code that
+    # nothing imports cannot satisfy them.
 
     def test_1_0_is_still_what_start_js_promotes(self):
         """2.0 is opt-in at /v2/. The default client is unchanged."""
@@ -112,34 +168,30 @@ class DefaultClientCapabilityTests(unittest.TestCase):
         self.assertFalse(os.path.exists(os.path.join(_ROOT, "start_react_v2.js")))
         self.assertNotIn("react-ui-v2", _read("start.js"))
 
-    def test_2_0_can_take_in_media_and_pick_a_face(self):
-        """The floor the first 2.0 failed: the routes without which no job can be made."""
+    def _v2_reachable(self):
         if not os.path.isdir(os.path.join(_ROOT, "react-ui-v2", "src")):
             self.skipTest("react-ui-v2 is not present")
-        referenced = _routes_referenced("react-ui-v2")
-        missing = {r: why for r, why in REQUIRED_ROUTES.items() if r not in referenced}
+        return _v2_reachable_files()
+
+    def test_2_0_reaches_every_route_a_job_needs(self):
+        """The floor the first 2.0 failed, plus the workstation's must-haves
+        (preview, timeline, render controls, batch, faceset library, models)."""
+        files = self._v2_reachable()
+        found = set()
+        for path in files:
+            with open(path, encoding="utf-8") as handle:
+                found.update(re.findall(r"/api/[a-zA-Z0-9_/-]+", handle.read()))
+        missing = {r: why for r, why in {**REQUIRED_ROUTES, **V2_MUST_HAVE}.items() if r not in found}
         self.assertEqual({}, missing, "react-ui-v2 cannot: " + "; ".join(
             f"{why} ({route})" for route, why in sorted(missing.items())))
 
-    def test_2_0_is_1_0_plus_a_visual_layer(self):
-        """Every 1.0 file is in 2.0 byte for byte, except the short OWNED list
-        2.0 edits to mount its visual layer - and those are flagged the moment
-        1.0 changes them. A 1.0 change that is not carried into 2.0 fails here:
-        run `python scripts/sync_react_ui_v2.py`."""
-        if not os.path.isdir(os.path.join(_ROOT, "react-ui-v2", "src")):
-            self.skipTest("react-ui-v2 is not present")
-        import importlib.util
-        spec = importlib.util.spec_from_file_location(
-            "sync_react_ui_v2", os.path.join(_ROOT, "scripts", "sync_react_ui_v2.py"))
-        sync = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(sync)
-        report = sync.audit()
-        drift = {k: v for k, v in report.items() if v}
-        self.assertEqual({}, drift,
-                         "React UI 2.0 has drifted from 1.0 + its visual layer. Run "
-                         "`python scripts/sync_react_ui_v2.py` (copies 1.0 changes, lists "
-                         "owned files to merge by hand): " + repr(drift))
-
+    def test_2_0_imports_no_1_0_visuals(self):
+        """Only 1.0's logic crosses over: no 1.0 component (.jsx/.tsx) and no 1.0 stylesheet."""
+        engine = os.path.normcase(os.path.join(_ROOT, "react-ui", "src"))
+        crossed = [p for p in self._v2_reachable() if os.path.normcase(p).startswith(engine)]
+        self.assertTrue(crossed, "2.0 should reach the engine through 1.0's logic modules")
+        visual = [os.path.relpath(p, _ROOT) for p in crossed if p.endswith((".jsx", ".tsx", ".css"))]
+        self.assertEqual([], visual, "react-ui-v2 imports 1.0 visuals")
 
 if __name__ == "__main__":
     unittest.main()

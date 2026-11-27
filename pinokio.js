@@ -61,7 +61,7 @@ module.exports = {
           // new visual layer. Offered only once its build exists; 1.0 stays the default.
           let v2_items = info.exists("react-ui-v2/dist/index.html") ? [{
             icon: "fa-solid fa-wand-magic-sparkles",
-            text: "<div><strong>Open React UI 2.0</strong><div>Same app, new visuals: 3D horizon, terminal dock, transitions</div></div>",
+            text: "<div><strong>Open React UI 2.0</strong><div>New studio: viewport, timeline, batch, library, models</div></div>",
             href: share_token ? `${local.url}/v2/?token=${share_token}` : `${local.url}/v2/`,
           }] : []
           return [{
