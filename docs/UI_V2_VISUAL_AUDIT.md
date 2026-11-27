@@ -45,6 +45,9 @@ in three ways:
 |---|---|
 | **Studio** | Cast (source faces: drop, add, select, remove, clear, load from the library); media bin (upload or add by path, select, remove); **viewport**; **timeline**; render deck; people (capture, select, map each person to a source or "leave untouched", detection mode); pipeline (swapper, restorer, mask, detector, swap resolution, colour match, with an animated beam diagram); look (blend, identity distance, feather, sharpen, detection threshold). |
 | **Batch** | The queue: run, pause, resume and stop the queue; per-job cancel, duplicate, retry and remove; drag to reorder; "Add current setup"; "Queue every target"; totals. |
+| **Face Manager** | Faceset builder (images or a clip in, cut faces per frame, quality scores, prune below a threshold, remove, build `.fsz`, open `.fsz`); pose radar (yaw/pitch of every face, missing angles, dry-run then confirm auto-prune of blurry/duplicate faces); **Morph Lab** (pick identities, weight them, slerp or linear, de-identification against chosen identities with a max-similarity bound, live similarity readout, preview in the Studio, save to the library). |
+| **Editor** | Transform (resolution, rotation, crop, output fps, replace the audio track and slip it ±500 ms) via `/api/extras/apply`; Enhance (every frame post-processor `/api/extras/frame_ops` lists); video → faceset (cut faces from chosen frames of a clip, build `.fsz`). |
+| **History** | Every run (`/api/history`): frames, fps, duration, key models, outputs (open, show in folder, export through `/api/export/presets`), re-apply a run's settings, delete; tick two runs to see exactly which settings differ. |
 | **Library** | Faceset library: search, load into the cast, rename in place, delete, import `.fsz`, save the selected cast face. |
 | **Models** | Every model family from `/api/meta` as cards (swapper, restorer, two masks, detector, recognizer, restoration mode, swap resolution, colour match, SAM 2 size); execution provider and TensorRT precision; on-disk integrity of every manifest file. |
 | **Outputs** | Rendered files, newest first. Videos play on hover; open or delete each; a marquee of the latest. |
@@ -52,8 +55,12 @@ in three ways:
 
 **Pause and Stop** are in the top bar on every screen while a render runs, and in the Studio's render deck.
 
-**Not rebuilt in 2.0:** the Editor (Extras), run History, Morph Lab and Face Swap's deep tools
-(roto, curves, identity keyframes, mask brush, quad inspection). The dock's last button opens them in 1.0.
+**2.0 does not link into 1.0.** The dock's link to 1.0 and the top bar's "1.0" link were removed. A test now
+scans 2.0's source and page for 1.0's look: its surface classes, its crimson `#E94560`, its typeface, and links
+into a 1.0 screen.
+
+**Still only in 1.0** (not reachable from 2.0): Face Swap's deep tools. These are roto polygons, tone curves,
+identity keyframes and pins, the mask brush, quad inspection, A/B snapshot slots and per-scene overrides.
 
 ### The viewport (`src/studio/Viewport.jsx`)
 - **Modes:** Swap (the `/api/preview` frame), Original (the untouched frame, for picking people) and
@@ -149,13 +156,26 @@ type and sunray keyframe, and the dithered horizon.
 - **`app/tests/test_default_client_capability.py` (5)**, `test_backend_serves_ui_v2.py`,
   `test_backend_serves_ui.py`: 28 passed. Launcher, install, storage, client and update test files: 397 passed.
 
+- **Live, against the real engine.** It ran at `http://127.0.0.1:42003/v2/`, served by the running backend,
+  mid-render on a 54,190-frame job. A read-only tour (14 checks, clicking nothing that changes state) passed.
+  The only POST was the Studio's preview, which the engine refuses during a render.
+  - The render deck showed live telemetry (80 %, 43,448/54,190, 61.7 fps, ETA), with Pause and Stop.
+  - It read the real 9-job queue, 34 facesets, 35 Morph Lab identities, 10 model families and 7 verified
+    model files, 3 frame post-processors, 170 history runs and all settings.
+  - Real data found a defect the mock could not: during the analysis stage the engine refuses frame
+    decodes (503). The media thumbnails and timeline then showed broken images. They now show a
+    placeholder and retry with back-off (`src/ui/FrameImg.jsx`).
+- **New screens on the mock:**
+  - Face Manager: builder, radar and Morph Lab render; a two-identity blend posts `morph/blend`.
+  - Editor: all three tools render.
+  - History: runs list, and a two-run compare shows the differing settings.
+  - No link back into 1.0.
+
 ## Not verified
 
-- **Against the real engine:** the running backend has to restart to load the `/v2/` route, and a
-  45,456-frame render was in progress.
-  - The faceset library and integrity screens are written against the engine's route code
-    (`routes_faceset.py`, `model_integrity.py`) and have not been exercised with real data.
-  - The engine log merge is proven only by `render-v2fx.mjs`.
+- **No 2.0 action has been run against the real engine.** The live tour was read-only because a render
+  was in progress: no source added, face picked, render started or paused, and no job queued, from 2.0.
+  Those are proven on the mock only.
 - **Horizon GPU cost:** unmeasured while idle or previewing.
 - **RTX 3060:** not run.
 - **Full GPU test suite:** not run, because a render was in progress.

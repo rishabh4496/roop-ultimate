@@ -53,7 +53,7 @@ export default function FxPanel() {
         {open && (
           <motion.div
             role="dialog" aria-label="Visual effects"
-            className="v2-fx-pop custom-scrollbar"
+            className="v2-fx-pop"
             initial={{ opacity: 0, y: -8, scale: 0.96, rotateX: -10, transformPerspective: 900 }}
             animate={{ opacity: 1, y: 0, scale: 1, rotateX: 0, transition: { duration: 0.28, ease: [0.16, 1, 0.3, 1] } }}
             exit={{ opacity: 0, y: -6, scale: 0.98, transition: { duration: 0.14 } }}

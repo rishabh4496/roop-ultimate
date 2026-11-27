@@ -7,6 +7,16 @@ folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22
 
 ## 2026-11-28
 
+- **React UI 2.0 is complete for the workstation's screens and live at `/v2/`.** Record: [`UI_V2_VISUAL_AUDIT.md`](UI_V2_VISUAL_AUDIT.md).
+  - **New screens.**
+    - Face Manager: faceset builder, pose radar with auto-prune, and Morph Lab (weighted slerp/linear identity blends, de-identification, similarity readout, preview, save).
+    - Editor: transform with audio replace and slip, frame post-processing, video → faceset.
+    - History: runs, outputs, export presets, re-apply settings, two-run settings diff.
+  - **No 1.0 look.** 2.0 no longer links into 1.0. `test_2_0_carries_none_of_1_0s_look` scans 2.0's source and page for 1.0's surface classes, its `#E94560` accent, its typeface and links into 1.0 screens. It caught two leftover `custom-scrollbar` class names, now removed.
+  - **Live.** The running backend already serves `/v2/` (it reads `react-ui-v2/dist` per request). A read-only tour of `http://127.0.0.1:42003/v2/` during a 54,190-frame render passed 14 checks: live telemetry with Pause/Stop, the real queue (9 jobs), 34 facesets, 35 Morph Lab identities, 7 verified model files, 170 runs, all settings. It found that frame thumbnails broke while the engine refuses decodes (503) during analysis. `FrameImg` now shows a placeholder and retries with back-off.
+  - **Still only in 1.0:** Face Swap's deep tools (roto, curves, identity keyframes and pins, mask brush, quad inspection, A/B slots, scene overrides).
+  - **Not verified:** no 2.0 action has run against the real engine (the tour was read-only during a render). The full GPU suite was not run.
+
 - **React UI 2.0 rebuilt as a new client: its own screens and no 1.0 visuals.** This supersedes the copy-plus-visual-layer 2.0 below (`bdff209`). `scripts/sync_react_ui_v2.py` and `react-ui-v2/V1_BASE.json` are gone with it. Full record: [`UI_V2_VISUAL_AUDIT.md`](UI_V2_VISUAL_AUDIT.md).
   - **Screens.**
     - Studio: a new viewport (Swap/Original/Compare wipe, face reticles you click to pick people, zoom and pan, raw frames while scrubbing), a new timeline (filmstrip, playhead, in/out handles saved with `set_frame`, scene cuts, presence lanes, transport and keys), cast, media bin, people mapping, pipeline, look and a render deck.

@@ -12,6 +12,7 @@ import { Panel, PipelineBeams } from '../fx/effects';
 import { Select, Slider } from '../ui/controls';
 import { peopleOf, hueOf, mappedSource, frameUrl, isSelectedPerson } from './people';
 import { notify } from '../ui/controls';
+import FrameImg from '../ui/FrameImg';
 
 // ── Cast: the source faces ───────────────────────────────────────────────────
 export function CastPanel({ onOpenLibrary }) {
@@ -72,15 +73,14 @@ export function TargetsPanel() {
             <div key={t.media_id || t.id || i} className={`tile group flex items-center gap-2.5 p-1.5 ${i === selected ? 'selected' : ''}`}>
               <button type="button" className="flex min-w-0 flex-1 items-center gap-2.5 text-left" onClick={() => useStudio.getState().selectTarget(i)} aria-pressed={i === selected}>
                 <span className="relative h-11 w-[72px] shrink-0 overflow-hidden rounded-lg bg-black">
-                  <img src={frameUrl(i, Math.max(1, t.start_frame || 1), 160)} alt="" loading="lazy" className="h-full w-full object-cover" />
+                  <FrameImg src={frameUrl(i, Math.max(1, t.start_frame || 1), 160)} loading="lazy" className="h-full w-full object-cover" />
                   <span className="absolute bottom-0.5 right-0.5 rounded bg-black/75 px-1 font-mono text-[9.5px] text-white">{video ? `${t.frames}f` : 'img'}</span>
                 </span>
                 <span className="min-w-0">
                   <span className="block truncate text-[12.5px] font-semibold text-white" title={t.name}>{t.name}</span>
-                  <span className="flex items-center gap-1 font-mono text-[10.5px] text-[var(--fg-faint)]">
-                    {video ? <Film size={11} /> : <ImageIcon size={11} />}
-                    {video ? `${t.fps ? Number(t.fps).toFixed(t.fps % 1 ? 2 : 0) : '?'} fps` : 'still'}
-                    {t.color_badge && <> · {t.color_badge}</>}
+                  <span className="flex min-w-0 items-center gap-1 font-mono text-[10.5px] text-[var(--fg-faint)]" title={t.color_badge || undefined}>
+                    {video ? <Film size={11} className="shrink-0" /> : <ImageIcon size={11} className="shrink-0" />}
+                    <span className="truncate">{video ? `${t.fps ? Number(t.fps).toFixed(t.fps % 1 ? 2 : 0) : '?'} fps` : 'still'}{t.color_badge ? ` · ${t.color_badge}` : ''}</span>
                   </span>
                 </span>
               </button>

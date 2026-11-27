@@ -3,6 +3,7 @@ import { ChevronsLeft, ChevronLeft, ChevronRight, ChevronsRight, Play, Pause, Fl
 import { getJSON } from '@engine/api';
 import { useStudio, currentTarget, isVideoTarget } from '../engine/studio';
 import { timecode, frameUrl, hueOf } from './people';
+import FrameImg from '../ui/FrameImg';
 
 // ── The timeline ────────────────────────────────────────────────────────────
 // A filmstrip of real frames across the clip; a playhead you drag (raw frames while dragging, the
@@ -186,7 +187,7 @@ export default function Timeline({ onScrub }) {
       {/* Strip + playhead + range */}
       <div ref={strip} className="tl-strip flex" role="slider" tabIndex={0} aria-label="Timeline" aria-valuemin={1} aria-valuemax={total} aria-valuenow={frame}
         onPointerDown={startScrub} onPointerMove={moveScrub} onPointerUp={endScrub} onPointerLeave={() => setHover(null)} data-testid="timeline-strip">
-        {thumbs.map((f) => <img key={`${sel}-${f}`} src={frameUrl(sel, f, 160)} alt="" loading="lazy" draggable={false} />)}
+        {thumbs.map((f) => <FrameImg key={`${sel}-${f}`} src={frameUrl(sel, f, 160)} loading="lazy" draggable={false} className="h-full min-w-0 flex-1 object-cover" />)}
         {video && (
           <>
             <div className="tl-out" style={{ left: 0, width: xOf(range.a) }} />

@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { AnimatePresence, motion, MotionConfig } from 'framer-motion';
-import { Clapperboard, Layers, Library as LibraryIcon, Boxes, FolderOpen, Settings2, TerminalSquare, ExternalLink, Zap, WifiOff, RefreshCw } from 'lucide-react';
+import { Clapperboard, Layers, Library as LibraryIcon, Boxes, FolderOpen, Settings2, TerminalSquare, Zap, WifiOff, RefreshCw, ScanFace, SlidersHorizontal, History as HistoryIcon } from 'lucide-react';
 import { setFailureToast } from '@engine/failureLog';
 import { useStudio } from './engine/studio';
 import { useRun, useRunSync } from './engine/run';
@@ -11,6 +11,9 @@ import Library from './screens/Library';
 import Models from './screens/Models';
 import Outputs from './screens/Outputs';
 import Settings from './screens/Settings';
+import Editor from './screens/Editor';
+import History from './screens/History';
+import FaceManager from './screens/FaceManager';
 import HorizonCanvas from './fx/HorizonCanvas';
 import TerminalDock from './fx/TerminalDock';
 import BootSequence from './fx/BootSequence';
@@ -28,9 +31,12 @@ const SCREENS = [
   { id: 'studio', label: 'Studio', icon: Clapperboard, kbd: 'Alt 1', render: (p) => <Studio {...p} /> },
   { id: 'batch', label: 'Batch', icon: Layers, kbd: 'Alt 2', render: () => <Batch /> },
   { id: 'library', label: 'Library', icon: LibraryIcon, kbd: 'Alt 3', render: () => <Library /> },
-  { id: 'models', label: 'Models', icon: Boxes, kbd: 'Alt 4', render: () => <Models /> },
-  { id: 'outputs', label: 'Outputs', icon: FolderOpen, kbd: 'Alt 5', render: () => <Outputs /> },
-  { id: 'settings', label: 'Settings', icon: Settings2, kbd: 'Alt 6', render: () => <Settings /> },
+  { id: 'faces', label: 'Face Manager', icon: ScanFace, kbd: 'Alt 4', render: (p) => <FaceManager {...p} /> },
+  { id: 'models', label: 'Models', icon: Boxes, kbd: 'Alt 5', render: () => <Models /> },
+  { id: 'editor', label: 'Editor', icon: SlidersHorizontal, kbd: 'Alt 6', render: (p) => <Editor {...p} /> },
+  { id: 'outputs', label: 'Outputs', icon: FolderOpen, kbd: 'Alt 7', render: () => <Outputs /> },
+  { id: 'history', label: 'History', icon: HistoryIcon, kbd: 'Alt 8', render: () => <History /> },
+  { id: 'settings', label: 'Settings', icon: Settings2, kbd: 'Alt 9', render: () => <Settings /> },
 ];
 const ids = SCREENS.map((s) => s.id);
 const fromHash = () => {
@@ -104,11 +110,9 @@ export default function App() {
     ...SCREENS.map((s) => ({ id: s.id, label: s.label, icon: s.icon, kbd: s.kbd })),
     { sep: true, key: 'sep' },
     { id: 'terminal', label: 'Terminal', icon: TerminalSquare, kbd: 'Ctrl `' },
-    { id: 'classic', label: 'Editor, History & more in 1.0', icon: ExternalLink },
   ];
   const onDock = (id) => {
     if (id === 'terminal') { if (!useFxStore.getState().terminal) toggleFx('terminal'); toggleFx('terminalOpen'); return; }
-    if (id === 'classic') { window.open('/#/extras', '_blank', 'noopener'); return; }
     go(id);
   };
 
@@ -136,7 +140,6 @@ export default function App() {
             <EngineChip />
             <RunControls compact />
             <FxPanel />
-            <a className="btn btn-ghost btn-sm hidden lg:inline-flex" href="/" title="Open React UI 1.0">1.0 <ExternalLink size={12} /></a>
           </div>
         </header>
 
@@ -155,7 +158,7 @@ export default function App() {
             <AnimatePresence mode="wait">
               <motion.div key={screen} variants={variantsFor(transition)} initial="initial" animate="animate" exit="exit"
                 data-transition={transition} className={screen === 'studio' ? 'xl:h-full xl:min-h-[640px]' : ''}>
-                {current.render({ onOpenLibrary: () => go('library') })}
+                {current.render({ onOpenLibrary: () => go('library'), meta })}
               </motion.div>
             </AnimatePresence>
           )}

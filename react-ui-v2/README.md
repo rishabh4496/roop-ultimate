@@ -30,13 +30,13 @@ ROOP_API_PORT=<backend port> npm run dev   # dev server proxying /api, /ws and /
 |---|---|
 | `src/engine/` | `payload.js` (pure: swap, preview and queue bodies; readiness), `studio.js` (state and every engine action), `run.js` (render state, Start/Pause/Resume/Stop, socket and poll) |
 | `src/studio/` | Studio: `Viewport.jsx`, `Timeline.jsx`, `Panels.jsx` (cast, media, people, pipeline, look), `RunDeck.jsx` |
-| `src/screens/` | Batch, Library, Models, Outputs, Settings |
+| `src/screens/` | Batch, Library, Face Manager (builder, pose radar, Morph Lab), Models, Editor, Outputs, History, Settings |
 | `src/fx/` | Horizon, terminal, boot sequence, FX panel, transitions, and `effects.jsx` (panel, ticker, split text, meteors, marquee, dock, pipeline beams) |
-| `src/ui/` | Form primitives and toasts |
+| `src/ui/` | Form primitives, toasts, `FrameImg` (a frame that retries while the engine is busy) |
 | `src/styles/app.css` | The design system |
 
 Keys:
-- Alt+1-6: switch screens.
+- Alt+1-9: switch screens.
 - Ctrl+\`: terminal.
 - On the timeline: ←/→ (Shift for ±10 frames), Home/End, I/O, Space.
 

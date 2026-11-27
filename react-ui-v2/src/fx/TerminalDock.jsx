@@ -283,7 +283,7 @@ export default function TerminalDock({ progress, onNavigate, tabs, onOpenPalette
 
       {open && (
         <>
-          <div ref={scrollRef} onScroll={onScroll} className="v2-term-body custom-scrollbar" role="log" aria-live="off">
+          <div ref={scrollRef} onScroll={onScroll} className="v2-term-body" role="log" aria-live="off">
             {shown.length === 0 && <div className="v2-term-empty">no output yet — type <b>help</b></div>}
             {shown.map((l, i) => (
               <Line key={l.id} line={l} typewriter={typewriter}

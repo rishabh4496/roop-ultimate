@@ -62,6 +62,14 @@ V2_MUST_HAVE = {
     "/api/models/integrity": "show the models on disk",
 }
 
+# React UI 1.0's visual signature: its shared surface classes, its type and accent, and links that
+# hand the user to a 1.0 screen. 2.0 must contain none of them (2026-11-28: "no visual look of v1").
+V1_LOOK = (
+    r"\bglass-panel\b", r"\bglass-input\b", r"\bcard-lift\b", r"\bhud-glass\b", r"\bshimmer-sweep\b",
+    r"\bapple-transition\b", r"\btext-muted\b", r"\btext-accent\b", r"\bcustom-scrollbar\b",
+    r"#E94560", r"Plus Jakarta", r"plus-jakarta", r"""['"`]/#/""", r"""href=["']/["']""",
+)
+
 _IMPORT_RE = re.compile(r"""(?:import|export)\s[^'"]*?from\s*['"]([^'"]+)['"]|import\s*\(\s*['"]([^'"]+)['"]\s*\)|import\s+['"]([^'"]+)['"]""")
 
 
@@ -192,6 +200,25 @@ class DefaultClientCapabilityTests(unittest.TestCase):
         self.assertTrue(crossed, "2.0 should reach the engine through 1.0's logic modules")
         visual = [os.path.relpath(p, _ROOT) for p in crossed if p.endswith((".jsx", ".tsx", ".css"))]
         self.assertEqual([], visual, "react-ui-v2 imports 1.0 visuals")
+
+    def test_2_0_carries_none_of_1_0s_look(self):
+        """Nothing of 1.0's look in 2.0, imported or re-typed: none of 1.0's signature classes, its
+        crimson accent or its typeface appear anywhere in 2.0's source or page, and 2.0 does not
+        send the user into 1.0's screens."""
+        root = os.path.join(_ROOT, "react-ui-v2")
+        if not os.path.isdir(os.path.join(root, "src")):
+            self.skipTest("react-ui-v2 is not present")
+        files = [os.path.join(root, "index.html")]
+        for base, _dirs, names in os.walk(os.path.join(root, "src")):
+            files += [os.path.join(base, n) for n in names if n.endswith((".js", ".jsx", ".ts", ".tsx", ".css", ".html"))]
+        hits = []
+        for path in files:
+            with open(path, encoding="utf-8") as handle:
+                text = handle.read()
+            for token in V1_LOOK:
+                if re.search(token, text, re.IGNORECASE):
+                    hits.append(f"{os.path.relpath(path, _ROOT)}: {token}")
+        self.assertEqual([], hits, "react-ui-v2 carries React UI 1.0's look")
 
 if __name__ == "__main__":
     unittest.main()
