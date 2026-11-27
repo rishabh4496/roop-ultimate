@@ -135,6 +135,43 @@ console.log('── a caller\'s abort is not a failure ────────�
   const p3 = rejects(getJSON('/api/x', { signal: ctrl3.signal, timeout: 0 }));
   ctrl3.abort();
   ok('and so does an abort with no deadline', (await p3)?.name === 'AbortError');
+  // An abort that lands AFTER the 200's headers, while the body is still streaming. Scrubbing the timeline
+  // does exactly this to /api/preview (a multi-megabyte data URL): the superseded request is aborted mid-body.
+  // The body read rejecting is the transport failing, not the server sending bad JSON - it used to surface
+  // as "Malformed JSON in the server response (HTTP 200 POST /api/preview)".
+  const midBody = (url, init) => Promise.resolve({
+    ok: true, status: 200, statusText: 'OK',
+    headers: { get: (k) => (k.toLowerCase() === 'content-type' ? 'application/json' : null) },
+    text: () => new Promise((_res, rej) => {
+      if (init.signal?.aborted) { rej(init.signal.reason); return; }
+      init.signal?.addEventListener('abort', () => rej(init.signal.reason), { once: true });
+    }),
+    json() { return this.text().then(JSON.parse); },
+  });
+  stubFetch(midBody);
+  const ctrl4 = new AbortController();
+  const p4 = rejects(postJSON('/api/preview', {}, { signal: ctrl4.signal, timeout: 0 }));
+  await new Promise((r) => realSetTimeout(r, 5));
+  ctrl4.abort();
+  const e4 = await p4;
+  ok('a caller abort while the 2xx body streams stays an AbortError, not "Malformed JSON"',
+    e4?.name === 'AbortError' && !(e4 instanceof ApiError), `${e4?.name}: ${e4?.message}`);
+
+  stubFetch(midBody);
+  const e5 = await rejects(postJSON('/api/preview', {}, { timeout: 20 }));
+  ok('a deadline that fires while the 2xx body streams is a timeout, not a parse error',
+    e5 instanceof ApiError && e5.kind === 'timeout', `${e5?.kind}: ${e5?.message}`);
+
+  stubFetch(async () => ({
+    ok: true, status: 200, statusText: 'OK',
+    headers: { get: () => 'application/json' },
+    text: async () => { throw new TypeError('network error'); },
+    json: async () => { throw new TypeError('network error'); },
+  }));
+  const e6 = await rejects(postJSON('/api/preview', {}, { timeout: 0 }));
+  ok('a connection reset while the 2xx body streams is a network error, not a parse error',
+    e6 instanceof ApiError && e6.kind === 'network', `${e6?.kind}: ${e6?.message}`);
+
   // the deadline's own timer must not outlive the request
   stubFetch(async () => json(200, { a: 1 }));
   ok('no stray timer is left behind a finished request', (await getJSON('/api/x', { timeout: 40 })).a === 1);

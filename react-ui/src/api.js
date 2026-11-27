@@ -67,13 +67,23 @@ export class ApiError extends Error {
 
 const bare = (path) => String(path).split('?')[0];
 
+// READING the body and PARSING it are two steps, and only the second can be the server's fault.
+// The headers (status included) arrive before the body, so an abort, a deadline or a dropped
+// connection can land while the body is still streaming - /api/preview's body is a
+// multi-megabyte data URL, and scrubbing the timeline aborts the superseded preview mid-body on
+// purpose. With `res.json()` inside one try, that rejection was caught here and reported as
+// "Malformed JSON in the server response (HTTP 200 POST /api/preview)". The read is left OUTSIDE
+// the try so its rejection reaches request(), which classifies it (the caller's abort / timeout /
+// network); only a body that was read in full and then fails to parse is a parse error.
+
 // A response that is not 2xx. The backend's error bodies are `{message}` (and
 // sometimes `{error}`); anything else falls back to the status text.
 async function httpError(res, method, path, track) {
   let body = null;
   let detail = res.statusText || `HTTP ${res.status}`;
+  const text = await res.text();                 // a transport failure propagates (see above)
   try {
-    body = await res.json();
+    body = JSON.parse(text);
     detail = body.message || body.error || detail;
   } catch { /* not JSON: the status line is all there is to say */ }
   return new ApiError({ detail: String(detail), status: res.status, method, path: bare(path), body, ...track() });
@@ -83,8 +93,9 @@ async function handle(res, method, path, track) {
   if (!res.ok) throw await httpError(res, method, path, track);
   const ct = res.headers.get('content-type') || '';
   if (!ct.includes('application/json')) return res.text();
+  const text = await res.text();                 // a transport failure propagates (see above)
   try {
-    return await res.json();
+    return JSON.parse(text);
   } catch (cause) {
     // A 2xx that is not parseable is a server bug, and saying so beats a bare
     // "Unexpected token" surfacing three components away.
