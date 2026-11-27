@@ -950,6 +950,7 @@ def _loop(gen):
     alongside the new runner: two renders into one output directory, through one
     set of ProcessMgr globals.
     """
+    finished_all = False
     while True:
         with _lock:
             if not _queue["running"] or gen != _generation:
@@ -968,6 +969,7 @@ def _loop(gen):
                     _queue["current"] = None
                     _save()
                     _say("[Queue] all jobs finished")
+                    finished_all = True
                     break
                 _set_state(job, "PREPARING")
                 job["started"] = time.time()
@@ -1039,6 +1041,67 @@ def _loop(gen):
             # over, and the remaining jobs are the whole point of a queue.
             import traceback
             traceback.print_exc()
+    if finished_all:
+        _print_batch_summary()
+
+
+# ── Terminal batch panel (roop/terminal_dashboard.py) ────────────────────────
+def _job_frames(job):
+    try:
+        a, b = job.get("frame_start"), job.get("frame_end")
+        if a is not None and b is not None and int(b) > int(a):
+            return int(b) - int(a)
+    except (TypeError, ValueError):
+        pass
+    return None
+
+
+def _dashboard_batch_source(include_idle=False):
+    """The job list for the terminal dashboard's batch panel, read WITHOUT waiting.
+
+    The dashboard ticks on its own thread several times a second, mid-render. A blocking
+    acquire here would let a slow _save() (or anything else holding the queue lock) stall
+    that thread, so a busy lock answers {"busy": True} and the panel keeps its last list.
+    None while the queue is not running: a single /api/swap run is not a batch."""
+    if not _lock.acquire(blocking=False):
+        return {"busy": True}
+    try:
+        if not (_queue["running"] or include_idle):
+            return None
+        jobs = []
+        for j in _queue["jobs"]:
+            outputs = j.get("outputs") or []
+            jobs.append({
+                "id": j.get("id"),
+                "name": j.get("label") or os.path.basename(str(j.get("target_name") or "")) or j.get("id"),
+                "state": _state(j),
+                "started": j.get("started") or None,
+                "finished": j.get("finished") or None,
+                "error": j.get("error") or "",
+                "segment": j.get("segment"),
+                "frames_total": _job_frames(j),
+                "output": os.path.basename(str(outputs[-1])) if outputs else "",
+            })
+        return {"source": "queue", "jobs": jobs, "current": _queue["current"],
+                "paused": bool(_queue["paused"]), "run_started": _queue.get("run_started")}
+    finally:
+        _lock.release()
+
+
+def _print_batch_summary():
+    """The whole queue's table, once, when the last job is done. Never fatal."""
+    try:
+        from roop import terminal_dashboard
+        terminal_dashboard.print_batch_summary(_dashboard_batch_source(include_idle=True))
+    except Exception as exc:
+        _swallowed("routes_queue.py:batch_summary", exc, "batch summary not printed")
+
+
+try:
+    from roop import terminal_dashboard as _terminal_dashboard
+    _terminal_dashboard.set_batch_source(_dashboard_batch_source)
+except Exception as _exc:          # the queue works without the dashboard
+    _swallowed("routes_queue.py:batch_source", _exc, "terminal batch panel unavailable")
 
 
 @router.post("/api/queue/start")
@@ -1060,6 +1123,8 @@ def queue_start():
         pause_controller.cancel()
         _queue["running"] = True
         _queue["paused"] = False
+        # Not persisted (_save writes jobs only): the terminal batch panel's "elapsed" and "this run" boundary.
+        _queue["run_started"] = time.time()
         _generation += 1
         gen = _generation
     _runner = threading.Thread(target=_loop, args=(gen,), name="queue-runner", daemon=True)

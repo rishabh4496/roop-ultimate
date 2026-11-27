@@ -34,6 +34,12 @@ SHARES ARE THREAD TIME. `latency_ms` is seconds summed across workers per DELIVE
 bottleneck percentage is that column's share of all recorded operation time. That is the number AGENTS.md calls "not a
 speedup budget": it names where thread time goes, not what removing it would buy. The snapshot says so (`basis`).
 
+BATCH PANEL / SYSTEM LINE (2026-11-27). While the job queue (`routes_queue`) or a multi-video `core.batch_process`
+runs, the block lists every job with its state, frames, fps, time and ETA, plus a batch ETA (see `build_batch_view`).
+`[B]` toggles the full list; `ROOP_DASHBOARD_BATCH_ROWS` (default 8) sets the compact one. A system line shows the
+card's NVML load and the host's psutil load. The block is laid out by `compose_live_lines` to the terminal's width and
+height: only the batch table gives up rows when the terminal is short.
+
 MODES (`ROOP_DASHBOARD`): `auto` (default) = live on a real terminal, log otherwise; `live`; `log`; `off` (the legacy
 `ChunkedProgress` lines come back). `auto` falls to `log` under CI, `TERM=dumb`, a pytest run and a Windows console that
 refuses VT processing. `NO_COLOR` keeps the live layout and drops the colour.
@@ -61,6 +67,8 @@ SCHEMA = 1
 RESET, BOLD, DIM = "\033[0m", "\033[1m", "\033[2m"
 GOLD, YELLOW, RED, GRAY, WHITE = "\033[1;38;5;220m", "\033[1;38;5;220m", "\033[1;38;5;196m", "\033[38;5;245m", "\033[1;37m"
 TRACK = "\033[38;5;238m"
+GREEN, ORANGE, SKY, VIOLET = "\033[38;5;46m", "\033[38;5;208m", "\033[38;5;117m", "\033[38;5;141m"
+RULE = "\033[38;5;240m"
 
 # id, short name, long title, colour. S1 cyan, S2 magenta, S3 emerald (percent in gold), S4 blue.
 STAGES: Tuple[Tuple[str, str, str, str], ...] = (
@@ -107,6 +115,19 @@ def strip_ansi(text: str) -> str:
     return _ANSI.sub("", text)
 
 
+def visible_len(text: str) -> int:
+    return len(strip_ansi(text))
+
+
+def pad_visible(text: str, width: int, align: str = "<") -> str:
+    """`text` padded (or cut) to exactly `width` visible columns; escapes do not count."""
+    n = visible_len(text)
+    if n > width:
+        return truncate_visible(text, width)
+    gap = " " * (width - n)
+    return gap + text if align == ">" else text + gap
+
+
 def truncate_visible(text: str, width: int) -> str:
     """`text` cut to `width` visible columns, escape sequences kept whole and the colour closed."""
     if width <= 0:
@@ -119,7 +140,8 @@ def truncate_visible(text: str, width: int) -> str:
             i = m.end()
             continue
         if seen >= width:
-            out.append(RESET)
+            if len(out) != seen:                      # an escape was copied: close the colour it may have opened
+                out.append(RESET)
             break
         out.append(text[i])
         seen += 1
@@ -568,6 +590,541 @@ def render_profile(p: Dict[str, Any], *, color: bool, width: int = 110) -> List[
     return out
 
 
+# ── system load (GPU via NVML, CPU/RAM via psutil) ───────────────────────────────────────────────────────────────
+
+class SystemSampler:
+    """GPU utilisation / temperature / power / VRAM / NVENC / NVDEC and CPU / RAM, sampled at most once a second.
+
+    NVML reads the DEVICE, not this process: the VRAM figure includes every other program on the card (the registry's
+    `vram_allocated_gb` beside it is this process's torch allocator). Every field is optional - a card without NVML,
+    a driver that refuses power readings, or no psutil just leaves that field None, never an exception."""
+
+    EVERY_S = 1.0
+
+    def __init__(self) -> None:
+        self._nvml: Any = None                 # None = not tried yet, False = unavailable, else the module
+        self._handle: Any = None
+        self._last = -1e9
+        self._cache: Dict[str, Any] = {}
+        self._proc: Any = None
+
+    def _init_nvml(self) -> None:
+        try:
+            import pynvml
+            pynvml.nvmlInit()
+            g = sys.modules.get("roop.globals")
+            idx = int(getattr(g, "cuda_device_id", 0) or 0) if g is not None else 0
+            self._handle = pynvml.nvmlDeviceGetHandleByIndex(idx)
+            self._nvml = pynvml
+        except Exception as exc:
+            _swallowed("roop/terminal_dashboard.py:nvml_init", exc, "GPU load left out of the system line")
+            self._nvml = False
+
+    def _gpu(self) -> Dict[str, Any]:
+        if self._nvml is None:
+            self._init_nvml()
+        if not self._nvml:
+            return {}
+        n, h, out = self._nvml, self._handle, {}
+
+        def read(key: str, fn: Callable[[], Any]) -> None:
+            try:
+                out[key] = fn()
+            except Exception as exc:                    # one unsupported query (power on some laptops): that field only
+                _swallowed(f"roop/terminal_dashboard.py:nvml_{key.strip('_')}", exc, "field left out of the system line")
+                out[key] = None
+
+        def name() -> str:
+            v = n.nvmlDeviceGetName(h)
+            return v.decode() if isinstance(v, bytes) else str(v)
+
+        read("gpu_name", name)
+        read("gpu_util_pct", lambda: int(n.nvmlDeviceGetUtilizationRates(h).gpu))
+        read("gpu_temp_c", lambda: int(n.nvmlDeviceGetTemperature(h, 0)))
+        read("gpu_power_w", lambda: round(n.nvmlDeviceGetPowerUsage(h) / 1000.0, 0))
+        read("gpu_power_limit_w", lambda: round(n.nvmlDeviceGetEnforcedPowerLimit(h) / 1000.0, 0))
+        read("nvenc_pct", lambda: int(n.nvmlDeviceGetEncoderUtilization(h)[0]))
+        read("nvdec_pct", lambda: int(n.nvmlDeviceGetDecoderUtilization(h)[0]))
+
+        def mem():
+            m = n.nvmlDeviceGetMemoryInfo(h)
+            return round(m.used / 1024 ** 3, 2), round(m.total / 1024 ** 3, 2)
+
+        read("_mem", mem)
+        used_total = out.pop("_mem", None)
+        out["gpu_mem_used_gb"], out["gpu_mem_total_gb"] = used_total if used_total else (None, None)
+        return out
+
+    def _host(self) -> Dict[str, Any]:
+        try:
+            import psutil
+        except Exception as exc:
+            _swallowed("roop/terminal_dashboard.py:psutil_import", exc, "host load left out of the system line")
+            return {}
+        out: Dict[str, Any] = {}
+        try:
+            out["cpu_pct"] = round(float(psutil.cpu_percent(interval=None)), 0)
+            vm = psutil.virtual_memory()
+            out["ram_used_gb"] = round((vm.total - vm.available) / 1024 ** 3, 1)
+            out["ram_total_gb"] = round(vm.total / 1024 ** 3, 1)
+            if self._proc is None:
+                self._proc = psutil.Process()
+            out["proc_rss_gb"] = round(self._proc.memory_info().rss / 1024 ** 3, 2)
+            out["proc_threads"] = int(self._proc.num_threads())
+        except Exception as exc:
+            _swallowed("roop/terminal_dashboard.py:psutil", exc, "host load left out of the system line")
+        return out
+
+    def sample(self, now: float) -> Dict[str, Any]:
+        if self._cache and now - self._last < self.EVERY_S:
+            return self._cache
+        self._last = now
+        self._cache = {**self._gpu(), **self._host()}
+        return self._cache
+
+
+def _load_color(pct: Optional[float], warn: float = 60.0, hot: float = 85.0) -> str:
+    if pct is None:
+        return GRAY
+    return RED if pct >= hot else (YELLOW if pct >= warn else GREEN)
+
+
+def _meter(pct: Optional[float], width: int, color: bool) -> str:
+    return _bar(pct, width, _load_color(pct), color) if color else _bar(pct, width, "", False)
+
+
+def render_system_line(sysv: Optional[Dict[str, Any]], *, color: bool, width: int = 110, _compact: bool = False) -> str:
+    """`GPU RTX 4070 ███░ 87% · 71°C · 142/200 W · VRAM 9.10/12.00 GB · NVENC 34% · NVDEC 0% │ CPU 34% · RAM ...`."""
+    if not sysv:
+        return ""
+    c = (lambda code, text: f"{code}{text}{RESET}") if color else (lambda code, text: text)
+    lab = (lambda text: f"{GRAY}{text}{RESET}") if color else (lambda text: text)
+    meter_w = 0 if _compact else (10 if width >= 150 else 6)
+    parts: List[str] = []
+    util = sysv.get("gpu_util_pct")
+    if util is not None or sysv.get("gpu_name"):
+        name = str(sysv.get("gpu_name") or "GPU").replace("NVIDIA GeForce ", "").replace("NVIDIA ", "")
+        meter = f"{_meter(util, meter_w, color)} " if meter_w else ""
+        gpu = f"{c(BOLD, 'GPU') if color else 'GPU'} {'' if _compact else name + ' '}{meter}{c(_load_color(util), _num(util, '{:.0f}') + '%')}"
+        temp = sysv.get("gpu_temp_c")
+        if temp is not None:
+            gpu += f" · {c(_load_color(temp, 70, 82), f'{temp}°C')}"
+        pw, pl = sysv.get("gpu_power_w"), sysv.get("gpu_power_limit_w")
+        if pw is not None:
+            gpu += f" · {_num(pw, '{:.0f}')}" + (f"/{_num(pl, '{:.0f}')}" if pl and not _compact else "") + " W"
+        parts.append(gpu)
+    mu, mt = sysv.get("gpu_mem_used_gb"), sysv.get("gpu_mem_total_gb")
+    if mu is not None and mt:
+        mp = 100.0 * mu / mt
+        parts.append(f"{lab('VRAM')} {c(_load_color(mp, 75, 92), _num(mu, '{:.2f}'))}/{_num(mt, '{:.2f}')} GB")
+    for key, label in ((("nvenc_pct", "NVENC"),) if _compact else (("nvenc_pct", "NVENC"), ("nvdec_pct", "NVDEC"))):
+        if sysv.get(key) is not None:
+            parts.append(f"{lab(label)} {_num(sysv[key], '{:.0f}')}%")
+    host: List[str] = []
+    if sysv.get("cpu_pct") is not None:
+        meter = f"{_meter(sysv['cpu_pct'], meter_w, color)} " if meter_w else ""
+        host.append(f"{c(BOLD, 'CPU') if color else 'CPU'} {meter}{c(_load_color(sysv['cpu_pct']), _num(sysv['cpu_pct'], '{:.0f}') + '%')}")
+    if sysv.get("ram_total_gb"):
+        rp = 100.0 * (sysv.get("ram_used_gb") or 0) / sysv["ram_total_gb"]
+        host.append(f"{lab('RAM')} {c(_load_color(rp, 75, 90), _num(sysv.get('ram_used_gb')))}/{_num(sysv['ram_total_gb'])} GB")
+    if sysv.get("proc_rss_gb") is not None:
+        host.append(f"{lab('app')} {_num(sysv['proc_rss_gb'], '{:.2f}')} GB" +
+                    (f" / {sysv['proc_threads']} thr" if sysv.get("proc_threads") and not _compact else ""))
+    sep = f" {RULE}│{RESET} " if color else " | "
+    left = " · ".join(parts)
+    right = " · ".join(host)
+    line = left + (sep if left and right else "") + right
+    if visible_len(line) > width and not _compact:
+        return render_system_line(sysv, color=color, width=width, _compact=True)
+    return line
+
+
+def render_system_log_line(sysv: Optional[Dict[str, Any]], stamp: str) -> str:
+    if not sysv:
+        return ""
+    keys = ("gpu_util_pct", "gpu_temp_c", "gpu_power_w", "gpu_mem_used_gb", "gpu_mem_total_gb", "nvenc_pct", "nvdec_pct",
+            "cpu_pct", "ram_used_gb", "ram_total_gb", "proc_rss_gb")
+    bits = [f"{k}={sysv[k]}" for k in keys if sysv.get(k) is not None]
+    return f"[System] t={stamp} " + " ".join(bits) if bits else ""
+
+
+# ── the batch / queue view ───────────────────────────────────────────────────────────────────────────────────────
+#
+# SOURCES. Two things run several targets in a row, and the dashboard reads each from where it already lives:
+#   * the job queue (routes_queue.py, "Run all queued videos" / Batch Matrix) registers `set_batch_source`: a callable
+#     that returns its job list, or None when it is not running or its lock is busy (a render must never wait on it);
+#   * `core.batch_process` with several videos stamps `batch_files` (the ordered target names) on the job.
+# Per-job results (frames written, elapsed, average fps) are recorded HERE at `end_job`, keyed by job id and by file
+# name, because the queue's own progress snapshot has no frame counts.
+#
+# BATCH ETA is (what is left of the current job) + (queued jobs) x (mean wall time of the jobs this run finished).
+# With no finished job yet the current job's own projection (elapsed + its ETA) stands in, and `eta_basis` says which.
+# It assumes the queued clips are like the finished ones; a 10-minute clip after three 20-second ones will be wrong,
+# and the basis is printed so it reads as the estimate it is.
+
+BATCH_DONE, BATCH_FAILED, BATCH_STOPPED, BATCH_RUNNING, BATCH_QUEUED = "done", "failed", "stopped", "running", "queued"
+_BATCH_CATEGORY = {
+    "COMPLETED": BATCH_DONE, "FINISHED": BATCH_DONE, "DONE": BATCH_DONE,
+    "FAILED": BATCH_FAILED,
+    "CANCELLED": BATCH_STOPPED, "INTERRUPTED": BATCH_STOPPED, "STOPPED": BATCH_STOPPED,
+    "PREPARING": BATCH_RUNNING, "PROCESSING": BATCH_RUNNING, "PAUSE_REQUESTED": BATCH_RUNNING, "PAUSED": BATCH_RUNNING,
+    "RUNNING": BATCH_RUNNING,
+    "QUEUED": BATCH_QUEUED, "RECOVERABLE": BATCH_QUEUED, "PENDING": BATCH_QUEUED,
+}
+_BATCH_STYLE = {   # category -> (icon, plain tag, colour)
+    BATCH_DONE: ("✔", "[ok]", GREEN), BATCH_FAILED: ("✖", "[FAIL]", RED), BATCH_STOPPED: ("■", "[stop]", ORANGE),
+    BATCH_RUNNING: ("▶", "[run]", GOLD), BATCH_QUEUED: ("○", "[wait]", SKY),
+}
+
+_batch_source: Optional[Callable[[], Optional[Dict[str, Any]]]] = None
+
+
+def set_batch_source(fn: Optional[Callable[[], Optional[Dict[str, Any]]]]) -> None:
+    """Register the queue's job-list reader (None unregisters). It must not block: return None when busy."""
+    global _batch_source
+    _batch_source = fn
+
+
+def batch_category(state: Any) -> str:
+    return _BATCH_CATEGORY.get(str(state or "").upper(), BATCH_QUEUED)
+
+
+def build_batch_view(src: Optional[Dict[str, Any]], history: Dict[str, Dict[str, Any]], wall: float,
+                     live: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+    """The JSON-safe batch panel: rows, counts, batch elapsed / ETA. None for a single job (nothing to list).
+
+    `src` = {"source", "jobs": [{id, name, state, started, finished, error, segment, frames_total, output}],
+             "current", "run_started"}; `live` = the running job's numbers from this dashboard's own snapshot."""
+    if not src or not src.get("jobs"):
+        return None
+    jobs = list(src["jobs"])
+    if len(jobs) < 2:
+        return None
+    live = live or {}
+    current_id = src.get("current")
+    run_started = src.get("run_started")
+    rows: List[Dict[str, Any]] = []
+    counts = {k: 0 for k in (BATCH_DONE, BATCH_FAILED, BATCH_STOPPED, BATCH_RUNNING, BATCH_QUEUED)}
+    finished_walls: List[float] = []
+    current_pos = None
+    for pos, j in enumerate(jobs, 1):
+        cat = batch_category(j.get("state"))
+        is_current = (current_id is not None and j.get("id") == current_id) or (current_id is None and cat == BATCH_RUNNING)
+        if is_current:
+            cat = BATCH_RUNNING
+            current_pos = current_pos or pos
+        counts[cat] += 1
+        rec = history.get(str(j.get("id"))) if j.get("id") else None
+        if rec is None and cat in (BATCH_DONE, BATCH_FAILED, BATCH_STOPPED) and not j.get("id"):
+            rec = history.get("file:" + str(j.get("name")))
+        started, finished = j.get("started") or None, j.get("finished") or None
+        row: Dict[str, Any] = {"pos": pos, "id": j.get("id"), "name": j.get("name") or f"job {pos}", "state": j.get("state"),
+                               "category": cat, "current": bool(is_current), "segment": j.get("segment"),
+                               "frames_done": None, "frames_total": j.get("frames_total"), "fps": None,
+                               "elapsed_s": None, "eta_s": None, "finished_at": None,
+                               "note": j.get("error") or j.get("output") or ""}
+        if is_current:
+            row.update(frames_done=live.get("frames_done"), frames_total=live.get("frames_total") or row["frames_total"],
+                       fps=live.get("fps"), eta_s=live.get("eta_s"), stage=live.get("stage"), pct=live.get("pct"),
+                       elapsed_s=_r(wall - started, 1) if started else live.get("elapsed_s"))
+            if not row["note"]:
+                row["note"] = live.get("stage_title") or ""
+        elif cat in (BATCH_DONE, BATCH_FAILED, BATCH_STOPPED):
+            if started and finished and finished >= started:
+                row["elapsed_s"] = _r(finished - started, 1)
+            if rec:
+                row["elapsed_s"] = row["elapsed_s"] if row["elapsed_s"] is not None else rec.get("elapsed_s")
+                row.update(frames_done=rec.get("frames"), frames_total=rec.get("frames_total") or row["frames_total"],
+                           fps=rec.get("fps_avg"))
+                finished = finished or rec.get("finished_at")
+            row["finished_at"] = _r(finished, 0) if finished else None
+            this_run = run_started is None or (finished is not None and finished >= run_started - 1.0)
+            if cat == BATCH_DONE and this_run and row["elapsed_s"]:
+                finished_walls.append(float(row["elapsed_s"]))
+        rows.append(row)
+    total = len(rows)
+    ended = counts[BATCH_DONE] + counts[BATCH_FAILED] + counts[BATCH_STOPPED]
+    cur_frac = 0.0
+    cur_row = next((r for r in rows if r["current"]), None)
+    if cur_row is not None and live.get("job_frac") is not None:
+        cur_frac = max(0.0, min(1.0, float(live["job_frac"])))
+    # ETA
+    queued = counts[BATCH_QUEUED]
+    per_job = basis = None
+    if finished_walls:
+        per_job, basis = sum(finished_walls) / len(finished_walls), f"mean of {len(finished_walls)} finished job(s)"
+    cur_left = None
+    if cur_row is not None:
+        if cur_row.get("eta_s") is not None and live.get("stage") == "S3":
+            cur_left = float(cur_row["eta_s"])
+            if per_job is None and cur_row.get("elapsed_s") is not None:
+                per_job, basis = float(cur_row["elapsed_s"]) + cur_left, "current job's projection"
+        elif per_job is not None and cur_row.get("elapsed_s") is not None:
+            cur_left = max(0.0, per_job - float(cur_row["elapsed_s"]))
+    eta_s = None
+    if queued == 0 and cur_row is None:
+        basis = None                                     # nothing left to estimate
+    elif per_job is not None and (cur_row is None or cur_left is not None):
+        eta_s = (cur_left or 0.0) + queued * per_job
+    elif queued == 0 and cur_left is not None:
+        eta_s, basis = cur_left, "current job"
+    elapsed = (wall - run_started) if run_started else None
+    if elapsed is None:
+        starts = [wall - r["elapsed_s"] for r in rows if r["current"] and r["elapsed_s"] is not None]
+        elapsed = (wall - min(starts)) if starts else None
+    return {"source": src.get("source") or "queue", "total": total, "counts": counts, "ended": ended,
+            "current_pos": current_pos, "progress_jobs": _r(ended + cur_frac, 2),
+            "pct": _r(100.0 * (ended + cur_frac) / total, 1) if total else None,
+            "elapsed_s": _r(elapsed, 1) if elapsed is not None else None,
+            "eta_s": None if eta_s is None else int(round(eta_s)), "eta_at": None if eta_s is None else _r(wall + eta_s, 0),
+            "eta_basis": basis, "per_job_s": _r(per_job, 1), "paused": bool(src.get("paused")), "rows": rows}
+
+
+def _batch_window(rows: List[Dict[str, Any]], max_rows: int) -> Tuple[int, int]:
+    """[start, end) of the rows to print: the running job with up to two finished ones before it, then queued ones."""
+    n = len(rows)
+    if n <= max_rows:
+        return 0, n
+    cur = next((i for i, r in enumerate(rows) if r["current"]), None)
+    if cur is None:
+        cur = next((i for i, r in enumerate(rows) if r["category"] == BATCH_QUEUED), n - 1)
+    start = max(0, cur - 2)
+    end = min(n, start + max_rows)
+    start = max(0, end - max_rows)
+    return start, end
+
+
+def _fmt_frames(done: Any, total: Any) -> str:
+    if done is None and total is None:
+        return "--"
+    if total:
+        return f"{_count(done) if done is not None else '--'}/{_count(total)}"
+    return _count(done)
+
+
+def render_batch_lines(batch: Optional[Dict[str, Any]], *, color: bool, width: int = 110, max_rows: int = 8,
+                       compact: bool = False, now: Optional[float] = None, title: str = "BATCH") -> List[str]:
+    """The queue panel: a full-width rule with the counts, a batch progress bar, and one row per job."""
+    if not batch:
+        return []
+    cnt = batch["counts"]
+    c = (lambda code, text: f"{code}{text}{RESET}") if color else (lambda code, text: text)
+
+    def tag(cat: str, n: int, word: str) -> str:
+        icon, plain, col = _BATCH_STYLE[cat]
+        return c(col, f"{icon} {n} {word}") if color else f"{n} {word}"
+
+    pos = batch.get("current_pos")
+    head = f"{title} {pos}/{batch['total']}" if pos else f"{title} {batch['total']} jobs"
+    summary = " · ".join([tag(BATCH_DONE, cnt[BATCH_DONE], "done"), tag(BATCH_FAILED, cnt[BATCH_FAILED], "failed")]
+                         + ([tag(BATCH_STOPPED, cnt[BATCH_STOPPED], "stopped")] if cnt[BATCH_STOPPED] else [])
+                         + [tag(BATCH_RUNNING, cnt[BATCH_RUNNING], "running"), tag(BATCH_QUEUED, cnt[BATCH_QUEUED], "queued")])
+    timing = f"elapsed {fmt_dur(batch.get('elapsed_s'))}"
+    basis = ""
+    if batch.get("paused"):
+        timing += " · " + c(ORANGE, "QUEUE PAUSED")
+    elif batch.get("eta_s") is not None:
+        timing += f" · batch ETA {fmt_eta(batch['eta_s'], batch.get('eta_at'), now)}"
+        if batch.get("eta_basis"):
+            basis = c(GRAY, f" ({batch['eta_basis']})") if color else f" ({batch['eta_basis']})"
+    elif cnt[BATCH_QUEUED] or cnt[BATCH_RUNNING]:
+        timing += " · batch ETA --"
+    title_txt = c(BOLD + VIOLET, head) if color else head
+    # Narrow terminal: the ETA's basis goes first, then the timing, then the counts are cut.
+    for text in (f"{title_txt}  {summary}  {timing}{basis}", f"{title_txt}  {summary}  {timing}", f"{title_txt}  {summary}"):
+        if visible_len(text) + 6 <= width:
+            break
+    out = [rule_line(text, color=color, width=width)]
+    # progress bar across the whole width
+    label = f"{_num(batch.get('progress_jobs'), '{:.2f}')}/{batch['total']} jobs"
+    pct_txt = f"{_num(batch.get('pct')):>5}%"
+    bar_w = max(10, width - len(label) - len(pct_txt) - 10 - (0 if color else 2))
+    out.append(f"{c(VIOLET, 'Batch') if color else 'Batch'} {_bar(batch.get('pct'), bar_w, VIOLET, color)} "
+               f"{c(GOLD, pct_txt) if color else pct_txt}  {label}")
+    if compact:
+        return out
+    rows = batch["rows"]
+    # columns: pos, status, file (flex), frames, fps, time, eta/finished, note (rest)
+    narrow = width < 100
+    w_pos, w_st, w_fr, w_fps, w_t, w_eta = (4, 9, 11, 8, 8, 13) if narrow else (4, 9, 15, 9, 10, 24)
+    fixed = w_pos + w_st + w_fr + w_fps + w_t + w_eta + 7
+    w_note = max(0, min(48, (width - fixed) // 3))
+    w_name = max(14, width - fixed - w_note)
+    if w_note < 8:
+        w_name, w_note = max(14, width - fixed), 0
+    hdr_cells = [pad_visible("#", w_pos, ">"), pad_visible("STATUS", w_st), pad_visible("FILE", w_name),
+                 pad_visible("FRAMES", w_fr, ">"), pad_visible("FPS", w_fps, ">"), pad_visible("TIME", w_t, ">"),
+                 pad_visible("ETA / DONE AT" if narrow else "ETA / FINISHED", w_eta)] + ([pad_visible("NOTE", w_note)] if w_note else [])
+    hdr = " ".join(hdr_cells)
+    out.append(c(GRAY, hdr) if color else hdr)
+    start, end = _batch_window(rows, max(1, max_rows))
+    hidden_before, hidden_after = rows[:start], rows[end:]
+    for r in rows[start:end]:
+        cat = r["category"]
+        icon, plain, col = _BATCH_STYLE[cat]
+        status_word = {"done": "done", "failed": "FAILED", "stopped": "stopped", "running": "running",
+                       "queued": "queued"}[cat]
+        if cat == BATCH_RUNNING and str(r.get("state") or "").upper() in ("PAUSED", "PAUSE_REQUESTED"):
+            status_word = "paused"
+        if cat == BATCH_QUEUED and str(r.get("state") or "").upper() == "RECOVERABLE":
+            status_word = "resume"
+        status = f"{icon} {status_word}" if color else status_word
+        name = str(r["name"])
+        seg = r.get("segment")
+        if isinstance(seg, dict) and seg.get("index") and seg.get("count"):
+            name += f" [seg {seg['index']}/{seg['count']}]"
+        if cat == BATCH_RUNNING and r.get("stage"):
+            name = f"{name}  {r['stage']}" + (f" {_num(r.get('pct'))}%" if r.get("pct") is not None else "")
+        fps = f"{_num(r.get('fps'))} fps" if r.get("fps") is not None else "--"
+        t = fmt_dur(r.get("elapsed_s")) if r.get("elapsed_s") is not None else "--"
+        if cat == BATCH_RUNNING:
+            if r.get("eta_s") is None:
+                eta = "ETA --"
+            elif narrow:
+                eta = f"ETA {fmt_dur(r['eta_s'])}"
+            else:
+                eta = f"ETA {fmt_eta(r['eta_s'], (now + r['eta_s']) if now is not None else None, now)}"
+        elif r.get("finished_at"):
+            eta = f"at {fmt_clock(r['finished_at'], now)}"
+        else:
+            eta = ""
+        cells = [pad_visible(str(r["pos"]), w_pos, ">"), pad_visible(status, w_st), pad_visible(name, w_name),
+                 pad_visible(_fmt_frames(r.get("frames_done"), r.get("frames_total")), w_fr, ">"),
+                 pad_visible(fps, w_fps, ">"), pad_visible(t, w_t, ">"), pad_visible(eta, w_eta)]
+        if w_note:
+            cells.append(truncate_visible(str(r.get("note") or ""), w_note))
+        line = " ".join(cells).rstrip()
+        if color:
+            if cat == BATCH_RUNNING:
+                line = f"{BOLD}{col}{line}{RESET}"
+            elif cat == BATCH_QUEUED:
+                line = f"{SKY}{line}{RESET}"
+            elif cat == BATCH_FAILED:
+                line = f"{RED}{line}{RESET}"
+            elif cat == BATCH_STOPPED:
+                line = f"{ORANGE}{line}{RESET}"
+            else:
+                line = f"{GREEN}{line}{RESET}"
+        out.append(line)
+    if hidden_before or hidden_after:
+        bits = []
+        if hidden_before:
+            hb = {k: sum(1 for r in hidden_before if r["category"] == k) for k in _BATCH_STYLE}
+            bits.append(f"{len(hidden_before)} earlier (" + ", ".join(f"{v} {k}" for k, v in hb.items() if v) + ")")
+        if hidden_after:
+            bits.append(f"{len(hidden_after)} more below (" + ", ".join(
+                f"{v} {k}" for k, v in {k: sum(1 for r in hidden_after if r["category"] == k) for k in _BATCH_STYLE}.items() if v) + ")")
+        more = "      … " + " · ".join(bits) + ("   [B] show all" if color else "")
+        out.append(c(GRAY, more) if color else more)
+    return out
+
+
+def render_batch_log_lines(batch: Optional[Dict[str, Any]], stamp: str, rows: bool = False) -> List[str]:
+    """ANSI-free `[Batch]` records: one summary line, plus one line per job when `rows`."""
+    if not batch:
+        return []
+    cnt = batch["counts"]
+    head = (f"[Batch] t={stamp} job={batch.get('current_pos') or '-'}/{batch['total']} done={cnt[BATCH_DONE]} "
+            f"failed={cnt[BATCH_FAILED]} stopped={cnt[BATCH_STOPPED]} running={cnt[BATCH_RUNNING]} queued={cnt[BATCH_QUEUED]} "
+            f"pct={_num(batch.get('pct'))} elapsed={fmt_dur(batch.get('elapsed_s'))}")
+    head += " paused=yes" if batch.get("paused") else f" eta={fmt_eta(batch.get('eta_s'), batch.get('eta_at'))}"
+    if batch.get("eta_basis") and batch.get("eta_s") is not None:
+        head += f" eta_basis={batch['eta_basis'].replace(' ', '_')}"
+    out = [head]
+    if rows:
+        for r in batch["rows"]:
+            rec = (f"[Batch] #{r['pos']} state={r.get('state')} file={r['name']} "
+                   f"frames={_fmt_frames(r.get('frames_done'), r.get('frames_total'))} "
+                   f"fps={_num(r.get('fps'))} time={fmt_dur(r.get('elapsed_s'))}")
+            if r.get("note"):
+                rec += f" note={r['note']}"
+            out.append(rec)
+    return out
+
+
+def render_batch_summary(batch: Optional[Dict[str, Any]], *, color: bool, width: int = 110) -> List[str]:
+    """The table printed once when the whole queue is over: every job, plus totals."""
+    if not batch:
+        return []
+    lines = render_batch_lines(batch, color=color, width=width, max_rows=10 ** 6, title="BATCH FINISHED")
+    rows = batch["rows"]
+    frames = sum(int(r["frames_done"]) for r in rows if r.get("frames_done") and r["category"] == BATCH_DONE)
+    busy = sum(float(r["elapsed_s"]) for r in rows if r.get("elapsed_s") and r["category"] != BATCH_QUEUED)
+    tot = (f"Totals: {batch['counts'][BATCH_DONE]}/{batch['total']} done · {_count(frames)} frames written · "
+           f"render time {fmt_dur(busy)}" + (f" · mean {frames / busy:.1f} fps" if busy > 0 and frames else "")
+           + (f" · wall {fmt_dur(batch.get('elapsed_s'))}" if batch.get("elapsed_s") else ""))
+    lines.append(f"{BOLD}{tot}{RESET}" if color else tot)
+    lines.append(rule_line("", color=color, width=width))
+    return lines
+
+
+def rule_line(text: str, *, color: bool, width: int, char: str = "─", lead: int = 2) -> str:
+    """`── text ─────────` filled to exactly `width` visible columns."""
+    ch = char if color else "-"
+    body = f" {text} " if text else ""
+    fill = max(0, width - lead - visible_len(body))
+    if color:
+        return truncate_visible(f"{RULE}{ch * lead}{RESET}{body}{RULE}{ch * fill}{RESET}", width)
+    return truncate_visible(ch * lead + body + ch * fill, width)
+
+
+def render_header_line(snap: Dict[str, Any], *, color: bool, width: int = 110) -> str:
+    """The full-width job header: which file, where it sits in the batch, what is running, job elapsed / ETA, clock."""
+    job = snap.get("job") or {}
+    prof = snap.get("profile") or {}
+    tgt = prof.get("target") or {}
+    stages = snap.get("stages") or {}
+    cur = snap.get("current")
+    c = (lambda code, text: f"{code}{text}{RESET}") if color else (lambda code, text: text)
+    bits: List[str] = []
+    keys: List[str] = []
+
+    def add(key: str, text: str) -> None:
+        keys.append(key)
+        bits.append(text)
+
+    add("title", c(BOLD + VIOLET, "ROOP ULTIMATE"))
+    if job.get("batch_index") and job.get("batch_count") and int(job["batch_count"]) > 1:
+        add("job", c(BOLD + GOLD, f"JOB {job['batch_index']}/{job['batch_count']}"))
+    name = job.get("label") or tgt.get("file")
+    if name:
+        add("file", c(WHITE, str(name)))
+    fmt = " @ ".join(x for x in (str(tgt["resolution"]) if tgt.get("resolution") else "",
+                                 f"{_num(tgt['fps'], '{:.3f}').rstrip('0').rstrip('.')} fps" if tgt.get("fps") else "") if x)
+    vid = " · ".join(x for x in (fmt, f"{_count(tgt['frames'])} frames" if tgt.get("frames") else "") if x)
+    if vid:
+        add("video", c(GRAY, vid))
+    if job.get("mode"):
+        add("mode", c(GRAY, str(job["mode"]).upper()))
+    if cur and cur in stages:
+        s = stages[cur]
+        add("now", c(STAGE_COLOR.get(cur, "") + BOLD, f"now {cur} {s['name']}") + (" " + c(ORANGE, "PAUSED") if s.get("paused") else ""))
+    elif snap.get("active") is False:
+        s3 = stages.get("S3") or {}
+        add("now", c(GREEN if s3.get("state") in (DONE, RESTORED) else ORANGE, "finished"))
+    started = job.get("started_at")
+    upd = snap.get("updated_at")
+    if started and upd:
+        add("elapsed", f"elapsed {fmt_dur(upd - started)}")
+    if cur and cur in stages and stages[cur].get("eta_s") is not None:
+        add("eta", f"{cur} ETA {fmt_eta(stages[cur]['eta_s'], stages[cur]['eta_at'], upd)}")
+    sep = c(RULE, " │ ") if color else " | "
+    right = fmt_clock(upd) if upd else ""
+    lead = c(VIOLET, "▌") if color else ""
+    fill_ch = "━" if color else "="
+    # Narrow terminal: give up the least useful fields first (mode, then video facts, then the product name).
+    left = ""
+    for drop in (None, "mode", "video", "elapsed", "title"):
+        if drop is not None and drop in keys:
+            i = keys.index(drop)
+            del bits[i], keys[i]
+        left = sep.join(bits)
+        gap = width - visible_len(lead) - visible_len(left) - visible_len(right) - 3
+        if gap >= 1:
+            return f"{lead}{left} {c(RULE, fill_ch * gap) if color else fill_ch * gap} {c(GRAY, right) if color else right} "
+    return truncate_visible(f"{lead}{left}", width)
+
+
 # ── the manager ──────────────────────────────────────────────────────────────────────────────────────────────────
 
 class _LiveTerminal:
@@ -602,17 +1159,24 @@ class _LiveTerminal:
     def _width() -> int:
         return max(20, shutil.get_terminal_size((120, 30)).columns - 1)
 
+    @staticmethod
+    def _height() -> int:
+        return max(4, shutil.get_terminal_size((120, 30)).lines - 1)
+
     def _paint_locked(self) -> None:
         if not self.lines:
             return
         width = self._width()
+        # A block taller than the viewport cannot be redrawn in place (cursor-previous-line stops at the top row, so
+        # every repaint would leave a copy in the scrollback). Keep the TOP of the block - the header and stages.
+        lines = self.lines[:self._height()]
         buf = [f"\x1b[{self.drawn}F"] if self.drawn else []
-        for ln in self.lines:
+        for ln in lines:
             buf.append(truncate_visible(ln, width) + "\x1b[K\n")
-        if len(self.lines) < self.drawn:
+        if len(lines) < self.drawn:
             buf.append("\x1b[J")
         self._w("".join(buf))
-        self.drawn = len(self.lines)
+        self.drawn = len(lines)
 
     def _erase_locked(self) -> None:
         if self.drawn:
@@ -718,6 +1282,11 @@ class TerminalProgressManager:
         self._throttle_mode: bool = False
         self._flash_message: Optional[str] = None
         self._flash_message_expiry: float = 0.0
+        # Outlive a job: per-job results for the batch panel, the [B] toggle, the system sampler.
+        self._history: Dict[str, Dict[str, Any]] = {}
+        self._batch_expanded = False
+        self._sys = SystemSampler()
+        self._files_batch: Optional[Tuple[Tuple[str, ...], float]] = None     # (names, wall when job 1 began)
         self._reset_state()
         atexit.register(self._atexit)
 
@@ -742,6 +1311,12 @@ class TerminalProgressManager:
         self._throttle_mode = False
         self._flash_message = None
         self._flash_message_expiry = 0.0
+        self._batch_src: Optional[Dict[str, Any]] = None
+        self._batch_src_at = -1e9
+        self._batch_sig: Optional[Tuple[Any, ...]] = None
+        self._batch_rows_logged = False
+
+    BATCH_EVERY_S = 1.0            # how often the queue's job list is re-read
 
     @property
     def active(self) -> bool:
@@ -761,6 +1336,11 @@ class TerminalProgressManager:
             self._job = dict(job or {})
             self._profile = profile
             self._started, self._started_wall = self._clock(), self._wall()
+            files = self._job.get("batch_files")
+            if files:
+                key = tuple(str(f) for f in files)
+                if self._files_batch is None or self._files_batch[0] != key or int(self._job.get("batch_index") or 1) == 1:
+                    self._files_batch = (key, self._started_wall)
             self._s1.update(state=RUNNING, since=self._started)
             color = self._mode == "live" and _color_on()
             try:
@@ -798,6 +1378,7 @@ class TerminalProgressManager:
             self._tick(final=True, ok=ok, emit=not _quiet)
             snap = dict(self._snap, active=False, finished_at=self._wall())
             self._snap = snap
+            self._record_history(snap, ok)
             leave = [] if _quiet else self._final_lines(snap)
             if self._term is not None:
                 self._term.uninstall(leave)
@@ -806,6 +1387,27 @@ class TerminalProgressManager:
                 self._print_plain(leave)
             self._active = False
             self._thread = None
+
+    HISTORY_MAX = 1000
+
+    def _record_history(self, snap: Dict[str, Any], ok: bool) -> None:
+        """One finished job's numbers, for the batch panel's later rows (the queue keeps no frame counts)."""
+        try:
+            s3 = (snap.get("stages") or {}).get("S3") or {}
+            wall = snap.get("finished_at") or self._wall()
+            rec = {"ok": bool(ok), "elapsed_s": _r(wall - self._started_wall, 1) if self._started_wall else None,
+                   "frames": s3.get("done") if s3.get("state") not in (None, PENDING) else None,
+                   "frames_total": s3.get("total"), "fps_avg": (s3.get("detail") or {}).get("fps_avg"),
+                   "short_by": (s3.get("detail") or {}).get("short_by"), "finished_at": _r(wall, 1)}
+            jid = self._job.get("job_id") or self._job.get("id")
+            if jid:
+                self._history[str(jid)] = rec
+            if self._job.get("label"):
+                self._history["file:" + str(self._job["label"])] = rec
+            while len(self._history) > self.HISTORY_MAX:
+                self._history.pop(next(iter(self._history)))
+        except Exception as exc:
+            _swallowed("roop/terminal_dashboard.py:history", exc, "job left out of the batch history")
 
     def _atexit(self) -> None:
         # Quiet: the process is going away mid-job, so the only thing owed is a terminal that is usable again (cursor
@@ -925,7 +1527,15 @@ class TerminalProgressManager:
             return self._handle_toggle_throttle()
         elif k == 'q':
             return self._handle_graceful_quit()
+        elif k == 'b':
+            return self._handle_toggle_batch()
         return None
+
+    def _handle_toggle_batch(self) -> str:
+        self._batch_expanded = not self._batch_expanded
+        msg = f"[Interactive] Batch list: {'ALL JOBS' if self._batch_expanded else 'COMPACT'}"
+        self._set_flash_message(msg)
+        return msg
 
     def _handle_pause_resume(self) -> str:
         try:
@@ -1243,10 +1853,71 @@ class TerminalProgressManager:
             self._snap = {"schema": SCHEMA, "active": True, "mode": self._mode, "updated_at": _r(wall, 2),
                           "job": {**self._job, "started_at": _r(self._started_wall, 1)}, "has_profile": self._profile is not None,
                           "current": current, "stages": stages, "telemetry": self._telemetry(now, view, retired, s3_state == RUNNING)}
+            self._snap["batch"] = _safe(lambda: self._batch_view(now, wall, stages, current, final, ok), None, "batch")
+            self._snap["system"] = _safe(lambda: self._sys.sample(now), None, "system")
             if self._profile is not None:
                 self._snap["profile"] = self._profile
             if emit:
                 self._emit(final)
+
+    # -- batch --
+    def _files_source(self) -> Optional[Dict[str, Any]]:
+        """`core.batch_process` with several videos: the ordered names on the job, states from the position."""
+        files = self._job.get("batch_files")
+        if not files or len(files) < 2:
+            return None
+        idx = int(self._job.get("batch_index") or 1)
+        jobs = []
+        for i, name in enumerate(files, 1):
+            name = str(name)
+            rec = self._history.get("file:" + name) if i < idx else None
+            if i < idx:
+                state = "COMPLETED" if (rec is None or rec.get("ok")) else "FAILED"
+            elif i == idx:
+                state = "PROCESSING"
+            else:
+                state = "QUEUED"
+            jobs.append({"id": None, "name": name, "state": state, "started": None,
+                         "finished": rec.get("finished_at") if rec else None})
+        return {"source": "files", "jobs": jobs, "current": None,
+                "run_started": self._files_batch[1] if self._files_batch else None}
+
+    def _batch_view(self, now: float, wall: float, stages: Dict[str, Any], current: Optional[str],
+                    final: bool, ok: bool) -> Optional[Dict[str, Any]]:
+        src = None
+        if _batch_source is not None:
+            if self._batch_src is None or final or now - self._batch_src_at >= self.BATCH_EVERY_S:
+                self._batch_src_at = now
+                try:
+                    got = _batch_source()
+                except Exception as exc:
+                    _swallowed("roop/terminal_dashboard.py:batch_source", exc, "queue left out of the batch panel")
+                    got = None
+                if not (isinstance(got, dict) and got.get("busy")):       # busy = keep the last list, do not wait
+                    self._batch_src = got
+            src = self._batch_src
+        if not src or not src.get("jobs"):
+            src = self._files_source()
+        if not src:
+            return None
+        s3 = stages["S3"]
+        s = stages.get(current) if current else None
+        if s3["state"] in (DONE, RESTORED) or stages["S4"]["state"] in (RUNNING, DONE):
+            job_frac = 1.0 if (stages["S4"]["state"] == DONE or s3["state"] in (DONE, RESTORED)) else 0.99
+        elif s3["state"] == RUNNING and s3.get("pct") is not None:
+            job_frac = s3["pct"] / 100.0
+        else:
+            job_frac = 0.0
+        tgt = (self._profile or {}).get("target") or {}
+        live = {"stage": current, "stage_title": STAGE_TITLE.get(current) if current else None,
+                "pct": s["pct"] if s else None,
+                "frames_done": s3["done"] if s3["state"] != PENDING else None,
+                "frames_total": s3["total"] or tgt.get("frames"),
+                "fps": s3["rate"] if s3["state"] == RUNNING else (s3.get("detail") or {}).get("fps_avg"),
+                "eta_s": s["eta_s"] if s else None,
+                "elapsed_s": _r(wall - self._started_wall, 1) if self._started_wall else None,
+                "job_frac": job_frac}
+        return build_batch_view(src, self._history, wall, live)
 
     def _telemetry(self, now: float, view: Dict[str, Any], retired: int, s3_running: bool) -> Dict[str, Any]:
         from roop import stage_telemetry as st
@@ -1325,8 +1996,7 @@ class TerminalProgressManager:
         self._last_states = states
         if self._mode == "live" and self._term is not None:
             color = _color_on()
-            lines = (render_stage_lines(snap, color=color, width=self._cols()) +
-                     render_telemetry_lines(snap, color=color, width=self._cols(), detailed=self._detail_telemetry))
+            footer = None
             if not final:
                 msg = self._flash_message if self._wall() < self._flash_message_expiry else None
                 footer = render_hotkey_footer(
@@ -1335,23 +2005,52 @@ class TerminalProgressManager:
                     detailed=self._detail_telemetry,
                     color=color,
                     width=self._cols(),
-                    message=msg
+                    message=msg,
+                    batch=bool(snap.get("batch")),
+                    batch_expanded=self._batch_expanded,
                 )
-                if footer:
-                    lines.append(footer)
-            self._term.set_lines(lines)
+            self._term.set_lines(compose_live_lines(snap, color=color, width=self._cols() - 1, height=self._rows(),
+                                                    detailed=self._detail_telemetry, footer=footer,
+                                                    batch_rows=self._batch_row_cap()))
         elif self._mode == "log":
             t = self._clock()
-            if final or changed or t - self._last_log >= self.LOG_EVERY_S:
+            batch = snap.get("batch")
+            sig = None if not batch else (tuple(sorted(batch["counts"].items())), batch.get("current_pos"))
+            batch_moved = sig != self._batch_sig
+            self._batch_sig = sig
+            if final or changed or batch_moved or t - self._last_log >= self.LOG_EVERY_S:
                 self._last_log = t
                 running = tuple(k for k, v in snap["stages"].items() if v["state"] == RUNNING)
                 moved = tuple(k for k, v in snap["stages"].items() if v["state"] != prev.get(k))
-                self._print_plain(render_log_lines(snap, None if final else tuple(dict.fromkeys(running + moved))))
+                lines = render_log_lines(snap, None if final else tuple(dict.fromkeys(running + moved)))
+                stamp = fmt_clock(snap.get("updated_at"))
+                if batch:
+                    lines += render_batch_log_lines(batch, stamp, rows=not self._batch_rows_logged)
+                    self._batch_rows_logged = True
+                sys_line = render_system_log_line(snap.get("system"), stamp) if running else ""
+                if sys_line:
+                    lines.append(sys_line)
+                self._print_plain(lines)
+
+    @staticmethod
+    def _rows() -> int:
+        return max(10, shutil.get_terminal_size((120, 30)).lines - 1)
+
+    def _batch_row_cap(self) -> int:
+        if self._batch_expanded:
+            return 200
+        try:
+            return max(1, int(os.environ.get("ROOP_DASHBOARD_BATCH_ROWS", "8")))
+        except ValueError:
+            return 8
 
     def _final_lines(self, snap: Dict[str, Any]) -> List[str]:
         if self._mode == "live":
             color = _color_on()
-            return render_stage_lines(snap, color=color, width=self._cols()) + render_telemetry_lines(snap, color=color, width=self._cols(), detailed=self._detail_telemetry)
+            # Left in the scrollback after every job: keep the batch to its two summary lines, or a 30-job queue
+            # would print its whole table 30 times. The full table is printed once, when the queue ends.
+            return compose_live_lines(snap, color=color, width=self._cols() - 1, height=10 ** 6,
+                                      detailed=self._detail_telemetry, footer=None, batch_rows=0)
         return []                                        # log mode already printed its final lines from the last tick
 
 
@@ -1387,30 +2086,58 @@ def _stage_extra(s: Dict[str, Any], with_rate: bool = True) -> str:
     return " · ".join(bits)
 
 
+_STATE_MARK = {RUNNING: ("▶", GOLD), DONE: ("✔", GREEN), RESTORED: ("✔", GREEN), FAILED: ("✖", RED),
+               SKIPPED: ("–", GRAY), PENDING: ("○", GRAY)}
+
+
 def render_stage_lines(snap: Dict[str, Any], *, color: bool, width: int = 110) -> List[str]:
-    bar_w = 20 if width >= 100 else 12
-    out = []
+    """One line per stage. The text columns are fixed-width so the four lines line up, and the bar takes whatever the
+    terminal has left (12-80 columns), so the block spans the full width of a wide terminal."""
+    upd = snap.get("updated_at")
+    rows = []
     for sid in ("S1", "S2", "S3", "S4"):
         s = snap["stages"][sid]
         c = STAGE_COLOR[sid] if color else ""
-        head = f"{c}{BOLD if color else ''}{sid} {s['name']:<8}{RESET if color else ''}"
         state = s["state"]
-        if state == SKIPPED:
-            out.append(f"{head} {DIM if color else ''}skipped (not needed for this job){RESET if color else ''}")
-            continue
-        if state == PENDING:
-            out.append(f"{head} {DIM if color else ''}pending{RESET if color else ''}")
+        mark, mark_c = _STATE_MARK.get(state, ("?", GRAY))
+        lead = f"{mark_c}{mark}{RESET} " if color else ""
+        head = f"{lead}{c}{BOLD if color else ''}{sid} {s['name']:<8}{RESET if color else ''}"
+        if state in (SKIPPED, PENDING):
+            text = "skipped (not needed for this job)" if state == SKIPPED else "pending"
+            rows.append((head, False, None, f"{DIM if color else ''}{text}{RESET if color else ''}"))
             continue
         pct_c = (GOLD if sid == "S3" else c) if color else ""
         pct = f"{pct_c}{_num(s['pct']):>5}%{RESET if color else ''}"
         counts = f"{_count(s['done'])}/{_count(s['total'])} {s['unit']}" if s["total"] is not None else f"{_count(s['done'])} {s['unit']}"
         elapsed = f"elapsed {fmt_dur(s['elapsed_s'])}"
         if state == RUNNING:
-            eta = "PAUSED" if s["paused"] else f"ETA: {fmt_eta(s['eta_s'], s['eta_at'], snap.get('updated_at'))}"
+            eta = (f"{ORANGE}PAUSED{RESET}" if color else "PAUSED") if s["paused"] else \
+                f"ETA: {fmt_eta(s['eta_s'], s['eta_at'], upd)}"
         else:
             eta = state.lower()
+            if color:
+                eta = f"{mark_c}{eta}{RESET}"
         extra = _stage_extra(s)
-        out.append(f"{head} {_bar(s['pct'], bar_w, c, color)} {pct}  {counts}  {elapsed}  {eta}" + (f"  {extra}" if extra else ""))
+        extra = f"{GRAY if color else ''}{extra}{RESET if color else ''}" if extra else ""
+        rows.append((head, True, s["pct"], [pct, counts, elapsed, eta, extra]))
+    # Columns pad to the widest value actually present, so the four lines align without wasting a narrow terminal.
+    cols = [max((visible_len(r[3][i]) for r in rows if r[1]), default=0) for i in range(4)]
+    for r in rows:
+        if r[1]:
+            pct, counts, elapsed, eta, extra = r[3]
+            r[3][:] = [f"{pct}  {pad_visible(counts, cols[1])}  {pad_visible(elapsed, cols[2])}  "
+                       f"{pad_visible(eta, cols[3])}" + (f"  {extra}" if extra else "")]
+    rows = [(h, b, p, t[0].rstrip() if isinstance(t, list) else t) for h, b, p, t in rows]
+    head_w = max(visible_len(r[0]) for r in rows)
+    widest_tail = max((visible_len(r[3]) for r in rows if r[1]), default=0)
+    bar_w = max(12, min(80, width - head_w - widest_tail - 2 - (0 if color else 2)))
+    out = []
+    for (head, has_bar, pct, tail), sid in zip(rows, ("S1", "S2", "S3", "S4")):
+        h = pad_visible(head, head_w)
+        if not has_bar:
+            out.append(f"{h} {tail}")
+        else:
+            out.append(f"{h} {_bar(pct, bar_w, STAGE_COLOR[sid] if color else '', color)} {tail}")
     return out
 
 
@@ -1504,11 +2231,14 @@ def render_hotkey_footer(
     throttle: bool = False,
     detailed: bool = False,
     color: bool = True,
-    width: int = 110,
+    width: Optional[int] = None,
     message: Optional[str] = None,
+    batch: bool = False,
+    batch_expanded: bool = False,
 ) -> str:
     """Compact hotkey footer bar:
     [P] Pause/Resume GPU    [S] Dump Debug Frame    [D] Toggle Kernel Detail    [T] Throttle Mode    [Q] Save Checkpoint & Exit
+    (+ [B] Batch list while a batch is running)
     """
     if message:
         prefix = f"{GOLD}▶ {RESET}" if color else "▶ "
@@ -1528,8 +2258,47 @@ def render_hotkey_footer(
     item_d = f"{k_c}{b}[D]{r} {d_c}{d_label}{r}"
     item_t = f"{k_c}{b}[T]{r} {d_c}{t_label}{r}"
     item_q = f"{k_c}{b}[Q]{r} {d_c}Save Checkpoint & Exit{r}"
+    items = [item_p, item_s, item_d, item_t]
+    if batch:
+        items.append(f"{k_c}{b}[B]{r} {d_c}{'Batch: all jobs' if batch_expanded else 'Batch: compact'}{r}")
+    items.append(item_q)
+    line = "    ".join(items)
+    if width is None or visible_len(line) <= width:
+        return line
+    short = [("P", "Resume" if paused else "Pause"), ("S", "Snapshot"), ("D", "Detail" + (" on" if detailed else "")),
+             ("T", "Throttle" + (" on" if throttle else ""))]
+    if batch:
+        short.append(("B", "Batch" + (" all" if batch_expanded else "")))
+    short.append(("Q", "Quit"))
+    return "  ".join(f"{k_c}{b}[{k}]{r} {d_c}{text}{r}" for k, text in short)
 
-    return f"{item_p}    {item_s}    {item_d}    {item_t}    {item_q}"
+
+def compose_live_lines(snap: Dict[str, Any], *, color: bool, width: int, height: int, detailed: bool = False,
+                       footer: Optional[str] = None, batch_rows: int = 8) -> List[str]:
+    """The whole live block, fitted to the terminal: header, the four stages, the batch panel, telemetry, system load,
+    footer. Only the batch table shrinks when the terminal is short (it gives up rows, then its table, then itself);
+    everything else is a fixed handful of lines."""
+    header = [render_header_line(snap, color=color, width=width)]
+    stages = render_stage_lines(snap, color=color, width=width)
+    tel = [rule_line(f"{GRAY}per-frame cost · queues · system{RESET}" if color else "per-frame cost / queues / system",
+                     color=color, width=width)]
+    tel += render_telemetry_lines(snap, color=color, width=width, detailed=detailed)
+    sys_line = render_system_line(snap.get("system"), color=color, width=width)
+    if sys_line:
+        tel.append(sys_line)
+    tail = [footer] if footer else []
+    fixed = len(header) + len(stages) + len(tel) + len(tail)
+    batch = snap.get("batch")
+    blines: List[str] = []
+    if batch:
+        room = height - fixed
+        now = snap.get("updated_at")
+        if batch_rows > 0 and room >= 5:
+            rows = min(batch_rows, room - 4)             # rule + bar + column header + "… more" line
+            blines = render_batch_lines(batch, color=color, width=width, max_rows=rows, now=now)
+        elif room >= 2:
+            blines = render_batch_lines(batch, color=color, width=width, compact=True, now=now)
+    return header + stages + blines + tel + tail
 
 
 def render_log_lines(snap: Dict[str, Any], only: Optional[Tuple[str, ...]] = None) -> List[str]:
@@ -1623,6 +2392,34 @@ def detach_bar(bar: Any) -> None:
 def claims_bar(desc: Any) -> bool:
     """True while a job is live and the dashboard paints this pipeline bar itself (ChunkedProgress then stays silent)."""
     return bool(manager.active and str(desc or "").startswith(CLAIMED_BAR_PREFIXES))
+
+
+def batch_summary_lines(src: Optional[Dict[str, Any]], *, color: bool, width: int,
+                        wall: Optional[float] = None) -> List[str]:
+    if not src or src.get("busy"):
+        return []
+    view = build_batch_view(src, manager._history, time.time() if wall is None else wall, None)
+    return render_batch_summary(view, color=color, width=width)
+
+
+def print_batch_summary(src: Optional[Dict[str, Any]]) -> None:
+    """Print the finished queue's table (called by the queue runner once its last job is over)."""
+    def run() -> None:
+        m = mode()
+        if m == "off":
+            return
+        color = m == "live" and _color_on() and _enable_windows_vt()
+        width = max(60, shutil.get_terminal_size((120, 30)).columns) - 1
+        lines = batch_summary_lines(src, color=color, width=width)
+        if not color:
+            lines = [ln if ln.startswith("[") else "[Batch] " + ln for ln in lines]
+        for ln in lines:
+            try:
+                print(ln, flush=True)
+            except UnicodeEncodeError:
+                enc = getattr(sys.stdout, "encoding", None) or "ascii"
+                print(ln.encode(enc, "replace").decode(enc, "replace"), flush=True)
+    _guard("print_batch_summary", run)
 
 
 def snapshot() -> Dict[str, Any]:

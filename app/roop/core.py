@@ -1623,7 +1623,8 @@ def _clear_terminal_for_new_run() -> None:
         pass
 
 
-def _dashboard_begin(path: str, fps, frames, index: int, count: int, is_image: bool = False) -> None:
+def _dashboard_begin(path: str, fps, frames, index: int, count: int, is_image: bool = False,
+                     batch_files=None) -> None:
     """Start the terminal dashboard for one target (roop/terminal_dashboard.py): the Swap Profile banner, then the
     four-stage display. The queue stamps the job id / position on `roop.globals._dashboard_job` and a split render's
     slice on `_segment_spec`. Never raises: a banner is not worth a render."""
@@ -1640,6 +1641,9 @@ def _dashboard_begin(path: str, fps, frames, index: int, count: int, is_image: b
                 'custody_dir': segment_output.segments_dir(roop.globals.output_path, spec.group)}
         if count > 1 and not job.get('batch_count'):
             job['batch_index'], job['batch_count'] = index + 1, count
+            if batch_files:
+                # The terminal's batch panel lists every target of this run (queued / running / done).
+                job['batch_files'] = [os.path.basename(str(f)) for f in batch_files]
         job['label'] = os.path.basename(path)
         if is_image:
             job['mode'] = 'image'
@@ -1807,7 +1811,8 @@ def batch_process(output_method, files:list[ProcessEntry], use_new_method) -> No
                 if is_streaming_only == False:
                     update_status(f'Creating {os.path.basename(v.finalname)} with {fps} FPS...')
 
-                _dashboard_begin(v.filename, fps, int(v.endframe - v.startframe), index, len(videofiles))
+                _dashboard_begin(v.filename, fps, int(v.endframe - v.startframe), index, len(videofiles),
+                                 batch_files=[x.filename for x in videofiles])
                 start_processing = time()
                 _swaps_before = getattr(process_mgr, 'total_swaps', 0)
                 _has_per_frame_masks = bool(getattr(roop.globals, 'mask_per_frame', {}))
