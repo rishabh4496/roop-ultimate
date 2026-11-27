@@ -1,17 +1,17 @@
 {
   "about": "sha256 of each 1.0 file a 2.0-owned file was last merged from (scripts/sync_react_ui_v2.py)",
   "owned": {
-    "README.md": "e2046b3af6986ea9a75897b2d8987b1b2c39bbb443604675ac290ab22d4870b0",
-    "index.html": "a7d2257bb63574d12040554fdc3076d90591c436279dccfd6e7794bdab54316e",
-    "package-lock.json": "406e334d5fd49b51551e94262257f518caf989c020e99d36c69dd69d24c1658b",
-    "package.json": "dd1b429cf51e54bad768ff98d6a1687ffa76ea2af25c24efbd1278ab77715123",
-    "src/App.jsx": "3b34be4cc0299636e23461efd4a9dad66d8b49a2221e51639dae81973d5e528a",
-    "src/components/Gallery.jsx": "b95ac59333aec4ee516439ad59a356126faa3de7894162d7741155556240139b",
-    "src/components/ThemeGallery.jsx": "4f51ac93fdfac032b71d3b328dffc8b77f71c772e1d1b459121e78298c80bfd8",
-    "src/components/shell/WorkstationHeader.jsx": "e4243771bc392bc958c18396e9e29aa7ef6be6fab58657a147d401aa9cf3fe9d",
-    "src/components/shell/WorkstationRail.jsx": "4fdec05f567020a0de9c341a89b28c515ea8ec51b8fe5988b2a0e8cdd13c0e3a",
-    "src/main.jsx": "b0ccb232001d47e90c9e4254bb0d13652deccab42bad43f935ab82fa11821ffd",
-    "src/themes.js": "f82b5f5af2cee721df11ce3ae7eddf3f1972a7b13aca2ec326e7e5cf356b0225",
-    "vite.config.js": "a15e978a8897c1a904fa85483e5f6fe62e7715bc92ecefd46e45b58b1120d391"
+    "README.md": "9ede68a23a32368268aaa8ccc8261c43a3578926d6944a5a69090a9590f9f217",
+    "index.html": "ebab1640fdab4f2eaea22e33b0a2a269eaf197203d2e416aa05bdf6b4bc5e00b",
+    "package-lock.json": "b4c0ca82d1fad70fdb39209ff84c8f949671ec0bc7c2739db60f8f43ca9ab87d",
+    "package.json": "67143ee4696a870b4104e8e3211e5ac89de39f00282f4704885274bdb219ca90",
+    "src/App.jsx": "834ec89c51466ccf21135724aaa2540a8ffafd2c4eff8ef6c3f4df73ea4f3a7c",
+    "src/components/Gallery.jsx": "9aa3300ead06a6ded5bbb5a9bbf534d15a1e17d6a94e1106faad94e5a849f090",
+    "src/components/ThemeGallery.jsx": "799502a1562e91d7b61a410274d2e89b042b96f6837a6a801f7d976e63d4b4ff",
+    "src/components/shell/WorkstationHeader.jsx": "228f8dc4fcadbacbe21955c764403c5b8f8409f1b3043e3558f2583ac319c9e0",
+    "src/components/shell/WorkstationRail.jsx": "22991ec15f75fce3a2d2d726d043e74a83c040989c0b5da5d2d91cb40dac12a4",
+    "src/main.jsx": "c13b06a4eedb3be1ab08a4cf0edf65b6f6eea52c8b5456e925d715ac11a574ef",
+    "src/themes.js": "d0bc9b7b1f703a4685e90fa71679f4d6e483a6530eae4af4ed24996a41d390de",
+    "vite.config.js": "5e12901d71397a575e04183798d5642ed20d3cbe0df9e72c91d7fdce00f8cc32"
   }
 }

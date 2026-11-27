@@ -53,8 +53,10 @@ _SKIP_DIRS = {"node_modules", "dist", "test-results", "playwright-report", ".vit
 
 
 def _sha(path):
+    """Content hash with line endings normalised: git's autocrlf checks the same blob out as LF on
+    one machine and CRLF on another, and the parity check must agree on both."""
     with open(path, "rb") as fh:
-        return hashlib.sha256(fh.read()).hexdigest()
+        return hashlib.sha256(fh.read().replace(b"\r\n", b"\n")).hexdigest()
 
 
 def _files(client_root, prefix):
