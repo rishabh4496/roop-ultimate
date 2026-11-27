@@ -94,6 +94,26 @@ def test_untrimmed_render_is_verified_then_the_intermediate_is_deleted(tmp_path)
     assert r["verify"]["probe_ms"] < 2000          # a header read, not a decode
 
 
+def test_untrimmed_mp4_keeps_aac_encoder_padding_out_of_playback(tmp_path):
+    fps = 24000 / 1001
+    rate = 22050  # One AAC priming packet is 46.4 ms, longer than one video frame.
+    duration = "3.003"
+    src = str(tmp_path / "source.mp4")
+    temp = str(tmp_path / "render__temp.mp4")
+    dest = str(tmp_path / "render.mp4")
+    _ff("-f", "lavfi", "-i", "testsrc2=s=160x120:r=24000/1001", "-f", "lavfi",
+        "-i", f"anoisesrc=r={rate}:seed=7", "-t", duration,
+        "-c:v", "libx264", "-bf", "2", "-c:a", "aac", src)
+    _ff("-i", src, "-an", "-c:v", "copy", temp)
+
+    result = fo.finalize_render(temp, dest, audio_source=src, trim_start=0, trim_end=72, expected_frames=72)
+
+    assert result["ok"], result["problems"]
+    assert result["verify"]["frames"] == 72
+    assert abs(result["verify"]["audio_start_offset_ms"]) < 1
+    assert abs(_lag_seconds(_pcm(src), _pcm(dest))) < 1 / fps / 10
+
+
 @pytest.mark.parametrize("trim", [(30, 90), (45, 105)])
 def test_trimmed_render_audio_is_aligned_to_under_one_frame(tmp_path, trim):
     start, end = trim

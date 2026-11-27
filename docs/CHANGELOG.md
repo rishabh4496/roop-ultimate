@@ -5,6 +5,10 @@ full session record is [`SESSION_LOGS.md`](SESSION_LOGS.md); the running enginee
 state lives outside the repository (`RECODE_STATUS.md` in the operator's `roop-keep`
 folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22.
 
+## 2026-11-28
+
+- Untrimmed MP4 exports preserve the audio edit that skips AAC encoder padding. Forcing all packet timestamps to start at zero exposed that padding and made finalization reject a render with a 47 ms audio lead. The corrected stream copy passed finalization with all 44,136 test frames and the affected source audio. The output started at a 0.0 ms A/V offset, and its first ten seconds of decoded audio matched the source.
+
 ## 2026-11-27
 
 - **The terminal dashboard shows the whole batch and fills the terminal width.** `app/roop/terminal_dashboard.py`, `app/routes_queue.py` (`_dashboard_batch_source`, `_print_batch_summary`), `app/roop/core.py` (`batch_files`); tests `app/tests/test_terminal_dashboard_batch.py`.

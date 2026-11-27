@@ -867,6 +867,7 @@ def _skip_audio_head(original_video: str, final_video: str, cut_from_s: float, s
 
 def _restore_audio_impl(intermediate_video: str, original_video: str, trim_frame_start, trim_frame_end, final_video: str) -> bool:
     fps = util.constant_frame_rate(util.detect_fps(original_video))
+    is_mp4 = final_video.lower().endswith(('.mp4', '.mov', '.m4v'))
     # On a variable-frame-rate source `frame / constant_fps` is not where that frame is: use its real timestamp.
     vfr_window = None
     try:
@@ -919,7 +920,6 @@ def _restore_audio_impl(intermediate_video: str, original_video: str, trim_frame
         # (19.0 ms measured, 0..23 ms in general). In an MP4 the gap is repaired exactly: cut `lead` (3 packets) BEFORE
         # the trim point, and let the audio track's edit list skip the remainder, so the trim point is t = 0 to the
         # sample. Other containers keep the packet-aligned cut (no edit list to carry the skip).
-        is_mp4 = final_video.lower().endswith(('.mp4', '.mov', '.m4v'))
         lead = min(start_s, 3.0 * 1024.0 / float(rate or 44100)) if is_mp4 else 0.0
         try:
             cut = ['-i', original_video, '-map', '0:a:0?', '-vn', '-sn', '-dn',
@@ -982,9 +982,12 @@ def _restore_audio_impl(intermediate_video: str, original_video: str, trim_frame
            '-map_metadata', '1',
            '-c:v', 'copy', '-c:a', 'copy',
            '-vsync', 'cfr', '-fps_mode', 'cfr',
-           '-avoid_negative_ts', 'make_zero',
           ]
     )
+    # On an untrimmed MP4, the muxer's default edit list keeps AAC priming out of playback.
+    # Forcing make_zero shifts the priming packets into the visible timeline, ahead of the video.
+    if not is_mp4 or start_s > 0:
+        commands += ['-avoid_negative_ts', 'make_zero']
     # Bounded by the VIDEO's own length, never `-shortest`. Source audio ends a
     # fraction of a frame before its video as a matter of course (AAC packets are
     # 21.3 ms), and `-shortest` then dropped the render's LAST frame: a 90-frame
@@ -999,7 +1002,7 @@ def _restore_audio_impl(intermediate_video: str, original_video: str, trim_frame
         commands += ['-t', format(min(bounds), '.6f')]
     else:
         commands += ['-shortest']     # video length unknown: the old behaviour
-    if final_video.lower().endswith(('.mp4', '.mov', '.m4v')):
+    if is_mp4:
         commands += ['-movflags', '+faststart']
     commands += [final_video]
     return run_ffmpeg(commands)
