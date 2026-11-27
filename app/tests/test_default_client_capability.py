@@ -98,15 +98,47 @@ class DefaultClientCapabilityTests(unittest.TestCase):
         self.assertTrue(os.path.isdir(
             os.path.join(_ROOT, _client_dir_of_default(), "src")))
 
-    def test_react_ui_2_is_gone_and_nothing_can_launch_it(self):
-        """It was removed after its seven unique capabilities were migrated
-        into V1 and verified -- docs/development/UI_V1_V2_MIGRATION_AUDIT.md.
-        This fails if any part of it returns without that record."""
-        self.assertFalse(os.path.exists(os.path.join(_ROOT, "react-ui-v2")))
+    # ── React UI 2.0, second edition (2026-11-28) ─────────────────────────────
+    # The first React UI 2.0 was a rewrite and was removed (docs/development/
+    # UI_V1_V2_MIGRATION_AUDIT.md); this file used to fail if any of it came
+    # back. It came back as something different, recorded in
+    # docs/UI_V2_VISUAL_AUDIT.md: 1.0's client COPIED, plus a visual layer
+    # (react-ui-v2/src/v2fx/), served at /v2/ beside 1.0. These replace the
+    # "it is gone" assertion with the three things that make the new one safe.
+
+    def test_1_0_is_still_what_start_js_promotes(self):
+        """2.0 is opt-in at /v2/. The default client is unchanged."""
+        self.assertEqual(_client_dir_of_default(), "react-ui")
         self.assertFalse(os.path.exists(os.path.join(_ROOT, "start_react_v2.js")))
-        for name in ("start.js", "pinokio.js", "install.js", "reset.js"):
-            self.assertNotIn("react-ui-v2", _read(name), name)
-            self.assertNotIn("start_react_v2", _read(name), name)
+        self.assertNotIn("react-ui-v2", _read("start.js"))
+
+    def test_2_0_can_take_in_media_and_pick_a_face(self):
+        """The floor the first 2.0 failed: the routes without which no job can be made."""
+        if not os.path.isdir(os.path.join(_ROOT, "react-ui-v2", "src")):
+            self.skipTest("react-ui-v2 is not present")
+        referenced = _routes_referenced("react-ui-v2")
+        missing = {r: why for r, why in REQUIRED_ROUTES.items() if r not in referenced}
+        self.assertEqual({}, missing, "react-ui-v2 cannot: " + "; ".join(
+            f"{why} ({route})" for route, why in sorted(missing.items())))
+
+    def test_2_0_is_1_0_plus_a_visual_layer(self):
+        """Every 1.0 file is in 2.0 byte for byte, except the short OWNED list
+        2.0 edits to mount its visual layer - and those are flagged the moment
+        1.0 changes them. A 1.0 change that is not carried into 2.0 fails here:
+        run `python scripts/sync_react_ui_v2.py`."""
+        if not os.path.isdir(os.path.join(_ROOT, "react-ui-v2", "src")):
+            self.skipTest("react-ui-v2 is not present")
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "sync_react_ui_v2", os.path.join(_ROOT, "scripts", "sync_react_ui_v2.py"))
+        sync = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(sync)
+        report = sync.audit()
+        drift = {k: v for k, v in report.items() if v}
+        self.assertEqual({}, drift,
+                         "React UI 2.0 has drifted from 1.0 + its visual layer. Run "
+                         "`python scripts/sync_react_ui_v2.py` (copies 1.0 changes, lists "
+                         "owned files to merge by hand): " + repr(drift))
 
 
 if __name__ == "__main__":

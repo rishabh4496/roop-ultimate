@@ -489,11 +489,12 @@ TARGETS = {
     ),
     "build": (
         "Front-end build output",
-        "react-ui/dist and lint caches. Rebuilt automatically on the next launch.",
-        # node_modules is deliberately NOT here: it is required to launch the
-        # client.  react-ui-v2/dist was listed here until React UI 2.0 was
-        # removed; there is one client now.
+        "react-ui/dist, react-ui-v2/dist and lint caches. Rebuilt automatically on the next launch.",
+        # node_modules is deliberately NOT here: it is required to build the
+        # clients. React UI 2.0 (react-ui-v2/, 1.0's screens with a new visual
+        # layer, served at /v2/) is rebuilt by start_react.js like 1.0.
         lambda: [p for p in (os.path.join(ROOT, "react-ui", "dist"),
+                             os.path.join(ROOT, "react-ui-v2", "dist"),
                              os.path.join(ROOT, ".ruff_cache"),
                              os.path.join(APP, ".ruff_cache"))
                  if os.path.exists(p)],

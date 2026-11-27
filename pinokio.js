@@ -57,12 +57,19 @@ module.exports = {
           let open_text = share_token
             ? `<div><strong>Open React UI 1.0</strong><div>SHARE MODE ON — token for other machines: <code>${share_token}</code></div></div>`
             : "Open React UI 1.0"
+          // React UI 2.0 (react-ui-v2/, served at /v2/ by the same backend): 1.0's screens with a
+          // new visual layer. Offered only once its build exists; 1.0 stays the default.
+          let v2_items = info.exists("react-ui-v2/dist/index.html") ? [{
+            icon: "fa-solid fa-wand-magic-sparkles",
+            text: "<div><strong>Open React UI 2.0</strong><div>Same app, new visuals: 3D horizon, terminal dock, transitions</div></div>",
+            href: share_token ? `${local.url}/v2/?token=${share_token}` : `${local.url}/v2/`,
+          }] : []
           return [{
             default: true,
             icon: "fa-solid fa-rocket",
             text: open_text,
             href: open_url,
-          }, {
+          }, ...v2_items, {
             icon: "fa-solid fa-circle-stop",
             text: "<div><strong>Stop Swap</strong><div>Abort the current job and finalize a playable video</div></div>",
             href: "stop.js",

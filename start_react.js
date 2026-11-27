@@ -114,6 +114,46 @@ module.exports = async (kernel) => {
           }]
         }
       },
+      // React UI 2.0 (react-ui-v2/): 1.0's screens with a new visual layer,
+      // served by the same backend at /v2/. Built the same way as 1.0, but
+      // deliberately WITHOUT a break on failure: 2.0 is opt-in, and a 2.0
+      // build problem must never stop 1.0 - the default client - from
+      // launching. pinokio.js only offers the 2.0 link when its dist exists,
+      // and the backend answers /v2/ with a "not built" page otherwise.
+      {
+        when: "{{exists('react-ui-v2/package.json') && !exists('react-ui-v2/node_modules/vite/bin/vite.js')}}",
+        method: "shell.run",
+        params: {
+          env: {
+            PATH: [
+              "{{path.resolve(cwd, '../../bin/miniforge')}}",
+              "{{path.resolve(cwd, '../../bin/miniconda')}}",
+              "{{(envs.PATH || envs.Path || '')}}"
+            ]
+          },
+          path: "react-ui-v2",
+          message: [
+            "npm ci --no-audit --no-fund || npm install --no-audit --no-fund --legacy-peer-deps"
+          ]
+        }
+      },
+      {
+        when: "{{exists('react-ui-v2/package.json')}}",
+        method: "shell.run",
+        params: {
+          env: {
+            PATH: [
+              "{{path.resolve(cwd, '../../bin/miniforge')}}",
+              "{{path.resolve(cwd, '../../bin/miniconda')}}",
+              "{{(envs.PATH || envs.Path || '')}}"
+            ]
+          },
+          path: "react-ui-v2",
+          message: [
+            "npm run build"
+          ]
+        }
+      },
       {
         method: "shell.run",
         params: {

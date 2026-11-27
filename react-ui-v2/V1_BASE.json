@@ -1,0 +1,17 @@
+{
+  "about": "sha256 of each 1.0 file a 2.0-owned file was last merged from (scripts/sync_react_ui_v2.py)",
+  "owned": {
+    "README.md": "e2046b3af6986ea9a75897b2d8987b1b2c39bbb443604675ac290ab22d4870b0",
+    "index.html": "a7d2257bb63574d12040554fdc3076d90591c436279dccfd6e7794bdab54316e",
+    "package-lock.json": "406e334d5fd49b51551e94262257f518caf989c020e99d36c69dd69d24c1658b",
+    "package.json": "dd1b429cf51e54bad768ff98d6a1687ffa76ea2af25c24efbd1278ab77715123",
+    "src/App.jsx": "3b34be4cc0299636e23461efd4a9dad66d8b49a2221e51639dae81973d5e528a",
+    "src/components/Gallery.jsx": "b95ac59333aec4ee516439ad59a356126faa3de7894162d7741155556240139b",
+    "src/components/ThemeGallery.jsx": "4f51ac93fdfac032b71d3b328dffc8b77f71c772e1d1b459121e78298c80bfd8",
+    "src/components/shell/WorkstationHeader.jsx": "e4243771bc392bc958c18396e9e29aa7ef6be6fab58657a147d401aa9cf3fe9d",
+    "src/components/shell/WorkstationRail.jsx": "4fdec05f567020a0de9c341a89b28c515ea8ec51b8fe5988b2a0e8cdd13c0e3a",
+    "src/main.jsx": "b0ccb232001d47e90c9e4254bb0d13652deccab42bad43f935ab82fa11821ffd",
+    "src/themes.js": "f82b5f5af2cee721df11ce3ae7eddf3f1972a7b13aca2ec326e7e5cf356b0225",
+    "vite.config.js": "a15e978a8897c1a904fa85483e5f6fe62e7715bc92ecefd46e45b58b1120d391"
+  }
+}

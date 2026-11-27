@@ -335,6 +335,7 @@ class StorageManager:
                 ("app/projects", "checkpoints", "Project checkpoint records reconstruct resumable work."),
                 ("app/queue.json", "files referenced by active jobs", "The durable queue owns pending and resumable job references."),
                 ("react-ui/node_modules", "required dependencies", "The active React UI dependency tree is required by start_react.js."),
+                ("react-ui-v2/node_modules", "required dependencies", "React UI 2.0's dependency tree is required to build it (start_react.js)."),
             ]
             for relative, category, reason in protected:
                 add(self._root(relative), category, PROTECTED, reason, False)

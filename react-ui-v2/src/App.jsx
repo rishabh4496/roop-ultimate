@@ -1,0 +1,1620 @@
+import { useShallow } from 'zustand/react/shallow';
+import React, { useEffect, useState, useCallback, useRef, useMemo, Suspense } from 'react';
+import { getJSON, postJSON, timeoutFor } from './api';
+import { logFailure, reportFailure, setFailureToast } from './failureLog';
+import { Toasts, Confetti } from './components/ui';
+import QualityProfilesModal, { BUILTIN_PROFILES } from './components/QualityProfilesModal';
+import CommandPalette from './components/CommandPalette';
+import useDialogFocus from './components/useDialogFocus';
+import WorkstationRail from './components/shell/WorkstationRail';
+import WorkstationHeader from './components/shell/WorkstationHeader';
+import useQueueSummary from './components/shell/useQueueSummary';
+import ModelSplash from './components/ModelSplash';
+import ErrorBoundary from './components/ErrorBoundary';
+import { lazyPanel, resetFailedPanels } from './components/lazyPanel';
+import { ConfirmHost, confirmDialog, promptDialog } from './components/confirm';
+import { fmtTime } from './components/faceswap/utils';
+import useRunCompleteAlert from './components/faceswap/useRunCompleteAlert';
+import useJobRecovery from './components/faceswap/useJobRecovery';
+import useTelemetrySocket from './useTelemetrySocket';
+import CompileBanner from './components/CompileBanner';
+import { usePipelineStatusSocket } from './usePipelineStatus';
+import { useJobStore } from './store/jobStore';
+import { onHistoryApplied } from './store/historyStore';
+import { useHistoryChannel, SETTINGS_CHANNEL } from './history/historyChannels';
+import { installHistoryDom } from './history/historyDom';
+import './store';
+import { useWorkspaceStore, LAYOUT_PRESETS } from './store/workspaceStore';
+import { setRunTelemetry, setPipelineTelemetry, setDashboardTelemetry, selectRenderProgress, renderCompleted, clearEngineTelemetry } from './store/telemetryStore';
+import { LiveText, LiveValue } from './components/LiveTelemetry';
+import { themeByName, allThemes, applyThemeToDom } from './themes';
+import { SETTINGS_CATALOG, focusSetting } from './components/settingsCatalog';
+import { motion, AnimatePresence, MotionConfig, spring } from './motion';
+import { Icon } from './icons';
+// React UI 2.0's visual layer (presentation only - see src/v2fx/fxStore.js).
+import HorizonCanvas from './v2fx/HorizonCanvas';
+import TerminalDock from './v2fx/TerminalDock';
+import BootSequence from './v2fx/BootSequence';
+import { useFxStore, TRANSITIONS } from './v2fx/fxStore';
+import { variantsFor } from './v2fx/transitions';
+import { installPointerFx } from './v2fx/pointerFx';
+import { termLog, levelOfToast } from './v2fx/termFeed';
+
+// ROUTE LOADING, in two tiers.
+//
+// EAGER: Face Swap and Processing are statically imported, so they ship in the entry chunk. Face Swap is the
+// default route and Processing is where a run lands the instant Start is pressed (App switches to it on the
+// edge); neither may ever show a chunk spinner, and neither can fail to download after the shell has loaded.
+// The cost is a larger entry chunk, which is measured in docs/CHANGELOG.md (2026-10-27, Stage 8).
+//
+// LAZY: every other route is code-split, so the entry only ships the shell plus those two. Each is fetched on first
+// visit (Vite emits one chunk per lazy import).
+//
+// The raw importer is kept alongside the lazy component so we can WARM a chunk
+// before it is needed (pointer/focus on its tab button, and an idle sweep after
+// first paint). Code-splitting bought a smaller first load but paid for it with
+// a spinner on every first tab visit; prefetching keeps the win and removes the
+// spinner, so a tab change is a pure animation instead of a network round trip.
+// A rejected prefetch is ignored — React.lazy retries on real render, and the
+// ErrorBoundary below owns the failure case.
+import FaceSwap from './components/FaceSwap';
+import ReferenceMonitor from './components/monitor/ReferenceMonitor';
+import ShortcutOverlay from './components/shortcuts/ShortcutOverlay';
+import PipMiniViewport from './components/PipMiniViewport';
+import { installPipRefresh, usePipStore } from './store/pipStore';
+import { eventFiresInText, eventMatches, useShortcutStore } from './store/shortcutStore';
+import Processing from './components/Processing';
+import useRenderLite, { cycleRenderLiteMode, RENDER_LITE_LABEL }
+  from './components/faceswap/useRenderLite';
+
+const loadHome = () => import('./components/Home');
+const loadBatchSwap = () => import('./components/BatchSwap');
+const loadSettings = () => import('./components/Settings');
+const loadFaceManager = () => import('./components/FaceManager');
+const loadExtras = () => import('./components/Extras');
+const loadGallery = () => import('./components/Gallery');
+const loadRunHistory = () => import('./components/RunHistory');
+
+const Home = lazyPanel(loadHome);
+const BatchSwap = lazyPanel(loadBatchSwap);
+const Settings = lazyPanel(loadSettings);
+const FaceManager = lazyPanel(loadFaceManager);
+const Extras = lazyPanel(loadExtras);
+const Gallery = lazyPanel(loadGallery);
+const RunHistory = lazyPanel(loadRunHistory);
+
+// Lightweight fallback while a tab chunk loads — mirrors the app's connecting
+// spinner so the swap reads as intentional, not a flash of empty space. It
+// fades in on a delay (see `.deferred-fallback`) so a chunk that resolves in a
+// few frames shows nothing at all rather than a jarring spinner blink.
+// Windows paths come back from the backend with backslashes, POSIX ones with
+// slashes, and the toast only wants the file name. Split on each in turn rather
+// than reaching for a character class that needs an escaped separator in it.
+const basename = (p) => String(p || '').split('\\').pop().split('/').pop();
+
+function TabFallback() {
+  return (
+    <div className="deferred-fallback flex flex-col items-center justify-center h-[40vh] gap-3">
+      <div className="h-7 w-7 rounded-full border-4 border-white/10 border-t-[var(--accent)] animate-spin" />
+      <div className="text-muted text-xs font-medium">Loading…</div>
+    </div>
+  );
+}
+
+// `transient` tabs are not always in the strip — see `runTabOpen` below. The
+// full list still lives here so chunk warming and the command palette can
+// resolve a tab by id whether or not it is currently on screen.
+const ALL_TABS = [
+  { id: 'home', label: 'Home', icon: Icon.home, preload: loadHome },
+  { id: 'faceswap', label: 'Face Swap', icon: Icon.faceswap },                  // eager: nothing to preload
+  { id: 'batch', label: 'Batch Matrix', icon: Icon.batch, preload: loadBatchSwap },
+  { id: 'processing', label: 'Processing', icon: Icon.meter, transient: true },  // eager: nothing to preload
+  { id: 'facemgr', label: 'Face Manager', icon: Icon.faces, preload: loadFaceManager },
+  { id: 'extras', label: 'Editor', icon: Icon.editor, preload: loadExtras },
+  { id: 'gallery', label: 'Outputs', icon: Icon.outputs, preload: loadGallery },
+  { id: 'history', label: 'History', icon: Icon.history, preload: loadRunHistory },
+  { id: 'settings', label: 'Settings', icon: Icon.settings, preload: loadSettings },
+];
+
+// Fire each importer at most once; repeated hovers must not re-request.
+const warmed = new Set();
+const warmTab = (id) => {
+  if (warmed.has(id)) return;
+  warmed.add(id);
+  const t = ALL_TABS.find((x) => x.id === id);
+  t?.preload?.().catch(() => warmed.delete(id));
+};
+
+const hudValue = (value, suffix = '') => {
+  if (value === null || value === undefined || value === ''
+      || value === 'UNKNOWN' || value === 'NOT_APPLICABLE'
+      || value === 'NOT_AVAILABLE') return 'UNKNOWN';
+  if (Array.isArray(value)) return value.length ? value.join(', ') : 'none';
+  return `${value}${suffix}`;
+};
+
+// ── Which tab, in the URL ────────────────────────────────────────────────────
+//
+// Pinokio reloads the webview on every RUN/DEV/FILES tab switch. The backend
+// keeps running and this app already restores the workspace across that reload
+// (see FaceSwap's rehydrate), but WHICH SCREEN you were on was not part of the
+// restored state — every reload dropped the user back on Face Swap from the
+// middle of a render they were watching, or from the settings page they were
+// halfway through.
+//
+// The hash is the natural place for it: it survives the reload for free, it is
+// shareable and bookmarkable, and Back/Forward start working. `transient: true`
+// tabs (Processing) are ordinary destinations here — a reload during a render
+// should return to the render.
+const tabFromHash = (hash, valid) => {
+  const id = String(hash || '').replace(/^#\/?/, '').split(/[/?]/)[0];
+  return valid.includes(id) ? id : null;
+};
+
+// Poll cadence. The fast rate is the historical 1 Hz, used whenever the
+// telemetry socket is NOT connected and the poll is the only source of live
+// state. When the socket IS connected it carries the per-frame numbers, and
+// the poll drops to the slow rate because it is then only refreshing the bulky
+// context a telemetry frame does not include: the rolling log, the finalized
+// parts and the runtime/HUD block. Measured in app/tests/probe_telemetry_gap.py
+// -- cutting the poll entirely froze all three for the length of the render.
+const FAST_POLL_MS = 1000;
+const SLOW_POLL_MS = 5000;
+
+export default function App() {
+  const [tab, setTabState] = useState(
+    () => tabFromHash(window.location.hash, ALL_TABS.map((t) => t.id)) || 'faceswap');
+  const [meta, setMeta] = useState(null);
+  const [settings, setSettings] = useState(null);
+  const [toasts, setToasts] = useState([]);
+  const [error, setError] = useState('');
+  const [isMonitor, setIsMonitor] = useState(() => (
+    typeof window !== 'undefined' && String(window.location?.hash || '').includes('monitor')
+  ));
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const onHash = () => {
+      setIsMonitor(String(window.location?.hash || '').includes('monitor'));
+    };
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+  }, []);
+
+  // ── Toasts ───────────────────────────────────────────────────────────────
+  // Declared HERE, at the very top of the component, and that is not cosmetic.
+  // `const` is not hoisted, so every callback below that names `notify` — in its
+  // body OR in its dependency array, which React evaluates on each render —
+  // throws "Cannot access 'notify' before initialization" on the FIRST render if
+  // it sits above this line. That takes the whole app down to the crash screen.
+  // Keeping the declaration above every consumer is what makes that impossible,
+  // rather than stripping `notify` out of dep arrays one at a time and leaving
+  // the next caller to rediscover the trap.
+  const [liveMsg, setLiveMsg] = useState('');
+  const dismissToast = useCallback((id) => setToasts((ts) => ts.filter((t) => t.id !== id)), []);
+  const notify = useCallback((message, type = 'success') => {
+    const id = Date.now() + Math.random();
+    // Stack toasts (newest wins visually) instead of clobbering — each dismisses
+    // on its own timer, and the whole set is capped so a burst can't pile up.
+    setToasts((ts) => [...ts, { id, message, type }].slice(-4));
+    setLiveMsg(`${type}: ${message}`);
+    termLog(message, levelOfToast(type), 'toast');
+    setTimeout(() => setToasts((ts) => ts.filter((t) => t.id !== id)), 4000);
+  }, []);
+  // Failures that used to be swallowed (`.catch(() => {})`) report through failureLog;
+  // this is where its rate-limited toasts land.
+  useEffect(() => setFailureToast(notify), [notify]);
+
+  // Stage 23: the edit history. `settings` is the live recipe (both Face Swap and the Editor edit
+  // it), so it is tracked here; FaceSwap / InteractivePreview / Extras report the mask, roto, pin and
+  // crop state they own. One window-level listener pair turns every slider drag into one entry and
+  // owns Ctrl/Cmd+Z / Y.
+  useHistoryChannel('settings', settings, setSettings, SETTINGS_CHANNEL, settings != null);
+  useEffect(() => installHistoryDom(), []);
+  useEffect(() => onHistoryApplied(({ kind, label }) => {
+    const verb = { undo: 'Undid', redo: 'Redid', jump: 'Went to', restore: 'Applied' }[kind] || 'Applied';
+    notify(`${verb}: ${label}`, 'info');
+  }), [notify]);
+
+  // Every existing setTab call site goes through here, so navigation and the
+  // URL cannot drift apart. `replace` is for the automatic switch into
+  // Processing when a run starts: that is a consequence of pressing Start, not
+  // a place the user navigated to, and it should not need two Backs to leave.
+  const setTab = useCallback((next, { replace = false } = {}) => {
+    setTabState((current) => {
+      const id = typeof next === 'function' ? next(current) : next;
+      const path = `#/${id}`;
+      if (window.location.hash !== path) {
+        if (replace) window.history.replaceState(null, '', path);
+        else window.location.hash = path;
+      }
+      return id;
+    });
+  }, []);
+
+  // Back/Forward, and a hash typed or pasted into the address bar.
+  useEffect(() => {
+    const ids = ALL_TABS.map((t) => t.id);
+    const onHash = () => {
+      const id = tabFromHash(window.location.hash, ids);
+      if (id) setTabState(id);
+    };
+    // Stamp the opening tab so the first Back does not land on a bare URL.
+    if (!tabFromHash(window.location.hash, ids)) {
+      window.history.replaceState(null, '', `#/${tab}`);
+    }
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount only; `tab` is read once to stamp the initial URL
+  }, []);
+
+  const [progress, setProgress] = useState({ processing: false, progress: 0, desc: '', output: null, stop_requested: false });
+
+  // ── Folding a /api/progress response into state ──────────────────────────
+  //
+  // NOT `setProgress(pr)`. The poll response and the telemetry frame are
+  // different shapes, and neither is a superset of the other:
+  //
+  //   * the poll carries `log`, `parts`, `runtime`, `output` — and no
+  //     `current_frame`, `total_frames` or `fps` (see `get_progress`, which
+  //     never adds them; only `_telemetry_snapshot` derives those).
+  //   * the telemetry frame carries exactly those three, plus the fast-moving
+  //     scalars, and none of the heavy blocks.
+  //
+  // Replacing state wholesale with the poll response therefore DELETED the
+  // pushed counters every time a poll landed. With the socket up the poll still
+  // runs at SLOW_POLL_MS, so the frame counter and the fps readout blanked once
+  // every five seconds and were repopulated 250 ms later by the next frame —
+  // a visible flicker on every figure derived from them, and a gap in the
+  // throughput series each time.
+  //
+  // Merge slow context even when the socket has already refreshed the live fields.
+  const telemetryRevision = useRef(0);
+  const readProgress = useCallback(async (timeout) => {
+    const revision = telemetryRevision.current;
+    const pr = await getJSON('/api/progress', { timeout });
+    if (revision !== telemetryRevision.current) {
+      // The socket reported something newer while this request was in flight.
+      // The console still needs the fields that only the poll carries.
+      setProgress((prev) => prev.started_at === pr.started_at
+        ? { ...prev, log: pr.log, parts: pr.parts, runtime: pr.runtime, output: pr.output, duration_s: pr.duration_s }
+        : prev);
+      return null;
+    }
+    // The fast fields also go to the telemetry store, which is what the live
+    // readouts subscribe to (see store/telemetryStore.js). With the socket down
+    // this poll is their only source.
+    const counts = pr.runtime?.frame_progress;
+    const hasCounts = Number.isFinite(counts?.done) && Number.isFinite(counts?.total) && counts.total > 0;
+    setRunTelemetry(pr.processing ? {
+      ...pr, current_frame: pr.current_frame ?? (hasCounts ? counts.done : 0),
+      total_frames: pr.total_frames ?? (hasCounts ? counts.total : 0),
+    } : {
+      ...pr, current_frame: 0, total_frames: 0, fps: 0, fps_now: null, frame_ms: null,
+    });
+    setProgress((prev) => {
+      const next = { ...prev, ...pr };
+      // A run that has ENDED must not keep the last live counters around, or
+      // the finished view reports the frame it stopped on as if it were still
+      // moving.
+      if (!pr.processing) {
+        next.current_frame = undefined;
+        next.total_frames = undefined;
+        next.fps = undefined;
+      }
+      return next;
+    });
+    return pr;
+  }, []);
+  const [controlBusy, setControlBusy] = useState('');
+  const controlBusyRef = useRef('');
+
+  const runControl = useCallback(async (action) => {
+    if (controlBusyRef.current) return null;
+    controlBusyRef.current = action;
+    setControlBusy(action);
+    const optimistic = {
+      pause: { pause_requested: true, paused: false, stop_requested: false, desc: 'Pause requested…' },
+      resume: { pause_requested: false, paused: false, stop_requested: false, desc: 'Resuming…' },
+      stop: { pause_requested: false, paused: false, stop_requested: true, desc: 'Stopping…' },
+    }[action];
+    if (optimistic) setProgress((pr) => ({ ...pr, ...optimistic }));
+    try {
+      const result = await postJSON(`/api/${action}`, {}, { timeout: timeoutFor('POST', `/api/${action}`) });
+      const pauseState = result?.pause || {};
+      if (action === 'pause') {
+        setProgress((pr) => ({
+          ...pr,
+          pause_requested: pauseState.requested !== undefined ? !!pauseState.requested : true,
+          paused: !!pauseState.acknowledged,
+          stop_requested: false,
+          desc: pauseState.acknowledged ? 'Paused' : 'Pause requested…',
+        }));
+      } else if (action === 'resume') {
+        setProgress((pr) => ({ ...pr, pause_requested: false, paused: false, stop_requested: false, desc: 'Resuming…' }));
+      } else if (action === 'stop' && result?.status === 'idle') {
+        controlBusyRef.current = '';
+        setControlBusy('');
+        setProgress((pr) => ({ ...pr, stop_requested: false }));
+      }
+      if (action === 'pause') notify('Pause requested; waiting for a safe checkpoint', 'info');
+      if (action === 'resume') notify('Resumed');
+      if (action === 'stop') notify('Stopping…', 'info');
+      return result;
+    } catch (e) {
+      setProgress((pr) => ({ ...pr, stop_requested: false }));
+      notify(e.message, 'error');
+      throw e;
+    } finally {
+      if (action !== 'stop') {
+        controlBusyRef.current = '';
+        setControlBusy('');
+      }
+    }
+  }, [notify]);
+
+  // Mounted HERE, not only in the Face Swap and Processing tabs, because App is
+  // the one component that is always mounted: 'always' mode has to hold on
+  // every screen, including Settings and Gallery, and the palette entry below
+  // has to be able to report the current mode from anywhere.
+  const { mode: liteMode } = useRenderLite(progress.processing);
+  const [startTime, setStartTime] = useState(null);
+  const [confetti, setConfetti] = useState(false);
+  const pollRef = useRef(null);
+  const pollIntervalRef = useRef(1000);
+
+  // ── Connection health ────────────────────────────────────────────────────
+  // Every backend call in this shell reports its outcome here. This is the
+  // local engine connection, not Internet reachability: core processing and
+  // previews use the loopback backend and must keep working when optional model
+  // download hosts are unavailable. A single blip is ignored (the server may
+  // briefly stall during heavy GPU work); three in a row starts a cheap
+  // heartbeat that clears itself when the backend answers again.
+  const [offline, setOffline] = useState(false);
+  const failsRef = useRef(0);
+  const beatRef = useRef(null);
+  const reportNet = useCallback((ok) => {
+    if (ok) {
+      failsRef.current = 0;
+      setOffline(false);
+    } else if (++failsRef.current >= 3) {
+      setOffline(true);
+    }
+  }, []);
+
+  const startPolling = useCallback((intervalMs = FAST_POLL_MS) => {
+    if (pollRef.current) clearInterval(pollRef.current);
+    pollIntervalRef.current = intervalMs;
+    pollRef.current = setInterval(async () => {
+      try {
+        const pr = await readProgress(8000);
+        reportNet(true);
+        if (pr && !pr.processing) {
+          clearInterval(pollRef.current);
+          pollRef.current = null;
+        }
+      } catch {
+        // Keep polling: a job can outlive a transient backend stall, and the
+        // health banner tells the user what is happening meanwhile.
+        reportNet(false);
+      }
+    }, intervalMs);
+  }, [reportNet, readProgress]);
+
+  // ── Catch up the moment this view is looked at again ─────────────────────
+  // Switching to the Terminal (or another Pinokio tab) either reloads this
+  // webview or leaves it hidden. If it survives, the browser throttles its
+  // timers hard — a 1 s poll can drop to one a minute in a background tab, and
+  // to nothing at all while occluded. Coming back then showed a progress bar
+  // and a live frame stuck wherever they were when you left, until the next
+  // throttled tick happened to fire.
+  //
+  // So: on every return to visibility, fetch once immediately and make sure the
+  // poll is running. Cheap (one request per switch) and it makes the state on
+  // screen current before the eye lands on it. `pageshow` covers the
+  // back/forward cache, where no visibilitychange fires at all.
+  useEffect(() => {
+    const catchUp = async () => {
+      if (document.visibilityState === 'hidden') return;
+      try {
+        const pr = await readProgress(8000);
+        reportNet(true);
+        if (pr?.processing && !pollRef.current) startPolling();
+      } catch {
+        reportNet(false);
+      }
+    };
+    document.addEventListener('visibilitychange', catchUp);
+    window.addEventListener('focus', catchUp);
+    window.addEventListener('pageshow', catchUp);
+    return () => {
+      document.removeEventListener('visibilitychange', catchUp);
+      window.removeEventListener('focus', catchUp);
+      window.removeEventListener('pageshow', catchUp);
+    };
+  }, [startPolling, reportNet, readProgress]);
+
+  // Heartbeat while offline — reconnects and refreshes core state on recovery.
+  useEffect(() => {
+    if (!offline) {
+      if (beatRef.current) { clearInterval(beatRef.current); beatRef.current = null; }
+      return undefined;
+    }
+    beatRef.current = setInterval(async () => {
+      try {
+        await readProgress(5000);
+        reportNet(true);
+      } catch (e) {
+        // Still down. The offline banner already says so; keep a trace without a toast.
+        reportFailure('Checking the engine connection', e, { toast: false });
+      }
+    }, 3000);
+    return () => { if (beatRef.current) { clearInterval(beatRef.current); beatRef.current = null; } };
+  }, [offline, reportNet, readProgress]);
+
+  // ── Live telemetry ───────────────────────────────────────────────────────
+  // The backend pushes run state over a WebSocket. Measured, the poll ships
+  // 17.4 KB per tick mid-render against a 108-byte frame: ~161x less data per
+  // update, and a far smoother fps readout than a 1 Hz sample can give.
+  //
+  // The poll does NOT go away. It drops to SLOW_POLL_MS and keeps refreshing
+  // the log/parts/runtime block a telemetry frame omits, and returns to
+  // FAST_POLL_MS whenever the socket is down (backend restarting, a proxy
+  // that blocks Upgrade), so a blocked WebSocket degrades to exactly the
+  // behaviour that shipped before this.
+  //
+  // Telemetry frames are a SUBSET of /api/progress: they carry the numbers
+  // that change, not the rolling log or the parts snapshot. So they are
+  // merged into existing state rather than replacing it, or a pushed frame
+  // would blank the console mid-render.
+  //
+  // AND ONLY THE STRUCTURAL PART REACHES REACT. A frame's fast fields
+  // (progress, desc, fps, frame counters, eta, live_seq) go to the telemetry
+  // store, where the readouts that show them subscribe at <= 10 Hz. This used
+  // to be one setProgress per frame, i.e. App plus the whole mounted tab
+  // re-rendered at the socket's 4 Hz for the entire render. `setProgress` now
+  // runs only when processing / paused / error / a pause or stop request
+  // actually changes — and then carries the fast fields too, so anything that
+  // reads `progress` AT a transition (the completion check, the finished view)
+  // sees the numbers the run ended on.
+  const structuralRef = useRef('');
+  const onTelemetry = useCallback((frame) => {
+    if (!frame || (frame.event !== 'progress' && frame.event !== 'hello'
+        && frame.event !== 'heartbeat')) return;
+    telemetryRevision.current++;
+    reportNet(true);
+    setRunTelemetry(frame);
+    setPipelineTelemetry(frame);
+    setDashboardTelemetry(frame);
+    const structural = {
+      processing: frame.processing,
+      paused: frame.paused,
+      error: frame.error,
+      started_at: frame.started_at,
+      ...(Object.prototype.hasOwnProperty.call(frame, 'pause_requested')
+        ? { pause_requested: frame.pause_requested } : {}),
+      ...(Object.prototype.hasOwnProperty.call(frame, 'stop_requested')
+        ? { stop_requested: frame.stop_requested } : {}),
+    };
+    const key = JSON.stringify(structural);
+    if (key === structuralRef.current) return;
+    structuralRef.current = key;
+    setProgress((prev) => ({
+      ...prev,
+      ...structural,
+      progress: frame.progress,
+      desc: frame.desc,
+      eta_s: frame.eta_s,
+      live_seq: frame.live_seq,
+      current_frame: frame.current_frame,
+      total_frames: frame.total_frames,
+      fps: frame.fps,
+    }));
+  }, [reportNet]);
+
+  const { connected: telemetryLive } = useTelemetrySocket(onTelemetry, true);
+  // "Compiling TensorRT Engine..." is a claim about a backend we can hear. A dropped socket stops
+  // confirming it (a backend that died mid-build would otherwise leave it up forever); the first frame
+  // after the reconnect carries the current state again.
+  useEffect(() => {
+    if (!telemetryLive) clearEngineTelemetry();
+  }, [telemetryLive]);
+  // The "backend is compiling TensorRT / running the canary" channel. Owned by the shell, not by a
+  // tab, so a hash-route change never closes it; api.js reads it to suspend request deadlines.
+  usePipelineStatusSocket();
+
+  useEffect(() => {
+    if (!progress.processing && controlBusyRef.current === 'stop') {
+      controlBusyRef.current = '';
+      setControlBusy('');
+    }
+  }, [progress.processing]);
+
+  useEffect(() => {
+    // The socket carries the fast numbers; the poll still carries the log,
+    // the parts and the runtime block, which a telemetry frame omits. So the
+    // poll SLOWS when the socket is live rather than stopping -- stopping it
+    // froze the console, the part tabs and the HUD.
+    const want = telemetryLive ? SLOW_POLL_MS : FAST_POLL_MS;
+    if (progress.processing) {
+      if (!pollRef.current || pollIntervalRef.current !== want) startPolling(want);
+    }
+    return () => {
+      if (!progress.processing && pollRef.current) {
+        clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+    };
+  }, [progress.processing, startPolling, telemetryLive]);
+
+  // ── Reattach to a render that was already running ────────────────────────
+  // Pinokio reloads this webview on every tab switch and a render can run for
+  // forty minutes, so a fresh mount over a live job is the NORMAL case, not an
+  // edge case. The store remembers which job this client started; the endpoint
+  // says what is actually running; useJobRecovery reconciles the two and is the
+  // only thing allowed to conclude either "still going" or "over". See
+  // store/jobStore.js for why that order is load-bearing.
+  const { beginJob, endJob } = useJobStore(
+    useShallow((s) => ({ beginJob: s.beginJob, endJob: s.endJob }))
+  );
+  useJobRecovery({
+    onReattach: ({ startedAt, label }) => {
+      // Resume everything a running job owns: the clock (from the BACKEND's
+      // start time, not this window's), the 1 s progress poll, and the run tab.
+      if (startedAt) setStartTime(startedAt);
+      if (!pollRef.current) startPolling();
+      // The run tab opens itself off `progress.processing` (see below), and the
+      // poll started above is what makes that true — so it is deliberately NOT
+      // forced here. `runTabOpen` is also declared further down this component,
+      // and reaching it from up here would be a temporal-dead-zone crash on
+      // first render, which is a bug this codebase has shipped before.
+      notify(label
+        ? `Reconnected to the render in progress — ${basename(label)}`
+        : 'Reconnected to the render already in progress', 'info');
+    },
+  });
+
+  // Keep the store's memory in step with what this window does. The edge, not
+  // the level: writing on every poll would re-stamp `startedAt` forever.
+  const prevPhaseRef = useRef(false);
+  useEffect(() => {
+    const was = prevPhaseRef.current;
+    prevPhaseRef.current = progress.processing;
+    if (progress.processing && !was) {
+      beginJob({
+        settings,
+        label: progress.output?.path || '',
+        startedAt: progress.started_at ? progress.started_at * 1000 : Date.now(),
+      });
+    } else if (!progress.processing && was) {
+      endJob();
+    }
+  }, [progress.processing, progress.started_at, progress.output, settings, beginJob, endJob]);
+
+  // ── The Processing tab ───────────────────────────────────────────────────
+  // A run no longer takes the Face Swap tab over. It gets a tab of its own,
+  // which exists only for the run: it appears the moment one starts (and is
+  // selected, because that is what you just asked for), and it stays after the
+  // run ends so the finished log and the output are still there to read. It
+  // disappears once you navigate away from it with nothing running.
+  const [runTabOpen, setRunTabOpen] = useState(
+    () => tabFromHash(window.location.hash, ALL_TABS.map((t) => t.id)) === 'processing'
+  );
+  // Queued jobs count too: the rail's Processing badge is a count of work still
+  // to run, and a badge on a route that is not listed would be unreachable.
+  const queuePending = useQueueSummary();
+  useEffect(() => {
+    if (progress.processing || tab === 'processing' || queuePending > 0) setRunTabOpen(true);
+    else setRunTabOpen(false);
+  }, [progress.processing, tab, queuePending]);
+  const navBadges = useMemo(
+    () => ({ processing: Math.max(queuePending, progress.processing ? 1 : 0) }),
+    [queuePending, progress.processing],
+  );
+
+  const visibleTabs = useMemo(
+    () => ALL_TABS.filter((t) => !t.transient || runTabOpen),
+    [runTabOpen],
+  );
+
+  const prevProcessingRef = useRef(false);
+  useEffect(() => {
+    const was = prevProcessingRef.current;
+    prevProcessingRef.current = progress.processing;
+    if (progress.processing && !was) {
+      // started_at is the backend's clock, so a run already in flight when this
+      // view (re)loaded keeps its real elapsed time instead of restarting at 0.
+      if (!startTime) setStartTime(progress.started_at ? progress.started_at * 1000 : Date.now());
+      // Follow the run. Only on the edge, so going back to Face Swap mid-render
+      // to line up the next job is not undone a second later.
+      // replace, not push: this switch is a consequence of the run starting,
+      // so Back should return to where the user actually was.
+      setTab('processing', { replace: true });
+    } else if (!progress.processing && was) {
+      setStartTime(null);
+    }
+  }, [progress.processing, progress.started_at, startTime, setTab]);
+
+  const prevProcessingCelebrationRef = useRef(false);
+  const completed = renderCompleted(progress);
+  useEffect(() => {
+    const was = prevProcessingCelebrationRef.current;
+    prevProcessingCelebrationRef.current = progress.processing;
+    if (was && completed) {
+      setConfetti(false);
+      requestAnimationFrame(() => setConfetti(true));
+      setTimeout(() => setConfetti(false), 2600);
+    }
+  }, [progress.processing, completed]);
+
+  const [isDraggingOver, setIsDraggingOver] = useState(false);
+  useEffect(() => { isDraggingOverRef.current = isDraggingOver; }, [isDraggingOver]);
+  const [showPalette, setShowPalette] = useState(false);
+  const fileListenersRef = useRef([]);
+  const dragHideTimerRef = useRef(null);
+  const isDraggingOverRef = useRef(false);
+
+  // App-level UI zoom (Chrome-style). Uses the CSS `zoom` property, which
+  // reflows layout instead of just visually scaling, so the whole UI grows /
+  // shrinks cleanly. Persisted so it survives reloads.
+  const [zoom, setZoom] = useState(() => {
+    const v = parseFloat(localStorage.getItem('roop_zoom'));
+    return v && v >= 0.5 && v <= 1.6 ? v : 1;
+  });
+  const bumpZoom = useCallback((d) => setZoom((z) => Math.min(1.6, Math.max(0.5, Math.round((z + d) * 20) / 20))), []);
+  useEffect(() => {
+    document.documentElement.style.zoom = String(zoom);
+    localStorage.setItem('roop_zoom', String(zoom));
+  }, [zoom]);
+
+  const { railCollapsed, toggleRail, setWorkspaceMode, setSettingsTab } = useWorkspaceStore(
+    useShallow((st) => ({
+      railCollapsed: st.railCollapsed,
+      toggleRail: st.toggleRail,
+      setWorkspaceMode: st.setWorkspaceMode,
+      setSettingsTab: st.setSettingsTab,
+    }))
+  );
+  const [showProfilesModal, setShowProfilesModal] = useState(false);
+  const [showSnapshotsModal, setShowSnapshotsModal] = useState(false);
+  const closeSnapshots = () => setShowSnapshotsModal(false);
+  const snapshotsDialog = useDialogFocus(showSnapshotsModal, closeSnapshots);
+  const [activeQualityProfile, setActiveQualityProfile] = useState('');
+  const [snapshots, setSnapshots] = useState(() => {
+    try {
+      const v = JSON.parse(localStorage.getItem('roop_session_snapshots') || '[]');
+      return Array.isArray(v) ? v : [];
+    } catch { return []; }
+  });
+
+  const saveSessionSnapshot = useCallback(async () => {
+    const defaultName = `Session ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+    const name = await promptDialog({
+      title: 'Save Workspace Snapshot',
+      message: 'Enter a descriptive name for this Session Snapshot:',
+      defaultValue: defaultName,
+      placeholder: defaultName,
+      confirmLabel: 'Save Snapshot',
+    });
+    if (!name || !name.trim()) return;
+    const snap = {
+      id: Date.now(),
+      name: name.trim(),
+      time: new Date().toISOString(),
+      tab,
+      settings: { ...(settings || {}) },
+      activeQualityProfile,
+    };
+    setSnapshots((prev) => {
+      const updated = [snap, ...prev];
+      localStorage.setItem('roop_session_snapshots', JSON.stringify(updated));
+      return updated;
+    });
+    notify(`Saved Workspace Snapshot: "${name.trim()}"`, 'success');
+  }, [tab, settings, activeQualityProfile, notify]);
+
+  const loadSessionSnapshot = useCallback((snap) => {
+    if (snap.settings) setSettings(snap.settings);
+    if (snap.tab) setTab(snap.tab);
+    if (snap.activeQualityProfile) setActiveQualityProfile(snap.activeQualityProfile);
+    setShowSnapshotsModal(false);
+    notify(`Loaded Workspace Snapshot: "${snap.name}"`, 'success');
+  }, [notify, setTab]);
+
+  const deleteSessionSnapshot = useCallback((id) => {
+    setSnapshots((prev) => {
+      const updated = prev.filter((s) => s.id !== id);
+      localStorage.setItem('roop_session_snapshots', JSON.stringify(updated));
+      return updated;
+    });
+  }, []);
+
+  const applyQualityProfile = useCallback((profileId, customPatch, profileName) => {
+    setActiveQualityProfile(profileId);
+    let patch = customPatch;
+    let label = profileName;
+
+    if (!patch) {
+      const builtin = BUILTIN_PROFILES.find((p) => p.id === profileId);
+      if (builtin) {
+        patch = builtin.settingsPatch;
+        label = builtin.name;
+      }
+    }
+
+    if (patch) {
+      setSettings((prev) => ({
+        ...(prev || {}),
+        ...patch,
+      }));
+      postJSON('/api/settings', patch).catch(logFailure('Saving the loaded profile'));
+      notify(`Loaded Profile: ${label || profileId}`, 'success');
+    }
+  }, [notify]);
+
+  // The floating preview needs to know which tab is showing (it follows you to Face Manager, Batch and Settings) and to hear when
+  // the live source changes behind its back. Both live here because the shell is the one thing mounted on every tab.
+  const pipOn = usePipStore((s) => s.enabled);
+  useEffect(() => { usePipStore.getState().setTab(tab); }, [tab]);
+  useEffect(() => installPipRefresh(), []);
+
+  // Global keyboard shortcuts. The keys are not written here: each is an action in shortcuts/actions.js (app.palette,
+  // app.help, app.toggleRail, app.zoom*), so a remap in Settings reaches this handler on the next keypress.
+  useEffect(() => {
+    const onKey = (e) => {
+      const inField = !!e.target && ['input', 'textarea', 'select'].includes(e.target.tagName?.toLowerCase());
+      // A bare key never fires from a text field (typing "?" must not open a dialog); a Mod+ combo does only for the
+      // actions that opt in - the palette (the settings search box is exactly where someone reaches for it) and help.
+      const fires = (id) => eventMatches(e, id) && (!inField || eventFiresInText(e, id));
+      if (fires('app.palette')) {
+        e.preventDefault();
+        setShowPalette((v) => !v);
+        return;
+      }
+      if (fires('app.help')) {
+        e.preventDefault();
+        useShortcutStore.getState().toggleOverlay();
+        return;
+      }
+      if (inField) return;
+      if (eventMatches(e, 'app.toggleRail')) { e.preventDefault(); toggleRail(); }
+      else if (eventMatches(e, 'app.zoomIn')) { e.preventDefault(); bumpZoom(0.05); }
+      else if (eventMatches(e, 'app.zoomOut')) { e.preventDefault(); bumpZoom(-0.05); }
+      else if (eventMatches(e, 'app.zoomReset')) { e.preventDefault(); setZoom(1); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [bumpZoom, toggleRail]);
+
+  // Ctrl/⌘ + wheel is the other half of the same gesture, and left alone it ran
+  // the BROWSER's page zoom instead — stacking on top of the CSS zoom above, so
+  // the UI scaled twice while the toolbar readout still claimed 100%, and
+  // Ctrl-0 only undid one of the two. Routing it here keeps one zoom, one
+  // number, one reset. Must be non-passive on window to be able to cancel the
+  // browser's own handling.
+  useEffect(() => {
+    const onWheel = (e) => {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      e.preventDefault();
+      bumpZoom(e.deltaY < 0 ? 0.05 : -0.05);
+    };
+    window.addEventListener('wheel', onWheel, { passive: false });
+    return () => window.removeEventListener('wheel', onWheel);
+  }, [bumpZoom]);
+
+  // ── Theme resolution ─────────────────────────────────────────────────────
+  // Declared above the command palette because that memo lists themes too.
+  //
+  // Track the OS light/dark preference. Nothing in the app used to read this,
+  // so a machine that switches to light mode at sunset left the UI dark. It is
+  // only ACTED on when the user opts into the pairing below, but it is always
+  // tracked so flipping that switch takes effect immediately.
+  const [systemDark, setSystemDark] = useState(
+    () => !window.matchMedia?.('(prefers-color-scheme: light)')?.matches,
+  );
+  useEffect(() => {
+    const mq = window.matchMedia?.('(prefers-color-scheme: dark)');
+    if (!mq) return undefined;
+    const onChange = () => setSystemDark(mq.matches);
+    onChange();
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+
+  // Which theme is actually live: either the explicit pick, or — when the user
+  // has paired a light and a dark theme — whichever half the OS is asking for.
+  const themeName = settings?.theme_follow_system
+    ? (systemDark ? (settings?.theme_dark || 'Default') : (settings?.theme_light || 'Glass Light'))
+    : settings?.selected_theme;
+  const customThemes = settings?.custom_themes;
+
+  useEffect(() => {
+    if (!themeName) return;
+    // applyThemeToDom owns both mechanisms (a preset's class, a custom theme's
+    // inline variables) and sets data-theme-mode for either — see themes.js.
+    applyThemeToDom(themeByName(themeName, customThemes));
+  }, [themeName, customThemes]);
+
+  const applyTheme = useCallback((name) => {
+    // Picking a theme by hand also leaves the system pairing: otherwise the
+    // choice would be overridden on the next render and the click would look
+    // like it did nothing.
+    const patch = { selected_theme: name, theme_follow_system: false };
+    setSettings((s) => ({ ...(s || {}), ...patch }));
+    postJSON('/api/settings', patch).catch(logFailure('Saving the theme'));
+  }, []);
+
+  // Faceswap-tab actions are decoupled via a window event bus so the palette
+  // stays independent of the FaceSwap component's internal handlers. `extra`
+  // carries arguments for the commands that need one (applying a named preset).
+  const runFaceswap = useCallback((id, extra) => {
+    setTab('faceswap');
+    setTimeout(() => window.dispatchEvent(new CustomEvent('roop:command', { detail: { id, ...extra } })), 60);
+  }, [setTab]);
+
+  // Presets are mirrored into localStorage by useProfiles, so the palette can
+  // list them without a fetch and without waiting on the Face Swap chunk. Read
+  // once on mount; the `roop:presets-changed` ping keeps it current when that
+  // tab saves or deletes one.
+  const [presets, setPresets] = useState([]);
+  useEffect(() => {
+    const read = () => {
+      try {
+        const v = JSON.parse(localStorage.getItem('roop_profiles') || '[]');
+        setPresets(Array.isArray(v) ? v.filter((pr) => pr && pr.name) : []);
+      } catch { setPresets([]); }
+    };
+    read();
+    window.addEventListener('roop:presets-changed', read);
+    // `storage` only fires for OTHER documents, which covers the pop-out
+    // preview window writing presets while this one is open.
+    window.addEventListener('storage', read);
+    return () => {
+      window.removeEventListener('roop:presets-changed', read);
+      window.removeEventListener('storage', read);
+    };
+  }, []);
+
+  // Open Settings on its Runtime Diagnostics section. The section is held in the
+  // workspace store, which Settings reads when it mounts, so this works whether
+  // the lazy chunk is already loaded or arriving for the first time.
+  const openDiagnostics = useCallback(() => {
+    setSettingsTab('diagnostics');
+    warmTab('settings');
+    setTab('settings');
+  }, [setSettingsTab, setTab]);
+
+  const commands = useMemo(() => {
+    const cmds = [];
+    // The tab's own icon and label carry straight into its palette row, so the
+    // two surfaces can never drift apart (this used to slice the emoji off the
+    // front of the label string and re-derive the title with a regex).
+    visibleTabs.forEach((t) => cmds.push({ id: `nav-${t.id}`, section: 'Navigate', icon: t.icon, title: `Go to ${t.label}`, run: () => { warmTab(t.id); setTab(t.id); } }));
+    cmds.push({ id: 'act-start', section: 'Actions', icon: Icon.play, title: 'Start swapping', subtitle: 'Run the current job', run: () => runFaceswap('start') });
+    cmds.push({ id: 'act-stop', section: 'Actions', icon: Icon.stop, title: 'Stop processing', run: () => runFaceswap('stop') });
+    cmds.push({ id: 'act-queue', section: 'Actions', icon: Icon.queue, title: 'Add current to batch queue', run: () => runFaceswap('queue') });
+    cmds.push({ id: 'act-compare', section: 'Actions', icon: Icon.compare, title: 'Toggle before/after compare', run: () => runFaceswap('compare') });
+    cmds.push({ id: 'act-split', section: 'Actions', icon: Icon.split, title: 'Toggle split view', run: () => runFaceswap('split') });
+    cmds.push({ id: 'act-preview', section: 'Actions', icon: Icon.refresh, title: 'Refresh preview', run: () => runFaceswap('preview') });
+    cmds.push({ id: 'act-shortcuts', section: 'Actions', icon: Icon.shortcuts, title: 'Show keyboard shortcuts', run: () => useShortcutStore.getState().openOverlay() });
+    cmds.push({ id: 'act-pip', section: 'Actions', icon: Icon.pip, title: 'Toggle floating preview', subtitle: 'Keeps the Face Swap picture in a corner while you work in Face Manager, Batch or Settings', run: () => usePipStore.getState().toggle() });
+    cmds.push({
+      id: 'act-diagnostics', section: 'Actions', icon: Icon.meter, title: 'Open runtime diagnostics',
+      subtitle: 'Settings, Runtime Diagnostics & Benchmark',
+      run: () => openDiagnostics(),
+    });
+    cmds.push({ id: 'act-rail', section: 'Layout', icon: Icon.panelLeft, title: 'Toggle navigation rail', subtitle: 'Ctrl B', run: () => toggleRail() });
+    LAYOUT_PRESETS.forEach((l) => cmds.push({
+      id: `layout-${l.id}`, section: 'Layout', icon: Icon.layout, title: `Layout: ${l.label}`, subtitle: l.hint,
+      run: () => { setWorkspaceMode(l.mode); setTab('faceswap'); },
+    }));
+    cmds.push({ id: 'act-mask-overlay', section: 'Canvas', icon: Icon.preview, title: 'Toggle mask overlay in preview', run: () => runFaceswap('maskOverlay') });
+    // Execution provider. The setting is read when inference sessions are built, so a
+    // switch made here takes effect after a restart; the toast says so rather than
+    // letting the row read as an instant change.
+    (meta?.providers || []).forEach((prov) => cmds.push({
+      id: `provider-${prov}`, section: 'Provider', icon: Icon.cpu, title: `Execution provider: ${prov}`,
+      subtitle: settings?.provider === prov ? 'Current' : 'Applies after restarting the app',
+      run: () => {
+        if (settings?.provider === prov) return;
+        setSettings((cur) => ({ ...(cur || {}), provider: prov }));
+        notify(`Provider set to ${prov}; restart the app to build sessions on it`, 'info');
+      },
+    }));
+    // Lite UI is a performance control, and the only place it lived was the
+    // Processing tab's dock -- i.e. reachable only while a render was in
+    // flight, which is exactly when you are least likely to go looking for it.
+    // It matters just as much to the IDLE app (59 backdrop-blur panels, all
+    // re-composited on every state change), so it belongs somewhere reachable
+    // from anywhere. Cycles during-renders -> always -> off.
+    cmds.push({
+      id: 'act-render-lite', section: 'Actions', icon: Icon.lite,
+      title: 'Cycle Lite UI (panel blurs & animations)',
+      subtitle: RENDER_LITE_LABEL[liteMode],
+      run: () => cycleRenderLiteMode(),
+    });
+
+    // Quality Preset Profiles
+    cmds.push({ id: 'prof-fast', section: 'Profiles', icon: Icon.brand, title: 'Profile: ⚡ Ultra Fast', subtitle: '128px, No Enhancer, Max FPS', run: () => applyQualityProfile('fast') });
+    cmds.push({ id: 'prof-cinematic', section: 'Profiles', icon: Icon.brand, title: 'Profile: 🎨 Cinematic Master', subtitle: '512px, Restoreformer++, DFL XSeg', run: () => applyQualityProfile('cinematic') });
+    cmds.push({ id: 'prof-ensemble', section: 'Profiles', icon: Icon.brand, title: 'Profile: 👤 Multi-Person Ensemble', subtitle: 'CodeFormer, Identity Tracking', run: () => applyQualityProfile('ensemble') });
+    cmds.push({ id: 'prof-vram', section: 'Profiles', icon: Icon.brand, title: 'Profile: 🚀 VRAM Efficient', subtitle: 'In-Memory processing, Capped Arena', run: () => applyQualityProfile('vram') });
+
+    // React UI 2.0 visual effects (per browser; nothing the engine reads).
+    const fx = useFxStore.getState();
+    cmds.push({ id: 'fx-terminal', section: 'Visual effects', icon: Icon.layout, title: 'Toggle terminal dock', subtitle: 'Ctrl `', run: () => fx.toggleFx('terminalOpen') });
+    cmds.push({ id: 'fx-ambient', section: 'Visual effects', icon: Icon.theme, title: 'Toggle 3D horizon', subtitle: 'WebGL ambient background', run: () => fx.toggleFx('ambient') });
+    cmds.push({ id: 'fx-crt', section: 'Visual effects', icon: Icon.theme, title: 'Toggle CRT scanlines', subtitle: 'Terminal dock', run: () => fx.toggleFx('crt') });
+    TRANSITIONS.forEach((t) => cmds.push({
+      id: `fx-transition-${t.id}`, section: 'Visual effects', icon: Icon.theme,
+      title: `Transition: ${t.label}`, subtitle: t.hint,
+      run: () => fx.setFx({ transition: t.id }),
+    }));
+
+    // Custom themes are selectable from the palette too — they are themes, and
+    // leaving them out would make the studio's output feel second-class.
+    allThemes(customThemes).forEach((t) => cmds.push({
+      id: `theme-${t.name}`, section: 'Theme', icon: Icon.theme,
+      title: t.name, subtitle: t.custom ? 'Your theme' : t.label,
+      run: () => applyTheme(t.name),
+    }));
+
+    // Every setting by name. The panel has its own search box, but you have to
+    // be standing in the panel to use it — and half the reason to look a
+    // setting up is that you are somewhere else and cannot remember which of
+    // four columns it lives in. Selecting one opens Settings and flashes the
+    // control itself.
+    SETTINGS_CATALOG.forEach((s) => cmds.push({
+      id: `setting-${s.key}`, section: 'Settings', icon: Icon.settings,
+      title: s.label, subtitle: s.section,
+      run: () => {
+        warmTab('settings');
+        setTab('settings');
+        // The panel is a lazy chunk and may be mounting for the first time, so
+        // give it a beat to subscribe before firing at it. Its own handler
+        // waits two frames again for the filters to settle.
+        setTimeout(() => focusSetting(s.key), 80);
+      },
+    }));
+
+    // Saved presets, straight from the same localStorage the Face Swap tab
+    // reads. No fetch: this memo runs on every settings change, and the list is
+    // already mirrored locally precisely so it works offline.
+    presets.forEach((pr) => cmds.push({
+      id: `preset-${pr.name}`, section: 'Presets', icon: Icon.layout,
+      title: pr.name, subtitle: 'Apply preset',
+      run: () => runFaceswap('preset', { name: pr.name }),
+    }));
+
+    return cmds;
+  }, [applyTheme, applyQualityProfile, runFaceswap, customThemes, presets, visibleTabs, liteMode, setTab,
+    toggleRail, setWorkspaceMode, openDiagnostics, meta, settings?.provider, notify]);
+
+  const registerFileListener = useCallback((cb) => {
+    fileListenersRef.current.push(cb);
+    return () => {
+      fileListenersRef.current = fileListenersRef.current.filter((l) => l !== cb);
+    };
+  }, []);
+
+  useEffect(() => {
+    // The overlay is kept alive by a self-resetting timer: dragover fires
+    // continuously while a file is over the window, so we re-arm a short hide
+    // timer on every event. When the drag leaves the window, is dropped
+    // elsewhere, or is CANCELLED (Escape) — all of which stop the dragover
+    // stream — the timer fires and clears the overlay. This is far more robust
+    // than the old clientX/Y===0 corner check, which never fired on a cancelled
+    // drag and left the overlay stuck.
+    const armHideTimer = () => {
+      // 450ms comfortably exceeds Chromium's ~350ms stationary-dragover interval,
+      // so holding a file still over the window won't flicker the overlay off;
+      // once the drag actually leaves/cancels (no more dragover) it clears fast.
+      if (dragHideTimerRef.current) clearTimeout(dragHideTimerRef.current);
+      dragHideTimerRef.current = setTimeout(() => setIsDraggingOver(false), 450);
+    };
+    const clearOverlay = () => {
+      if (dragHideTimerRef.current) { clearTimeout(dragHideTimerRef.current); dragHideTimerRef.current = null; }
+      setIsDraggingOver(false);
+    };
+    const handleDragOver = (e) => {
+      // Only react to OS file drags — internal drags (e.g. dragging a source
+      // face onto a person) carry custom types, not 'Files', and must not
+      // trigger the full-screen "drop media" overlay.
+      if (!Array.from(e.dataTransfer?.types || []).includes('Files')) return;
+      e.preventDefault();
+      setIsDraggingOver(true);
+      armHideTimer();
+    };
+    const handleDragLeave = (e) => {
+      e.preventDefault();
+    };
+    const handleDrop = (e) => {
+      e.preventDefault();
+      clearOverlay();
+      // A dedicated dropzone (FileDrop) already handled this drop.
+      if (e.roopConsumed) return;
+      const files = Array.from(e.dataTransfer.files);
+      if (files.length > 0) {
+        fileListenersRef.current.forEach((listener) => listener(files));
+      }
+    };
+    const handlePaste = (e) => {
+      if (['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName)) return;
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      const files = [];
+      for (let i = 0; i < items.length; i++) {
+        if (items[i].kind === 'file') {
+          files.push(items[i].getAsFile());
+        }
+      }
+      if (files.length > 0) {
+        fileListenersRef.current.forEach((listener) => listener(files));
+      }
+    };
+    // Extra safety nets so the overlay can never get stuck: a cancelled drag
+    // fires dragend, and any click/keydown dismisses a lingering overlay.
+    const handleDragEnd = () => clearOverlay();
+    const handlePointerDown = () => { if (dragHideTimerRef.current || isDraggingOverRef.current) clearOverlay(); };
+    window.addEventListener('dragover', handleDragOver);
+    window.addEventListener('dragleave', handleDragLeave);
+    window.addEventListener('drop', handleDrop);
+    window.addEventListener('dragend', handleDragEnd);
+    window.addEventListener('pointerdown', handlePointerDown);
+    window.addEventListener('paste', handlePaste);
+    return () => {
+      window.removeEventListener('dragover', handleDragOver);
+      window.removeEventListener('dragleave', handleDragLeave);
+      window.removeEventListener('drop', handleDrop);
+      window.removeEventListener('dragend', handleDragEnd);
+      window.removeEventListener('pointerdown', handlePointerDown);
+      window.removeEventListener('paste', handlePaste);
+      if (dragHideTimerRef.current) clearTimeout(dragHideTimerRef.current);
+    };
+  }, []);
+
+  // ── "Your render finished", once ─────────────────────────────────────────
+  // Here rather than in a tab because the shell is the only thing mounted for
+  // the whole session: a run that ends while you are on Settings or Outputs
+  // still has to announce itself.
+  //
+  // It used to live in BOTH places. The shell played its own chime and posted
+  // its own notification, and the Face Swap tab mounted useRunCompleteAlert as
+  // well — so every finished run gave you two chimes and two desktop
+  // notifications, and only if you happened to be on that one tab. Neither half
+  // could see the other, which is how a duplicate survives review: each looks
+  // correct on its own. The hook is the better of the two (it tells a failed run
+  // from a finished one and plays a different tone), so it won.
+  //
+  // Reads `notify`, which is declared at the top of the component — see the TDZ
+  // note there before moving either one.
+  const { desktopAlerts, toggleDesktopAlerts } = useRunCompleteAlert({
+    processing: progress.processing, error: progress.error, notify,
+  });
+
+  // Core bootstrap (meta + settings + in-flight job), retryable. The backend is
+  // often still binding its port when this webview first paints — especially on
+  // a cold Pinokio start — so a first failure schedules its own backoff retry
+  // instead of parking the user on a dead-end error screen.
+  const [retrying, setRetrying] = useState(false);
+  const bootAttemptRef = useRef(0);
+  const bootTimerRef = useRef(null);
+  const loadCore = useCallback(async () => {
+    setRetrying(true);
+    try {
+      const [m, s] = await Promise.all([
+        getJSON('/api/meta', { timeout: 10000 }),
+        getJSON('/api/settings', { timeout: 10000 }),
+      ]);
+      setMeta(m);
+      // Mark the incoming value as "just fetched" so the autosave effect below
+      // skips it — otherwise a retry would immediately POST back the settings
+      // we only just read.
+      settingsLoadedRef.current = false;
+      setSettings(s);
+      setError('');
+      reportNet(true);
+      bootAttemptRef.current = 0;
+      try {
+        const pr = await readProgress(8000);
+        if (pr?.processing) startPolling();
+      } catch (e) {
+        // Progress is non-critical for boot, so no toast; but do not lose the reason.
+        reportFailure('Loading run progress', e, { toast: false });
+      }
+    } catch (e) {
+      // Say what actually failed. This used to read "Cannot reach backend on
+      // 127.0.0.1:8001" unconditionally, and both halves of that were wrong:
+      // the port is whatever ROOP_API_PORT the launcher assigned (these calls
+      // are same-origin and proxied by Vite, so the number was never even
+      // ours to state), and the catch fires for ANY rejection — including a
+      // 4xx from a server that is up and answering. A registration bug that
+      // made GET /api/settings return 422 was read as a dead server because
+      // of this line, so the message now carries the reason it was given.
+      const why = (e && e.message) ? ` (${e.message})` : '';
+      setError(`Backend request failed${why}. `
+        + 'Make sure the server (run.py) is running, and check its console for errors.');
+      // 1s, 2s, 4s … capped at 8s, forever — a launcher window left open should
+      // heal itself the moment the server comes up.
+      const wait = Math.min(8000, 1000 * 2 ** bootAttemptRef.current++);
+      if (bootTimerRef.current) clearTimeout(bootTimerRef.current);
+      bootTimerRef.current = setTimeout(() => loadCore(), wait);
+    } finally {
+      setRetrying(false);
+    }
+  }, [reportNet, startPolling, readProgress]);
+
+  useEffect(() => {
+    loadCore();
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+      if (bootTimerRef.current) clearTimeout(bootTimerRef.current);
+    };
+  }, [loadCore]);
+
+  // Warm the remaining tab chunks once the app is idle, so the very first visit
+  // to any tab is instant even without a hover. requestIdleCallback keeps this
+  // off the critical path; Safari/older webviews fall back to a timeout.
+  useEffect(() => {
+    if (!meta) return undefined;
+    const run = () => ALL_TABS.forEach((t) => warmTab(t.id));
+    const ric = window.requestIdleCallback;
+    if (ric) {
+      const h = ric(run, { timeout: 3000 });
+      return () => window.cancelIdleCallback?.(h);
+    }
+    const h = setTimeout(run, 1500);
+    return () => clearTimeout(h);
+  }, [meta]);
+
+  // A tab change swaps the entire view; keeping the old scroll offset drops the
+  // user into the middle of a panel they have never seen. Snap to the top as
+  // the outgoing view fades so the incoming one always starts at its header.
+  const firstTabRenderRef = useRef(true);
+  useEffect(() => {
+    if (firstTabRenderRef.current) { firstTabRenderRef.current = false; return; }
+    if (window.scrollY > 4) window.scrollTo({ top: 0, behavior: 'auto' });
+  }, [tab]);
+
+  // Autosave settings to the backend CFG (debounced) on every in-session edit.
+  // Previously settings were only persisted at swap-start / explicit Save, so
+  // switching Pinokio's Run<->Dev view — which reloads this webview and remounts
+  // React — reverted any unsaved edits to the backend's last-saved values (the
+  // load effect above re-fetches /api/settings on every mount). Persisting each
+  // change makes the backend the durable source of truth across reloads.
+  const settingsLoadedRef = useRef(false);
+  const settingsSaveRef = useRef(null);
+  const settingsDirtyRef = useRef(null); // latest not-yet-persisted settings, or null when clean
+  // Persist the pending edit now. keepalive lets it survive the webview teardown
+  // when this fires from pagehide/visibilitychange during a Run<->Dev reload.
+  const flushSettings = useCallback((keepalive = false) => {
+    const body = settingsDirtyRef.current;
+    if (!body) return;
+    settingsDirtyRef.current = null;
+    if (settingsSaveRef.current) { clearTimeout(settingsSaveRef.current); settingsSaveRef.current = null; }
+    // Offline, this fails and the change is re-sent with the next edit or run; the failure
+    // is reported once (not per keystroke) so the user knows their edit is not saved yet.
+    postJSON('/api/settings', body, { keepalive }).catch(logFailure('Saving settings'));
+  }, []);
+  useEffect(() => {
+    if (!settings) return;
+    // Skip the first value (just fetched from the backend) so we don't re-POST
+    // exactly what we loaded on mount.
+    if (!settingsLoadedRef.current) { settingsLoadedRef.current = true; return; }
+    settingsDirtyRef.current = settings;
+    if (settingsSaveRef.current) clearTimeout(settingsSaveRef.current);
+    settingsSaveRef.current = setTimeout(() => flushSettings(false), 500);
+    return () => { if (settingsSaveRef.current) clearTimeout(settingsSaveRef.current); };
+  }, [settings, flushSettings]);
+  // Flush a pending edit immediately when the webview is hidden/torn down, so a
+  // change made <500ms before a Run<->Dev toggle isn't dropped by the debounce.
+  useEffect(() => {
+    const onPageHide = () => flushSettings(true);
+    const onVisibility = () => { if (document.visibilityState === 'hidden') flushSettings(true); };
+    window.addEventListener('pagehide', onPageHide);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.removeEventListener('pagehide', onPageHide);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [flushSettings]);
+
+  const stopping = !!progress.stop_requested || controlBusy === 'stop';
+
+  // ── React UI 2.0 visual layer ────────────────────────────────────────────
+  // Above the monitor early-return on purpose: hooks run unconditionally.
+  const fxTransition = useFxStore((s) => s.transition);
+  const fxTerminal = useFxStore((s) => s.terminal);
+  const fxGrain = useFxStore((s) => s.grain);
+  const fxSunray = useFxStore((s) => s.sunray);
+  useEffect(() => installPointerFx(), []);
+  useEffect(() => { document.documentElement.classList.toggle('v2-no-sunray', !fxSunray); }, [fxSunray]);
+  useEffect(() => {
+    const t = ALL_TABS.find((x) => x.id === tab);
+    termLog(`goto ${t?.id || tab} · ${t?.label || ''}`, 'info', 'nav');
+  }, [tab]);
+  useEffect(() => {
+    if (offline) termLog('engine connection lost — reconnecting', 'warn', 'net');
+  }, [offline]);
+  const wasProcessing = useRef(false);
+  useEffect(() => {
+    if (progress.processing && !wasProcessing.current) termLog('render started — ambient animation held while the engine has the GPU', 'ok', 'run');
+    if (!progress.processing && wasProcessing.current) termLog(progress.error ? `render ended: ${progress.error}` : 'render finished', progress.error ? 'error' : 'ok', 'run');
+    wasProcessing.current = !!progress.processing;
+  }, [progress.processing, progress.error]);
+
+  // The run chip is the one piece of the run that is on screen from every route,
+  // so it lives in the header and doubles as the way back to the run's own tab.
+  const runChip = progress.processing ? (
+            <div className="flex items-center gap-2 px-2.5 py-1 rounded-lg bg-[var(--accent)]/10 border border-[var(--accent)]/20 text-micro font-bold tracking-wide uppercase">
+      <span className={`h-1.5 w-1.5 rounded-full ${stopping ? 'bg-red-400' : progress.paused || progress.pause_requested ? 'bg-amber-400' : 'bg-[var(--accent)] animate-ping'}`} />
+      {/* The chip is the one piece of the run that is on screen from
+          every tab, so it doubles as the way back to the run's own tab
+          once you have wandered off it. */}
+      <button
+        type="button"
+        onClick={() => setTab('processing')}
+        title="Open the Processing tab"
+        className={`hover:underline ${stopping ? 'text-red-400/90' : progress.paused || progress.pause_requested ? 'text-amber-400/90' : 'text-accent'}`}
+      >
+        {stopping ? 'Stopping' : progress.paused ? 'Paused' : progress.pause_requested ? 'Pause requested' : (
+          <LiveText select={(s) => {
+            const { label, fraction } = selectRenderProgress(s);
+            return fraction == null ? label : `${label} ${Math.round(fraction * 100)}%`;
+          }} />
+        )}
+      </button>
+      {!(progress.paused || progress.pause_requested || stopping) && (
+        <LiveText
+          className="text-muted normal-case font-mono font-medium ml-1 empty:hidden"
+          select={(s) => {
+            const { etaMs: eta } = selectRenderProgress(s);
+            return eta > 0 ? `Phase ETA ${fmtTime(eta)}` : '';
+          }}
+        />
+      )}
+      <div className="flex items-center gap-1.5 border-l border-white/10 pl-2 ml-1">
+        {progress.paused ? (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              runControl('resume').catch(logFailure('Resuming the job', { toast: false }));
+            }}
+            disabled={stopping || controlBusy === 'resume'}
+            className="grid place-items-center hover:text-white text-white/60 transition-colors cursor-pointer"
+            title="Resume Job" aria-label="Resume job"
+          >
+            <Icon.play size={13} />
+          </button>
+        ) : (
+          <button
+            type="button"
+            disabled={progress.pause_requested || stopping || controlBusy === 'pause' || controlBusy === 'resume'}
+            onClick={(e) => {
+              e.stopPropagation();
+              runControl('pause').catch(logFailure('Pausing the job', { toast: false }));
+            }}
+            className="grid place-items-center hover:text-white text-white/60 transition-colors cursor-pointer"
+            title={progress.pause_requested ? 'Pause requested' : 'Pause Job'} aria-label={progress.pause_requested ? 'Pause requested' : 'Pause job'}
+          >
+            <Icon.pause size={13} />
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={async (e) => {
+            e.stopPropagation();
+            if (await confirmDialog({ title: 'Stop job?', message: 'Stop the active job? The partial output so far is finalized and kept.', confirmLabel: 'Stop', danger: true })) {
+              runControl('stop').catch(logFailure('Stopping the job', { toast: false }));
+            }
+          }}
+          disabled={stopping}
+          className="grid place-items-center hover:text-red-400 text-white/60 transition-colors cursor-pointer"
+          title="Stop Job" aria-label="Stop job"
+        >
+          <Icon.stop size={13} />
+        </button>
+      </div>
+    </div>
+  ) : null;
+
+
+  if (isMonitor) {
+    return <ReferenceMonitor />;
+  }
+
+  return (
+    <MotionConfig reducedMotion="user">
+    <div className="min-h-screen flex relative overflow-x-clip select-none">
+      <ModelSplash />
+      <BootSequence meta={meta} settings={settings} error={error} />
+      {/* 2.0: the ray-traced horizon replaces 1.0's two static glow discs. It holds a still frame
+          while a render runs (see HorizonCanvas). The body's CSS background stays underneath as
+          the fallback when WebGL is unavailable or the effect is switched off. */}
+      <HorizonCanvas busy={!!progress.processing} />
+      {fxGrain && <div className="v2-grain" aria-hidden="true" />}
+
+      <WorkstationRail
+        tabs={visibleTabs}
+        tab={tab}
+        onSelect={setTab}
+        warmTab={warmTab}
+        collapsed={railCollapsed}
+        onToggleCollapse={toggleRail}
+        badges={navBadges}
+        runActive={progress.processing}
+        build={(meta?.git_version || meta?.installed_commit?.short) ? {
+          text: `Engine ${meta?.git_version || 'main'}${meta?.installed_commit?.short ? ` (${meta.installed_commit.short.slice(0, 7)})` : ''}`,
+          title: meta?.installed_commit?.sha
+            ? `commit ${meta.installed_commit.sha}${meta.installed_commit.date ? ` · ${meta.installed_commit.date}` : ''}`
+            : undefined,
+        } : null}
+      />
+
+      <div className="relative z-10 flex min-w-0 flex-1 flex-col">
+      <WorkstationHeader
+        current={ALL_TABS.find((t) => t.id === tab)}
+        tab={tab}
+        onNavigate={setTab}
+        runChip={runChip}
+        engine={{
+          provider: hudValue(progress.runtime?.sections?.PROVIDER?.values?.effective),
+          workers: hudValue(progress.runtime?.sections?.POOLING?.values?.workers?.configured),
+          connection: offline ? 'Local engine unavailable' : meta ? 'Local engine connected' : 'Local engine checking',
+        }}
+        onOpenDiagnostics={openDiagnostics}
+        zoom={zoom}
+        onBumpZoom={bumpZoom}
+        onResetZoom={() => setZoom(1)}
+        profileName={activeQualityProfile ? (BUILTIN_PROFILES.find(p => p.id === activeQualityProfile)?.name.split(' ')[1] || 'Custom') : 'Standard'}
+        onOpenProfiles={() => setShowProfilesModal(true)}
+        onOpenSnapshots={() => setShowSnapshotsModal(true)}
+        pipOn={pipOn}
+        onTogglePip={() => usePipStore.getState().toggle()}
+        onOpenPalette={() => setShowPalette(true)}
+      />
+
+      {/* The shortcut sheet: ? or Ctrl+/ . Reads the live keymap, so it shows the user's remaps. */}
+      <ShortcutOverlay onOpenSettings={() => { setSettingsTab('shortcuts'); setTab('settings'); }} />
+
+      {/* Face Swap's picture in a corner, on the tabs you tune a project from. Only on screen when on, and a frame exists. */}
+      <PipMiniViewport
+        tab={tab}
+        onReturn={() => {
+          // From another tab: go back to Face Swap. Already there (the stage is scrolled out of view): bring the stage into view.
+          if (tab === 'faceswap') document.querySelector('.preview-stage')?.scrollIntoView({ block: 'center' });
+          else setTab('faceswap');
+        }}
+      />
+
+      {/* Workspace Snapshots Modal */}
+      {showSnapshotsModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[70] flex items-center justify-center p-4"
+             onClick={(event) => { if (event.target === event.currentTarget) closeSnapshots(); }}>
+          <div ref={snapshotsDialog} role="dialog" aria-modal="true" aria-labelledby="workspace-snapshots-title" tabIndex={-1}
+               className="max-h-[calc(100dvh-2rem)] w-full max-w-md space-y-4 overflow-y-auto rounded-2xl border border-white/10 bg-[#121216] p-4 text-white shadow-2xl animate-scale-in sm:p-6">
+            <div className="flex items-center justify-between gap-2 border-b border-white/10 pb-3">
+              <h2 id="workspace-snapshots-title" className="text-base font-bold flex items-center gap-2 text-accent">
+                <Icon.history size={18} /> Workspace Session Snapshots
+              </h2>
+              <button type="button" onClick={closeSnapshots} aria-label="Close workspace snapshots modal" className="text-muted hover:text-white font-bold">✕</button>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-xs text-white/50">{snapshots.length} snapshot(s) saved</span>
+              <button type="button" onClick={saveSessionSnapshot} className="px-3 py-1 rounded-lg bg-[var(--accent)] hover:bg-[var(--accent)]/90 text-white text-xs font-bold transition-all">
+                + Save Current State
+              </button>
+            </div>
+
+            <div className="max-h-60 overflow-y-auto space-y-2 py-1">
+              {snapshots.length === 0 ? (
+                <div className="text-center py-6 text-xs text-muted">No saved snapshots yet</div>
+              ) : (
+                snapshots.map((s) => (
+                  <div key={s.id} className="p-3 rounded-xl bg-white/5 border border-white/10 flex items-center justify-between gap-2 hover:border-white/20 transition-all">
+                    <div className="min-w-0 flex-1">
+                      <div className="font-bold text-xs text-white truncate">{s.name}</div>
+                      <div className="text-note font-mono text-muted">{new Date(s.time).toLocaleString()}</div>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button type="button" onClick={() => loadSessionSnapshot(s)} className="px-2.5 py-1 rounded bg-white/10 hover:bg-white/20 text-xs font-semibold text-white">Load</button>
+                      <button type="button" onClick={() => deleteSessionSnapshot(s.id)} aria-label={`Delete snapshot ${s.name}`} className="px-2 py-1 rounded bg-red-500/20 hover:bg-red-500/30 text-xs font-semibold text-red-300">✕</button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Main Container Layout */}
+      <main className="flex-1 w-full max-w-[1920px] mx-auto px-3 sm:px-4 md:px-6 py-3 md:py-4 mt-1.5 z-10 relative">
+        {error && (
+          <div role="alert" className="rounded-2xl bg-red-500/10 border border-red-500/20 p-5 text-sm text-red-300 animate-slide-up flex flex-wrap items-center justify-between gap-3">
+            {/* items-start: on a wrapped multi-line error the icon belongs on
+                the first line, not floating in the vertical middle. */}
+            <span className="flex items-start gap-2 min-w-0">
+              <Icon.warning size={16} className="mt-px text-red-400" />
+              <span className="selectable">{error}</span>
+            </span>
+            <div className="flex items-center gap-2 shrink-0">
+              <span className="text-mini text-red-300/50">
+                {retrying ? 'Retrying…' : 'Retrying automatically…'}
+              </span>
+              <button
+                type="button"
+                onClick={() => { bootAttemptRef.current = 0; loadCore(); }}
+                disabled={retrying}
+                className="px-3 py-1.5 rounded-lg bg-red-500/15 hover:bg-red-500/25 border border-red-500/30 text-mini font-semibold text-red-200 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Retry now
+              </button>
+            </div>
+          </div>
+        )}
+        {!error && !meta && (
+          <div className="flex flex-col items-center justify-center h-[50vh] gap-4">
+            <div className="h-8 w-8 rounded-full border-4 border-white/10 border-t-[var(--accent)] animate-spin" />
+            <div className="text-muted text-sm font-medium">Establishing secure gateway connection…</div>
+          </div>
+        )}
+        {!error && meta && settings && (
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={tab}
+              variants={variantsFor(fxTransition)}
+              initial="initial"
+              animate="animate"
+              exit="exit"
+              data-transition={fxTransition}
+            >
+              <ErrorBoundary resetKey={tab} onReset={resetFailedPanels}>
+              <Suspense fallback={<TabFallback />}>
+                {tab === 'home' && (
+                  <Home
+                    progress={progress}
+                    setTab={setTab}
+                    setSettings={setSettings}
+                    notify={notify}
+                  />
+                )}
+                {tab === 'faceswap' && (
+                  <FaceSwap
+                    meta={meta}
+                    settings={settings}
+                    setSettings={setSettings}
+                    notify={notify}
+                    registerFileListener={registerFileListener}
+                    progress={progress}
+                    setProgress={setProgress}
+                    startTime={startTime}
+                    setStartTime={setStartTime}
+                    onOpenProcessing={() => setTab('processing')}
+                    onStopRun={() => runControl('stop')}
+                  />
+                )}
+                {tab === 'batch' && (
+                  <BatchSwap
+                    settings={settings}
+                    notify={notify}
+                    progress={progress}
+                    setTab={setTab}
+                    onUpdateSetting={(k, v) => setSettings?.(s => ({ ...s, [k]: v }))}
+                  />
+                )}
+                {tab === 'processing' && (
+                  <Processing
+                    progress={progress}
+                    settings={settings}
+                    notify={notify}
+                    setTab={setTab}
+                    desktopAlerts={desktopAlerts}
+                    onToggleDesktopAlerts={toggleDesktopAlerts}
+                    onPauseRun={() => runControl('pause')}
+                    onResumeRun={() => runControl('resume')}
+                    onStopRun={() => runControl('stop')}
+                    controlBusy={controlBusy}
+                  />
+                )}
+                {tab === 'facemgr' && <FaceManager notify={notify} registerFileListener={registerFileListener} setTab={setTab} />}
+                {tab === 'extras' && <Extras notify={notify} registerFileListener={registerFileListener} meta={meta} settings={settings} setSettings={setSettings} setTab={setTab} />}
+                {tab === 'gallery' && <Gallery notify={notify} setSettings={setSettings} setTab={setTab} />}
+                {tab === 'history' && <RunHistory notify={notify} setSettings={setSettings} setTab={setTab} settings={settings} />}
+                {tab === 'settings' && <Settings meta={meta} settings={settings} setSettings={setSettings} notify={notify} progress={progress} />}
+              </Suspense>
+              </ErrorBoundary>
+            </motion.div>
+          </AnimatePresence>
+        )}
+      </main>
+      {fxTerminal && (
+        <TerminalDock
+          progress={progress}
+          tabs={visibleTabs}
+          onNavigate={setTab}
+          onOpenPalette={() => setShowPalette(true)}
+        />
+      )}
+      </div>
+
+      <Toasts toasts={toasts} onDismiss={dismissToast} />
+
+      <CompileBanner />
+
+      {/* Backend went quiet mid-session (server restart, GPU stall, sleep).
+          Non-blocking: the UI stays usable and this clears itself the moment a
+          heartbeat lands, so a brief hiccup never forces a manual reload. */}
+      <AnimatePresence>
+        {offline && !error && (
+          <motion.div
+            initial={{ opacity: 0, y: 16, scale: 0.96 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 16, scale: 0.96 }}
+            transition={spring.snappy}
+            role="status"
+            className="fixed bottom-6 left-6 z-50 px-4 py-3 rounded-xl bg-[#0E0F15]/95 backdrop-blur-xl border border-amber-400/25 shadow-2xl flex items-center gap-3"
+          >
+            <span className="h-2 w-2 rounded-full bg-amber-400 animate-ping" />
+            <span className="text-xs font-semibold text-amber-200/90">Reconnecting to the engine…</span>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Screen-reader status channel: toast messages + live processing state,
+          announced politely without stealing focus. */}
+      <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">{liveMsg}</div>
+      {/* Polite live region at 0.2 Hz: a screen reader told the percentage ten
+          times a second is a screen reader that cannot say anything else. */}
+      <LiveText
+        className="sr-only" role="status" aria-live="polite" hz={0.2}
+        select={(s) => {
+          if (!progress.processing) return '';
+          const { label, fraction } = selectRenderProgress(s);
+          return `${stopping ? 'Stopping, ' : progress.paused ? 'Paused, ' : ''}${label}${fraction == null ? '' : ` ${Math.round(fraction * 100)} percent`}`;
+        }}
+      />
+
+      <Confetti active={confetti} />
+
+      {progress.processing && (
+        <LiveValue select={(s) => selectRenderProgress(s).fraction}>
+          {(fraction) => (
+            <div aria-hidden="true" className="fixed inset-x-0 top-0 h-[3px] z-[60] overflow-hidden pointer-events-none">
+              <div className={`h-full v2-progress ${fraction == null
+                ? (progress.paused || progress.pause_requested || stopping ? '' : 'preview-indeterminate')
+                : 'motion-safe:transition-[width] duration-300'}`}
+                style={{ width: fraction == null ? '25%' : `${fraction * 100}%` }} />
+            </div>
+          )}
+        </LiveValue>
+      )}
+
+      <QualityProfilesModal
+        open={showProfilesModal}
+        onClose={() => setShowProfilesModal(false)}
+        activeProfileId={activeQualityProfile}
+        onApplyProfile={applyQualityProfile}
+        currentSettings={settings}
+        notify={notify}
+      />
+
+      <CommandPalette open={showPalette} onClose={() => setShowPalette(false)} commands={commands} />
+
+      <ConfirmHost />
+
+      {isDraggingOver && (
+        <div className="fixed inset-0 bg-[var(--accent)]/10 backdrop-blur-[2px] border-4 border-dashed border-[var(--accent)] z-50 flex items-center justify-center pointer-events-none">
+          <div className="bg-black/80 px-6 py-4 rounded-2xl border border-white/10 shadow-2xl flex flex-col items-center gap-2">
+            {/* animate-bounce is a transform, so it stays on the compositor —
+                this overlay is on screen during a drag and must not repaint. */}
+            <Icon.drop size={34} className="animate-bounce text-accent" />
+            <span className="text-lg font-bold text-white uppercase tracking-wider">Drop media here</span>
+          </div>
+        </div>
+      )}
+    </div>
+    </MotionConfig>
+  );
+}

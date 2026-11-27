@@ -7,6 +7,34 @@ folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22
 
 ## 2026-11-28
 
+- **React UI 2.0: 1.0's client with a new visual layer, served at `/v2/`.** React UI 1.0 (`react-ui/`) is unchanged and is still what `start.js` launches. Full record: [`UI_V2_VISUAL_AUDIT.md`](UI_V2_VISUAL_AUDIT.md).
+  - **What it is.** `react-ui-v2/` is 1.0 copied file for file. Twelve "owned" files are edited to mount `src/v2fx/`:
+    - a WebGL ray-traced planet horizon (atmosphere, stars, parallax, grain);
+    - a terminal dock that tails the engine log, merged by `seq`, together with UI events, with filters and a navigation/appearance prompt (Ctrl+\`);
+    - tab transitions: depth, flip, portal, glitch and warp;
+    - a boot sequence that prints the real startup;
+    - panel spotlight and card tilt, a decrypting title and sunray sweeps;
+    - an FX panel;
+    - the Void design system: black void, hairline rules, magenta/cyan, Geist and JetBrains Mono bundled offline, and five Void themes.
+  - **Inspiration.** omp.sh's CSS and JS were read for technique (palette, type, sunray keyframe, dithered horizon); none of its content is used.
+  - **Parity is enforced, not claimed.** `scripts/sync_react_ui_v2.py --check` fails when any non-owned file differs from 1.0, or when 1.0 changes a file 2.0 owns (base hashes in `react-ui-v2/V1_BASE.json`). Running it without `--check` copies 1.0's changes across. `test_default_client_capability.py` runs that check. It used to fail if `react-ui-v2` existed at all; it now also requires 1.0 to stay the default client and 2.0 to reference the four job-intake routes.
+  - **Backend.** `app/api.py` serves `react-ui-v2/dist` under `/v2/` from the existing 404 fallback (no mount, so it cannot shadow a route). It uses a path-safe `_dist_file` and the same share-mode token gate as 1.0. `/api/ui/status` adds a `v2` block.
+  - **Launcher.** `start_react.js` builds 2.0 after 1.0 with no break on failure, so 2.0 can never stop 1.0 from launching. `pinokio.js` shows "Open React UI 2.0" once its build exists. `storage_manager` protects `react-ui-v2/node_modules`, and `scripts/cleanup.py` lists `react-ui-v2/dist` as rebuildable.
+  - **GPU.** The horizon draws one still frame and stops while a render runs or a TensorRT build/canary is active, unless "Animate during renders" is switched on. It renders at 0.35-0.75 scale with a 24-60 fps cap.
+  - **Verified.**
+    - `app/tests/test_backend_serves_ui_v2.py` (11): `/v2/`, assets, fonts, 404s, traversal, `/` still serving 1.0. Run with `test_backend_serves_ui.py` and `test_api_access.py`: 45 passed.
+    - Launcher, install, storage, client and update test files: 397 passed.
+    - v2's whole render-check suite (1.0's 35 scripts plus `render-v2fx.mjs`, 48 checks) passes.
+    - Headless Chromium against the 2.0 build on the mock backend: 26 checks, including all 8 routes ending their transition at `transform: none`, the horizon freezing for a render and resuming, and no console errors. The screenshots caught invisible titles (a `currentColor` sunray on transparent text), terminal bleed-through and a clipped FX popover; all three are fixed.
+    - Light suite: 2788 passed, 5 failed. All five fail at HEAD and touch nothing changed here: three in `test_lipsync_acoustics`, `test_phase_harness_contracts`, and `test_terminal_dashboard::Facade::test_a_live_job_end_to_end_on_a_screen` (its "SWAP PROFILE" section needs the ML stack).
+  - **Not verified.**
+    - Not run against the real backend: it must restart to load `/v2/`.
+    - The terminal's engine half is proven only by `render-v2fx.mjs`, because the mock sends no `log`.
+    - The horizon's idle and preview GPU cost is unmeasured on both GPUs.
+    - Not run on the RTX 3060.
+    - 1.0's Playwright e2e specs were not run against 2.0.
+    - The full GPU suite was not run, because a 45,456-frame user render was in progress.
+
 - Untrimmed MP4 exports preserve the audio edit that skips AAC encoder padding. Forcing all packet timestamps to start at zero exposed that padding and made finalization reject a render with a 47 ms audio lead. The corrected stream copy passed finalization with all 44,136 test frames and the affected source audio. The output started at a 0.0 ms A/V offset, and its first ten seconds of decoded audio matched the source.
 
 ## 2026-11-27

@@ -7319,15 +7319,30 @@ _UI_DIST = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__
                         "react-ui", "dist")
 
 
+# React UI 2.0 (react-ui-v2/): 1.0's screens with a new visual layer, served at /v2/ beside 1.0.
+# It is built with Vite `base: '/v2/'`, so every asset URL it emits starts with /v2/ and is served
+# from the 404 handler below exactly like 1.0's - nothing is mounted, nothing can shadow a route.
+_UI2_PREFIX = "/v2"
+_UI2_DIST = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                         "react-ui-v2", "dist")
+_UI2_INDEX = os.path.join(_UI2_DIST, "index.html")
+
+
 def ui_dist_ready():
     """Whether a usable production build of the React UI is on disk."""
     return os.path.isfile(os.path.join(_UI_DIST, "index.html"))
 
 
+def ui2_dist_ready():
+    """Whether React UI 2.0 has a production build on disk."""
+    return os.path.isfile(_UI2_INDEX)
+
+
 @app.get("/api/ui/status")
 def ui_status():
     """Lets the launcher and support tooling tell 'not built' from 'not running'."""
-    return {"dist": _UI_DIST, "built": ui_dist_ready()}
+    return {"dist": _UI_DIST, "built": ui_dist_ready(),
+            "v2": {"dist": _UI2_DIST, "built": ui2_dist_ready(), "path": _UI2_PREFIX + "/"}}
 
 
 import mimetypes as _mimetypes
@@ -7354,21 +7369,26 @@ if os.path.isdir(_UI_ASSETS):
 
 _UI_INDEX = os.path.join(_UI_DIST, "index.html")
 
-def _ui_file(request_path):
-    """Resolve a URL path to a file inside dist/, or None.
+def _dist_file(dist, request_path):
+    """Resolve a URL path to a file inside `dist`, or None.
 
     Rejects anything that escapes dist/ (`..`, absolute paths, symlinked
     parents) by resolving both sides and comparing prefixes, so this cannot
     be used to read arbitrary files off the machine.
     """
-    candidate = os.path.normpath(os.path.join(_UI_DIST, request_path.lstrip("/")))
-    root = os.path.realpath(_UI_DIST)
+    candidate = os.path.normpath(os.path.join(dist, request_path.lstrip("/")))
+    root = os.path.realpath(dist)
     resolved = os.path.realpath(candidate)
     if resolved != root and not resolved.startswith(root + os.sep):
         return None
     return resolved if os.path.isfile(resolved) else None
 
-def _serve_index(request):
+
+def _ui_file(request_path):
+    """Resolve a URL path to a file inside 1.0's dist/, or None (see _dist_file)."""
+    return _dist_file(_UI_DIST, request_path)
+
+def _serve_index(request, index=None):
     """index.html, gated by the share-mode token for non-loopback visitors.
 
     Opening the printed URL (`/?token=...`) sets an HttpOnly, SameSite=Strict
@@ -7377,18 +7397,45 @@ def _serve_index(request):
     Without a valid token the visitor gets a small form, not the app. This
     applies to loopback too: the Pinokio sidebar link carries the token.
     """
+    index = index or _UI_INDEX
     policy = _api_access.get_policy()
     if not policy.share:
-        return _FileResponse(_UI_INDEX)
+        return _FileResponse(index)
     query_token = _api_access.token_from_request_query(request.url.query)
     if query_token is not None and policy.token_ok(query_string=request.url.query):
-        response = _FileResponse(_UI_INDEX)
+        response = _FileResponse(index)
         response.set_cookie(_api_access.TOKEN_COOKIE, policy.token, httponly=True,
                             samesite="strict", path="/")
         return response
     if policy.token_ok(cookie_header=request.headers.get("cookie")):
-        return _FileResponse(_UI_INDEX)
+        return _FileResponse(index)
     return _HTMLResponse(status_code=401, content=_api_access.TOKEN_PAGE)
+
+
+def _serve_ui2(request, path):
+    """React UI 2.0 under /v2/: a real file in react-ui-v2/dist, else (for an in-app path) its
+    index.html behind the same share-mode gate as 1.0. A missing asset is a 404, never HTML."""
+    from fastapi.responses import RedirectResponse as _RedirectResponse
+    if not ui2_dist_ready():
+        return _HTMLResponse(
+            status_code=503,
+            content=("<!DOCTYPE html><html><head><title>React UI 2.0 Not Built</title></head>"
+                     "<body style='font-family:sans-serif;background:#000;color:#eee;padding:40px'>"
+                     "<h1>React UI 2.0 build missing</h1><p>Expected <code>react-ui-v2/dist/index.html</code>."
+                     " Build it with <code>cd react-ui-v2 &amp;&amp; npm run build</code>, or restart through"
+                     " Pinokio. React UI 1.0 is unaffected at <a style='color:#f84fcc' href='/'>/</a>.</p>"
+                     "</body></html>"))
+    if path == _UI2_PREFIX:
+        query = f"?{request.url.query}" if request.url.query else ""
+        return _RedirectResponse(url=_UI2_PREFIX + "/" + query, status_code=307)
+    rel = path[len(_UI2_PREFIX) + 1:]
+    found = _dist_file(_UI2_DIST, rel) if rel else None
+    if found is not None:
+        return _FileResponse(found)
+    _, ext = os.path.splitext(rel)
+    if rel.startswith("assets/") or ext.lower() in _STATIC_EXTENSIONS:
+        return JSONResponse(status_code=404, content={"detail": "Asset not found"})
+    return _serve_index(request, _UI2_INDEX)
 
 
 
@@ -7504,6 +7551,8 @@ async def _spa_fallback(request, exc):
     # Only GET/HEAD can sensibly return a document.
     if request.method not in ("GET", "HEAD"):
         return JSONResponse(status_code=404, content={"detail": getattr(exc, "detail", "Not Found")})
+    if path == _UI2_PREFIX or path.startswith(_UI2_PREFIX + "/"):
+        return _serve_ui2(request, path)
     if ui_dist_ready():
         found = _ui_file(path)
         if found is not None:

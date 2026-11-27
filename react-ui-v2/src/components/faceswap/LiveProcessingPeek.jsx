@@ -1,0 +1,133 @@
+import React, { useEffect, useState } from 'react';
+import { Icon } from '../../icons';
+import FastCanvasPlayer from '../player/FastCanvasPlayer';
+import { frameSocket } from '../../transport/frameSocket';
+import { useFrameSocketOpen } from '../../transport/useFrameSocket';
+
+/**
+ * LiveProcessingPeek
+ * The image shown inside the processing box while a job runs.
+ *
+ * Two different things can be on screen here, and the badge says which:
+ *
+ *  - LIVE — the frame the pipeline most recently finished, republished about
+ *    twice a second. With /ws/frames open the JPEG bytes are PUSHED to a
+ *    <FastCanvasPlayer> the moment they are published (decode + draw in a
+ *    worker, nothing through React). Without it, the old path: `liveSeq` from
+ *    telemetry keys `/api/live_frame` so an <img> refetches when there is a
+ *    newer frame — one extra round trip per picture, decoded on this thread.
+ *  - PREVIEW STILL — the fallback before the first live frame arrives, or with
+ *    ROOP_LIVE_PREVIEW=0: the last preview rendered for the frame the timeline
+ *    is parked on. It does NOT advance, so it must not claim to.
+ */
+export default function LiveProcessingPeek({
+  previewSrc,
+  rawUrl,
+  liveSrc = '',
+  frame = 1,
+  maxFrames = 1,
+  progressDesc = '',
+  paused = false,
+}) {
+  const socketOpen = useFrameSocketOpen();
+  // True once the canvas has actually PRESENTED a pushed frame. Set once per
+  // connection; the per-frame path never touches React state.
+  const [socketLive, setSocketLive] = useState(false);
+  useEffect(() => { if (!socketOpen) setSocketLive(false); }, [socketOpen]);
+
+  // /api/live_frame answers 204 when nothing has been published yet, and a
+  // reset between one poll and the fetch it triggered can land exactly there —
+  // which would leave a broken-image icon in the box. Fall back to the still
+  // for that seq instead, and retry naturally when the next seq arrives.
+  const [failedSeq, setFailedSeq] = useState('');
+  // With the socket open the <img> never fetches live frames: the canvas owns
+  // "live", and until its first frame lands the still stays up.
+  const httpLive = !socketOpen && !!liveSrc && liveSrc !== failedSeq;
+  const isLive = socketLive || httpLive;
+  const stillImage = (httpLive && liveSrc) || previewSrc || rawUrl;
+  const [aspectRatio, setAspectRatio] = useState(null);
+
+  useEffect(() => {
+    return frameSocket.subscribeLive((f) => {
+      if (f && f.width && f.height) {
+        setAspectRatio(`${f.width} / ${f.height}`);
+      }
+    });
+  }, []);
+
+  const handleImgLoad = (e) => {
+    const { naturalWidth, naturalHeight } = e.target;
+    if (naturalWidth && naturalHeight) {
+      setAspectRatio(`${naturalWidth} / ${naturalHeight}`);
+    }
+  };
+
+  return (
+    <div className="relative group overflow-hidden rounded-2xl border border-white/15 bg-black/60 shadow-xl backdrop-blur-md transition-all duration-300">
+      {/* Media Frame Container */}
+      <div
+        className={`relative w-full flex items-center justify-center overflow-hidden bg-neutral-950 transition-all duration-300 ${aspectRatio ? '' : 'aspect-video'}`}
+        style={aspectRatio ? { aspectRatio, maxHeight: '60vh' } : { maxHeight: '60vh' }}
+      >
+        {!socketLive && (stillImage ? (
+          <img
+            src={stillImage}
+            alt={httpLive ? 'Latest processed frame' : 'Preview still'}
+            onLoad={handleImgLoad}
+            onError={() => { if (httpLive) setFailedSeq(liveSrc); }}
+            className="h-full w-full object-contain transition-all duration-300 transform-gpu"
+          />
+        ) : (
+          <div className="flex flex-col items-center gap-2 text-neutral-500">
+            <div className="h-8 w-8 rounded-full border-2 border-white/10 border-t-[var(--accent)] animate-spin" />
+            <span className="text-xs">Waiting for the first processed frame…</span>
+          </div>
+        ))}
+        {/* Always mounted (a canvas handed to a worker cannot be re-created
+            without a flash), hidden until it has something to show. */}
+        <FastCanvasPlayer
+          source={frameSocket.liveSource}
+          label="Latest processed frame"
+          onPresent={() => { if (!socketLive) setSocketLive(true); }}
+          className={`absolute inset-0 h-full w-full ${socketLive ? '' : 'invisible'}`}
+        />
+
+        {/* Live Status Overlay Badges */}
+        <div className="absolute top-3 left-3 flex items-center gap-2 z-10">
+          <span className={`px-2.5 py-1 rounded-full text-micro font-bold uppercase tracking-wider backdrop-blur-md border ${
+            paused
+              ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+              : isLive
+                ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                : 'bg-white/10 text-neutral-300 border-white/20'
+          } inline-flex items-center gap-1.5`}>
+            {paused
+              ? <><Icon.pause size={11} /> PAUSED</>
+              : isLive
+                ? <><Icon.live size={11} /> LIVE</>
+                : <><Icon.still size={11} /> PREVIEW STILL</>}
+          </span>
+
+          {!isLive && maxFrames > 1 && (
+            <span
+              className="px-2.5 py-1 rounded-full text-micro font-mono font-bold bg-black/70 backdrop-blur-md border border-white/15 text-white"
+              title="The frame this preview was rendered for — not the frame the render has reached"
+            >
+              of frame {frame} / {maxFrames}
+            </span>
+          )}
+        </div>
+
+        {/* Bottom Description Pill */}
+        {progressDesc && (
+          <div className="absolute bottom-3 left-3 right-3 z-10">
+            <div className="px-3 py-1.5 rounded-xl bg-black/80 backdrop-blur-md border border-white/10 text-xs font-mono text-neutral-200 truncate">
+              <span className="text-accent font-bold mr-2">STATE:</span>
+              <span>{progressDesc}</span>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
