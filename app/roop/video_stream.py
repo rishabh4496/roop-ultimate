@@ -91,6 +91,71 @@ def _popen_kwargs() -> dict:
     return kwargs
 
 
+# The decode pipe's kernel buffer. `subprocess.PIPE` on Windows is a pipe with the system
+# default buffer (4096 bytes, by GetNamedPipeInfo), so FFmpeg can never get ahead of the reader: every frame
+# arrives as dozens of small raw reads, and each one drops and re-takes the GIL. Stage 3
+# runs ten frame workers at THREAD_PRIORITY_HIGHEST that hold the GIL for most of a frame,
+# so the reader (normal priority) loses almost every handoff and the workers starve for
+# input ("in 0.0/1 chunks (empty 100%)"). Measured offline (ffmpeg testsrc2 1272x720 bgr24
+# -> pipe, the `_read_into` loop below, Python threads holding the GIL):
+#
+#   pipe buffer        0 GIL threads   6 GIL threads   10 GIL threads
+#   default (PIPE)       644 fps          2.3 fps         1.6 fps
+#   1 MiB                    -           56 fps             -
+#   4 MiB                    -          185 fps             -
+#   8 MiB                    -          268 fps             -
+#   16 MiB              1251 fps        237 fps          189 fps
+#
+# Live, on the 4070 in the sixth queued video of one backend: Stage 3 GPU 46 %, workers
+# waiting on the GIL in 67/80 native samples, the reader parked re-taking the GIL inside
+# `_read_into` in 6/8, and Stage 3's `decode` wait the op that grew most from the first
+# job of a backend to its fifth and later (x1.65 median over 14 sessions).
+_DECODE_PIPE_MIN = 8 * 1024 * 1024
+_DECODE_PIPE_MAX = 32 * 1024 * 1024
+_DECODE_PIPE_FRAMES = 3
+
+
+def _decode_pipe_bytes(frame_size: int) -> int:
+    """Kernel buffer for the decode pipe: three frames, within [8, 32] MiB."""
+    return int(min(_DECODE_PIPE_MAX, max(_DECODE_PIPE_MIN, _DECODE_PIPE_FRAMES * int(frame_size))))
+
+
+def _open_large_pipe(size: int):
+    """(read_fd, write_fd) of an anonymous pipe with a `size`-byte kernel buffer (Windows).
+
+    Both ends are non-inheritable; `Popen(stdout=write_fd)` makes the child's copy
+    inheritable itself. Returns None off Windows, or if the pipe cannot be made, and the
+    caller keeps `subprocess.PIPE`.
+    """
+    if os.name != "nt":
+        return None
+    try:
+        import _winapi
+        import msvcrt
+        read_handle, write_handle = _winapi.CreatePipe(None, int(size))
+    except Exception as _degrade_error:
+        _swallowed("roop/video_stream.py:_open_large_pipe", _degrade_error,
+                   "decode pipe keeps the default buffer")
+        return None
+    try:
+        read_fd = msvcrt.open_osfhandle(read_handle, os.O_RDONLY)
+    except Exception as _degrade_error:
+        _winapi.CloseHandle(read_handle)
+        _winapi.CloseHandle(write_handle)
+        _swallowed("roop/video_stream.py:_open_large_pipe", _degrade_error,
+                   "decode pipe keeps the default buffer")
+        return None
+    try:
+        write_fd = msvcrt.open_osfhandle(write_handle, 0)
+    except Exception as _degrade_error:
+        os.close(read_fd)
+        _winapi.CloseHandle(write_handle)
+        _swallowed("roop/video_stream.py:_open_large_pipe", _degrade_error,
+                   "decode pipe keeps the default buffer")
+        return None
+    return read_fd, write_fd
+
+
 def hardware_stream_enabled() -> bool:
     """Return whether the Stage 2 direct pipe is enabled.
 
@@ -202,14 +267,40 @@ class NVHardwareVideoReader:
     def _start(self) -> None:
         if self.proc is not None:
             return
+        bufsize = max(self.frame_size * 2, 64 * 1024)
+        pipe = _open_large_pipe(_decode_pipe_bytes(self.frame_size))
         try:
-            self.proc = subprocess.Popen(
-                self._command(),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                bufsize=max(self.frame_size * 2, 64 * 1024),
-                **_popen_kwargs(),
-            )
+            if pipe is None:
+                self.proc = subprocess.Popen(
+                    self._command(),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    bufsize=bufsize,
+                    **_popen_kwargs(),
+                )
+            else:
+                read_fd, write_fd = pipe
+                try:
+                    self.proc = subprocess.Popen(
+                        self._command(),
+                        stdout=write_fd,
+                        stderr=subprocess.PIPE,
+                        **_popen_kwargs(),
+                    )
+                except Exception:
+                    os.close(read_fd)
+                    raise
+                finally:
+                    # Only FFmpeg may hold the write end, or the read never sees EOF.
+                    os.close(write_fd)
+                # Everything else in this class reads, closes and drains `proc.stdout`.
+                try:
+                    self.proc.stdout = open(read_fd, "rb", buffering=bufsize)
+                except Exception:
+                    os.close(read_fd)
+                    self.proc.kill()
+                    self.proc.wait(timeout=5)
+                    raise
             if self.proc.stderr is not None:
                 self._stderr_drainer = StderrDrainer(self.proc.stderr)
         except Exception:
