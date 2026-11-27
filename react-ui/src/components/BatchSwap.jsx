@@ -63,6 +63,18 @@ const ENHANCER_OPTIONS = [
   'None',
 ];
 
+function BatchFileButton({ accept, multiple, onFiles, disabled, children, ...buttonProps }) {
+  const input = useRef(null);
+  return (
+    <>
+      <input ref={input} type="file" hidden accept={accept} multiple={multiple} onChange={onFiles} disabled={disabled} />
+      <Button type="button" {...buttonProps} onClick={() => input.current?.click()} disabled={disabled}>
+        {children}
+      </Button>
+    </>
+  );
+}
+
 export default function BatchSwap({ settings = {}, notify, onUpdateSetting }) {
   const { getJSON, postFiles, postJSON } = useApi();
   // ── Server State ────────────────────────────────────────────────────────
@@ -864,7 +876,7 @@ export default function BatchSwap({ settings = {}, notify, onUpdateSetting }) {
       )}
 
       {/* ── Top Header Banner ── */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 glass-panel p-4 rounded-2xl">
+      <div className="flex flex-col lg:flex-row lg:flex-wrap lg:items-center justify-between gap-3 glass-panel p-4 rounded-2xl">
         <div>
           <h2 className="text-xl font-bold text-white flex items-center gap-2">
             <Icon.batch className="text-accent" size={24} />
@@ -876,22 +888,16 @@ export default function BatchSwap({ settings = {}, notify, onUpdateSetting }) {
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 shrink-0">
-          <label className="cursor-pointer">
-            <input type="file" multiple accept="video/*,image/*" onChange={handleUploadTargets} className="sr-only" />
-            <Button size="sm" variant="secondary" className="pointer-events-none" disabled={uploading}>
-              <Icon.upload size={14} className="mr-1.5" />
-              + Add Targets
-            </Button>
-          </label>
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <BatchFileButton size="sm" variant="secondary" accept="video/*,image/*" multiple onFiles={handleUploadTargets} disabled={uploading}>
+            <Icon.upload size={14} className="mr-1.5" />
+            + Add Targets
+          </BatchFileButton>
 
-          <label className="cursor-pointer">
-            <input type="file" multiple accept="image/*,.fsz" onChange={handleUploadSources} className="sr-only" />
-            <Button size="sm" variant="secondary" className="pointer-events-none" disabled={uploading}>
-              <Icon.upload size={14} className="mr-1.5" />
-              + Add Sources
-            </Button>
-          </label>
+          <BatchFileButton size="sm" variant="secondary" accept="image/*,.fsz" multiple onFiles={handleUploadSources} disabled={uploading}>
+            <Icon.upload size={14} className="mr-1.5" />
+            + Add Sources
+          </BatchFileButton>
 
           {/* Persistent Faceset Library Toggle Button */}
           <Button
@@ -910,13 +916,10 @@ export default function BatchSwap({ settings = {}, notify, onUpdateSetting }) {
             Export Preset
           </Button>
 
-          <label className="cursor-pointer">
-            <input type="file" accept=".json" onChange={importBatchPreset} className="sr-only" />
-            <Button size="sm" variant="secondary" className="pointer-events-none" title="Import Batch Preset JSON">
-              <Icon.upload size={14} className="mr-1" />
-              Import Preset
-            </Button>
-          </label>
+          <BatchFileButton size="sm" variant="secondary" accept=".json" onFiles={importBatchPreset} title="Import Batch Preset JSON">
+            <Icon.upload size={14} className="mr-1" />
+            Import Preset
+          </BatchFileButton>
 
           <Button size="sm" variant="ghost" onClick={refreshBackendState} title="Refresh media library" aria-label="Refresh media library">
             <Icon.refresh size={14} className={loadingState ? 'animate-spin' : ''} />
@@ -926,7 +929,7 @@ export default function BatchSwap({ settings = {}, notify, onUpdateSetting }) {
 
       {/* ── Quick-Slot Preset Toolbar & Settings ── */}
       <div className="flex flex-wrap items-center justify-between gap-3 p-3.5 bg-white/5 rounded-2xl border border-white/10 text-xs">
-        <div className="flex items-center gap-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
           <span className="font-bold text-white flex items-center gap-1.5">
             <Icon.settings size={14} className="text-accent" />
             Quick Slots (1–5):
@@ -1599,7 +1602,7 @@ export default function BatchSwap({ settings = {}, notify, onUpdateSetting }) {
         <Section title="Strategy 3: Per-File Custom Mapping Matrix">
           {/* Toolbar: Search, Filter, Bulk Operations */}
           <div className="p-3.5 bg-white/5 rounded-2xl border border-white/10 space-y-3 mb-4">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+            <div className="flex flex-col lg:flex-row lg:flex-wrap lg:items-center justify-between gap-3">
               {/* Search & Filter */}
               <div className="flex flex-wrap items-center gap-2 flex-1">
                 <input
@@ -1623,7 +1626,7 @@ export default function BatchSwap({ settings = {}, notify, onUpdateSetting }) {
               </div>
 
               {/* Smart Bulk Tools */}
-              <div className="flex flex-wrap gap-2 shrink-0">
+              <div className="flex min-w-0 flex-wrap gap-2">
                 <Button size="sm" variant="primary" onClick={autoMatchFacesetsToTargets}>
                   <Icon.wand className="mr-1" size={13} />
                   Smart Auto-Match Names
@@ -1636,21 +1639,15 @@ export default function BatchSwap({ settings = {}, notify, onUpdateSetting }) {
                 <Button size="sm" variant="secondary" onClick={bulkAutoIncrementTargetPersons}>
                   Auto-Inc Person Ranks
                 </Button>
-                <label className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold bg-white/5 hover:bg-white/10 text-white/90 border border-white/10 cursor-pointer transition-colors">
-                  <span>Import EDL/OTIO</span>
-                  <input
-                    type="file"
-                    accept=".edl,.txt,.json,.otio"
-                    onChange={handleImportTimelineFile}
-                    className="sr-only"
-                  />
-                </label>
+                <BatchFileButton size="sm" variant="secondary" accept=".edl,.txt,.json,.otio" onFiles={handleImportTimelineFile}>
+                  Import EDL/OTIO
+                </BatchFileButton>
               </div>
             </div>
 
             {/* Quick Bulk Toggles */}
-            <div className="flex items-center justify-between border-t border-white/10 pt-2 text-micro">
-              <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-t border-white/10 pt-2 text-xs">
+              <div className="flex flex-wrap items-center gap-2">
                 <span className="text-muted font-semibold">Bulk Select:</span>
                 <button
                   type="button"
@@ -1669,7 +1666,7 @@ export default function BatchSwap({ settings = {}, notify, onUpdateSetting }) {
                 </button>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <span className="text-muted font-semibold">Bulk Enhancer:</span>
                 {ENHANCER_OPTIONS.slice(0, 4).map((enh) => (
                   <button
@@ -1966,15 +1963,9 @@ export default function BatchSwap({ settings = {}, notify, onUpdateSetting }) {
               </div>
 
               <div>
-                <label className="w-full inline-flex items-center justify-center py-2 px-3 rounded-lg text-xs font-bold bg-[var(--accent)] text-black hover:opacity-90 cursor-pointer transition-opacity">
-                  <span>📂 Import EDL / OTIO</span>
-                  <input
-                    type="file"
-                    accept=".edl,.txt,.json,.otio"
-                    onChange={handleImportTimelineFile}
-                    className="sr-only"
-                  />
-                </label>
+                <BatchFileButton size="sm" variant="primary" className="w-full justify-center" accept=".edl,.txt,.json,.otio" onFiles={handleImportTimelineFile}>
+                  Import EDL / OTIO
+                </BatchFileButton>
               </div>
             </Card>
           </div>

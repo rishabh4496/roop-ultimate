@@ -90,7 +90,7 @@ export default function FloatingActionDock({
     // labels broke onto two lines ("GPU / Turbo", "Pop- / out") and the dock doubled in height
     // over the content. `whitespace-nowrap` holds each label on one line; the cap keeps it on screen.
     <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 w-max max-w-[calc(100vw-2rem)] whitespace-nowrap pointer-events-auto transition-all duration-300">
-      <div className="relative flex items-center gap-2.5 rounded-full border border-white/15 bg-black/85 px-4 py-2.5 shadow-2xl backdrop-blur-xl ring-1 ring-white/10">
+      <div className="relative flex flex-wrap items-center justify-center gap-1 rounded-2xl border border-white/15 bg-black/85 px-2 py-2 shadow-2xl backdrop-blur-xl ring-1 ring-white/10 sm:gap-2.5 sm:rounded-full sm:px-4 sm:py-2.5">
         
         {/* There is no Start / Cancel here. The run bar at the top of the
             workspace is the ONE run control (it turns into Cancel while a job is
@@ -129,7 +129,7 @@ export default function FloatingActionDock({
           </div>
         )}
 
-        <div className="h-4 w-px bg-white/15" />
+        <div aria-hidden="true" className="hidden h-4 w-px bg-white/15 sm:block" />
 
         {/* Workspace Layout Switcher Menu */}
         <div className="relative" ref={modeMenuRef}>
@@ -180,7 +180,7 @@ export default function FloatingActionDock({
           </AnimatePresence>
         </div>
 
-        <div className="h-4 w-px bg-white/15" />
+        <div aria-hidden="true" className="hidden h-4 w-px bg-white/15 sm:block" />
 
         {/* Ambilight Glow Toggle */}
         <button
@@ -219,7 +219,7 @@ export default function FloatingActionDock({
           <span className="hidden md:inline">Pop-out</span>
         </button>
 
-        <div className="h-4 w-px bg-white/15" />
+        <div aria-hidden="true" className="hidden h-4 w-px bg-white/15 sm:block" />
 
         {/* Panel Drawer Collapse Toggles */}
         <div className="flex items-center gap-1">

@@ -395,7 +395,7 @@ export default function SliderTrackerBar({
         </div>
 
         {/* Right action controls */}
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {/* Master Slider Effect Switch */}
           <button
             type="button"

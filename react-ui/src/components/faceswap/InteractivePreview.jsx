@@ -1214,9 +1214,8 @@ export default function InteractivePreview({
     ? { height: previewHeight, minHeight: 0, maxHeight: 'none' }
     : {};
 
-  // ── Bottom-Left Viewport HUD Floating Pill ────────────────────────────────
-  const viewportPill = () => (
-    <div className="absolute bottom-3 left-3 z-50 flex items-center gap-1.5 px-2 py-1 rounded-xl bg-black/85 backdrop-blur-md border border-white/20 shadow-2xl pointer-events-auto select-none">
+  const zoomPresets = () => (
+    <div className="absolute inset-x-0 top-full mt-1 flex flex-wrap items-center justify-center gap-1 rounded-xl border border-white/20 bg-black/90 px-2 py-1 shadow-2xl backdrop-blur-md select-none">
       <span
         ref={zoomReadoutRef}
         className="font-mono text-micro font-bold tabular-nums text-accent px-1.5 py-0.5 rounded bg-[var(--accent)]/15 border border-[var(--accent)]/30"
@@ -1601,7 +1600,19 @@ export default function InteractivePreview({
 
   // ── Top Information Badges ────────────────────────────────────────────────
   const stageInfo = () => (
-    <div className="absolute top-3 left-3 z-40 flex items-center gap-2 pointer-events-none">
+    <div className="absolute inset-x-3 top-3 z-40 flex flex-wrap items-center gap-2 pointer-events-none [&:has(details[open])]:z-[55]"
+         onBlur={(event) => {
+           const presets = event.target.closest('details[open]');
+           if (presets && !presets.contains(event.relatedTarget)) presets.open = false;
+         }}
+         onKeyDown={(event) => {
+           if (event.key !== 'Escape') return;
+           const presets = event.target.closest('details[open]');
+           if (!presets) return;
+           event.stopPropagation();
+           presets.open = false;
+           presets.querySelector('summary')?.focus();
+         }}>
       {imgDim && (
         <span className="rounded-lg bg-black/75 backdrop-blur-md px-2.5 py-1 font-mono text-micro tabular-nums text-white/80 border border-white/10 shadow-lg">
           {imgDim.w}×{imgDim.h}
@@ -1664,6 +1675,13 @@ export default function InteractivePreview({
           Pen ({rotoNewMode})
         </span>
       )}
+      <details className="pointer-events-auto ml-auto">
+        <summary aria-label="Viewport zoom presets" title="Viewport zoom presets and face lock"
+                 className="cursor-pointer list-none rounded-lg border border-white/15 bg-black/75 px-2.5 py-1 text-xs font-semibold text-white/90">
+          Zoom <span aria-hidden="true">▾</span>
+        </summary>
+        {zoomPresets()}
+      </details>
     </div>
   );
 
@@ -1726,7 +1744,6 @@ export default function InteractivePreview({
           ))}
         </div>
 
-        {viewportPill()}
         {hudBar()}
       </div>
     );
@@ -2237,7 +2254,6 @@ export default function InteractivePreview({
       )}
 
       {/* ── Bottom Floating Pill & HUD ─────────────────────────────────────── */}
-      {viewportPill()}
       {hudBar()}
     </div>
   );

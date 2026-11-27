@@ -5,6 +5,7 @@ import { logFailure, reportFailure, setFailureToast } from './failureLog';
 import { Toasts, Confetti } from './components/ui';
 import QualityProfilesModal, { BUILTIN_PROFILES } from './components/QualityProfilesModal';
 import CommandPalette from './components/CommandPalette';
+import useDialogFocus from './components/useDialogFocus';
 import WorkstationRail from './components/shell/WorkstationRail';
 import WorkstationHeader from './components/shell/WorkstationHeader';
 import useQueueSummary from './components/shell/useQueueSummary';
@@ -666,6 +667,8 @@ export default function App() {
   );
   const [showProfilesModal, setShowProfilesModal] = useState(false);
   const [showSnapshotsModal, setShowSnapshotsModal] = useState(false);
+  const closeSnapshots = () => setShowSnapshotsModal(false);
+  const snapshotsDialog = useDialogFocus(showSnapshotsModal, closeSnapshots);
   const [activeQualityProfile, setActiveQualityProfile] = useState('');
   const [snapshots, setSnapshots] = useState(() => {
     try {
@@ -1350,16 +1353,18 @@ export default function App() {
 
       {/* Workspace Snapshots Modal */}
       {showSnapshotsModal && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[70] flex items-center justify-center p-4" onClick={() => setShowSnapshotsModal(false)}>
-          <div className="bg-[#121216] border border-white/10 rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl animate-scale-in text-white" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between border-b border-white/10 pb-3">
-              <h3 className="text-base font-bold flex items-center gap-2 text-accent">
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[70] flex items-center justify-center p-4"
+             onClick={(event) => { if (event.target === event.currentTarget) closeSnapshots(); }}>
+          <div ref={snapshotsDialog} role="dialog" aria-modal="true" aria-labelledby="workspace-snapshots-title" tabIndex={-1}
+               className="max-h-[calc(100dvh-2rem)] w-full max-w-md space-y-4 overflow-y-auto rounded-2xl border border-white/10 bg-[#121216] p-4 text-white shadow-2xl animate-scale-in sm:p-6">
+            <div className="flex items-center justify-between gap-2 border-b border-white/10 pb-3">
+              <h2 id="workspace-snapshots-title" className="text-base font-bold flex items-center gap-2 text-accent">
                 <Icon.history size={18} /> Workspace Session Snapshots
-              </h3>
-              <button type="button" onClick={() => setShowSnapshotsModal(false)} aria-label="Close workspace snapshots modal" className="text-muted hover:text-white font-bold">✕</button>
+              </h2>
+              <button type="button" onClick={closeSnapshots} aria-label="Close workspace snapshots modal" className="text-muted hover:text-white font-bold">✕</button>
             </div>
 
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="text-xs text-white/50">{snapshots.length} snapshot(s) saved</span>
               <button type="button" onClick={saveSessionSnapshot} className="px-3 py-1 rounded-lg bg-[var(--accent)] hover:bg-[var(--accent)]/90 text-white text-xs font-bold transition-all">
                 + Save Current State

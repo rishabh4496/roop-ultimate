@@ -141,12 +141,22 @@ export default function FaceManager({ notify, registerFileListener, setTab }) {
 
   return (
     <div className="space-y-4">
-      <div role="tablist" aria-label="Face Manager" className="flex gap-1 rounded-xl border border-white/10 bg-white/[0.03] p-1 w-fit">
-        {VIEWS.map((v) => (
+      <div role="tablist" aria-label="Face Manager" className="flex w-fit max-w-full flex-wrap gap-1 rounded-xl border border-white/10 bg-white/[0.03] p-1">
+        {VIEWS.map((v, index) => (
           <button
             key={v.id} type="button" role="tab" id={`facemgr-tab-${v.id}`} aria-selected={view === v.id}
             aria-controls={`facemgr-panel-${v.id}`} data-testid={`facemgr-tab-${v.id}`}
+            tabIndex={view === v.id ? 0 : -1}
             onClick={() => setView(v.id)}
+            onKeyDown={(event) => {
+              const next = { ArrowRight: (index + 1) % VIEWS.length, ArrowLeft: (index + VIEWS.length - 1) % VIEWS.length,
+                Home: 0, End: VIEWS.length - 1 }[event.key];
+              if (next === undefined) return;
+              event.preventDefault();
+              const id = VIEWS[next].id;
+              setView(id);
+              document.getElementById(`facemgr-tab-${id}`)?.focus();
+            }}
             className={`rounded-lg px-3 py-1.5 text-sm font-semibold transition-colors ${
               view === v.id ? 'bg-[var(--accent)]/15 text-accent' : 'text-white/60 hover:text-white hover:bg-white/[0.06]'}`}
           >

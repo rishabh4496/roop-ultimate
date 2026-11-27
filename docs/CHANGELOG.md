@@ -7,6 +7,7 @@ folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22
 
 ## 2026-11-27
 
+- Face Swap and Batch Matrix controls now wrap on narrow screens. Face Swap puts its zoom presets and face lock in a popover so the canvas stays clear. Batch uploads and preset or timeline imports open from keyboard-accessible buttons. Face Manager supports arrow-key tab navigation, and the shared Workspace Snapshots dialog traps focus, closes on Escape and returns focus to its opener.
 - React progress follows the active render phase. Tracking uses its own counts, Swap uses written-frame telemetry when available, and encoding shows an indeterminate bar. The sticky status shows live frame rate and a phase ETA when the backend supplies one. Delayed polling responses cannot undo a newer socket update.
 - The Face Swap preview height can be dragged or adjusted with the keyboard. The Preview size menu offers Fit, Compact and Large. Custom heights are saved with the workspace and in named layouts.
 

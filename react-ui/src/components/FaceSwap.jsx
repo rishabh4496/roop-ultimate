@@ -4484,28 +4484,28 @@ export default function FaceSwap({
             className="w-full"
           />
           {/* run bar */}
-          <div className="sticky top-20 z-30 !mt-3 pb-3 bg-[#0c0e14]/90 backdrop-blur-md">
+          <div className="relative z-30 !mt-3 pb-3 bg-[#0c0e14]/90 backdrop-blur-md lg:sticky lg:top-20">
             {/* The run bar keeps its shape whether or not something is
                 rendering. A run has its own tab now, so this one no longer
                 turns into a progress panel — it just says a job is in flight,
                 and offers the way over to it. */}
             <div className="w-full space-y-3">
               <div className="rounded-2xl glass-panel p-3.5 sm:p-4 flex flex-col md:flex-row items-center justify-between gap-3 sm:gap-4 shadow-xl border border-white/5 w-full">
-                <div className="flex items-center gap-3 w-full md:w-auto">
+                <div className="flex w-full min-w-0 flex-wrap items-center gap-2 sm:gap-3 md:w-auto">
                   {progress.processing ? (
-                    <Button variant="stop" size="lg" onClick={confirmStop} aria-describedby="run-status" className="w-full md:w-auto justify-center">■ Cancel render</Button>
+                    <Button variant="stop" size="lg" onClick={confirmStop} aria-describedby="run-status" className="flex-auto justify-center md:flex-none">■ Cancel render</Button>
                   ) : (
-                    <Button variant="primary" size="lg" onClick={run} disabled={queue.running || queue.busy || uploadingTgt || !!runBlockedReason} aria-describedby="run-status" className="w-full md:w-auto justify-center">
+                    <Button variant="primary" size="lg" onClick={run} disabled={queue.running || queue.busy || uploadingTgt || !!runBlockedReason} aria-describedby="run-status" className="flex-auto justify-center md:flex-none">
                       {queue.pending.length ? `▶ Start Batch (${queue.pending.length})` : '▶ Start Swapping'}
                     </Button>
                   )}
                   {maxFrames > 1 && (
-                    <Button variant="secondary" size="lg" onClick={renderPreviewClip} disabled={!!startBlockedReason || isGeneratingPreviewClip || progress.processing} aria-describedby="run-status" className="!text-orange-400 border border-orange-500/20 hover:bg-orange-500/10 w-full md:w-auto justify-center">
+                    <Button variant="secondary" size="lg" onClick={renderPreviewClip} disabled={!!startBlockedReason || isGeneratingPreviewClip || progress.processing} aria-describedby="run-status" className="flex-auto justify-center border border-orange-500/20 !text-orange-400 hover:bg-orange-500/10 md:flex-none">
                       Render 5s Preview
                     </Button>
                   )}
                   {progress.processing && (
-                    <Button variant="secondary" size="lg" onClick={onOpenProcessing} className="w-full md:w-auto justify-center">
+                    <Button variant="secondary" size="lg" onClick={onOpenProcessing} className="flex-auto justify-center md:flex-none">
                       View progress →
                     </Button>
                   )}
