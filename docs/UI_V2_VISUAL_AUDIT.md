@@ -200,11 +200,16 @@ type and sunray keyframe, and the dithered horizon.
   - **Blank app after a render.** `/api/progress.output` becomes an object once a render finishes, and the
     deck printed it raw (React error #31). It is now normalised. Each screen also sits in an error
     boundary.
-  - **In point one frame late.** The engine stores a 0-based seek plus an exclusive end; the timeline
-    shows 1-based frames. In 300 / Out 329 rendered 29 frames from 301, and "reset" dropped frame 1.
-    `inOutOf()` and `engineFrameFor()` map the range in one place. The same range now renders 30 frames,
-    and output frame 0 matches source frame 300 (mean abs diff 1.72 against 4.33 and 4.13 for its
-    neighbours). 1.0 sends the raw value and is unchanged.
+  - **In point one frame late, in both clients.** The engine stores a 0-based seek plus an exclusive end;
+    every client shows 1-based frames, and `set_frame` stored In raw. In 300 / Out 329 rendered 29 frames,
+    from 301.
+    - First fixed in 2.0's client (`d888e2d`): the same range rendered 30 frames, and output frame 0
+      matched source frame 300 (mean abs diff 1.72, against 4.33 and 4.13 for its neighbours).
+    - Then fixed at the API (`2617e3c`), so 1.0 is fixed too, with no change to 1.0. `set_frame` takes
+      the frame on screen, and the target list reports `start_frame` 1-based. That matches the queue's
+      `frame_start` and the mock. 2.0's `inOutOf()` and `engineFrameFor()` are now pass-throughs.
+    - Covered by `app/tests/test_target_in_out_frames.py`. The API fix has not yet run on the live
+      engine (the backend was down).
   - **Idle GPU load.** Below.
 - **GPU cost (RTX 4070).** Chromium ran on ANGLE/D3D11; the WebGL renderer string was checked, so this is
   not SwiftShader. `nvidia-smi` was sampled for 20 s per arm, in A/B/B/A order, with the engine idle.
