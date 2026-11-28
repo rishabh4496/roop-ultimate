@@ -29,6 +29,14 @@ export function outputLabel(o) {
   return String(o);
 }
 
+/** The finished output's file path (absolute on the engine), for routes that take one; '' if unknown. */
+export function outputPath(o) {
+  if (!o) return '';
+  if (typeof o === 'string') return o;
+  if (typeof o === 'object') return String(o.absolute_path || o.path || '');
+  return '';
+}
+
 export const useRun = create((set, get) => ({
   progress: IDLE,
   online: true,

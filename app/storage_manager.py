@@ -104,6 +104,21 @@ def _within(path: str, root: str) -> bool:
         return False
 
 
+def _within_canonical(path: str, root: str) -> bool:
+    """`_within` for two paths that are ALREADY `_canonical`: a string test, no filesystem call.
+
+    Matching every scanned item against every reference through `_within` cost four `realpath`
+    calls per pair. Measured 2026-11-28 on the 4070 install (942 references, ~830 items): 380 ms
+    per item, done twice per item, so one /api/storage took ~10 minutes and the requests queued on
+    the lock. Both sides are canonical here (references are stored canonical, the item is
+    canonicalised once in _make_item), so the containment test reduces to a prefix test.
+    """
+    if path == root:
+        return True
+    prefix = root if root.endswith(os.sep) else root + os.sep
+    return path.startswith(prefix)
+
+
 def _size(path: str) -> int:
     try:
         if os.path.isfile(path) and not os.path.islink(path):
@@ -157,6 +172,16 @@ class StorageManager:
         self._lock = threading.RLock()
 
     def _runtime(self) -> dict[str, Any]:
+        # Queue jobs and project records repeat the same few media paths hundreds of times, and each
+        # realpath() is a filesystem walk on Windows: canonicalise each distinct string once per scan.
+        _canon_cache: dict[str, str] = {}
+
+        def canon(p: str) -> str:
+            hit = _canon_cache.get(p)
+            if hit is None:
+                hit = _canon_cache[p] = _canonical(p)
+            return hit
+
         context: dict[str, Any] = {
             "references": set(),
             "active_work": False,
@@ -171,10 +196,10 @@ class StorageManager:
             for entry in getattr(api, "list_files_process", []) or []:
                 filename = getattr(entry, "filename", "")
                 if filename:
-                    context["references"].add(_canonical(filename))
+                    context["references"].add(canon(filename))
             active_project = getattr(api, "_active_project_id", "")
             if active_project:
-                context["references"].add(_canonical(
+                context["references"].add(canon(
                     os.path.join(self.app_root, "projects", f"{active_project}.json")))
         except Exception as _degrade_error:
             # Inventory must remain available when the API is starting or when
@@ -194,14 +219,14 @@ class StorageManager:
                     context["active_work"] = True
                     context["active_reasons"].append("a resumable queue/project job exists")
                 context["references"].update(
-                    _canonical(p) for p in _path_strings(job) if p)
+                    canon(p) for p in _path_strings(job) if p)
         except Exception as _degrade_error:
             _swallowed("storage_manager.py:196", _degrade_error, "fallback continued")
             pass
 
         queue_file = os.path.join(self.app_root, "queue.json")
         if os.path.isfile(queue_file):
-            context["references"].add(_canonical(queue_file))
+            context["references"].add(canon(queue_file))
             try:
                 with open(queue_file, encoding="utf-8") as handle:
                     data = json.load(handle)
@@ -211,7 +236,7 @@ class StorageManager:
                         context["active_work"] = True
                         context["active_reasons"].append("a persisted active/resumable queue job exists")
                     context["references"].update(
-                        _canonical(p) for p in _path_strings(job) if p)
+                        canon(p) for p in _path_strings(job) if p)
             except (OSError, ValueError, json.JSONDecodeError):
                 # A malformed queue is protected; it is not safe to infer that
                 # its referenced media is orphaned.
@@ -224,12 +249,12 @@ class StorageManager:
                 if not filename.endswith(".json"):
                     continue
                 path = os.path.join(projects_dir, filename)
-                context["references"].add(_canonical(path))
+                context["references"].add(canon(path))
                 try:
                     with open(path, encoding="utf-8") as handle:
                         record = json.load(handle)
                     context["references"].update(
-                        _canonical(p) for p in _path_strings(record) if p)
+                        canon(p) for p in _path_strings(record) if p)
                     if str(record.get("state") or "") in _ACTIVE_STATES:
                         context["active_work"] = True
                         context["active_reasons"].append("a persisted project is active or resumable")
@@ -260,14 +285,21 @@ class StorageManager:
             return True
         return False
 
+    def _matching_references(self, path: str, references: set[str]) -> int:
+        """How many references lie inside `path` or contain it. `references` are canonical."""
+        canonical = _canonical(path)
+        return sum(1 for ref in references
+                   if _within_canonical(canonical, ref) or _within_canonical(ref, canonical))
+
     def _referenced(self, path: str, references: set[str]) -> bool:
-        return any(_within(path, ref) or _within(ref, path) for ref in references)
+        return self._matching_references(path, references) > 0
 
     def _make_item(self, path: str, category: str, classification: str,
                    reason: str, regenerable: bool, context: Mapping[str, Any],
                    evidence: str = "") -> dict[str, Any]:
         canonical = _canonical(path)
-        referenced = self._referenced(canonical, context["references"])
+        reference_count = self._matching_references(canonical, context["references"])
+        referenced = reference_count > 0
         active = bool(context["active_work"])
         if referenced:
             classification = PROTECTED
@@ -284,8 +316,7 @@ class StorageManager:
             "reason": reason,
             "regenerable": bool(regenerable),
             "referenced": bool(referenced),
-            "reference_count": sum(1 for ref in context["references"]
-                                   if _within(canonical, ref) or _within(ref, canonical)),
+            "reference_count": reference_count,
             "size_bytes": _size(path),
             "is_directory": os.path.isdir(path) and not os.path.islink(path),
             "evidence": evidence,

@@ -3,6 +3,7 @@ import { Trash2, ExternalLink, Film, Image as ImageIcon, RefreshCw, FolderOpen }
 import { getJSON, postJSON } from '@engine/api';
 import { Panel, Marquee, SplitText, Meteors } from '../fx/effects';
 import { notify } from '../ui/controls';
+import QualityReport from '../ui/QualityReport';
 
 const isVideo = (f) => f.kind === 'video' || /\.(mp4|mkv|webm|avi|mov)$/i.test(f.name || '');
 const mb = (n) => `${((n || 0) / 1048576).toFixed(1)} MB`;
@@ -27,6 +28,7 @@ function Card({ f, onDelete }) {
       <div className="p-2.5">
         <div className="truncate text-[12.5px] font-semibold text-white" title={f.name}>{f.name}</div>
         <div className="font-mono text-[10.5px] text-[var(--fg-faint)]">{mb(f.size)} · {when(f.mtime)}</div>
+        {f.absolute_path && <div className="mt-1.5"><QualityReport path={f.absolute_path} /></div>}
       </div>
     </article>
   );

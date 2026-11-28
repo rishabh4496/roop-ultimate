@@ -3,11 +3,13 @@ import { Play, Pause, Square, ListPlus, Loader2, AlertTriangle, Timer, Gauge, Fi
 import { useTelemetryStore, selectRenderProgress } from '@engine/store/telemetryStore';
 import { postJSON } from '@engine/api';
 import { useStudio } from '../engine/studio';
-import { useRun, outputLabel } from '../engine/run';
+import { useRun, outputLabel, outputPath } from '../engine/run';
+import QualityReport from '../ui/QualityReport';
 import { readiness, buildQueueJob } from '../engine/payload';
 import { Panel, NumberTicker } from '../fx/effects';
 import { notify } from '../ui/controls';
 import Preflight from './Preflight';
+import { RunEstimate, ClipAdvisor } from './Estimate';
 
 const fmtEta = (ms) => {
   if (!ms || ms < 0) return '—';
@@ -118,6 +120,7 @@ export default function RunDeck() {
           <AlertTriangle size={14} className="mt-0.5 shrink-0" /> {why}
         </div>
       )}
+      {!why && <RunEstimate />}
       {!why && <Preflight />}
       {p.error && !why && <div className="mb-3 rounded-xl border border-[var(--rule-strong)] p-2 text-[12px] text-[var(--danger)]">Last render: {p.error}</div>}
       <div className="flex gap-2">
@@ -129,6 +132,8 @@ export default function RunDeck() {
         </button>
       </div>
       {outputLabel(p.output) && <div className="mt-2 truncate font-mono text-[11px] text-[var(--fg-faint)]" title={outputLabel(p.output)}>last output · {outputLabel(p.output)}</div>}
+      {outputPath(p.output) && <div className="mt-2"><QualityReport path={outputPath(p.output)} /></div>}
+      <ClipAdvisor />
     </Panel>
   );
 }

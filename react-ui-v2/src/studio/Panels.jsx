@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   UserPlus, Trash2, Library, FolderInput, Film, Image as ImageIcon, X, ScanFace, Users, Eraser,
   ArrowRight, Cpu, Wand2, Layers, Crosshair, Clapperboard, Check, Link2, Pencil,
+  Loader2, ScanSearch, Combine, Plus, Sparkles,
 } from 'lucide-react';
 import { getJSON, postJSON } from '@engine/api';
 import { swapperOptions } from '@engine/components/faceswap/pipelineRules.js';
@@ -112,6 +113,14 @@ export function PeoplePanel() {
     <Panel title="People" accent={people.length ? `${people.length}` : undefined} data-testid="people"
       actions={<>
         <button type="button" className="btn btn-ghost btn-sm" title="Make every face on this frame a target person" onClick={() => s.captureFace({ all: true })}><Users size={14} /> All</button>
+        <button type="button" className="btn btn-ghost btn-sm" disabled={s.busy === 'people' || !s.targets.length} data-testid="people-autocapture"
+          title="Scan the whole clip and capture everyone from their own most frontal frame (replaces the people here)"
+          onClick={() => { if (!people.length || window.confirm('Scan the clip and capture everyone from scratch?\n\nThis replaces the people you already have.')) s.autoCapture(); }}>
+          {s.busy === 'people' ? <Loader2 size={14} className="animate-spin" /> : <ScanSearch size={14} />} Scan
+        </button>
+        {s.targetFaces.length > 1 && (
+          <button type="button" className="btn btn-ghost btn-sm btn-icon" disabled={s.busy === 'people'} aria-label="Group the captured faces into people" title="Group the captured faces into people by likeness" data-testid="people-autogroup" onClick={() => s.autoGroup()}><Combine size={14} /></button>
+        )}
         {people.length > 0 && <button type="button" className="btn btn-ghost btn-sm btn-icon" aria-label="Forget the target people" title="Forget the target people" onClick={() => s.clearPeople()}><Eraser size={14} /></button>}
       </>}>
       <Select label="Who gets swapped" value={mode} options={[...modes, ...(modes.includes('Selected people') ? [] : ['Selected people'])]} onChange={(v) => s.setSetting('face_detection_mode', v)} />
@@ -121,7 +130,7 @@ export function PeoplePanel() {
           const sel = isSelectedPerson(s, p);
           const value = src == null ? 'auto' : String(src);
           return (
-            <div key={p.id} className={`tile group flex items-center gap-2 p-2 ${sel ? 'selected' : ''}`} style={sel ? { borderColor: hueOf(p.rank) } : undefined} data-testid="person">
+            <div key={p.id} className={`tile group flex flex-wrap items-center gap-2 p-2 ${sel ? 'selected' : ''}`} style={sel ? { borderColor: hueOf(p.rank) } : undefined} data-testid="person">
               {editing === p.id ? (
                 <form className="flex min-w-0 flex-1 items-center gap-1.5" onSubmit={async (e) => { e.preventDefault(); if (await s.renamePerson(p, draft)) setEditing(null); }}>
                   <label className="sr-only" htmlFor={`name-${p.id}`}>Name for {p.name}</label>
@@ -156,6 +165,27 @@ export function PeoplePanel() {
                   onClick={() => s.removePerson(p)} data-testid="person-remove"><Trash2 size={12} /></button>
               </span>
               </>)}
+              {sel && editing !== p.id && (
+                <div className="flex w-full flex-wrap items-center gap-1.5 border-t border-[var(--rule)] pt-1.5" data-testid="person-tools">
+                  <button type="button" className="btn btn-ghost btn-sm" title={`Capture ${p.name} again from frame ${s.frame}`} onClick={() => s.addAngle(p)} data-testid="person-add-angle"><Plus size={12} /> Angle here</button>
+                  <button type="button" className="btn btn-ghost btn-sm" disabled={s.busy === `angles:${p.id}`} title={`Scan the clip for ${p.name} at other poses`} onClick={() => s.findAngles(p)} data-testid="person-find-angles">
+                    {s.busy === `angles:${p.id}` ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />} Find angles
+                  </button>
+                  {people.length > 1 && (
+                    <>
+                      <label className="sr-only" htmlFor={`merge-${p.id}`}>Merge {p.name} into</label>
+                      <select id={`merge-${p.id}`} className="select !h-7 ml-auto w-auto text-[11.5px]" value="" data-testid="person-merge"
+                        onChange={(e) => {
+                          const into = people.find((q) => String(q.id) === e.target.value);
+                          if (into && window.confirm(`Merge ${p.name} into ${into.name}?\n\nEvery captured angle of ${p.name} becomes ${into.name}'s.`)) s.mergePerson(p, into);
+                        }}>
+                        <option value="">Merge into…</option>
+                        {people.filter((q) => q.id !== p.id).map((q) => <option key={q.id} value={String(q.id)}>{q.name}</option>)}
+                      </select>
+                    </>
+                  )}
+                </div>
+              )}
             </div>
           );
         })}

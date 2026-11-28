@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { AnimatePresence, motion, MotionConfig } from 'framer-motion';
-import { Clapperboard, Layers, Library as LibraryIcon, Boxes, FolderOpen, Settings2, TerminalSquare, Zap, WifiOff, RefreshCw, ScanFace, SlidersHorizontal, History as HistoryIcon } from 'lucide-react';
+import { Clapperboard, Layers, Library as LibraryIcon, Boxes, FolderOpen, Settings2, TerminalSquare, Zap, WifiOff, RefreshCw, ScanFace, SlidersHorizontal, History as HistoryIcon, Video } from 'lucide-react';
 import { setFailureToast } from '@engine/failureLog';
 import { useStudio } from './engine/studio';
 import { useRun, useRunSync } from './engine/run';
@@ -14,6 +14,7 @@ import Settings from './screens/Settings';
 import Editor from './screens/Editor';
 import History from './screens/History';
 import FaceManager from './screens/FaceManager';
+import Live from './screens/Live';
 import HorizonCanvas from './fx/HorizonCanvas';
 import TerminalDock from './fx/TerminalDock';
 import BootSequence from './fx/BootSequence';
@@ -24,6 +25,7 @@ import { variantsFor } from './fx/transitions';
 import { termLog } from './fx/termFeed';
 import { Toasts, notify } from './ui/controls';
 import TermsGate, { useTerms } from './ui/TermsGate';
+import CommandPalette, { useCommands } from './ui/CommandPalette';
 
 // React UI 2.0 - the shell. Hash routes, the boot sequence, the top bar (engine state + the render's
 // Pause/Stop, reachable from every screen), the magnifying dock, the terminal and the transitions.
@@ -38,6 +40,7 @@ const SCREENS = [
   { id: 'outputs', label: 'Outputs', icon: FolderOpen, kbd: 'Alt 7', render: () => <Outputs /> },
   { id: 'history', label: 'History', icon: HistoryIcon, kbd: 'Alt 8', render: () => <History /> },
   { id: 'settings', label: 'Settings', icon: Settings2, kbd: 'Alt 9', render: () => <Settings /> },
+  { id: 'live', label: 'Live', icon: Video, kbd: 'Alt 0', render: () => <Live /> },
 ];
 const ids = SCREENS.map((s) => s.id);
 const fromHash = () => {
@@ -119,12 +122,16 @@ export default function App() {
   useEffect(() => {
     const onKey = (e) => {
       if (!e.altKey || e.ctrlKey || e.metaKey) return;
-      const n = Number(e.key);
-      if (n >= 1 && n <= SCREENS.length) { e.preventDefault(); go(SCREENS[n - 1].id); }
+      // Alt 1-9 are the first nine screens, Alt 0 the tenth.
+      const i = e.key === '0' ? 9 : Number(e.key) - 1;
+      if (/^[0-9]$/.test(e.key) && i >= 0 && i < SCREENS.length) { e.preventDefault(); go(SCREENS[i].id); }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [go]);
+
+  const toggleTerminal = useCallback(() => { if (!useFxStore.getState().terminal) toggleFx('terminal'); toggleFx('terminalOpen'); }, [toggleFx]);
+  const commands = useCommands({ screens: SCREENS, go, toggleTerminal });
 
   const current = SCREENS.find((s) => s.id === screen) || SCREENS[0];
   const dockItems = [
@@ -188,6 +195,7 @@ export default function App() {
       </div>
 
       {!gated && <Dock items={dockItems} active={screen} onSelect={onDock} />}
+      {!gated && booted && <CommandPalette commands={commands} />}
       {terminal && !gated && <TerminalDock progress={progress} tabs={SCREENS} onNavigate={go} />}
       <Toasts />
     </MotionConfig>

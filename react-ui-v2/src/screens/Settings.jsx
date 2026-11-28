@@ -1,11 +1,12 @@
-import React, { useMemo, useState } from 'react';
-import { Search, RotateCcw, SlidersHorizontal, HardDrive, Cpu, Loader2 } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Search, RotateCcw, SlidersHorizontal, HardDrive, Cpu, Loader2, Gauge } from 'lucide-react';
 import { getJSON } from '@engine/api';
 import schema from '@schema';
 import { useStudio } from '../engine/studio';
 import { Panel, SplitText } from '../fx/effects';
 import { Switch, notify } from '../ui/controls';
 import { StoragePanel, SystemPanels } from './System';
+import TuningPanels from './Tuning';
 
 // ── Settings: every setting the engine exposes, rendered from its own schema ──
 // app/settings.schema.json is generated from app/settings.py (the single source for a setting), so a
@@ -153,14 +154,22 @@ function EngineSettings() {
 const TABS = [
   { id: 'engine', label: 'Engine settings', icon: SlidersHorizontal },
   { id: 'storage', label: 'Storage', icon: HardDrive },
+  { id: 'tuning', label: 'Tuning', icon: Gauge },
   { id: 'system', label: 'System', icon: Cpu },
 ];
 
 export default function Settings() {
-  const [tab, setTab] = useState(() => {
+  const tabFromHash = () => {
     const t = String(window.location.hash || '').split('?')[1]?.match(/tab=(\w+)/)?.[1];
-    return TABS.some((x) => x.id === t) ? t : 'engine';
-  });
+    return TABS.some((x) => x.id === t) ? t : null;
+  };
+  const [tab, setTab] = useState(() => tabFromHash() || 'engine');
+  // A link (or the command palette) to #/settings?tab=x while Settings is already open.
+  useEffect(() => {
+    const onHash = () => { const t = tabFromHash(); if (t) setTab(t); };
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+  }, []);
   return (
     <div className="mx-auto max-w-[1500px] space-y-3" data-testid="settings">
       <div className="flex flex-wrap items-end gap-3">
@@ -174,6 +183,7 @@ export default function Settings() {
       </div>
       {tab === 'engine' && <EngineSettings />}
       {tab === 'storage' && <StoragePanel />}
+      {tab === 'tuning' && <TuningPanels />}
       {tab === 'system' && <SystemPanels />}
     </div>
   );

@@ -5,6 +5,7 @@ import { useStudio } from '../engine/studio';
 import { buildQueueJob, readiness } from '../engine/payload';
 import { Panel, NumberTicker, Meteors } from '../fx/effects';
 import { notify } from '../ui/controls';
+import Segments from './Segments';
 
 // ── Batch: the job queue ─────────────────────────────────────────────────────
 // The queue's state and actions are React UI 1.0's useQueue hook (it owns the polling and the
@@ -136,6 +137,7 @@ export default function Batch() {
           </div>
           <div className="mt-2 text-[11.5px] text-[var(--fg-faint)]">{q.running ? (q.paused ? 'Queue paused.' : 'Queue running.') : 'Queue idle.'} Queue pause holds the batch between jobs; the render's own Pause (top bar) holds the current frame.</div>
         </Panel>
+        <Segments running={!!q.running} />
       </div>
     </div>
   );

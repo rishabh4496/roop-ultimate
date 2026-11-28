@@ -1647,23 +1647,35 @@ async function startServer() {
     });
   });
 
+  // routes_quality.quality_analyze's shape. The old {score, recommendation} was no shape the engine sends,
+  // so 1.0's report read every metric as undefined against the mock.
   app.post('/api/quality/analyze', (req, res) => {
+    const path = String((req.body || {}).path || '');
+    if (!path) return res.status(404).json({ message: 'No output available to analyze' });
+    const isVideo = /\.(mp4|mov|mkv|webm|avi|gif|webp)$/i.test(path);
     res.json({
-      score: 94.2,
-      recommendation: 'Optimal configuration. Lighting angle matches source identity.',
-      warnings: [],
+      ok: true, is_video: isVideo, sampled: isVideo ? 24 : 1, has_source: true,
+      metrics: {
+        identity_similarity: 0.512, identity_score: 90.5, sharpness_raw: 612.4, sharpness_score: 76.6,
+        detection_rate: 95.8, ...(isVideo ? { temporal_stability: 88.1 } : {}),
+        overall_score: isVideo ? 87.6 : 86.3, grade: 'A',
+      },
     });
   });
 
+  // routes_diagnostics.settings_advisor's shape: clip stats, and ONLY the settings it would change,
+  // each with its reason. The old {advice, suggested_settings} was no shape the engine sends.
   app.post('/api/advisor', (req, res) => {
+    if (progressState.processing) return res.status(409).json({ message: 'busy processing' });
+    const cur = (req.body || {}).settings || appSettings;
+    const recs = [
+      { key: 'face_detector_threshold', value: 0.42, reason: 'Faces are small (3.1% of the frame at the smallest): a lower threshold keeps them detected.' },
+      { key: 'detector_engine', value: 'retinaface', reason: 'SCRFD missed faces in 2 of 12 sampled frames; RetinaFace finds turned faces more reliably.' },
+    ].filter((r) => cur[r.key] !== r.value);
     res.json({
-      advice: 'RTX 4070 desktop detected with 12GB VRAM. TensorRT FP16 execution recommended with UltraMax enhancer.',
-      suggested_settings: {
-        provider: 'cuda',
-        trt_precision: 'mixed',
-        max_threads: 10,
-        selected_enhancer: 'UltraMax',
-      },
+      ok: true, is_video: true,
+      stats: { sampled_frames: 12, detection_coverage: 83.3, median_faces: 2, min_face_size_pct: 3.1, max_face_size_pct: 11.4, brightness: 118.2, motion: 4.6 },
+      recommendations: recs,
     });
   });
 

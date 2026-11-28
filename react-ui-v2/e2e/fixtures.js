@@ -104,6 +104,7 @@ export const SCREENS = [
   { route: 'outputs', root: 'outputs' },
   { route: 'history', root: 'history' },
   { route: 'settings', root: 'settings' },
+  { route: 'live', root: 'live' },
 ];
 const rootOf = (route) => SCREENS.find((s) => s.route === route)?.root || route;
 

@@ -4,6 +4,7 @@ import { getJSON, postJSON } from '@engine/api';
 import { useStudio } from '../engine/studio';
 import { Panel, SplitText, Meteors, NumberTicker } from '../fx/effects';
 import { notify } from '../ui/controls';
+import Projects from './Projects';
 
 // ── History: every finished run, its settings, and what changed between two ──
 // /api/history (run_history.json). "Apply settings" merges a run's settings into the current ones
@@ -61,6 +62,8 @@ export default function History() {
           <p className="text-[13px] text-[var(--fg-dim)]">{list.length} run{list.length === 1 ? '' : 's'} · <NumberTicker value={totals.frames} /> frames · {dur(totals.time)} rendering. Tick two runs to compare their settings.</p>
         </div>
       </div>
+
+      <Projects />
 
       {pair.length === 2 && (
         <Panel title="Compare" accent={`${diff.length} setting${diff.length === 1 ? '' : 's'} differ`} beam data-testid="history-compare"

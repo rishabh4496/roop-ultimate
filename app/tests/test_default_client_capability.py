@@ -72,6 +72,27 @@ V2_MUST_HAVE = {
     "/api/render/preflight": "check a render before it starts",
     "/api/system/hardware": "show the machine",
     "/api/update/check": "show whether an update is available",
+    # 2026-11-28, second pass: the rest of 1.0's served features.
+    "/api/queue/segments": "see a split render's slices",
+    "/api/queue/segments/rerender": "re-render one slice",
+    "/api/queue/segments/join": "join a split render",
+    "/api/projects": "list resumable projects",
+    "/api/quality/analyze": "grade a finished output",
+    "/api/target/auto_capture": "capture everyone in a clip",
+    "/api/target/autocluster": "group captured faces into people",
+    "/api/target/add_angle": "add an angle of a person",
+    "/api/target/auto_angles": "find a person's angles across the clip",
+    "/api/target/group": "merge two people",
+    "/api/trt_cache": "see the TensorRT engine cache",
+    "/api/trt_cache/clear": "clear stale TensorRT engines",
+    "/api/recognition/set": "choose the identity embedding backbone",
+    "/api/benchmark/start": "benchmark this machine",
+    "/api/autotune/start": "auto-tune provider and batch size",
+    "/api/livecam/start": "start the live camera",
+    "/api/timeline/export_edl": "export a cut list for an editor",
+    "/api/timeline/export_otio": "export an OpenTimelineIO timeline",
+    "/api/runtime_estimate": "estimate how long a render takes",
+    "/api/advisor": "suggest settings for a clip",
 }
 
 # React UI 1.0's visual signature: its shared surface classes, its type and accent, and links that

@@ -99,5 +99,49 @@ class StorageRouteRegistrationTest(unittest.TestCase):
         self.assertIn("/api/storage/delete", paths)
 
 
+class WithinCanonicalTest(unittest.TestCase):
+    """_within_canonical replaced realpath-per-pair matching (2026-11-28: ~10 min -> 16 s per scan).
+    It must answer exactly what _within answers for canonical inputs."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix="within_")
+        root = self.tmp.name
+        self.paths = [os.path.join(root, *parts) for parts in (
+            (), ("a",), ("a", "b"), ("a", "bc"), ("a", "b", "c.mp4"), ("ab",), ("x", "a", "b"))]
+        for p in self.paths[1:]:
+            os.makedirs(p, exist_ok=True)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_agrees_with_within_on_every_pair(self):
+        from storage_manager import _within, _within_canonical
+        canon = [_canonical(p) for p in self.paths]
+        for a in canon:
+            for b in canon:
+                self.assertEqual(_within_canonical(a, b), _within(a, b), (a, b))
+
+    def test_a_sibling_sharing_a_prefix_is_not_inside(self):
+        from storage_manager import _within_canonical
+        b = _canonical(os.path.join(self.tmp.name, "a", "b"))
+        bc = _canonical(os.path.join(self.tmp.name, "a", "bc"))
+        self.assertFalse(_within_canonical(bc, b))
+        self.assertTrue(_within_canonical(_canonical(os.path.join(self.tmp.name, "a", "b", "c.mp4")), b))
+
+    def test_a_drive_root_contains_its_paths(self):
+        from storage_manager import _within_canonical
+        drive_root = _canonical(os.path.splitdrive(self.tmp.name)[0] + os.sep) if os.name == "nt" else os.sep
+        self.assertTrue(_within_canonical(_canonical(self.tmp.name), drive_root))
+
+    def test_reference_count_matches_the_old_pairwise_count(self):
+        from storage_manager import _within
+        manager = StorageManager(self.tmp.name)
+        refs = {_canonical(p) for p in self.paths[2:5]}
+        for p in self.paths:
+            c = _canonical(p)
+            old = sum(1 for r in refs if _within(c, r) or _within(r, c))
+            self.assertEqual(manager._matching_references(c, refs), old, p)
+
+
 if __name__ == "__main__":
     unittest.main()

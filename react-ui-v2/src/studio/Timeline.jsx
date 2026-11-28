@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { ChevronsLeft, ChevronLeft, ChevronRight, ChevronsRight, Play, Pause, Flag, FlagOff, Scissors, RotateCcw } from 'lucide-react';
-import { getJSON } from '@engine/api';
+import { ChevronsLeft, ChevronLeft, ChevronRight, ChevronsRight, Play, Pause, Flag, FlagOff, Scissors, RotateCcw, FileDown } from 'lucide-react';
+import { getJSON, postJSON } from '@engine/api';
+import { cutListDocument, downloadText } from '../engine/interchange';
+import { notify } from '../ui/controls';
 import { useStudio, currentTarget, isVideoTarget } from '../engine/studio';
 import { timecode, frameUrl, hueOf } from './people';
 import FrameImg from '../ui/FrameImg';
@@ -262,6 +264,27 @@ export default function Timeline({ onScrub }) {
       )}
       {video && !presence.length && (
         <div className="mt-1.5 text-[11.5px] text-[var(--fg-faint)]">Presence lanes appear once the engine has scanned this clip for people.</div>
+      )}
+      {video && (
+        <div className="mt-2 flex flex-wrap items-center gap-1.5" data-testid="cutlist-export">
+          <span className="text-[11px] text-[var(--fg-faint)]">Cut list for your editor{presence.length ? ` (${presence.length} ${presence.length === 1 ? 'person' : 'people'}, In to Out)` : ' (source only: no presence lanes yet)'}:</span>
+          {[['edl', 'EDL', '/api/timeline/export_edl', 'edl', 'text/plain'], ['otio', 'OTIO', '/api/timeline/export_otio', 'otio', 'application/json']].map(([k, label, route, field, type]) => (
+            <button key={k} type="button" className="btn btn-ghost btn-sm !h-7" data-testid={`export-${k}`}
+              title={k === 'edl' ? "CMX3600 EDL: the source on V1, each person's swapped stretches on V2" : 'OpenTimelineIO JSON: the source on V1, swapped stretches on V2'}
+              onClick={async () => {
+                const { document: doc, fps } = cutListDocument(target, presence, { a: engineIn, b: engineOut });
+                try {
+                  const r = await postJSON(route, { document: doc, fps });
+                  const text = r?.[field];
+                  if (!text) { notify(`The engine returned no ${label}`, 'error'); return; }
+                  downloadText(text, r.filename || `${doc.name}.${k}`, type);
+                  notify(`Exported ${label}: ${doc.timeline.face_segments.length} swapped stretch${doc.timeline.face_segments.length === 1 ? '' : 'es'}`);
+                } catch (e) { notify(e.message, 'error'); }
+              }}>
+              <FileDown size={12} /> {label}
+            </button>
+          ))}
+        </div>
       )}
     </div>
   );

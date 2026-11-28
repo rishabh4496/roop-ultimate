@@ -247,6 +247,93 @@ export const useStudio = create((set, get) => ({
       return true;
     } catch (e) { notify(e.message, 'error'); await get().refresh().catch(() => {}); return false; }
   },
+  // ── people tools (1.0's PersonGroups, on the same routes) ───────────────────
+  /** Scan the whole clip and capture everyone from THEIR most frontal frame, replacing the people. */
+  autoCapture: async () => {
+    const s = get();
+    set({ busy: 'people' });
+    try {
+      const res = await postJSON('/api/target/auto_capture', { index: s.selectedTarget, replace: true, target_media_id: s.targetMediaId }, { timeout: 0 });
+      set({ ...contextPatch(res), selTargetFace: 0 });
+      if (!res.count) { notify(res.message || 'Auto-capture found nobody in this clip', 'warn'); return res; }
+      const people = new Set((res.target_person_ids || []).filter(Boolean));
+      if (people.size > 1) get().setSetting('face_detection_mode', 'Selected people');
+      // `separation` predicts whether identity can work at all: two people 0.12 apart are one
+      // identity to the matcher, and the failure shows up much later as wrong or missing swaps.
+      const sep = res.separation;
+      const quality = sep == null ? '' : sep >= 0.7 ? `, clearly distinct (${sep.toFixed(2)})` : sep >= 0.4 ? `, usable but close (${sep.toFixed(2)})` : `. WARNING: only ${sep.toFixed(2)} apart, they will be mixed up`;
+      const angles = res.angles_added ? `, plus ${res.angles_added} angle${res.angles_added === 1 ? '' : 's'}` : '';
+      notify(`Captured ${res.count} ${res.count === 1 ? 'person' : 'people'}${angles}${res.scanned ? ` from ${res.scanned} frames` : ''}${quality}`, sep != null && sep < 0.4 ? 'warn' : 'success');
+      (res.notes || []).forEach((n) => { if (/WARNING|never clearly apart|overlap/.test(n)) notify(n, 'warn'); });
+      return res;
+    } catch (e) { notify(e.message, 'error'); return null; } finally { set({ busy: '' }); }
+  },
+  /** Re-group every captured face into people by embedding. */
+  autoGroup: async () => {
+    set({ busy: 'people' });
+    try {
+      const res = await postJSON('/api/target/autocluster', { target_media_id: get().targetMediaId }, { timeout: 0 });
+      set(contextPatch(res));
+      const n = res.people ?? new Set((res.target_person_ids?.some(Boolean) ? res.target_person_ids : res.target_groups || []).filter((x) => x !== null && x !== '')).size;
+      notify(`Grouped into ${n} ${n === 1 ? 'person' : 'people'}`);
+      return res;
+    } catch (e) { notify(e.message, 'error'); return null; } finally { set({ busy: '' }); }
+  },
+  /** Capture person `p` again from the frame on screen: one more angle in their bank. */
+  addAngle: async (p) => {
+    const s = get();
+    try {
+      const res = await postJSON('/api/target/add_angle', {
+        index: s.selectedTarget, frame: s.frame, target_media_id: s.targetMediaId,
+        ...(p.legacy ? { person: p.rank } : { target_person_id: p.id }),
+      }, { timeout: 0 });
+      set(contextPatch(res));
+      if (res?.message && !res.count && !(res.target_faces || []).length) notify(res.message, 'warn');
+      else notify(`Added an angle of ${p.name} from frame ${s.frame}`);
+      return res;
+    } catch (e) { notify(e.message, 'error'); return null; }
+  },
+  /** Scan the clip for person `p` at many poses and bank the new angles. */
+  findAngles: async (p) => {
+    const s = get();
+    set({ busy: `angles:${p.id}` });
+    try {
+      const res = await postJSON('/api/target/auto_angles', {
+        index: s.selectedTarget, target_media_id: s.targetMediaId,
+        ...(p.legacy ? { person: p.rank } : { target_person_id: p.id }),
+      }, { timeout: 0 });
+      set(contextPatch(res));
+      const detail = res.scanned ? ` (scanned ${res.scanned} frames${res.bins ? `, ${res.bins} pose bins` : ''})` : '';
+      if (res.count) {
+        notify(`Found ${res.count} new angle${res.count === 1 ? '' : 's'} of ${p.name}${detail}`);
+        // Every match takes the minimum over a person's angles, so one wrong angle speaks for all.
+        if (res.review?.length) notify(`${res.review.length} of them sit far from the original capture: check ${p.name}'s angles and remove any that are not them.`, 'warn');
+      } else {
+        const why = Object.entries(res.rejected || {}).map(([r, c]) => `${c} ${r}`).join(', ');
+        notify(`${res.message || 'No new angles found'}${detail}${why ? `; turned away: ${why}` : ''}`, 'warn');
+      }
+      return res;
+    } catch (e) { notify(e.message, 'error'); return null; } finally { set({ busy: '' }); }
+  },
+  /** Merge person `from` into person `into`: every captured angle of `from` becomes `into`'s. */
+  mergePerson: async (from, into) => {
+    const s = get();
+    if (!from || !into || from.id === into.id) return null;
+    const legacy = from.legacy || into.legacy;
+    const body = legacy
+      ? { groups: (s.targetGroups || []).map((g) => (g === from.id ? into.id : g)) }
+      : { target_person_ids: (s.targetPersonIds || []).map((id) => (id === from.id ? into.id : id)) };
+    try {
+      const res = await postJSON('/api/target/group', { target_media_id: s.targetMediaId, ...body });
+      const patch = contextPatch(res);
+      // The engine sends the regrouped context; the mock's legacy answer is the groups we sent.
+      set({ ...patch, ...(legacy && !patch.targetGroups ? { targetGroups: body.groups } : {}) });
+      const next = { ...get().faceMapping };
+      if (Object.prototype.hasOwnProperty.call(next, from.id) && !patch.faceMapping) { delete next[from.id]; set({ faceMapping: next }); }
+      notify(`Merged ${from.name} into ${into.name}`);
+      return res;
+    } catch (e) { notify(e.message, 'error'); return null; }
+  },
   clearPeople: async () => {
     try {
       const res = await postJSON('/api/target/clear_faces', { target_media_id: get().targetMediaId });

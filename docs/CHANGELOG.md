@@ -7,6 +7,48 @@ folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22
 
 ## 2026-11-28
 
+- **React UI 2.0 gains the rest of 1.0's served features, plus three of its own. The storage review is 40x faster.**
+  - **Storage review: 660 s → 16 s, identical output.**
+    - Cause: every item was matched against every reference (942 on the 4070 install) through `_within`, at four `realpath` calls per pair. That cost 380 ms per item, twice per item.
+    - Fix: `_within_canonical` compares already-canonical strings. `_runtime` canonicalises each distinct path once per scan.
+    - A/B on the 4070 install, HEAD vs new: 839 items each, 0 differences in classification, `referenced` or `reference_count`.
+    - `test_storage_manager.py` checks the new test against `_within` on every pair, including `\a\bc` vs `\a\b` and a drive root.
+  - **New in 2.0:**
+    - Batch: split renders. One pill per slice; re-render one slice after a confirmation (the others are untouched); join with a duration check.
+    - History: projects. Check, Load or Resume a checkpointed render. Resume is offered only where the engine says the record is recoverable, and a refusal shows the engine's reasons.
+    - Quality report: grade, likeness, sharpness, stability and coverage. On every output card and on the Render deck's last output.
+    - People: auto-capture (scan the clip), auto-group, an angle from this frame, find angles across the clip, and merge two people.
+    - Settings, Tuning: benchmark (run, apply, keep mine, revert), auto-tune (start, cancel, revert), the TensorRT engine cache (clear stale or all, confirmed) and the identity-embedding backbone.
+    - Live screen (Alt+0): webcam live swap, optional OBS virtual camera and audio pass-through.
+    - Timeline: export a cut list as EDL or OTIO, built from the presence lanes and clipped to In/Out.
+    - Render deck: a time estimate labelled "learned from N runs" or "rough guess", and a clip advisor that suggests only changes, each applied by choice.
+    - A command palette (Ctrl+K), and Settings tabs that follow `#/settings?tab=` while open.
+  - **1.0 defect found: EDL/OTIO export never produced a file.**
+    - 1.0 reads `edl_text` and `otio_json`; the engine returns `edl` and `otio`.
+    - 1.0 also sent `face_segments: []`, so the EDL could only ever hold the source.
+    - 2.0 reads the right keys and sends the segments. `test_cutlist_export_document.py` runs that document through the engine's real exporters.
+  - **Not built: UltraMax compile.**
+    - `/api/enhancer/ultramax/compile` sleeps about 1 s and reports "Engine compilation successful" without building anything.
+    - Nothing in the render reads `/api/enhancer/ultramax/settings`.
+    - A button on either would report success while nothing ran.
+  - **Mock server:**
+    - `/api/quality/analyze` and `/api/advisor` now have the engine's shapes (they had `{score, recommendation}` and `{advice, suggested_settings}`).
+  - **Tests:**
+    - `react-ui-v2/e2e/features2.spec.js` adds 10 tests. Mock suite: 44 of 44 pass.
+    - 1.0's suite against the changed mock: 375 pass, 38 skip, and 1 fails (`tab-stops: faceswap`, which fails the same at HEAD).
+  - **On the real engine (4070, restarted with this code):**
+    - Storage lists 839 items in 13 s. It offers no delete while a paused project counts as active work; that is the engine's rule.
+    - Projects lists 352 and offers Resume on none, which matches the engine. Load restored the newest project: 1 target, 1 source, 1 person.
+    - The live spec passes (3.0 min, two renders), and `queue.json` keeps its 9 jobs unchanged.
+    - The quality report on a real output: B (81) from 24 frames in 9.8 s.
+    - Working:
+      - Tuning: TRT cache 23.2 GB (mostly stale namespaces), recognition advice, the benchmark prompt, and auto-tune ("no render has run in this session yet").
+      - The pre-flight check reads "ready".
+      - The advisor returned no changes (12 frames sampled).
+      - The estimate reads "18 s · rough guess": no recorded run matches these exact settings, so it uses the 1135 ms/frame global average.
+    - Not run on the real engine, because they change the user's people, files or GPU state: people tools, TRT clear, benchmark, auto-tune, live camera, and split renders (none exist on the install).
+    - The capability guard requires 20 more routes.
+    - The auto-tune and benchmark verbs are spelled out, because the guard cannot see interpolated routes.
 - **React UI 2.0 re-verified. A fresh install could not render from it. Fixed, plus five features 1.0 had.**
   - **Re-verify at `36e29b1`, before any change:**
     - lint and build are clean;
