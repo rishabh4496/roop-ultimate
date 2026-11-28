@@ -314,7 +314,9 @@ test.describe('keyboard shortcuts', () => {
     await expect(row(page, 'viewport.splitView').locator('kbd')).toHaveText('Q');
     await expect(row(page, 'transport.addToQueue'), 'the other action gave the key up').toContainText('unbound');
     await expect(page.getByTestId('shortcut-changed-count')).toHaveText('2 changed');
-    await page.getByRole('button', { name: 'Reset all' }).click();
+    // Scoped to the shortcuts tab: Settings has its own "Reset all" once any setting differs from
+    // /api/settings/defaults, which in a full run an earlier test has already changed.
+    await page.getByTestId('keyboard-shortcuts-tab').getByRole('button', { name: 'Reset all' }).click();
     await expect(page.getByTestId('shortcut-changed-count')).toHaveText('All defaults');
     await expect(row(page, 'transport.addToQueue').locator('kbd')).toHaveText('Q');
   });

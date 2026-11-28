@@ -60,6 +60,18 @@ V2_MUST_HAVE = {
     "/api/faceset/library": "open the faceset library",
     "/api/faceset/library/load": "load a faceset into the cast",
     "/api/models/integrity": "show the models on disk",
+    # 2026-11-28 re-verify: 2.0 had no terms screen, and the engine refuses /api/swap (403
+    # terms_required) until they are accepted, so a fresh install could not render from 2.0 at all.
+    "/api/terms": "show the intended-use terms on a fresh install",
+    "/api/terms/acknowledge": "accept the intended-use terms",
+    "/api/target/name": "name a target person",
+    "/api/target/remove_face": "remove a target person",
+    "/api/storage": "review what the engine keeps on disk",
+    "/api/storage/delete": "delete one reviewed safe item",
+    "/api/settings/defaults": "reset settings to the defaults",
+    "/api/render/preflight": "check a render before it starts",
+    "/api/system/hardware": "show the machine",
+    "/api/update/check": "show whether an update is available",
 }
 
 # React UI 1.0's visual signature: its shared surface classes, its type and accent, and links that

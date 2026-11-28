@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   UserPlus, Trash2, Library, FolderInput, Film, Image as ImageIcon, X, ScanFace, Users, Eraser,
-  ArrowRight, Cpu, Wand2, Layers, Crosshair, Clapperboard, Check, Link2,
+  ArrowRight, Cpu, Wand2, Layers, Crosshair, Clapperboard, Check, Link2, Pencil,
 } from 'lucide-react';
 import { getJSON, postJSON } from '@engine/api';
 import { swapperOptions } from '@engine/components/faceswap/pipelineRules.js';
@@ -106,6 +106,8 @@ export function PeoplePanel() {
   const people = useMemo(() => peopleOf(s), [s.targetPersonIds, s.targetGroups, s.targetNames, s.targetFaces]); // eslint-disable-line react-hooks/exhaustive-deps
   const mode = s.settings?.face_detection_mode;
   const modes = s.meta?.face_detection_modes || ['Selected face', 'All faces', 'First found'];
+  const [editing, setEditing] = useState(null);   // person id being renamed
+  const [draft, setDraft] = useState('');
   return (
     <Panel title="People" accent={people.length ? `${people.length}` : undefined} data-testid="people"
       actions={<>
@@ -119,13 +121,23 @@ export function PeoplePanel() {
           const sel = isSelectedPerson(s, p);
           const value = src == null ? 'auto' : String(src);
           return (
-            <div key={p.id} className={`tile flex items-center gap-2 p-2 ${sel ? 'selected' : ''}`} style={sel ? { borderColor: hueOf(p.rank) } : undefined}>
+            <div key={p.id} className={`tile group flex items-center gap-2 p-2 ${sel ? 'selected' : ''}`} style={sel ? { borderColor: hueOf(p.rank) } : undefined} data-testid="person">
+              {editing === p.id ? (
+                <form className="flex min-w-0 flex-1 items-center gap-1.5" onSubmit={async (e) => { e.preventDefault(); if (await s.renamePerson(p, draft)) setEditing(null); }}>
+                  <label className="sr-only" htmlFor={`name-${p.id}`}>Name for {p.name}</label>
+                  <input id={`name-${p.id}`} className="input !h-8 min-w-0 flex-1 text-[12px]" autoFocus maxLength={40} value={draft} placeholder={`Person ${p.rank + 1}`}
+                    onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => { if (e.key === 'Escape') setEditing(null); }} data-testid="person-name-input" />
+                  <button type="submit" className="btn btn-sm btn-icon" aria-label="Save name"><Check size={14} /></button>
+                  <button type="button" className="btn btn-ghost btn-sm btn-icon" aria-label="Cancel" onClick={() => setEditing(null)}><X size={14} /></button>
+                </form>
+              ) : (<>
               <button type="button" onClick={() => s.selectPerson(p.id, p.faceIndex)} aria-pressed={sel} className="flex min-w-0 items-center gap-2 text-left">
                 <span className="relative h-10 w-10 shrink-0 overflow-hidden rounded-full border-2" style={{ borderColor: hueOf(p.rank) }}>
                   {p.thumb ? <img src={p.thumb} alt="" className="h-full w-full object-cover" /> : <ScanFace size={18} className="m-auto mt-2" />}
+                  {p.faceIndices?.length > 1 && <span className="absolute bottom-0 right-0 rounded bg-black/80 px-0.5 font-mono text-[8.5px] text-white" title={`${p.faceIndices.length} captured angles`}>{p.faceIndices.length}</span>}
                 </span>
                 <span className="min-w-0">
-                  <span className="block truncate text-[12.5px] font-semibold text-white">{p.name}</span>
+                  <span className="block truncate text-[12.5px] font-semibold text-white" data-testid="person-name">{p.name}</span>
                   <span className="block font-mono text-[10px]" style={{ color: hueOf(p.rank) }}>{sel ? 'selected' : 'click to select'}</span>
                 </span>
               </button>
@@ -137,6 +149,13 @@ export function PeoplePanel() {
                 {s.sources.map((_, i) => <option key={i} value={i}>{sourceNameAt(s, i)}</option>)}
                 <option value="-1">Leave untouched</option>
               </select>
+              <span className="flex shrink-0 flex-col gap-0.5 opacity-60 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+                <button type="button" className="btn btn-ghost btn-sm btn-icon !h-6 !w-6" aria-label={`Rename ${p.name}`} title="Rename"
+                  onClick={() => { setDraft(p.named ? p.name : ''); setEditing(p.id); }} data-testid="person-rename"><Pencil size={12} /></button>
+                <button type="button" className="btn btn-ghost btn-sm btn-icon !h-6 !w-6" aria-label={`Remove ${p.name}`} title="Remove this person (every captured angle)"
+                  onClick={() => s.removePerson(p)} data-testid="person-remove"><Trash2 size={12} /></button>
+              </span>
+              </>)}
             </div>
           );
         })}
@@ -162,7 +181,8 @@ export function PipelinePanel() {
     { id: 'swap', label: 'Swap', icon: Wand2, value: settings.swap_model },
     { id: 'mask', label: 'Mask', icon: Layers, value: settings.mask_engine },
     { id: 'restore', label: 'Restore', icon: Cpu, value: settings.selected_enhancer },
-    { id: 'out', label: 'Output', icon: Clapperboard, value: settings.video_codec || settings.output_method || 'file' },
+    // The codec setting is output_video_codec; `video_codec` does not exist, so this node always read "file".
+    { id: 'out', label: 'Output', icon: Clapperboard, value: settings.output_video_codec || settings.output_method || 'file' },
   ];
   return (
     <Panel title="Pipeline" accent={live ? 'live' : undefined} beam={live} data-testid="pipeline">

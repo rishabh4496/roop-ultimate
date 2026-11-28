@@ -7,6 +7,45 @@ folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22
 
 ## 2026-11-28
 
+- **React UI 2.0 re-verified. A fresh install could not render from it. Fixed, plus five features 1.0 had.**
+  - **Re-verify at `36e29b1`, before any change:**
+    - lint and build are clean;
+    - the mock suite passed 26 of 26;
+    - the live spec on the real engine passed.
+  - **The earlier "every 1.0 tool" claim was wrong.**
+    - 2.0's import graph reached 72 of the 146 `/api/*` routes 1.0 calls.
+    - The live backend answers 73 of the 74 it missed (probed by GET: 200 or 405, not 404).
+  - **Defect: no terms screen.**
+    - The engine refuses `/api/swap` with 403 `terms_required` until `NOTICE.md`'s intended-use terms are accepted.
+    - 2.0 had no screen to accept them, so a fresh install could never render from it.
+    - Fix: `ui/TermsGate.jsx`. The shell is inert behind it.
+  - **Defect: person names were read by face index.**
+    - The engine's `target_names` is per person rank (`_target_names_ranked`).
+    - With two captured angles of one person, a name landed on the wrong person or on nobody.
+  - **Defect: four Settings keys did not exist.**
+    - `video_codec`, `video_format`, `image_format` and `encoder_preset` were mapped instead of the real `output_*` and `perf_encoder_preset` keys.
+    - The output codec, format and preset were free-text boxes, and the Pipeline diagram's Output node always read "file".
+    - The fix also makes `tristate` flags auto/on/off dropdowns.
+  - **New in 2.0:**
+    - People: rename a person, and remove a person (every captured angle of them).
+    - Settings, Storage: the engine's storage review, with a confirmed delete of one `SAFE_TO_DELETE` item.
+    - Settings, System: hardware, and the update check.
+    - Settings: Reset all to this machine's defaults, after a confirmation.
+    - Render deck: the engine's pre-flight check, with its two one-click fixes. It is advisory and never blocks Start.
+  - **Mock server:**
+    - `/api/storage` now has the engine's shape (it returned a `{total_gb}` shape the engine never sent).
+    - `/api/settings/defaults` no longer echoes the current settings.
+    - 1.0's suite against it: 374 pass, 2 fail. `tab-stops: faceswap` fails the same on HEAD's mock (250 vs 203).
+    - `stage26`'s shortcut "Reset all" locator matched 1.0's Settings "Reset all" once defaults were real. It is now scoped to the shortcuts tab; 27 of 27 pass.
+  - **Storage review is slow inside the engine.**
+    - `/api/storage` took minutes on the 4070 install (about 830 items) and requests queue on `StorageManager._lock`; one did not return in 5 min.
+    - Run standalone, `StorageManager().scan()` took 4.7 s and found 6 items. Not investigated.
+    - 2.0 sets no client timeout on it and shows a "takes a few minutes" note. 1.0's 45 s timeout fails there.
+  - **Tests:**
+    - `react-ui-v2/e2e/features.spec.js` adds 8 tests. Mock suite: 34 of 34 pass. Live spec: passed again with the new build.
+    - Checked in the browser on the real engine: pre-flight, the Output codec, rename (restored after), and the System tab. Not on the real engine: the Storage tab (the scan did not return) and person removal (to keep the captured person).
+    - `test_default_client_capability.py` now requires the 10 routes above to be reachable from 2.0.
+  - **Still only in 1.0** (served routes 2.0 does not call): live cam, projects, queue segment re-render/join, EDL/OTIO export, target grouping/auto-capture, quality analysis, UltraMax compile, benchmark/autotune, recognition model choice, TRT cache management.
 - **React UI 2.0 has committed browser tests.**
   - `react-ui-v2/e2e/`, run with `npm run test:e2e`: 26 Playwright tests against the built app and 1.0's mock server. All pass.
     - They replace the scratch `flow` script.

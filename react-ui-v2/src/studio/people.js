@@ -14,12 +14,17 @@ export function peopleOf(s) {
   const legacy = !ids.some(Boolean);
   const keys = legacy ? (s.targetGroups || []) : ids;
   keys.forEach((id, faceIndex) => {
-    if (id === null || id === undefined || id === '' || seen.has(id)) return;
+    if (id === null || id === undefined || id === '') return;
+    if (seen.has(id)) { out.find((p) => p.id === id)?.faceIndices.push(faceIndex); return; }
     seen.add(id);
     const rank = out.length;
     out.push({
       id, rank, faceIndex, legacy,
-      name: s.targetNames?.[faceIndex] || s.targetFacesInfo?.[faceIndex]?.name || `Person ${rank + 1}`,
+      // The engine's target_names is indexed by person RANK (_target_names_ranked), not by captured
+      // face: with two angles of one person, a face index names the wrong person.
+      name: s.targetNames?.[rank] || s.targetFacesInfo?.[faceIndex]?.name || `Person ${rank + 1}`,
+      named: !!s.targetNames?.[rank],
+      faceIndices: [faceIndex],     // every captured angle of this person
       thumb: s.targetFaces?.[faceIndex] || null,
     });
   });

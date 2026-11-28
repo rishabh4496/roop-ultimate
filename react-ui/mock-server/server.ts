@@ -289,6 +289,9 @@ let appSettings: Record<string, any> = {
   color_gamma: 1.0,
   color_gain: 1.0,
 };
+// What a fresh install starts with: /api/settings/defaults must not follow later edits (the engine
+// loads a throwaway Settings from a missing file), or "reset to default" is a no-op in the mock.
+const defaultAppSettings: Record<string, any> = JSON.parse(JSON.stringify(appSettings));
 
 // Target and source selection
 let selectedSourceIndex = 0;
@@ -676,7 +679,7 @@ async function startServer() {
   });
 
   app.get('/api/settings/defaults', (req, res) => {
-    res.json(appSettings);
+    res.json(defaultAppSettings);
   });
 
   app.post('/api/settings', (req, res) => {
@@ -1836,8 +1839,42 @@ async function startServer() {
     current: { sha: 'a'.repeat(40), date: '2026-09-22T00:00:00+00:00', branch: 'main', version: 'main@mock' },
     apply_channel: 'pinokio', apply_gated: false, checked_at: Date.now() / 1000, cached: false,
   }));
-  app.get('/api/storage', (req, res) => res.json({ total_gb: 512, used_gb: 128, temp_gb: 4.2 }));
-  app.post('/api/storage/delete', (req, res) => res.json({ ok: true }));
+  // The engine's shape (storage_manager.StorageManager.scan / delete_item): a reviewed item list, and a
+  // delete of ONE explicitly confirmed SAFE_TO_DELETE item. The old {total_gb, used_gb} stand-in was no
+  // shape the engine ever sent.
+  const storageItems = [
+    { id: 'st-temp-1', relative_path: 'app/temp/preview_cache', category: 'temporary files', size_bytes: 734003200, is_directory: true,
+      classification: 'SAFE_TO_DELETE', reason: 'Temporary frames left by an earlier render; regenerated on demand.', regenerable: true, referenced: false, reference_count: 0 },
+    { id: 'st-log-1', relative_path: 'logs/api/old.log', category: 'logs', size_bytes: 1048576, is_directory: false,
+      classification: 'SAFE_TO_DELETE', reason: 'An old launcher log.', regenerable: true, referenced: false, reference_count: 0 },
+    { id: 'st-trt-1', relative_path: 'app/models/trt_cache', category: 'application cache', size_bytes: 2147483648, is_directory: true,
+      classification: 'REVIEW_BEFORE_DELETE', reason: 'TensorRT engines; deleting forces a ~90 s rebuild per model.', regenerable: true, referenced: false, reference_count: 0 },
+    { id: 'st-out-1', relative_path: 'app/output/clip_swapped.mp4', category: 'outputs', size_bytes: 52428800, is_directory: false,
+      classification: 'PROTECTED', reason: 'A render output referenced by the run history.', regenerable: false, referenced: true, reference_count: 1 },
+  ];
+  const storageReview = () => {
+    const names = Array.from(new Set(storageItems.map((i) => i.category)));
+    return {
+      schema_version: 1, project_root: 'C:/mock/roop-ultimate', active_work: !!progressState.processing,
+      active_reasons: progressState.processing ? ['render in progress'] : [],
+      categories: names.map((name) => {
+        const list = storageItems.filter((i) => i.category === name);
+        return { name, status: 'VERIFIED', evidence: `mock ${name}`, item_count: list.length, size_bytes: list.reduce((n, i) => n + i.size_bytes, 0) };
+      }),
+      items: storageItems,
+      deletion_policy: 'Only a single freshly revalidated SAFE_TO_DELETE item may be explicitly deleted.',
+    };
+  };
+  app.get('/api/storage', (req, res) => res.json(storageReview()));
+  app.post('/api/storage/delete', (req, res) => {
+    const body = req.body || {};
+    if (!body.confirm) return res.status(400).json({ message: 'explicit confirmation is required before deleting storage', storage_error: true });
+    const at = storageItems.findIndex((i) => i.id === String(body.item_id || ''));
+    if (at < 0) return res.status(404).json({ message: 'storage item not found; rescan', storage_error: true });
+    if (storageItems[at].classification !== 'SAFE_TO_DELETE') return res.status(409).json({ message: 'item is not SAFE_TO_DELETE', storage_error: true });
+    const [gone] = storageItems.splice(at, 1);
+    res.json({ deleted: gone, inventory: storageReview() });
+  });
   app.get('/api/runtime/state', (req, res) => res.json({ state: 'ready', initialized: true, ...getHardwareTelemetry(progressState.processing) }));
 
   // ── Hardware Benchmark & Optimization Suite ─────────────────────────

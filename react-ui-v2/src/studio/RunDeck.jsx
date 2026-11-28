@@ -7,6 +7,7 @@ import { useRun, outputLabel } from '../engine/run';
 import { readiness, buildQueueJob } from '../engine/payload';
 import { Panel, NumberTicker } from '../fx/effects';
 import { notify } from '../ui/controls';
+import Preflight from './Preflight';
 
 const fmtEta = (ms) => {
   if (!ms || ms < 0) return '—';
@@ -117,6 +118,7 @@ export default function RunDeck() {
           <AlertTriangle size={14} className="mt-0.5 shrink-0" /> {why}
         </div>
       )}
+      {!why && <Preflight />}
       {p.error && !why && <div className="mb-3 rounded-xl border border-[var(--rule-strong)] p-2 text-[12px] text-[var(--danger)]">Last render: {p.error}</div>}
       <div className="flex gap-2">
         <button type="button" className="btn btn-primary btn-lg flex-1" onClick={start} disabled={!!busy || !!why} data-testid="run-start">

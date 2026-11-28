@@ -23,6 +23,7 @@ import { useFxStore } from './fx/fxStore';
 import { variantsFor } from './fx/transitions';
 import { termLog } from './fx/termFeed';
 import { Toasts, notify } from './ui/controls';
+import TermsGate, { useTerms } from './ui/TermsGate';
 
 // React UI 2.0 - the shell. Hash routes, the boot sequence, the top bar (engine state + the render's
 // Pause/Stop, reachable from every screen), the magnifying dock, the terminal and the transitions.
@@ -89,6 +90,9 @@ export default function App() {
   const terminal = useFxStore((s) => s.terminal);
   const toggleFx = useFxStore((s) => s.toggleFx);
 
+  const termsState = useTerms(booted);
+  const gated = !!termsState.terms && !termsState.terms.acknowledged;
+
   useRunSync();
   useEffect(() => setFailureToast((msg, type) => notify(msg, type === 'warning' ? 'warn' : type)), []);
   useEffect(() => { document.documentElement.dataset.palette = palette; }, [palette]);
@@ -139,7 +143,8 @@ export default function App() {
       {grain && <div className="v2-grain" aria-hidden="true" />}
       <BootSequence meta={meta} settings={settings} error={error} />
 
-      <div className="relative z-10 flex h-full flex-col">
+      <TermsGate {...termsState} />
+      <div className="relative z-10 flex h-full flex-col" inert={gated || undefined} aria-hidden={gated || undefined}>
         <header className="topbar">
           <a href="#/studio" className="flex items-center gap-2.5" aria-label="Roop Ultimate 2.0, Studio">
             <span className="brand-mark"><Zap size={15} /></span>
@@ -182,8 +187,8 @@ export default function App() {
         </main>
       </div>
 
-      <Dock items={dockItems} active={screen} onSelect={onDock} />
-      {terminal && <TerminalDock progress={progress} tabs={SCREENS} onNavigate={go} />}
+      {!gated && <Dock items={dockItems} active={screen} onSelect={onDock} />}
+      {terminal && !gated && <TerminalDock progress={progress} tabs={SCREENS} onNavigate={go} />}
       <Toasts />
     </MotionConfig>
   );

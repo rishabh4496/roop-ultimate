@@ -218,6 +218,35 @@ export const useStudio = create((set, get) => ({
     set({ faceMapping: next });
     get().commitContext({ face_mapping: next, target_person_source_mapping: next });
   },
+  /** Give person `p` (from peopleOf) a display name; '' clears it. The engine keys it by stable id. */
+  renamePerson: async (p, name) => {
+    const s = get();
+    try {
+      const res = await postJSON('/api/target/name', {
+        target_media_id: s.targetMediaId, name: String(name || '').trim().slice(0, 40),
+        ...(p.legacy ? { person: p.rank } : { target_person_id: p.id }),
+      });
+      set(contextPatch(res));
+      return true;
+    } catch (e) { notify(e.message, 'error'); return false; }
+  },
+  /** Forget person `p`: every captured angle of them, highest face index first so the rest keep theirs. */
+  removePerson: async (p) => {
+    const indices = [...(p.faceIndices || [p.faceIndex])].sort((a, b) => b - a);
+    try {
+      let res = null;
+      for (const face_index of indices) {
+        res = await postJSON('/api/target/remove_face', { target_media_id: get().targetMediaId, face_index, index: face_index });
+      }
+      // The engine's own mapping wins; the mock sends none, so drop the person from ours.
+      const patch = contextPatch(res);
+      const next = { ...get().faceMapping };
+      delete next[p.id];
+      set({ ...patch, faceMapping: patch.faceMapping || next });
+      notify(`Removed ${p.name}`);
+      return true;
+    } catch (e) { notify(e.message, 'error'); await get().refresh().catch(() => {}); return false; }
+  },
   clearPeople: async () => {
     try {
       const res = await postJSON('/api/target/clear_faces', { target_media_id: get().targetMediaId });
