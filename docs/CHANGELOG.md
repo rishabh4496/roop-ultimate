@@ -7,6 +7,14 @@ folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22
 
 ## 2026-11-28
 
+- **React UI 2.0 has committed browser tests.**
+  - `react-ui-v2/e2e/`, run with `npm run test:e2e`: 26 Playwright tests against the built app and 1.0's mock server. All pass.
+    - They replace the scratch `flow` script.
+    - Where the mock differs from the engine, the tests answer with the engine's shape. That clears the 3 known mock gaps.
+  - `npm run test:e2e:live` is the opt-in run against the real engine. It passed.
+    - In 1200 / Out 1229 rendered 30 frames.
+    - The output's first frame matched source frame 1200.
+  - Record: [`UI_V2_VISUAL_AUDIT.md`](UI_V2_VISUAL_AUDIT.md).
 - **React UI 2.0 has every 1.0 tool and has been run against the real engine.** Commits `99f459f` and `d888e2d`. Record: [`UI_V2_VISUAL_AUDIT.md`](UI_V2_VISUAL_AUDIT.md).
   - **Precision tools, rebuilt on 1.0's pure models.** These were the last features only 1.0 had.
     - Mask brush (`imagemask`), roto pen (`roto_polygons`), identity pins (`identity_pins`), identity blend with keyframes (`identity_blend`).

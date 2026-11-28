@@ -231,6 +231,22 @@ type and sunray keyframe, and the dithered horizon.
 ## Not verified
 
 - **RTX 3060:** not run. It needs the laptop.
-- **A 2.0-specific Playwright suite:** not written. The browser checks (`flow`, `live_actions`,
-  `gpu_measure`) are scratch scripts, not committed tests.
-- **Mock flow:** 42 checks pass. The same 3 mock gaps fail: library shape, integrity list, unserved outputs.
+- **GPU cost:** measured with a scratch script (`gpu_measure`), not a committed test.
+
+## Browser tests
+
+- **`react-ui-v2/e2e/`, `npm run test:e2e`:** 26 tests against the built app and 1.0's mock server,
+  all passing. They replace the scratch `flow` script and cover:
+  - the shell: every screen by dock and by hash, transitions that end, no link into 1.0, widths
+    of 1280 and 420 px with no horizontal scroll, and the terminal;
+  - the studio, the six precision tools (the next `/api/preview` must carry them), and
+    Start/Pause/Resume/Stop;
+  - a render cut into three queued pieces;
+  - every other screen;
+  - regressions: a `progress.output` object, and In/Out sending the frame on screen.
+  The 3 mock gaps no longer fail: `e2e/fixtures.js` answers those three routes with the engine's
+  shape.
+- **`npm run test:e2e:live`:** the scratch `live_actions` script as a committed, opt-in test, updated
+  to the 1-based API. It passed on the live engine: In 1200 / Out 1229 rendered 30 frames (History
+  and an OpenCV decode agree), and the output's first frame matched source frame 1200 (diff 1.63,
+  against 5.91 and 7.19 for frames 1199 and 1201).

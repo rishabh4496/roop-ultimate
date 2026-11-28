@@ -10,10 +10,12 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "lint": "oxlint src .render-check",
+    "lint": "oxlint src .render-check e2e",
     "test:v2fx": "node .render-check/run-module.mjs render-v2fx.mjs",
     "test:studio": "node .render-check/run-module.mjs render-studio.mjs",
-    "test:render-checks": "npm run test:v2fx && npm run test:studio"
+    "test:render-checks": "npm run test:v2fx && npm run test:studio",
+    "test:e2e": "playwright test -c e2e/playwright.config.js",
+    "test:e2e:live": "playwright test -c e2e/playwright.live.config.js"
   },
   "dependencies": {
     "@fontsource-variable/geist": "5.3.0",

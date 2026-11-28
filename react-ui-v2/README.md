@@ -45,7 +45,19 @@ Keys:
 ```bash
 npm run test:render-checks   # payload builders + effects logic
 npm run lint
+npm run build && npm run test:e2e   # browser tests on the built app + 1.0's mock server
+npm run test:e2e:live        # the same actions on the REAL engine (opt-in, renders on the GPU)
 ```
+
+`test:e2e` (`e2e/playwright.config.js`) serves `dist/` with `vite preview` at `/v2/` in front of
+`react-ui/mock-server`, and refuses to run on a build older than `src/`, `react-ui/src` or the
+settings schema. Where the mock's answer differs from the engine's (the faceset library, model
+integrity, `/outputs` files), `e2e/fixtures.js` answers with the engine's shape instead.
+
+`test:e2e:live` (`e2e/playwright.live.config.js`, `ROOP_V2_LIVE_URL`, default
+`http://127.0.0.1:42003`) needs an idle backend with a target, a target person and a source set
+up, and skips if any is missing. It renders a stopped partial and a complete 30-frame render (both
+kept, the second in History), adds and removes a queue job, and restores the target's In/Out.
 
 `app/tests/test_default_client_capability.py` walks this client's import graph. It fails if a route
 the workstation needs is unreachable, or if a 1.0 component or stylesheet is imported.
