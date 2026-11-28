@@ -42,6 +42,10 @@ ROOT = APP.parent
 
 if str(APP) not in sys.path:
     sys.path.insert(0, str(APP))
+# fixtures.py sits next to this file; do not rely on an earlier test module
+# having put app/tests on sys.path (run alone, the import failed).
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
 
 import install_state
 import fixtures

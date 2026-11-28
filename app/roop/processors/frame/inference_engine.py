@@ -1,4 +1,3 @@
-from roop.degrade import swallowed as _swallowed
 """OptimizedInferenceSession: TensorRT -> CUDA -> CPU, with persistent device
 IO binding, for the swap models (HiFiFace, HyperSwap).
 
@@ -38,6 +37,7 @@ PRECISION IS A MEASURED TRADE HERE, not a free speed-up. See
 tools/benchmark_swapper.py and the numbers recorded in RECODE_STATUS.md.
 """
 from __future__ import annotations
+from roop.degrade import swallowed as _swallowed
 
 import os
 import re
