@@ -176,7 +176,7 @@ export const useStudio = create((set, get) => ({
       set({ preview: EMPTY_PREVIEW });
     } catch (e) { notify(e.message, 'error'); }
   },
-  /** `frame` is the UI's frame (1-based, inclusive); engineFrameFor converts to the engine's seek/exclusive-end. */
+  /** `frame` is the UI's frame (1-based, inclusive), which is what set_frame takes. */
   setRange: async (which, frame) => {
     try {
       const res = await postJSON('/api/target/set_frame', { which, frame: engineFrameFor(which, frame), target_media_id: get().targetMediaId });

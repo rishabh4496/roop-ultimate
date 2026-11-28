@@ -2507,9 +2507,13 @@ def _target_entry_dict(entry):
         # a thumbnail that the preview endpoint must correctly return as 404.
         "preview_available": os.path.isfile(entry.filename),
         "has_target_faces": has_target_faces,
+        # startframe/endframe: the engine's own values - a 0-based seek (CAP_PROP_POS_FRAMES) and an
+        # exclusive end; the render covers [startframe, endframe). start_frame/end_frame: the same range
+        # in the frames every client shows and /api/preview decodes - 1-based, inclusive - which is also
+        # what /api/target/set_frame takes and what a queue job's frame_start/frame_end mean.
         "startframe": entry.startframe,
         "endframe": entry.endframe,
-        "start_frame": entry.startframe,
+        "start_frame": int(entry.startframe or 0) + 1,
         "end_frame": entry.endframe,
         "frames": total,
         "fps": entry.fps or 0,
@@ -2618,6 +2622,9 @@ def target_set_frame(payload: dict = Body(...)):
     idx, _media_id, error = _activate_target_from_payload(payload, refresh=False)
     if error:
         return error
+    # `frame` is a 1-based, inclusive frame - the one on screen when the user sets In or Out. The engine
+    # stores In as a 0-based seek, so In f -> startframe f-1; Out f -> endframe f (exclusive 0-based end).
+    # Storing In raw made every render start one frame after the In point the user picked.
     which = payload.get("which", "start")
     try:
         frame = int(payload.get("frame", 1))
@@ -2632,11 +2639,12 @@ def target_set_frame(payload: dict = Body(...)):
         frame = max(1, frame)
     if idx < len(list_files_process):
         if which == "start":
-            entry.startframe = min(frame, entry.endframe or frame)
+            seek = max(0, frame - 1)
+            entry.startframe = min(seek, entry.endframe - 1) if entry.endframe else seek
         else:
             if total:
                 frame = min(frame, total)
-            entry.endframe = max(frame, entry.startframe)
+            entry.endframe = max(frame, entry.startframe + 1)
     return _target_list_payload()
 
 

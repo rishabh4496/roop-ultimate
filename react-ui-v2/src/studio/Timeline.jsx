@@ -54,7 +54,7 @@ export default function Timeline({ onScrub }) {
     return clamp(Math.round(1 + ((clientX - r.left) / r.width) * (total - 1)), 1, total);
   }, [total]);
 
-  // In / out in UI frames (1-based, inclusive) - inOutOf maps the engine's seek/exclusive-end storage.
+  // In / out in UI frames (1-based, inclusive), read through inOutOf.
   const { a: engineIn, b: engineOut } = inOutOf(target);
   const [range, setRangeLocal] = useState({ a: engineIn, b: engineOut });
   useEffect(() => { setRangeLocal({ a: engineIn, b: engineOut }); }, [engineIn, engineOut, total, sel]);

@@ -136,25 +136,24 @@ export function settingsAtFrame(s, frame) {
 }
 
 /**
- * The In/Out range in the frames the UI shows: 1-based, inclusive (the same frames /api/preview decodes
- * and the queue's frame_start/frame_end use). The engine STORES a target's range as a 0-based seek
- * position plus an exclusive end (startframe = POS_FRAMES, the render covers [startframe, endframe)), so
- * the In point the user sees is start_frame + 1 and the Out point is end_frame. Measured on the live
- * engine: In 300 sent raw rendered 29 frames, from 301 - the frame on screen at In was never rendered.
+ * The In/Out range in the frames the UI shows: 1-based, inclusive - the frames /api/preview decodes, the
+ * queue's frame_start/frame_end, and (since 11-28) the target list's start_frame/end_frame and what
+ * /api/target/set_frame takes. The engine stores a 0-based seek + exclusive end (`startframe`/`endframe`)
+ * and converts at the API. Before that fix it stored In raw, so In 300 rendered from 301 (measured live).
+ * The one place 2.0 reads the range, so a contract change is one edit.
  */
 export function inOutOf(t) {
   const total = Math.max(1, t?.frames || 1);
-  const s0 = Number(t?.start_frame ?? t?.startframe ?? 0) || 0;
-  const e0 = Number(t?.end_frame ?? t?.endframe ?? 0) || 0;
-  const a = Math.min(total, Math.max(1, s0 + 1));
-  const b = Math.min(total, Math.max(a, e0 > 0 ? e0 : total));
+  const s1 = Number(t?.start_frame) || 1;
+  const e1 = Number(t?.end_frame) || 0;
+  const a = Math.min(total, Math.max(1, s1));
+  const b = Math.min(total, Math.max(a, e1 > 0 ? e1 : total));
   return { a, b, total };
 }
 
-/** The value /api/target/set_frame takes for a UI frame `f` (1-based, inclusive) at `which`. */
+/** The value /api/target/set_frame takes for a UI frame `f` at `which`: the frame itself (1-based). */
 export function engineFrameFor(which, f) {
-  const n = Math.max(1, Math.round(Number(f) || 1));
-  return which === 'start' ? n - 1 : n;
+  return Math.max(1, Math.round(Number(f) || 1));
 }
 
 /**
