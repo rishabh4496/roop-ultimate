@@ -59,8 +59,23 @@ in three ways:
 scans 2.0's source and page for 1.0's look: its surface classes, its crimson `#E94560`, its typeface, and links
 into a 1.0 screen.
 
-**Still only in 1.0** (not reachable from 2.0): Face Swap's deep tools. These are roto polygons, tone curves,
-identity keyframes and pins, the mask brush, quad inspection, A/B snapshot slots and per-scene overrides.
+### Precision tools (`src/studio/Tools.jsx`, `src/studio/Overlays.jsx`)
+Face Swap's deep tools, rebuilt with 2.0's own UI on 1.0's pure models (`rotoModel`, `identityLock`,
+`identityKeyframes`, `identityBlend`, `timeline/overrides`, `curves/curveModel` and `curvePieces`, through
+`@engine`). Per-clip state is kept per browser, keyed by media id.
+- **Mask brush:** paint or erase on the viewport in frame pixels. Sent as `imagemask`
+  (`{"<source>": {exclude, canonical: false, ref_kps}}`), bound to the selected person's landmarks.
+- **Roto pen:** exclude or include zones with feather, for the whole clip, the In/Out range or one frame.
+  Sent as `roto_polygons`.
+- **Identity pins:** with the Pins tab open, a face click locks that face to its source from that frame.
+  Sent as `identity_pins`.
+- **Identity blend:** weighted cast identities (slerp or linear) with keyframes. Synced to
+  `/api/identity/blend` and sent as `identity_blend`.
+- **Scene overrides and parameter curves:** previews apply them at the playhead. Start cuts the range into
+  1.0's pieces and queues one job per piece (`add_batch` + `queue/start`).
+- **Quad view** (original, swap, difference, mask + roto) and **Ref view** (a wipe against a finished
+  render). These replace 1.0's A/B snapshot slots.
+- **Timeline lanes** show scenes, curve keys and pins.
 
 ### The viewport (`src/studio/Viewport.jsx`)
 - **Modes:** Swap (the `/api/preview` frame), Original (the untouched frame, for picking people) and
@@ -171,12 +186,45 @@ type and sunray keyframe, and the dithered horizon.
   - History: runs list, and a two-run compare shows the differing settings.
   - No link back into 1.0.
 
+- **Actions against the real engine (idle, 2026-11-28): 16 of 16.**
+  - A live swap preview (`1 face · 1 swapped` at frame 300).
+  - In/Out set with the timeline's buttons.
+  - Start, Pause, Resume and Stop, all sent to the engine.
+  - A stopped run stays out of history; the engine records completed runs only.
+  - A full 30-frame render finished `Done`, landed in history and wrote 30 frames.
+  - Batch: add the current setup, then remove it.
+  - The user's In/Out was restored.
+  - No page errors.
+
+  Three defects the mock could not show, all fixed:
+  - **Blank app after a render.** `/api/progress.output` becomes an object once a render finishes, and the
+    deck printed it raw (React error #31). It is now normalised. Each screen also sits in an error
+    boundary.
+  - **In point one frame late.** The engine stores a 0-based seek plus an exclusive end; the timeline
+    shows 1-based frames. In 300 / Out 329 rendered 29 frames from 301, and "reset" dropped frame 1.
+    `inOutOf()` and `engineFrameFor()` map the range in one place. The same range now renders 30 frames,
+    and output frame 0 matches source frame 300 (mean abs diff 1.72 against 4.33 and 4.13 for its
+    neighbours). 1.0 sends the raw value and is unchanged.
+  - **Idle GPU load.** Below.
+- **GPU cost (RTX 4070).** Chromium ran on ANGLE/D3D11; the WebGL renderer string was checked, so this is
+  not SwiftShader. `nvidia-smi` was sampled for 20 s per arm, in A/B/B/A order, with the engine idle.
+
+  | Page state | GPU util before | after the fix |
+  |---|---|---|
+  | tab closed | 2.6 % | 1.9 % |
+  | 2.0, horizon off | 12.1 % | 3.4 % |
+  | 2.0, horizon balanced (the default) | 13.1 % | 5.4 % |
+  | 2.0, pipeline beams live (during a render) | ~11.7 % | 6.3 % |
+
+  - Bisecting by animation group: the four pipeline-beam SVG paths cost ~8 points. A `stroke-dashoffset`
+    animation is repainted every frame, not composited, and it ran while idle. Idle beams now stand still,
+    and live beams step at ~10 updates/s.
+  - The horizon itself costs +0.6, +1.0 and +3.1 points (low, balanced, high).
+  - Power stayed at 38–39 W in every arm (noise). The horizon freezes during a render by default.
+
 ## Not verified
 
-- **No 2.0 action has been run against the real engine.** The live tour was read-only because a render
-  was in progress: no source added, face picked, render started or paused, and no job queued, from 2.0.
-  Those are proven on the mock only.
-- **Horizon GPU cost:** unmeasured while idle or previewing.
-- **RTX 3060:** not run.
-- **Full GPU test suite:** not run, because a render was in progress.
-- **A 2.0-specific Playwright suite:** not written. The browser check is a scratch script, not a committed test.
+- **RTX 3060:** not run. It needs the laptop.
+- **A 2.0-specific Playwright suite:** not written. The browser checks (`flow`, `live_actions`,
+  `gpu_measure`) are scratch scripts, not committed tests.
+- **Mock flow:** 42 checks pass. The same 3 mock gaps fail: library shape, integrity list, unserved outputs.

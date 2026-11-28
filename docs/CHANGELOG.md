@@ -7,6 +7,25 @@ folder). Entries before 2026-09-21 were moved here from the README on 2026-09-22
 
 ## 2026-11-28
 
+- **React UI 2.0 has every 1.0 tool and has been run against the real engine.** Commits `99f459f` and `d888e2d`. Record: [`UI_V2_VISUAL_AUDIT.md`](UI_V2_VISUAL_AUDIT.md).
+  - **Precision tools, rebuilt on 1.0's pure models.** These were the last features only 1.0 had.
+    - Mask brush (`imagemask`), roto pen (`roto_polygons`), identity pins (`identity_pins`), identity blend with keyframes (`identity_blend`).
+    - Scene overrides and parameter curves. Start queues one job per piece.
+    - Quad and Ref views, and timeline tool lanes.
+  - **On the idle real engine: 16 of 16 checks pass.**
+    - A live swap preview, and In/Out set with the timeline.
+    - Start, Pause, Resume and Stop.
+    - A full 30-frame render: `Done`, in history, 30 frames in the file.
+    - Batch: add, then remove.
+    - The user's In/Out was restored.
+  - **Three defects the mock could not show, all fixed.**
+    - **Blank app after a render.** `/api/progress.output` becomes an object, and the deck printed it raw (React error #31). It is now normalised, and each screen has an error boundary.
+    - **In point one frame late.** The engine stores a 0-based seek plus an exclusive end (`startframe` = `CAP_PROP_POS_FRAMES`), and the timeline shows 1-based frames. In 300 / Out 329 rendered 29 frames from 301, and "reset range" dropped the first frame. 2.0 now maps the range in `inOutOf`/`engineFrameFor`, and output frame 0 matches source frame 300. **1.0 still sends the raw frame** (`FaceSwap.jsx` `setFrameMarkerVal`), so its In point is still one frame late. It is left unchanged.
+    - **Idle GPU load.** On the RTX 4070 (ANGLE/D3D11, checked not to be SwiftShader), a 2.0 tab cost 12.1 % GPU with the horizon off, against 2.0 % closed. The four pipeline-beam SVG `stroke-dashoffset` animations accounted for ~8 points, repainting every frame even when idle. Idle beams now stand still, and live beams step at ~10 updates/s: idle is 3.4 %, and 5.4 % with the default horizon. The horizon itself costs +0.6, +1.0 and +3.1 points (low, balanced, high).
+  - **Not verified.**
+    - The full GPU suite was stopped at ~55 % because the system ran low on memory. The failing test names had not printed yet, so the run is inconclusive and nothing was pushed.
+    - RTX 3060 not run.
+
 - **React UI 2.0 is complete for the workstation's screens and live at `/v2/`.** Record: [`UI_V2_VISUAL_AUDIT.md`](UI_V2_VISUAL_AUDIT.md).
   - **New screens.**
     - Face Manager: faceset builder, pose radar with auto-prune, and Morph Lab (weighted slerp/linear identity blends, de-identification, similarity readout, preview, save).
