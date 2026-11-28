@@ -208,8 +208,9 @@ type and sunray keyframe, and the dithered horizon.
     - Then fixed at the API (`2617e3c`), so 1.0 is fixed too, with no change to 1.0. `set_frame` takes
       the frame on screen, and the target list reports `start_frame` 1-based. That matches the queue's
       `frame_start` and the mock. 2.0's `inOutOf()` and `engineFrameFor()` are now pass-throughs.
-    - Covered by `app/tests/test_target_in_out_frames.py`. The API fix has not yet run on the live
-      engine (the backend was down).
+    - Covered by `app/tests/test_target_in_out_frames.py`. Checked on the restarted live backend: In 300 /
+      Out 329 stores seek 299 and end 329 (30 frames) and reports 300-329. A render from seek 299 had
+      already been measured to start on source frame 300.
   - **Idle GPU load.** Below.
 - **GPU cost (RTX 4070).** Chromium ran on ANGLE/D3D11; the WebGL renderer string was checked, so this is
   not SwiftShader. `nvidia-smi` was sampled for 20 s per arm, in A/B/B/A order, with the engine idle.
