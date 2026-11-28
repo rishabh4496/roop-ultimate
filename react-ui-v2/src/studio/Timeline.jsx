@@ -4,6 +4,9 @@ import { getJSON } from '@engine/api';
 import { useStudio, currentTarget, isVideoTarget } from '../engine/studio';
 import { timecode, frameUrl, hueOf } from './people';
 import FrameImg from '../ui/FrameImg';
+import { DIRECT_PARAMS } from '@engine/components/faceswap/curves/curveModel.js';
+import { describeOverride } from '@engine/components/faceswap/timeline/overrides.js';
+import { clipFxOf, clipKeyOf } from '../engine/payload';
 
 // ── The timeline ────────────────────────────────────────────────────────────
 // A filmstrip of real frames across the clip; a playhead you drag (raw frames while dragging, the
@@ -27,6 +30,10 @@ export default function Timeline({ onScrub }) {
   const mediaId = useStudio((s) => s.targetMediaId);
   const setFrame = useStudio((s) => s.setFrame);
   const setRange = useStudio((s) => s.setRange);
+  // Primitives / stable references only: clipFxOf builds a fresh object, so it is derived, not selected.
+  const clipFx = useStudio((st) => st.clipFx);
+  const clipKey = useStudio(clipKeyOf);
+  const fx = useMemo(() => clipFxOf({ clipFx, targetMediaId: clipKey, selectedTarget: 0 }), [clipFx, clipKey]);
   const total = Math.max(1, target?.frames || 1);
   const fps = target?.fps || 30;
   const video = isVideoTarget(target);
@@ -206,6 +213,38 @@ export default function Timeline({ onScrub }) {
           </div>
         )}
       </div>
+
+      {/* Tool lanes: scene overrides, curve keys, pins (what will render differently, and where). */}
+      {video && (fx.overrides.length > 0 || DIRECT_PARAMS.some((p) => (fx.curves[p.id] || []).length) || fx.pins.length > 0) && (
+        <div className="mt-2 space-y-1" aria-label="Tool lanes" data-testid="tool-lanes">
+          {fx.overrides.length > 0 && (
+            <div className="flex items-center gap-2">
+              <span className="w-24 shrink-0 text-[11px] font-medium text-[var(--accent-2)]">Scenes</span>
+              <div className="tl-lane flex-1">
+                {fx.overrides.map((o) => (
+                  <i key={o.id} title={`${o.label}: ${describeOverride(o)}`} style={{ left: `${((o.start - 1) / Math.max(1, total - 1)) * 100}%`, width: `${Math.max(0.5, ((o.end - o.start + 1) / total) * 100)}%`, background: o.bypass ? 'var(--fg-faint)' : 'var(--accent-2)' }} />
+                ))}
+              </div>
+            </div>
+          )}
+          {DIRECT_PARAMS.filter((p) => (fx.curves[p.id] || []).length).map((p) => (
+            <div key={p.id} className="flex items-center gap-2">
+              <span className="w-24 shrink-0 truncate text-[11px] font-medium" style={{ color: p.color }}>{p.label}</span>
+              <div className="tl-lane flex-1">
+                {fx.curves[p.id].map((k) => <i key={k.frame} title={`f${k.frame}: ${k.value}`} style={{ left: `calc(${((k.frame - 1) / Math.max(1, total - 1)) * 100}% - 3px)`, width: 6, background: p.color, borderRadius: 2 }} />)}
+              </div>
+            </div>
+          ))}
+          {fx.pins.length > 0 && (
+            <div className="flex items-center gap-2">
+              <span className="w-24 shrink-0 text-[11px] font-medium text-[var(--warn)]">Pins</span>
+              <div className="tl-lane flex-1">
+                {fx.pins.map((pn) => <i key={pn.id} title={`pin at f${pn.frame}`} style={{ left: `calc(${((pn.frame - 1) / Math.max(1, total - 1)) * 100}% - 3px)`, width: 6, background: 'var(--warn)' }} />)}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Presence lanes */}
       {presence.length > 0 && (

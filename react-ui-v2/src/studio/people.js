@@ -52,4 +52,11 @@ export function timecode(frame, fps) {
   return `${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}.${String(ff).padStart(2, '0')}`;
 }
 
+// The engine's boxes are [x1, y1, x2, y2] (insightface). A box whose far corner is not past its
+// near one cannot be that, so it is read as [x, y, w, h] - only the mock backend sends that form.
+export const asCorners = (b) => {
+  const [a, c, d, e] = (b || []).map(Number);
+  return d > a && e > c ? [a, c, d, e] : [a, c, a + Math.abs(d), c + Math.abs(e)];
+};
+
 export const frameUrl = (index, frame, width = 0) => `/api/target/preview?index=${index}&frame=${frame}${width ? `&width=${width}` : ''}`;

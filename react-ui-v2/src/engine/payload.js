@@ -16,6 +16,25 @@ import {
 } from '@engine/components/faceswap/faceMapping.js';
 import { buildProcessingSelection } from '@engine/components/faceswap/processingSelection.js';
 import { requestFields } from '@engine/components/faceswap/mouthCustody.js';
+import { serialize as serializeRoto } from '@engine/components/faceswap/rotoModel.js';
+import { serializePins } from '@engine/components/faceswap/identityLock.js';
+import { normalizeBlend } from '@engine/components/faceswap/identityBlend.js';
+import { overrideAt, patchSettings, overridePieces, patchPayload, canBypass } from '@engine/components/faceswap/timeline/overrides.js';
+import { patchSettingsWithCurves, applyCurveValues } from '@engine/components/faceswap/curves/curveModel.js';
+import { bakeCurvePieces, piecesHaveCurves } from '@engine/components/faceswap/curves/curvePieces.js';
+
+/** The per-clip tool state (roto zones, pins, scene overrides, curves) of the selected target. */
+export const clipKeyOf = (s) => s.targetMediaId || `legacy-index-${s.selectedTarget ?? 0}`;
+export const clipFxOf = (s) => ({ roto: [], pins: [], overrides: [], curves: {}, ...((s.clipFx || {})[clipKeyOf(s)] || {}) });
+
+/** The brush mask as ProcessMgr reads it: {"<faceset>": {exclude: dataUrl, canonical, ref_kps}}; '' when none. */
+export function maskJsonOf(s) {
+  const m = s.mask;
+  if (!m?.dataUrl) return '';
+  const entry = { exclude: m.dataUrl, canonical: false };
+  if (m.refKps) entry.ref_kps = m.refKps;
+  return JSON.stringify({ [String(s.selectedSource || 0)]: entry });
+}
 
 const num = (v, d) => {
   const n = Number(v);
@@ -101,12 +120,63 @@ export function buildEnginePayload(s, { requestId = null } = {}) {
     selected_source_id: sourceIdAt(s, sel),
     target_media_id: s.targetMediaId || null,
     selection_version: s.selectionVersion ?? null,
+    // The tools. The engine CLEARS roto zones and pins on a request that does not carry them, so what
+    // is sent is the whole truth for this render (the per-clip lists, never another clip's).
+    imagemask: maskJsonOf(s),
+    roto_polygons: serializeRoto(clipFxOf(s).roto),
+    identity_pins: serializePins(clipFxOf(s).pins),
+    identity_blend: normalizeBlend(s.identityBlend),
   };
+}
+
+/** The settings in force at `frame`: the clip's, with the scene override and the curves at that frame on top. */
+export function settingsAtFrame(s, frame) {
+  const fx = clipFxOf(s);
+  return patchSettingsWithCurves(patchSettings(s.settings || {}, overrideAt(fx.overrides, frame)), fx.curves, frame);
+}
+
+/**
+ * The render plan for the In/Out range: the pieces the scene overrides and parameter curves cut it into
+ * (React UI 1.0's overridePieces + bakeCurvePieces). `has` = some piece differs from the clip's own
+ * settings, so the range must render as one queued job per piece instead of one /api/swap.
+ */
+export function renderPlan(s) {
+  const t = s.targets?.[s.selectedTarget ?? 0];
+  const total = Math.max(1, t?.frames || 1);
+  const lo = Math.max(1, t?.start_frame || t?.startframe || 1);
+  const hi = Math.min(total, t?.end_frame || t?.endframe || total);
+  const fx = clipFxOf(s);
+  const { pieces } = bakeCurvePieces(overridePieces(fx.overrides, lo, hi), fx.curves);
+  const base = buildEnginePayload(s);
+  const has = pieces.some((pc) => pc.override) || piecesHaveCurves(pieces, base);
+  return { pieces, has, base, lo, hi };
+}
+
+/** The queue jobs for a plan: each piece's payload is the base with its override and curve values written over it. */
+export function planJobs(s, plan) {
+  const name = s.targets?.[s.selectedTarget ?? 0]?.name || '';
+  const group = `ovr-${Date.now().toString(36)}`;
+  return plan.pieces.map((pc, i) => buildQueueJob(s, {
+    label: `${name} - ${pc.override ? pc.override.label : 'clip settings'}${pc.curves ? ' + curves' : ''} (${pc.start}-${pc.end})`,
+    frame_start: pc.start,
+    frame_end: pc.end,
+    payload: applyCurveValues(patchPayload(plan.base, pc.override), pc.curves),
+    ...(plan.pieces.length > 1 ? { segment: { group, index: i + 1, count: plan.pieces.length } } : {}),
+  }));
+}
+
+/** Why a planned render cannot run (a bypass piece outside the targeted detection modes), or null. */
+export function planBlocked(s, plan) {
+  if (plan.pieces.some((pc) => pc.override?.bypass) && !canBypass(s.settings?.face_detection_mode)) {
+    return 'Bypass swap needs the "Selected face" detection mode: the all-faces modes have no match threshold to close.';
+  }
+  return null;
 }
 
 /** The /api/preview body for `frame` (1-based). `swap: false` asks for the untouched frame + face boxes. */
 export function buildPreviewPayload(s, { frame = 1, swap = true } = {}) {
-  const body = buildEnginePayload(s);
+  // Scrubbing shows the scene override and the curves in force at this frame.
+  const body = buildEnginePayload({ ...s, settings: settingsAtFrame(s, frame) });
   return {
     ...body,
     index: s.selectedTarget ?? 0,
@@ -119,7 +189,7 @@ export function buildPreviewPayload(s, { frame = 1, swap = true } = {}) {
 
 /** A /api/queue/add job: the swap body frozen with the names the queue shows. */
 export function buildQueueJob(s, extra = {}) {
-  const payload = buildEnginePayload(s);
+  const payload = extra.payload || buildEnginePayload(s);
   const sel = s.selectedSource || 0;
   return {
     target_name: s.targets?.[s.selectedTarget ?? 0]?.name || '',

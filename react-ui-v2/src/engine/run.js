@@ -11,7 +11,7 @@ import useTelemetrySocket from '@engine/useTelemetrySocket';
 import { setRunTelemetry, setPipelineTelemetry, setDashboardTelemetry, clearEngineTelemetry } from '@engine/store/telemetryStore';
 import { usePipelineStatusSocket } from '@engine/usePipelineStatus';
 import { useStudio } from './studio';
-import { buildEnginePayload, readiness } from './payload';
+import { buildEnginePayload, readiness, renderPlan, planJobs, planBlocked } from './payload';
 import { notify } from '../ui/controls';
 import { termLog } from '../fx/termFeed';
 
@@ -34,6 +34,18 @@ export const useRun = create((set, get) => ({
     if (why) { notify(why, 'warn'); return false; }
     set({ busy: 'start' });
     try {
+      // Scene overrides / parameter curves that change something inside In/Out: the range goes out as
+      // one queued job per piece (each with its own patched payload) and the queue runs them in order.
+      const plan = renderPlan(st);
+      if (plan.has) {
+        const blocked = planBlocked(st, plan);
+        if (blocked) { notify(blocked, 'error'); return false; }
+        await postJSON('/api/queue/add_batch', { jobs: planJobs(st, plan) });
+        await postJSON('/api/queue/start', {});
+        termLog(`render queued as ${plan.pieces.length} piece(s) for scene overrides / curves`, 'ok', 'run');
+        notify(`Rendering in ${plan.pieces.length} piece${plan.pieces.length === 1 ? '' : 's'} (scene overrides / curves) - see Batch`);
+        return true;
+      }
       await postJSON('/api/swap', buildEnginePayload(st), { timeout: 0 });
       get().merge({ processing: true, paused: false, pause_requested: false, stop_requested: false, error: null, desc: 'Starting…' });
       termLog(`render started · ${st.targets[st.selectedTarget]?.name || 'target'} · ${st.settings?.swap_model}`, 'ok', 'run');

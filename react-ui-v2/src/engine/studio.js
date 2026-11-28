@@ -8,7 +8,14 @@
 import { create } from 'zustand';
 import { getJSON, postJSON, postFiles } from '@engine/api';
 import { nextSelectionVersion } from '@engine/components/faceswap/processingSelection.js';
-import { buildPreviewPayload } from './payload';
+import { buildPreviewPayload, clipKeyOf } from './payload';
+import { normalizeBlend, EMPTY_BLEND } from '@engine/components/faceswap/identityBlend.js';
+
+// Per-clip tool state (roto zones, pins, scene overrides, curves), kept per browser and keyed by the
+// target's media id, so a zone drawn round a microphone in one clip never rides into another's render.
+const CLIP_FX_KEY = 'roop_v2_clipfx';
+const loadClipFx = () => { try { return JSON.parse(localStorage.getItem(CLIP_FX_KEY) || '{}') || {}; } catch { return {}; } };
+const saveClipFx = (v) => { try { localStorage.setItem(CLIP_FX_KEY, JSON.stringify(v)); } catch { /* quota / private: in-memory only */ } };
 import { notify } from '../ui/controls';
 import { termLog } from '../fx/termFeed';
 
@@ -55,11 +62,20 @@ export const useStudio = create((set, get) => ({
   preview: EMPTY_PREVIEW,
   previewMode: 'swap',          // swap | original | compare
   busy: '',                     // the action in flight, for spinners
+  tool: 'pick',                 // viewport tool: pick | mask | roto | pin
+  brush: { size: 28, erase: false },
+  mask: { dataUrl: null, refKps: null, version: 0 },
+  clipFx: loadClipFx(),
+  identityBlend: EMPTY_BLEND,
+  blendDiag: null,
+  reference: null,              // { url, name, kind } - an output to A/B against
 
   // ── boot / refresh ─────────────────────────────────────────────────────────
   boot: async () => {
     const [meta, settings] = await Promise.all([getJSON('/api/meta'), getJSON('/api/settings')]);
     set({ meta, settings });
+    // The engine's live identity blend is the state to restore (a reload must not drop it).
+    getJSON('/api/identity/blend').then((r) => { if (r?.recipe) set({ identityBlend: normalizeBlend(r.recipe) }); }).catch(() => {});
     await get().refresh();
     set({ booted: true });
     return { meta, settings };
@@ -219,6 +235,35 @@ export const useStudio = create((set, get) => ({
     } catch (e) { notify(e.message, 'error'); return null; }
   },
 
+  // ── tools ────────────────────────────────────────────────────────────────
+  setTool: (tool) => set({ tool }),
+  setBrush: (patch) => set((x) => ({ brush: { ...x.brush, ...patch } })),
+  /** Commit the painted mask (a white-on-transparent PNG at frame size; the engine reads it as grayscale). */
+  applyMask: (dataUrl) => {
+    const x = get();
+    const kps = x.preview.kps?.[x.selTargetFace] || x.preview.kps?.[0] || null;
+    set({ mask: { dataUrl: dataUrl || null, refKps: dataUrl ? kps : null, version: x.mask.version + 1 } });
+  },
+  /** Patch the selected clip's tool state: fn(fx) -> partial fx. */
+  updateClipFx: (fn) => {
+    const x = get();
+    const key = clipKeyOf(x);
+    const cur = { roto: [], pins: [], overrides: [], curves: {}, ...(x.clipFx[key] || {}) };
+    const next = { ...x.clipFx, [key]: { ...cur, ...fn(cur) } };
+    set({ clipFx: next });
+    saveClipFx(next);
+  },
+  setIdentityBlend: (recipe) => {
+    const next = normalizeBlend(recipe);
+    set({ identityBlend: next });
+    clearTimeout(blendTimer);
+    blendTimer = setTimeout(async () => {
+      try { set({ blendDiag: await postJSON('/api/identity/blend', next) }); }
+      catch (e) { set({ blendDiag: { error: e.message } }); }
+    }, 300);
+  },
+  setReference: (reference) => set({ reference }),
+
   // ── frame + preview ────────────────────────────────────────────────────────
   setFrame: (frame) => {
     const t = get().targets[get().selectedTarget];
@@ -240,7 +285,7 @@ export const useStudio = create((set, get) => ({
       if (previewCtrl !== ctrl) return;
       set({
         preview: {
-          image: res?.image || null, faces: res?.faces || [], personIds: res?.person_ids || [], frame,
+          image: res?.image || null, faces: res?.faces || [], personIds: res?.person_ids || [], kps: res?.kps || [], frame,
           loading: false, error: null, audit: res?.swap_audit || null,
           diagnostic: res?.selection_diagnostic || (res?.target_required ? 'target_required' : null),
           message: res?.message || null, swapped: swap,
@@ -259,6 +304,7 @@ export const useStudio = create((set, get) => ({
 }));
 
 let previewCtrl = null;
+let blendTimer = null;
 let saveTimer = null;
 let pendingPatch = {};
 async function flushSettings() {

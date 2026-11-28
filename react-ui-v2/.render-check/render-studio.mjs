@@ -17,7 +17,7 @@ const ok = (name, cond, detail = '') => {
   console.log(`  FAIL  ${name}${detail ? `\n          ${detail}` : ''}`);
 };
 
-const { buildEnginePayload, buildPreviewPayload, buildQueueJob, readiness, sourceIdAt } = await import('../src/engine/payload.js');
+const { buildEnginePayload, buildPreviewPayload, buildQueueJob, readiness, sourceIdAt, settingsAtFrame, renderPlan, planJobs, planBlocked, maskJsonOf } = await import('../src/engine/payload.js');
 
 const settings = {
   face_detection_mode: 'Selected face', selected_enhancer: 'GPEN', max_face_distance: 0.65, blend_ratio: 0.9,
@@ -100,6 +100,51 @@ console.log('── readiness (refuse a render that would swap nobody) ───
   ok('a complete setup is ready', readiness(base) === null);
   ok('"All faces" needs no picking', readiness({ ...base, settings: { ...settings, face_detection_mode: 'All faces' }, targetPersonIds: [], targetGroups: [] }) === null);
   ok('a source without an id still has a stable slot id', sourceIdAt({ sourcesInfo: [] }, 3) === 'memory-slot-3');
+}
+
+console.log('── tools in the render ─────────────────────────────────────');
+{
+  const zone = { id: 'z1', mode: 'exclude', feather: 8, frames: null, closed: true, enabled: true,
+    points: [{ x: 10, y: 10 }, { x: 60, y: 10 }, { x: 60, y: 50 }] };
+  const pin = { id: 'p1', frame: 12, bbox: [1, 2, 30, 40], source_index: 1, person_id: 'tp_b', track_id: null };
+  const s = {
+    ...base,
+    mask: { dataUrl: 'data:image/png;base64,AAA', refKps: [[1, 2], [3, 4]], version: 3 },
+    clipFx: { m1: { roto: [zone], pins: [pin], overrides: [], curves: {} }, other: { roto: [{ ...zone, id: 'leak' }] } },
+    identityBlend: { enabled: true, components: [{ source_id: 'src-anna', weight: 1 }, { source_id: 'src-ben', weight: 0.5 }], mode: 'slerp' },
+  };
+  const p = buildEnginePayload(s);
+  const mask = JSON.parse(p.imagemask);
+  ok('imagemask is {"<selected source>": {exclude, canonical:false, ref_kps}}', mask['1']?.exclude === 'data:image/png;base64,AAA' && mask['1'].canonical === false && mask['1'].ref_kps?.length === 2, p.imagemask.slice(0, 90));
+  ok('no mask -> empty imagemask', maskJsonOf({ ...s, mask: { dataUrl: null } }) === '');
+  ok('roto zones belong to this clip only', p.roto_polygons.length === 1 && p.roto_polygons[0].id === 'z1' && p.roto_polygons[0].points.length === 3);
+  ok('an open zone is not sent', buildEnginePayload({ ...s, clipFx: { m1: { roto: [{ ...zone, closed: false }] } } }).roto_polygons.length === 0);
+  ok('pins serialize with frame, bbox and source', p.identity_pins.length === 1 && p.identity_pins[0].frame === 12 && p.identity_pins[0].source_index === 1);
+  ok('the identity blend is normalised into the payload', p.identity_blend.enabled === true && p.identity_blend.components.length === 2 && Array.isArray(p.identity_blend.keyframes));
+  ok('a different clip carries none of it', buildEnginePayload({ ...s, targetMediaId: 'm9' }).roto_polygons.length === 0);
+}
+
+console.log('── scene overrides + curves ────────────────────────────────');
+{
+  const t = { media_id: 'm1', name: 'clip.mp4', frames: 300, start_frame: 1, end_frame: 300 };
+  const ov = { id: 'o1', start: 101, end: 200, label: 'Close-up', bypass: false, params: { mask_feather: 60 }, order: 0 };
+  const s = { ...base, targets: [t], settings: { ...settings, face_mask_blend: 20, blend_ratio: 1 },
+    clipFx: { m1: { roto: [], pins: [], overrides: [ov], curves: {} } } };
+  ok('inside the override the preview reads its value', settingsAtFrame(s, 150).face_mask_blend === 60);
+  ok('outside it, the clip settings', settingsAtFrame(s, 50).face_mask_blend === 20);
+  const plan = renderPlan(s);
+  ok('an override cuts the range into 3 pieces', plan.has && plan.pieces.length === 3, JSON.stringify(plan.pieces.map((pc) => [pc.start, pc.end])));
+  const jobs = planJobs(s, plan);
+  ok('each piece is a job with its own range and patched payload', jobs.length === 3 && jobs[1].frame_start === 101 && jobs[1].frame_end === 200
+    && jobs[1].payload.face_mask_blend === 60 && jobs[0].payload.face_mask_blend === 20, JSON.stringify(jobs.map((j) => [j.frame_start, j.payload.face_mask_blend])));
+  ok('pieces share a segment group so the queue can join them', jobs.every((j) => j.segment && j.segment.group === jobs[0].segment.group && j.segment.count === 3));
+  ok('no override, no curve -> one plain render', renderPlan({ ...s, clipFx: {} }).has === false);
+  const curved = { ...s, clipFx: { m1: { overrides: [], curves: { swap_opacity: [{ frame: 1, value: 1, interp: 'linear' }, { frame: 300, value: 0.2, interp: 'linear' }] } } } };
+  ok('a curve changes the preview along the clip', settingsAtFrame(curved, 1).blend_ratio === 1 && settingsAtFrame(curved, 300).blend_ratio < 0.3, `${settingsAtFrame(curved, 300).blend_ratio}`);
+  const cp = renderPlan(curved);
+  ok('a curve renders as stepped pieces', cp.has && cp.pieces.length > 2 && cp.pieces.length <= 24, `${cp.pieces.length} pieces`);
+  const bypass = { ...s, settings: { ...s.settings, face_detection_mode: 'All faces' }, clipFx: { m1: { overrides: [{ ...ov, bypass: true, params: {} }] } } };
+  ok('bypass outside the targeted modes is refused', !!planBlocked(bypass, renderPlan(bypass)));
 }
 
 console.log(failures ? `studio: ${failures} check(s) FAILED` : 'studio: all checks passed');

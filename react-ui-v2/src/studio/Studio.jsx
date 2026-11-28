@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import Viewport from './Viewport';
 import Timeline from './Timeline';
 import RunDeck from './RunDeck';
+import ToolsPanel from './Tools';
 import { CastPanel, TargetsPanel, PeoplePanel, PipelinePanel, LookPanel } from './Panels';
 import { Panel } from '../fx/effects';
 import { useStudio, currentTarget } from '../engine/studio';
@@ -30,6 +31,7 @@ export default function Studio({ onOpenLibrary }) {
       <div className="flex min-h-0 flex-col gap-3 xl:overflow-y-auto xl:pr-1">
         <RunDeck />
         <PeoplePanel />
+        <ToolsPanel />
         <PipelinePanel />
         <LookPanel />
       </div>

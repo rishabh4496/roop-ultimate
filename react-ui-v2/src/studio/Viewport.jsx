@@ -1,9 +1,12 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Film, ImagePlus, ScanFace, SplitSquareHorizontal, Sparkles, Image as ImageIcon, Maximize2, ZoomIn, Users } from 'lucide-react';
+import { Film, ImagePlus, ScanFace, SplitSquareHorizontal, Sparkles, Image as ImageIcon, Maximize2, ZoomIn, Users, LayoutGrid, Columns2 } from 'lucide-react';
+import { MaskCanvas, RotoLayer } from './Overlays';
+import { pinFace } from './Tools';
+import { clipFxOf } from '../engine/payload';
 import { useStudio, currentTarget } from '../engine/studio';
 import { sourceNameAt } from '../engine/payload';
 import { useRun } from '../engine/run';
-import { peopleOf, hueOf, mappedSource, timecode, frameUrl, isSelectedPerson } from './people';
+import { peopleOf, hueOf, mappedSource, timecode, frameUrl, isSelectedPerson, asCorners } from './people';
 import { Meteors } from '../fx/effects';
 
 // ── The viewport ────────────────────────────────────────────────────────────
@@ -19,14 +22,23 @@ const MODES = [
   { id: 'swap', label: 'Swap', icon: Sparkles },
   { id: 'original', label: 'Original', icon: ImageIcon },
   { id: 'compare', label: 'Compare', icon: SplitSquareHorizontal },
+  { id: 'quad', label: 'Quad', icon: LayoutGrid },
+  { id: 'reference', label: 'Ref', icon: Columns2 },
 ];
 
-// The engine's boxes are [x1, y1, x2, y2] (insightface). A box whose far corner is not past its
-// near one cannot be that, so it is read as [x, y, w, h] - only the mock backend sends that form.
-const asCorners = (b) => {
-  const [a, c, d, e] = (b || []).map(Number);
-  return d > a && e > c ? [a, c, d, e] : [a, c, a + Math.abs(d), c + Math.abs(e)];
-};
+/** The reference render at the same moment as `frame` (a still is shown as is). */
+function RefMedia({ reference, frame, fps, className, style }) {
+  const v = useRef(null);
+  useEffect(() => {
+    if (v.current && Number.isFinite(fps) && fps > 0) {
+      try { v.current.currentTime = Math.max(0, (frame - 1) / fps); } catch { /* not seekable yet */ }
+    }
+  }, [frame, fps, reference?.url]);
+  if (!reference) return null;
+  return reference.kind === 'video' || /\.(mp4|mkv|webm|mov)$/i.test(reference.name || '')
+    ? <video ref={v} src={reference.url} muted playsInline preload="auto" className={className} style={style} />
+    : <img src={reference.url} alt="Reference" className={className} style={style} />;
+}
 
 function fitRect(boxW, boxH, w, h) {
   if (!w || !h || !boxW || !boxH) return null;
@@ -58,7 +70,7 @@ export default function Viewport({ scrubbing }) {
 
   // Ask for the swap preview when what it depends on settles (debounced; scrubbing shows raw frames).
   const deps = JSON.stringify([frame, selectedTarget, previewMode, s.targetMediaId, s.faceMapping, s.selectedTargetPersonId, s.selTargetFace,
-    s.selectedSource, s.sources.length, s.targetPersonIds, s.settings]);
+    s.selectedSource, s.sources.length, s.targetPersonIds, s.settings, s.mask.version, s.clipFx, s.identityBlend]);
   useEffect(() => {
     if (scrubbing || !target) return undefined;
     const h = setTimeout(() => useStudio.getState().requestPreview(), 220);
@@ -73,9 +85,11 @@ export default function Viewport({ scrubbing }) {
   const rect = fitRect(size.w, size.h, nat.w, nat.h);
   const people = useMemo(() => peopleOf(s), [s.targetPersonIds, s.targetGroups, s.targetNames, s.targetFaces]); // eslint-disable-line react-hooks/exhaustive-deps
   const rankOf = useMemo(() => new Map(people.map((p) => [p.id, p])), [people]);
-  const faces = !showRaw && preview.frame === frame ? (preview.faces || []).map(asCorners) : [];
+  // Quad / Ref draw their own panes; the stage's reticles and tags would float over them.
+  const faces = !showRaw && preview.frame === frame && previewMode !== 'quad' && previewMode !== 'reference' ? (preview.faces || []).map(asCorners) : [];
 
   const onPickFace = useCallback((i) => {
+    if (useStudio.getState().tool === 'pin') { pinFace(i); return; }
     const pid = preview.personIds?.[i];
     if (pid && rankOf.has(pid)) {
       const p = rankOf.get(pid);
@@ -226,7 +240,51 @@ export default function Viewport({ scrubbing }) {
             </button>
           );
         })}
+        {nat.w > 0 && (s.tool === 'mask' || s.mask.dataUrl) && <MaskCanvas nat={nat} editing={s.tool === 'mask'} />}
+        {nat.w > 0 && <RotoLayer nat={nat} editing={s.tool === 'roto'} frame={frame} />}
       </div>
+
+      {previewMode === 'quad' && !showRaw && preview.image && (
+        <div className="absolute inset-x-0 bottom-11 top-12 z-[6] grid grid-cols-2 grid-rows-2 gap-1 bg-black p-1" data-testid="quad">
+          {[
+            ['original', <img key="o" src={rawUrl} alt="" className="h-full w-full object-contain" />],
+            ['swap', <img key="s" src={preview.image} alt="" className="h-full w-full object-contain" />],
+            ['difference', (
+              <div key="d" className="relative h-full w-full" style={{ isolation: 'isolate' }}>
+                <img src={rawUrl} alt="" className="absolute inset-0 h-full w-full object-contain" />
+                <img src={preview.image} alt="" className="absolute inset-0 h-full w-full object-contain" style={{ mixBlendMode: 'difference', filter: 'brightness(2.2)' }} />
+              </div>
+            )],
+            ['mask + roto', (
+              <div key="m" className="relative h-full w-full">
+                <img src={rawUrl} alt="" className="absolute inset-0 h-full w-full object-contain opacity-60" />
+                {s.mask.dataUrl && <img src={s.mask.dataUrl} alt="" className="absolute inset-0 h-full w-full object-contain" style={{ filter: 'drop-shadow(0 0 0 #fb7185) sepia(1) saturate(8) hue-rotate(-50deg)', opacity: 0.7 }} />}
+                {nat.w > 0 && clipFxOf(s).roto.length > 0 && <div className="absolute inset-0 grid place-items-center"><div className="relative" style={{ aspectRatio: `${nat.w}/${nat.h}`, maxHeight: '100%', maxWidth: '100%', height: '100%' }}><RotoLayer nat={nat} editing={false} frame={frame} /></div></div>}
+                {!s.mask.dataUrl && !clipFxOf(s).roto.length && <span className="absolute inset-0 grid place-items-center text-[11px] text-[var(--fg-faint)]">no mask or roto zone</span>}
+              </div>
+            )],
+          ].map(([label, node]) => (
+            <div key={label} className="relative overflow-hidden rounded-lg border border-[var(--rule)] bg-[#050507]">
+              {node}
+              <span className="hud left-2 top-2 !py-0.5">{label}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {previewMode === 'reference' && !showRaw && preview.image && rect && (
+        <div className="absolute z-[6]" style={{ left: rect.x, top: rect.y, width: rect.w, height: rect.h }} data-testid="reference-view">
+          {s.reference ? (
+            <>
+              <RefMedia reference={s.reference} frame={frame} fps={target.fps} className="absolute inset-0 h-full w-full bg-black object-contain" />
+              <img src={preview.image} alt="Live preview" className="absolute inset-0 h-full w-full object-contain" style={{ clipPath: `inset(0 0 0 ${wipe}%)` }} />
+              <div data-wipe className="wipe-handle" style={{ left: `calc(${wipe}% - 1px)` }} onPointerDown={wipeDrag} role="slider" aria-label="Reference wipe" aria-valuenow={Math.round(wipe)} aria-valuemin={0} aria-valuemax={100} tabIndex={0} />
+              <span className="hud left-3" style={{ bottom: 12 }}>ref · {s.reference.name}</span>
+              <span className="hud right-3" style={{ bottom: 12 }}>live</span>
+            </>
+          ) : <div className="grid h-full place-items-center bg-black/70 text-[12.5px] text-[var(--fg-dim)]">Pick a reference render in Tools → Ref</div>}
+        </div>
+      )}
 
       {preview.loading && <div className="scanline" aria-hidden="true" />}
 
