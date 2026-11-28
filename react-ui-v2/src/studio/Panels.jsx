@@ -7,7 +7,7 @@ import { getJSON, postJSON } from '@engine/api';
 import { swapperOptions } from '@engine/components/faceswap/pipelineRules.js';
 import { useStudio } from '../engine/studio';
 import { useRun } from '../engine/run';
-import { sourceNameAt } from '../engine/payload';
+import { sourceNameAt, inOutOf } from '../engine/payload';
 import { Panel, PipelineBeams } from '../fx/effects';
 import { Select, Slider } from '../ui/controls';
 import { peopleOf, hueOf, mappedSource, frameUrl, isSelectedPerson } from './people';
@@ -73,7 +73,7 @@ export function TargetsPanel() {
             <div key={t.media_id || t.id || i} className={`tile group flex items-center gap-2.5 p-1.5 ${i === selected ? 'selected' : ''}`}>
               <button type="button" className="flex min-w-0 flex-1 items-center gap-2.5 text-left" onClick={() => useStudio.getState().selectTarget(i)} aria-pressed={i === selected}>
                 <span className="relative h-11 w-[72px] shrink-0 overflow-hidden rounded-lg bg-black">
-                  <FrameImg src={frameUrl(i, Math.max(1, t.start_frame || 1), 160)} loading="lazy" className="h-full w-full object-cover" />
+                  <FrameImg src={frameUrl(i, inOutOf(t).a, 160)} loading="lazy" className="h-full w-full object-cover" />
                   <span className="absolute bottom-0.5 right-0.5 rounded bg-black/75 px-1 font-mono text-[9.5px] text-white">{video ? `${t.frames}f` : 'img'}</span>
                 </span>
                 <span className="min-w-0">

@@ -136,15 +136,35 @@ export function settingsAtFrame(s, frame) {
 }
 
 /**
+ * The In/Out range in the frames the UI shows: 1-based, inclusive (the same frames /api/preview decodes
+ * and the queue's frame_start/frame_end use). The engine STORES a target's range as a 0-based seek
+ * position plus an exclusive end (startframe = POS_FRAMES, the render covers [startframe, endframe)), so
+ * the In point the user sees is start_frame + 1 and the Out point is end_frame. Measured on the live
+ * engine: In 300 sent raw rendered 29 frames, from 301 - the frame on screen at In was never rendered.
+ */
+export function inOutOf(t) {
+  const total = Math.max(1, t?.frames || 1);
+  const s0 = Number(t?.start_frame ?? t?.startframe ?? 0) || 0;
+  const e0 = Number(t?.end_frame ?? t?.endframe ?? 0) || 0;
+  const a = Math.min(total, Math.max(1, s0 + 1));
+  const b = Math.min(total, Math.max(a, e0 > 0 ? e0 : total));
+  return { a, b, total };
+}
+
+/** The value /api/target/set_frame takes for a UI frame `f` (1-based, inclusive) at `which`. */
+export function engineFrameFor(which, f) {
+  const n = Math.max(1, Math.round(Number(f) || 1));
+  return which === 'start' ? n - 1 : n;
+}
+
+/**
  * The render plan for the In/Out range: the pieces the scene overrides and parameter curves cut it into
  * (React UI 1.0's overridePieces + bakeCurvePieces). `has` = some piece differs from the clip's own
  * settings, so the range must render as one queued job per piece instead of one /api/swap.
  */
 export function renderPlan(s) {
   const t = s.targets?.[s.selectedTarget ?? 0];
-  const total = Math.max(1, t?.frames || 1);
-  const lo = Math.max(1, t?.start_frame || t?.startframe || 1);
-  const hi = Math.min(total, t?.end_frame || t?.endframe || total);
+  const { a: lo, b: hi } = inOutOf(t);
   const fx = clipFxOf(s);
   const { pieces } = bakeCurvePieces(overridePieces(fx.overrides, lo, hi), fx.curves);
   const base = buildEnginePayload(s);

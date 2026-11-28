@@ -9,7 +9,7 @@ import { OVERRIDE_FIELDS, addOverride, updateOverride, removeOverride, describeO
 import { DIRECT_PARAMS, INTERPS, INTERP_LABELS, addKey, removeKey, setInterp, setValue, evaluate, clampValue, curveIneffective } from '@engine/components/faceswap/curves/curveModel.js';
 import { swapperOptions } from '@engine/components/faceswap/pipelineRules.js';
 import { useStudio, currentTarget } from '../engine/studio';
-import { clipFxOf, renderPlan, sourceIdAt, sourceNameAt } from '../engine/payload';
+import { clipFxOf, renderPlan, sourceIdAt, sourceNameAt, inOutOf } from '../engine/payload';
 import { Panel } from '../fx/effects';
 import { Slider, Switch, Select, notify } from '../ui/controls';
 import { exportMask } from './Overlays';
@@ -61,7 +61,6 @@ function RotoTab() {
   const s = useStudio();
   const zones = clipFxOf(s).roto;
   const t = currentTarget(s);
-  const total = Math.max(1, t?.frames || 1);
   const up = (id, fn) => s.updateClipFx((fx) => ({ roto: fx.roto.map((z) => (z.id === id ? fn(z) : z)) }));
   return (
     <div className="space-y-2" data-testid="tool-roto">
@@ -77,7 +76,7 @@ function RotoTab() {
             {['exclude', 'include'].map((m) => <button key={m} type="button" className={`chip ${z.mode === m ? 'on' : ''}`} onClick={() => up(z.id, (x) => setMode(x, m))}>{m}</button>)}
             <span className="mx-1 w-px bg-white/10" />
             <button type="button" className={`chip ${!z.frames ? 'on' : ''}`} onClick={() => up(z.id, (x) => setRange(x, null))}>whole clip</button>
-            <button type="button" className="chip" onClick={() => up(z.id, (x) => setRange(x, [t?.start_frame || 1, t?.end_frame || total]))}>in–out</button>
+            <button type="button" className="chip" onClick={() => up(z.id, (x) => setRange(x, [inOutOf(t).a, inOutOf(t).b]))}>in–out</button>
             <button type="button" className="chip" onClick={() => up(z.id, (x) => setRange(x, [s.frame, s.frame]))}>this frame</button>
           </div>
           <div className="mt-1.5"><Slider label="Feather" value={z.feather} min={0} max={64} step={1} format={(v) => `${v}px`} onChange={(v) => up(z.id, (x) => setFeather(x, v))} /></div>
@@ -186,7 +185,7 @@ function ScenesTab() {
   return (
     <div className="space-y-2" data-testid="tool-scenes">
       <p className="text-[12px] text-[var(--fg-dim)]">Different settings for a stretch of the clip. Set In/Out on the timeline, then add. The render is cut into one queued piece per change.</p>
-      <button type="button" className="btn btn-sm w-full" onClick={() => up((l) => addOverride(l, { start: t?.start_frame || 1, end: t?.end_frame || total }, total).list)}><Plus size={13} /> Override In–Out ({t?.start_frame || 1}–{t?.end_frame || total})</button>
+      <button type="button" className="btn btn-sm w-full" onClick={() => up((l) => addOverride(l, { start: inOutOf(t).a, end: inOutOf(t).b }, total).list)}><Plus size={13} /> Override In–Out ({inOutOf(t).a}–{inOutOf(t).b})</button>
       {list.map((o) => (
         <div key={o.id} className={`tile p-2 ${here?.id === o.id ? 'selected' : ''}`}>
           <div className="flex items-center gap-2">

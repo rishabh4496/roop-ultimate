@@ -8,7 +8,7 @@
 import { create } from 'zustand';
 import { getJSON, postJSON, postFiles } from '@engine/api';
 import { nextSelectionVersion } from '@engine/components/faceswap/processingSelection.js';
-import { buildPreviewPayload, clipKeyOf } from './payload';
+import { buildPreviewPayload, clipKeyOf, inOutOf, engineFrameFor } from './payload';
 import { normalizeBlend, EMPTY_BLEND } from '@engine/components/faceswap/identityBlend.js';
 
 // Per-clip tool state (roto zones, pins, scene overrides, curves), kept per browser and keyed by the
@@ -164,7 +164,7 @@ export const useStudio = create((set, get) => ({
       });
       const targets = res.targets || get().targets;
       const sel = res.selected_target_index ?? index;
-      set({ targets, selectedTarget: sel, frame: Math.max(1, targets[sel]?.start_frame || 1), preview: EMPTY_PREVIEW, ...contextPatch(res) });
+      set({ targets, selectedTarget: sel, frame: inOutOf(targets[sel]).a, preview: EMPTY_PREVIEW, ...contextPatch(res) });
       if (!res.target_media_id) set({ targetMediaId: targets[sel]?.media_id || targets[sel]?.id || null });
     } catch (e) { notify(e.message, 'error'); }
   },
@@ -176,11 +176,12 @@ export const useStudio = create((set, get) => ({
       set({ preview: EMPTY_PREVIEW });
     } catch (e) { notify(e.message, 'error'); }
   },
+  /** `frame` is the UI's frame (1-based, inclusive); engineFrameFor converts to the engine's seek/exclusive-end. */
   setRange: async (which, frame) => {
     try {
-      const res = await postJSON('/api/target/set_frame', { which, frame: Math.round(frame), target_media_id: get().targetMediaId });
+      const res = await postJSON('/api/target/set_frame', { which, frame: engineFrameFor(which, frame), target_media_id: get().targetMediaId });
       if (res.targets) set({ targets: res.targets });
-      termLog(`${which} frame = ${Math.round(frame)}`, 'info', 'range');
+      termLog(`${which === 'start' ? 'in' : 'out'} = frame ${Math.round(frame)}`, 'info', 'range');
     } catch (e) { notify(e.message, 'error'); }
   },
 

@@ -17,7 +17,7 @@ const ok = (name, cond, detail = '') => {
   console.log(`  FAIL  ${name}${detail ? `\n          ${detail}` : ''}`);
 };
 
-const { buildEnginePayload, buildPreviewPayload, buildQueueJob, readiness, sourceIdAt, settingsAtFrame, renderPlan, planJobs, planBlocked, maskJsonOf } = await import('../src/engine/payload.js');
+const { buildEnginePayload, buildPreviewPayload, buildQueueJob, readiness, sourceIdAt, settingsAtFrame, renderPlan, planJobs, planBlocked, maskJsonOf, inOutOf, engineFrameFor } = await import('../src/engine/payload.js');
 
 const settings = {
   face_detection_mode: 'Selected face', selected_enhancer: 'GPEN', max_face_distance: 0.65, blend_ratio: 0.9,
@@ -126,7 +126,7 @@ console.log('── tools in the render ─────────────�
 
 console.log('── scene overrides + curves ────────────────────────────────');
 {
-  const t = { media_id: 'm1', name: 'clip.mp4', frames: 300, start_frame: 1, end_frame: 300 };
+  const t = { media_id: 'm1', name: 'clip.mp4', frames: 300, start_frame: 0, end_frame: 300 };
   const ov = { id: 'o1', start: 101, end: 200, label: 'Close-up', bypass: false, params: { mask_feather: 60 }, order: 0 };
   const s = { ...base, targets: [t], settings: { ...settings, face_mask_blend: 20, blend_ratio: 1 },
     clipFx: { m1: { roto: [], pins: [], overrides: [ov], curves: {} } } };
@@ -145,6 +145,23 @@ console.log('── scene overrides + curves ───────────�
   ok('a curve renders as stepped pieces', cp.has && cp.pieces.length > 2 && cp.pieces.length <= 24, `${cp.pieces.length} pieces`);
   const bypass = { ...s, settings: { ...s.settings, face_detection_mode: 'All faces' }, clipFx: { m1: { overrides: [{ ...ov, bypass: true, params: {} }] } } };
   ok('bypass outside the targeted modes is refused', !!planBlocked(bypass, renderPlan(bypass)));
+}
+
+console.log('── In/Out frames (UI 1-based inclusive <-> engine seek + exclusive end) ──');
+{
+  // Live engine, 11-28: In 300 / Out 329 sent raw rendered 29 frames (301..329). The engine stores
+  // startframe as the 0-based CAP_PROP_POS_FRAMES and renders [startframe, endframe).
+  ok('In at UI frame 300 is sent as seek 299', engineFrameFor('start', 300) === 299);
+  ok('Out at UI frame 329 is sent as 329 (exclusive 0-based end)', engineFrameFor('end', 329) === 329);
+  ok('In at frame 1 is seek 0 (the reset button keeps frame 1)', engineFrameFor('start', 1) === 0);
+  const full = inOutOf({ frames: 81507, start_frame: 0, end_frame: 81507 });
+  ok('the engine full-clip default reads as 1..frames', full.a === 1 && full.b === 81507, JSON.stringify(full));
+  const set = inOutOf({ frames: 81507, start_frame: engineFrameFor('start', 300), end_frame: engineFrameFor('end', 329) });
+  ok('In 300 / Out 329 round-trips and counts 30 frames', set.a === 300 && set.b === 329 && set.b - set.a + 1 === 30, JSON.stringify(set));
+  ok('end_frame 0 (unset) means the whole clip', inOutOf({ frames: 50, start_frame: 0, end_frame: 0 }).b === 50);
+  const s = { ...base, targets: [{ media_id: 'm1', frames: 300, start_frame: 99, end_frame: 200 }], clipFx: {} };
+  const plan = renderPlan(s);
+  ok('the render plan covers the UI range 100..200', plan.lo === 100 && plan.hi === 200, `${plan.lo}..${plan.hi}`);
 }
 
 console.log(failures ? `studio: ${failures} check(s) FAILED` : 'studio: all checks passed');

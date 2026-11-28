@@ -20,6 +20,15 @@ const CONTROL_PATH = { pause: '/api/pause', resume: '/api/resume', stop: '/api/s
 
 const IDLE = { processing: false, paused: false, pause_requested: false, stop_requested: false, desc: '', progress: 0, log: [], error: null, output: null, started_at: 0 };
 
+// /api/progress.output is a string on some engine paths and an object
+// ({path, kind, version, source, url, name, absolute_path}) once a render finishes. Never render it raw.
+export function outputLabel(o) {
+  if (!o) return '';
+  if (typeof o === 'string') return o;
+  if (typeof o === 'object') return String(o.name || o.path || o.absolute_path || o.url || '');
+  return String(o);
+}
+
 export const useRun = create((set, get) => ({
   progress: IDLE,
   online: true,
@@ -134,7 +143,7 @@ export function useRunSync() {
   // Edges, for the terminal and a toast when a render ends.
   const was = useRef(false);
   const err = useRun((s) => s.progress.error);
-  const output = useRun((s) => s.progress.output);
+  const output = useRun((s) => outputLabel(s.progress.output));
   useEffect(() => {
     if (processing && !was.current) termLog('render running — ambient animation held while the engine has the GPU', 'ok', 'run');
     if (!processing && was.current) {

@@ -3,7 +3,7 @@ import { Play, Pause, Square, ListPlus, Loader2, AlertTriangle, Timer, Gauge, Fi
 import { useTelemetryStore, selectRenderProgress } from '@engine/store/telemetryStore';
 import { postJSON } from '@engine/api';
 import { useStudio } from '../engine/studio';
-import { useRun } from '../engine/run';
+import { useRun, outputLabel } from '../engine/run';
 import { readiness, buildQueueJob } from '../engine/payload';
 import { Panel, NumberTicker } from '../fx/effects';
 import { notify } from '../ui/controls';
@@ -126,7 +126,7 @@ export default function RunDeck() {
           <ListPlus size={16} /> Batch
         </button>
       </div>
-      {p.output && <div className="mt-2 truncate font-mono text-[11px] text-[var(--fg-faint)]" title={p.output}>last output · {p.output}</div>}
+      {outputLabel(p.output) && <div className="mt-2 truncate font-mono text-[11px] text-[var(--fg-faint)]" title={outputLabel(p.output)}>last output · {outputLabel(p.output)}</div>}
     </Panel>
   );
 }

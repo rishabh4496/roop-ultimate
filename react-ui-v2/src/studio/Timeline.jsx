@@ -6,7 +6,7 @@ import { timecode, frameUrl, hueOf } from './people';
 import FrameImg from '../ui/FrameImg';
 import { DIRECT_PARAMS } from '@engine/components/faceswap/curves/curveModel.js';
 import { describeOverride } from '@engine/components/faceswap/timeline/overrides.js';
-import { clipFxOf, clipKeyOf } from '../engine/payload';
+import { clipFxOf, clipKeyOf, inOutOf } from '../engine/payload';
 
 // ── The timeline ────────────────────────────────────────────────────────────
 // A filmstrip of real frames across the clip; a playhead you drag (raw frames while dragging, the
@@ -54,11 +54,10 @@ export default function Timeline({ onScrub }) {
     return clamp(Math.round(1 + ((clientX - r.left) / r.width) * (total - 1)), 1, total);
   }, [total]);
 
-  // In / out: the engine's start/end frame for this target (0 = whole clip).
-  const engineIn = target?.start_frame || target?.startframe || 1;
-  const engineOut = target?.end_frame || target?.endframe || total;
+  // In / out in UI frames (1-based, inclusive) - inOutOf maps the engine's seek/exclusive-end storage.
+  const { a: engineIn, b: engineOut } = inOutOf(target);
   const [range, setRangeLocal] = useState({ a: engineIn, b: engineOut });
-  useEffect(() => { setRangeLocal({ a: Math.max(1, engineIn), b: Math.min(total, engineOut || total) }); }, [engineIn, engineOut, total, sel]);
+  useEffect(() => { setRangeLocal({ a: engineIn, b: engineOut }); }, [engineIn, engineOut, total, sel]);
 
   // Tracks (scene cuts + presence lanes)
   const [tracks, setTracks] = useState(null);

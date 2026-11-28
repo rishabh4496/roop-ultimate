@@ -363,8 +363,11 @@ html.no-sunray .sunray { animation: none; background: none; color: inherit; }
 
 /* ── Animated beam (pipeline diagram) ─────────────────────────────────── */
 .beam-path { fill: none; stroke: rgba(255, 255, 255, 0.1); stroke-width: 2; }
-.beam-flow { fill: none; stroke-width: 2.2; stroke-linecap: round; stroke-dasharray: 18 160; animation: beam-flow 1.8s linear infinite; }
-.beam-flow.idle { animation-duration: 5s; opacity: 0.35; }
+/* An SVG stroke-dashoffset animation is repainted, not composited: measured on an RTX 4070 these four
+   paths alone cost ~8 points of GPU utilisation at 60 fps (the whole rest of the page ~1). So: idle beams
+   stand still (nothing is flowing), and while a render runs the flow steps at ~10 updates/s. */
+.beam-flow { fill: none; stroke-width: 2.2; stroke-linecap: round; stroke-dasharray: 18 160; animation: beam-flow 1.8s steps(18) infinite; }
+.beam-flow.idle { animation: none; opacity: 0.35; }
 @keyframes beam-flow { to { stroke-dashoffset: -178; } }
 .pipe-node { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 12px; border: 1px solid var(--rule-strong); background: #0b0b0e; color: var(--fg-dim); box-shadow: 0 0 0 4px rgba(0,0,0,.5); }
 .pipe-node.live { color: #fff; border-color: color-mix(in oklab, var(--accent) 55%, transparent); box-shadow: 0 0 22px -6px var(--accent), 0 0 0 4px rgba(0,0,0,.5); }

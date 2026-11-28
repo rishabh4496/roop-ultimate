@@ -44,6 +44,23 @@ const fromHash = () => {
   return ids.includes(id) ? id : 'studio';
 };
 
+// One screen's render error must not blank the shell (the top bar's Pause/Stop stay reachable).
+class ScreenBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(error) { return { error }; }
+  componentDidCatch(error) { termLog(`screen ${this.props.name} crashed: ${error?.message || error}`, 'error', 'ui'); }
+  render() {
+    if (!this.state.error) return this.props.children;
+    return (
+      <div className="mx-auto mt-16 max-w-lg panel p-6 text-center" role="alert" data-testid="screen-error">
+        <div className="text-lg font-semibold">This screen hit an error</div>
+        <div className="mt-1 font-mono text-[12px] text-[var(--fg-dim)] selectable">{String(this.state.error?.message || this.state.error)}</div>
+        <button type="button" className="btn btn-primary mt-4" onClick={() => this.setState({ error: null })}><RefreshCw size={15} /> Reload screen</button>
+      </div>
+    );
+  }
+}
+
 function EngineChip() {
   const online = useRun((r) => r.online);
   const socket = useRun((r) => r.socket);
@@ -158,7 +175,7 @@ export default function App() {
             <AnimatePresence mode="wait">
               <motion.div key={screen} variants={variantsFor(transition)} initial="initial" animate="animate" exit="exit"
                 data-transition={transition} className={screen === 'studio' ? 'xl:h-full xl:min-h-[640px]' : ''}>
-                {current.render({ onOpenLibrary: () => go('library'), meta })}
+                <ScreenBoundary key={screen} name={screen}>{current.render({ onOpenLibrary: () => go('library'), meta })}</ScreenBoundary>
               </motion.div>
             </AnimatePresence>
           )}
